@@ -1,0 +1,30 @@
+{
+  "name": "mir-bim",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Web-based BIM visualization & 4D/equipment simulation platform (Fuzor-like)",
+  "scripts": {
+    "predev": "node scripts/copy-wasm.mjs",
+    "dev": "vite",
+    "prebuild": "node scripts/copy-wasm.mjs",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.171.0",
+    "web-ifc": "0.0.68",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/three": "^0.171.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}

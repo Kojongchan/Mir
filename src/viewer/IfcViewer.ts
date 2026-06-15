@@ -1,0 +1,376 @@
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { IfcAPI, type FlatMesh, type PlacedGeometry } from 'web-ifc';
+
+export interface ElementProperties {
+  modelID: number;
+  expressID: number;
+  type: string;
+  name: string;
+  attributes: { key: string; value: string }[];
+}
+
+interface LoadedModel {
+  modelID: number;
+  group: THREE.Group;
+  /** expressID -> the meshes that make up that IFC element */
+  elementMeshes: Map<number, THREE.Mesh[]>;
+}
+
+type SelectCallback = (props: ElementProperties | null) => void;
+
+const HIGHLIGHT_COLOR = new THREE.Color(0xffaa00);
+
+/**
+ * Imperative Three.js + web-ifc engine.
+ *
+ * Phase 1 responsibilities:
+ *  - load IFC files and build per-element Three.js meshes
+ *  - orbit/pan/zoom navigation
+ *  - click-to-select with property read-out
+ *  - visibility helpers (hide / isolate / show-all) used by the 4D layer later
+ */
+export class IfcViewer {
+  readonly scene = new THREE.Scene();
+  private readonly renderer: THREE.WebGLRenderer;
+  private readonly camera: THREE.PerspectiveCamera;
+  private readonly controls: OrbitControls;
+  private readonly raycaster = new THREE.Raycaster();
+  private readonly ifcAPI = new IfcAPI();
+
+  private readonly container: HTMLElement;
+  private readonly models: LoadedModel[] = [];
+
+  /** material clones swapped in for the current selection, kept so we can restore */
+  private highlighted: { mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] }[] = [];
+
+  private onSelect: SelectCallback = () => {};
+  private initialized = false;
+  private disposed = false;
+
+  constructor(container: HTMLElement) {
+    this.container = container;
+
+    this.scene.background = new THREE.Color(0x1e2430);
+
+    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.renderer.setSize(container.clientWidth, container.clientHeight);
+    container.appendChild(this.renderer.domElement);
+
+    this.camera = new THREE.PerspectiveCamera(
+      60,
+      container.clientWidth / container.clientHeight,
+      0.1,
+      10000,
+    );
+    this.camera.position.set(15, 15, 15);
+
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.enableDamping = true;
+
+    this.setupSceneHelpers();
+
+    this.renderer.domElement.addEventListener('click', this.handleClick);
+    window.addEventListener('resize', this.handleResize);
+
+    this.animate();
+  }
+
+  setOnSelect(cb: SelectCallback) {
+    this.onSelect = cb;
+  }
+
+  async init() {
+    if (this.initialized) return;
+    this.ifcAPI.SetWasmPath('/web-ifc/');
+    await this.ifcAPI.Init();
+    this.initialized = true;
+  }
+
+  get modelCount() {
+    return this.models.length;
+  }
+
+  // --- IFC loading -------------------------------------------------------
+
+  async loadIfc(data: Uint8Array): Promise<LoadedModel> {
+    await this.init();
+
+    const modelID = this.ifcAPI.OpenModel(data, {
+      COORDINATE_TO_ORIGIN: true,
+    });
+
+    const group = new THREE.Group();
+    const elementMeshes = new Map<number, THREE.Mesh[]>();
+    const materialCache = new Map<string, THREE.Material>();
+
+    this.ifcAPI.StreamAllMeshes(modelID, (flatMesh: FlatMesh) => {
+      const expressID = flatMesh.expressID;
+      const placedGeometries = flatMesh.geometries;
+      const meshes: THREE.Mesh[] = [];
+
+      for (let i = 0; i < placedGeometries.size(); i++) {
+        const placed = placedGeometries.get(i);
+        const geometry = this.buildGeometry(modelID, placed);
+        const material = this.getMaterial(materialCache, placed.color);
+
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.applyMatrix4(new THREE.Matrix4().fromArray(placed.flatTransformation));
+        mesh.userData.expressID = expressID;
+        mesh.userData.modelID = modelID;
+
+        group.add(mesh);
+        meshes.push(mesh);
+      }
+
+      elementMeshes.set(expressID, meshes);
+    });
+
+    // IFC is Z-up; rotate the whole model into Three.js' Y-up convention.
+    group.rotation.x = -Math.PI / 2;
+
+    this.scene.add(group);
+
+    const model: LoadedModel = { modelID, group, elementMeshes };
+    this.models.push(model);
+
+    this.fitToObject(group);
+    return model;
+  }
+
+  private buildGeometry(modelID: number, placed: PlacedGeometry): THREE.BufferGeometry {
+    const geom = this.ifcAPI.GetGeometry(modelID, placed.geometryExpressID);
+    const verts = this.ifcAPI.GetVertexArray(geom.GetVertexData(), geom.GetVertexDataSize());
+    const indices = this.ifcAPI.GetIndexArray(geom.GetIndexData(), geom.GetIndexDataSize());
+
+    // web-ifc interleaves [px,py,pz, nx,ny,nz] per vertex
+    const vertexCount = verts.length / 6;
+    const positions = new Float32Array(vertexCount * 3);
+    const normals = new Float32Array(vertexCount * 3);
+    for (let i = 0; i < vertexCount; i++) {
+      positions[i * 3] = verts[i * 6];
+      positions[i * 3 + 1] = verts[i * 6 + 1];
+      positions[i * 3 + 2] = verts[i * 6 + 2];
+      normals[i * 3] = verts[i * 6 + 3];
+      normals[i * 3 + 1] = verts[i * 6 + 4];
+      normals[i * 3 + 2] = verts[i * 6 + 5];
+    }
+
+    const bufferGeometry = new THREE.BufferGeometry();
+    bufferGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    bufferGeometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    bufferGeometry.setIndex(new THREE.BufferAttribute(new Uint32Array(indices), 1));
+
+    geom.delete();
+    return bufferGeometry;
+  }
+
+  private getMaterial(
+    cache: Map<string, THREE.Material>,
+    color: { x: number; y: number; z: number; w: number },
+  ): THREE.Material {
+    const key = `${color.x.toFixed(3)}_${color.y.toFixed(3)}_${color.z.toFixed(3)}_${color.w.toFixed(3)}`;
+    let material = cache.get(key);
+    if (!material) {
+      material = new THREE.MeshLambertMaterial({
+        color: new THREE.Color(color.x, color.y, color.z),
+        side: THREE.DoubleSide,
+        transparent: color.w !== 1,
+        opacity: color.w,
+        depthWrite: color.w === 1,
+      });
+      cache.set(key, material);
+    }
+    return material;
+  }
+
+  // --- selection ---------------------------------------------------------
+
+  private handleClick = (event: MouseEvent) => {
+    const hit = this.pick(event.clientX, event.clientY);
+    if (!hit) {
+      this.clearHighlight();
+      this.onSelect(null);
+      return;
+    }
+    this.highlight(hit.modelID, hit.expressID);
+    this.onSelect(this.getProperties(hit.modelID, hit.expressID));
+  };
+
+  private pick(clientX: number, clientY: number): { modelID: number; expressID: number } | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+
+    const meshes = this.allMeshes().filter((m) => m.visible);
+    const hits = this.raycaster.intersectObjects(meshes, false);
+    if (hits.length === 0) return null;
+
+    const mesh = hits[0].object as THREE.Mesh;
+    return {
+      modelID: mesh.userData.modelID as number,
+      expressID: mesh.userData.expressID as number,
+    };
+  }
+
+  private highlight(modelID: number, expressID: number) {
+    this.clearHighlight();
+    const meshes = this.meshesFor(modelID, expressID);
+    for (const mesh of meshes) {
+      this.highlighted.push({ mesh, material: mesh.material });
+      const highlightMat = new THREE.MeshLambertMaterial({
+        color: HIGHLIGHT_COLOR,
+        side: THREE.DoubleSide,
+      });
+      mesh.material = highlightMat;
+    }
+  }
+
+  private clearHighlight() {
+    for (const { mesh, material } of this.highlighted) {
+      (mesh.material as THREE.Material).dispose?.();
+      mesh.material = material;
+    }
+    this.highlighted = [];
+  }
+
+  getProperties(modelID: number, expressID: number): ElementProperties {
+    const line = this.ifcAPI.GetLine(modelID, expressID, true) as Record<string, unknown>;
+    const typeCode = this.ifcAPI.GetLineType(modelID, expressID);
+    const type = this.ifcAPI.GetNameFromTypeCode(typeCode) ?? 'Unknown';
+
+    const attributes: { key: string; value: string }[] = [];
+    for (const [key, raw] of Object.entries(line)) {
+      if (key === 'expressID' || key === 'type') continue;
+      const value = this.formatValue(raw);
+      if (value !== null) attributes.push({ key, value });
+    }
+
+    const name = this.readValue(line.Name) ?? '(unnamed)';
+    return { modelID, expressID, type, name, attributes };
+  }
+
+  private readValue(raw: unknown): string | null {
+    if (raw && typeof raw === 'object' && 'value' in raw) {
+      const v = (raw as { value: unknown }).value;
+      return v == null ? null : String(v);
+    }
+    return null;
+  }
+
+  private formatValue(raw: unknown): string | null {
+    if (raw == null) return null;
+    if (typeof raw === 'object') {
+      if ('value' in raw) return this.readValue(raw);
+      return null; // skip nested handles/arrays in the basic panel
+    }
+    return String(raw);
+  }
+
+  // --- visibility helpers (foundation for the 4D timeline) ---------------
+
+  setElementVisible(modelID: number, expressID: number, visible: boolean) {
+    for (const mesh of this.meshesFor(modelID, expressID)) mesh.visible = visible;
+  }
+
+  hideSelected(selection: { modelID: number; expressID: number } | null) {
+    if (!selection) return;
+    this.setElementVisible(selection.modelID, selection.expressID, false);
+    this.clearHighlight();
+  }
+
+  isolate(selection: { modelID: number; expressID: number } | null) {
+    if (!selection) return;
+    const keep = new Set(this.meshesFor(selection.modelID, selection.expressID));
+    for (const mesh of this.allMeshes()) mesh.visible = keep.has(mesh);
+  }
+
+  showAll() {
+    for (const mesh of this.allMeshes()) mesh.visible = true;
+  }
+
+  fitToSelection(selection: { modelID: number; expressID: number } | null) {
+    if (!selection) {
+      if (this.models.length) this.fitToObject(this.models[0].group);
+      return;
+    }
+    const box = new THREE.Box3();
+    for (const mesh of this.meshesFor(selection.modelID, selection.expressID)) {
+      box.expandByObject(mesh);
+    }
+    if (!box.isEmpty()) this.frameBox(box);
+  }
+
+  // --- helpers -----------------------------------------------------------
+
+  private meshesFor(modelID: number, expressID: number): THREE.Mesh[] {
+    const model = this.models.find((m) => m.modelID === modelID);
+    return model?.elementMeshes.get(expressID) ?? [];
+  }
+
+  private allMeshes(): THREE.Mesh[] {
+    const meshes: THREE.Mesh[] = [];
+    for (const model of this.models) {
+      for (const list of model.elementMeshes.values()) meshes.push(...list);
+    }
+    return meshes;
+  }
+
+  private fitToObject(object: THREE.Object3D) {
+    const box = new THREE.Box3().setFromObject(object);
+    if (box.isEmpty()) return;
+    this.frameBox(box);
+  }
+
+  private frameBox(box: THREE.Box3) {
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z) || 1;
+    const distance = maxDim * 1.8;
+
+    this.controls.target.copy(center);
+    this.camera.position.set(center.x + distance, center.y + distance * 0.8, center.z + distance);
+    this.camera.near = maxDim / 100;
+    this.camera.far = maxDim * 100;
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
+  }
+
+  private setupSceneHelpers() {
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x404050, 1.0);
+    this.scene.add(hemi);
+    const dir = new THREE.DirectionalLight(0xffffff, 1.2);
+    dir.position.set(10, 20, 10);
+    this.scene.add(dir);
+
+    const grid = new THREE.GridHelper(100, 100, 0x445566, 0x2a3340);
+    this.scene.add(grid);
+  }
+
+  private handleResize = () => {
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+    this.renderer.setSize(w, h);
+  };
+
+  private animate = () => {
+    if (this.disposed) return;
+    requestAnimationFrame(this.animate);
+    this.controls.update();
+    this.renderer.render(this.scene, this.camera);
+  };
+
+  dispose() {
+    this.disposed = true;
+    window.removeEventListener('resize', this.handleResize);
+    this.renderer.domElement.removeEventListener('click', this.handleClick);
+    this.renderer.dispose();
+    this.renderer.domElement.remove();
+  }
+}
