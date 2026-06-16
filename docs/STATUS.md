@@ -23,9 +23,14 @@
     프로젝트/모델 목록→Storage 업로드/다운로드 왕복을 헤드리스로 점검.
   - AuthProvider 버그픽스: 미설정 시 네트워크 호출 스킵, profile fetch 에러 처리.
   - README "Supabase 설정"에 seed/verify 절차 반영.
-- ⏳ **사용자 입력 대기**: Supabase URL · anon key · 첫 관리자 아이디/비번 · 테스트 사용자.
-- ⏳ 키 받은 뒤: `.env` 작성 → 0001 실행 → `models` 버킷 → seed.sql → `verify:e2e`
-  통과 확인 → 필요 시 버그픽스 → main 으로 PR.
+- ✅ 키 수령(URL/publishable key/admin/테스트 사용자) → 로컬 `.env`(gitignore) 작성.
+- ‼️ **블로커(라이브 검증)**: 이 원격 환경의 네트워크 egress 허용목록에 `*.supabase.co`
+  가 없어 컨테이너→Supabase 호출이 403(`host_not_allowed`)으로 차단됨.
+  → (a) 환경 egress 설정에 supabase 호스트 추가 후 재시도, 또는 (b) 사용자가 로컬에서
+  `npm run verify:e2e` 실행 후 결과 공유. **둘 중 하나 필요.**
+- ‼️ **버그 후보**: 한글 아이디(`고종찬`) → 매핑 이메일 `고종찬@mir.local` 의 비-ASCII
+  local-part 를 GoTrue 가 거부할 수 있음. 권고: 로그인 아이디는 ASCII(`gojongchan` 등),
+  표시명은 `full_name='고종찬'` 으로(앱은 full_name 우선 표시). S2 자동가입에서 정책 확정.
 
 ## 다음 할 일 (우선순위)
 1. **S1 마무리**: 위 "사용자 입력 대기" 항목 → 라이브 검증.
