@@ -2,7 +2,7 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-16 · S3 Vercel 배포 설정 완료 (PR 대기) 🚀
+**마지막 업데이트**: 2026-06-16 · S3 Vercel 배포 **라이브 검증 완료** ✅ (PR #2)
 
 ## 지금까지 한 일
 - Phase 1: 3D IFC 뷰어 (Three.js + web-ifc) — 로드·탐색·선택·속성·표시제어.
@@ -10,8 +10,10 @@
   - DB 스키마/정책: `supabase/migrations/0001_init.sql`
   - 화면: 로그인 → 프로젝트 선택 → 작업공간(뷰어+모델 목록/업로드)
 - **S1: 실제 Supabase 프로젝트 연결·라이브 검증 완료** (아래 검증 상태 참고).
-- **S3: Vercel 배포 설정** — `vercel.json`(SPA rewrites + WASM/asset 캐시 헤더),
-  GitHub Actions CI(`.github/workflows/ci.yml`: typecheck+build), README 배포 가이드.
+- **S3: Vercel 배포 라이브 검증 완료** — `vercel.json`(SPA rewrites + WASM/asset 캐시
+  헤더), GitHub Actions CI(`.github/workflows/ci.yml`: typecheck+build), README 가이드.
+  실제 Vercel URL에서 로그인 성공 확인(사용자 검증). Supabase 키는 publishable(공개)
+  키 사용 — supabase-js 호환 OK.
 - 멀티세션 워크플로우 백본: `CLAUDE.md`, `docs/`, SessionStart 훅(`.claude/`).
 - `main` 통합 브랜치 생성 + PR 병합 전략 채택.
 
@@ -45,13 +47,18 @@
 - ✅ CI: `.github/workflows/ci.yml` — main PR·push 마다 `npm ci → typecheck → build`.
   자격증명 없이 통과(supabase 미설정 시 안전 폴백).
 - ✅ prebuild WASM 복사가 `dist/web-ifc/`에 포함됨을 빌드로 확인.
-- 📌 **사용자 액션 필요**: Vercel 대시보드에서 레포 import 후 환경변수
-  `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`(anon 키만!) 설정 → Deploy.
-  배포 URL 에서 로그인→프로젝트→IFC 열람 라이브 확인 (README "배포(Vercel)" 참고).
+- ✅ **라이브 검증**: 사용자가 Vercel 레포 import + 환경변수(`VITE_SUPABASE_URL`,
+  `VITE_SUPABASE_ANON_KEY`=publishable 키) 설정 → Deploy → 실제 URL에서 **로그인 성공**.
+  로그인 화면 렌더·SPA·WASM 포함 정상.
+- 📌 운영 메모: Vercel Hobby/Supabase Free 둘 다 무기한 무료(자동 과금 X). Supabase
+  무료 프로젝트는 **1주 미사용 시 자동 일시정지** → 대시보드 Restore 필요.
+- 📌 키 메모: 사용자는 새 형식 publishable 키(`sb_publishable_...`) 사용. 만약 추후
+  "Invalid API key" 발생 시 레거시 anon 키(JWT `eyJ...`)로 교체.
 
 ## 다음 할 일 (우선순위)
-1. (사용자) Vercel 환경변수 입력 후 실제 URL 라이브 검증(로그인→프로젝트→IFC).
-2. S2 관리자 콘솔(프로젝트·사용자·멤버 UI, service_role 자동가입) → S4 4D …
+1. **S2 관리자 콘솔** — 프로젝트·사용자·멤버 관리 UI + service_role 자동가입
+   (비-ASCII 보정 SQL 불필요화). 또는 **S4 4D 시뮬레이션**(뷰어 중심).
+2. (선택) 실제 IFC 업로드→뷰어 렌더 눈 검증, 교량 IFC 누움 버그 보정.
 
 ## 미해결 질문 / 메모
 - 사용자 생성은 현재 Supabase 대시보드 수동 → S2에서 service_role 서버리스 함수로 자동화
@@ -63,6 +70,6 @@
   영역). S4(4D, 뷰어 중심)에서 같이 보정하거나 짧은 단독 수정 세션으로 처리.
 
 ## 다음 세션 인수인계 (한 줄)
-> S3 완료: vercel.json(SPA rewrites)+CI 추가, 빌드 통과, main 으로 PR. 남은 건 사용자가
-> Vercel에서 레포 import + 환경변수(anon 키) 입력 후 Deploy → 실제 URL 라이브 확인.
-> 다음은 S2(관리자 콘솔) 또는 S4(4D) 권장.
+> S3 완료: Vercel 배포 + CI 추가, 실제 URL에서 로그인 라이브 검증 통과, PR #2(main 병합 대기).
+> 다음은 S2(관리자 콘솔: 사용자/프로젝트/멤버 UI, service_role 자동가입) 권장 — 현재 사용자
+> 추가가 Supabase 대시보드 수동이라 이걸 풀면 운영이 크게 편해짐. 또는 S4(4D).
