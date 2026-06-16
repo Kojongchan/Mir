@@ -1,8 +1,8 @@
 # MIR_VDC
 
-**M**odel **I**ntegrated **R**eality · Virtual Design & Construction.
+MIR_Virtual Design & Construction.
 
-웹 기반 BIM 시각화 · 4D/장비운용 시뮬레이션 협업 플랫폼 (Fuzor 유사 기능 목표).
+웹 기반 BIM 시각화 · 4D/장비운용 시뮬레이션 협업 플랫폼.
 사용자는 **아이디로 로그인**해 **본인이 배정된 프로젝트(공구)** 만 선택해 들어가,
 해당 프로젝트의 IFC 모델을 열람·시뮬레이션합니다.
 
