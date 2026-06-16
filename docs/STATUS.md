@@ -2,7 +2,7 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-16 · S3 Vercel 배포 **라이브 검증 완료** ✅ (PR #2)
+**마지막 업데이트**: 2026-06-16 · S2 관리자 콘솔 **구현 완료** (typecheck/build 통과, 라이브 검증 대기)
 
 ## 지금까지 한 일
 - Phase 1: 3D IFC 뷰어 (Three.js + web-ifc) — 로드·탐색·선택·속성·표시제어.
@@ -14,6 +14,8 @@
   헤더), GitHub Actions CI(`.github/workflows/ci.yml`: typecheck+build), README 가이드.
   실제 Vercel URL에서 로그인 성공 확인(사용자 검증). Supabase 키는 publishable(공개)
   키 사용 — supabase-js 호환 OK.
+- **S2: 관리자 콘솔 구현 완료** (`/admin`) — 프로젝트·사용자·멤버를 화면에서 관리.
+  service_role 자동가입으로 한글 아이디 **수동 보정 SQL 제거**(아래 S2 결과 참고).
 - 멀티세션 워크플로우 백본: `CLAUDE.md`, `docs/`, SessionStart 훅(`.claude/`).
 - `main` 통합 브랜치 생성 + PR 병합 전략 채택.
 
@@ -55,14 +57,31 @@
 - 📌 키 메모: 사용자는 새 형식 publishable 키(`sb_publishable_...`) 사용. 만약 추후
   "Invalid API key" 발생 시 레거시 anon 키(JWT `eyJ...`)로 교체.
 
+## S2 결과 (branch: claude/clever-maxwell-z64bhm → main PR, feature/admin-console)
+- ✅ DB: `supabase/migrations/0002_admin.sql` — admin RLS **쓰기** 정책 추가
+  (projects/project_members insert·update·delete, profiles update). 추가형·멱등.
+- ✅ 서버리스: `api/admin.ts` (Vercel 함수) — service_role 로 사용자 **생성/삭제/비번변경**.
+  호출자 access_token 검증 → `is_admin` 확인 후 처리. 생성 시 `user_metadata.username`
+  직접 주입 → 한글 아이디도 **수동 보정 SQL 불필요**. (vercel.json rewrite 에서 `/api` 제외)
+- ✅ UI: `src/pages/Admin.tsx` (`/admin`, 관리자 전용 가드) — 프로젝트/사용자/멤버 3탭.
+  진입점: 프로젝트 선택 화면 우상단 `관리자 콘솔`(admin 만 노출). `src/lib/admin.ts` 데이터층.
+- ✅ 검증: `npm run typecheck`·`npm run build` 통과. `api/admin.ts` 는 tsconfig 제외(Vercel
+  가 배포 시 컴파일, @types/node 자동 제공) — 단독 tsc 시 `process` 만 미해결(정상).
+- 📌 **배포 셋업 필요**: Vercel 서버 전용 env `SUPABASE_URL`,`SUPABASE_SERVICE_ROLE_KEY`
+  추가(VITE_ 금지) + `0002_admin.sql` 실행 + 첫 관리자 1회 SQL 승격. README/OPERATIONS 0-A 참고.
+- 📌 **미검증(egress)**: 실제 사용자 생성/삭제 라이브 테스트는 배포 환경 또는 `vercel dev`
+  에서 필요(원격 세션 egress 제약). `npm run dev`(vite)에선 사용자 관리만 404, 프로젝트·멤버는 동작.
+
 ## 다음 할 일 (우선순위)
-1. **S2 관리자 콘솔** — 프로젝트·사용자·멤버 관리 UI + service_role 자동가입
-   (비-ASCII 보정 SQL 불필요화). 또는 **S4 4D 시뮬레이션**(뷰어 중심).
-2. (선택) 실제 IFC 업로드→뷰어 렌더 눈 검증, 교량 IFC 누움 버그 보정.
+1. **S2 라이브 검증** — Vercel env 설정 후 `/admin` 에서 사용자 생성→로그인→프로젝트 배정 확인.
+2. **S4 4D 시뮬레이션**(뷰어 중심: 일정↔객체, 타임슬라이더).
+3. (선택) 실제 IFC 업로드→뷰어 렌더 눈 검증, 교량 IFC 누움 버그 보정.
 
 ## 미해결 질문 / 메모
-- 사용자 생성은 현재 Supabase 대시보드 수동 → S2에서 service_role 서버리스 함수로 자동화
-  (메타데이터로 username 직접 지정 → 비-ASCII 보정 SQL 불필요화).
+- ✅ (해소) 사용자 생성 자동화 — S2 `api/admin.ts` service_role 함수 + `user_metadata.username`
+  직접 주입으로 비-ASCII 보정 SQL 제거. 배포 환경 env 설정 후 라이브 검증만 남음.
+- 콘솔의 username(로그인 아이디) **변경**은 미구현(auth.users.email 동기 필요) — 필요 시
+  서버리스 액션으로 추가. 현재는 표시이름/관리자플래그/비번/배정만 화면 관리.
 - 번들 크기 경고(three+web-ifc) → 추후 코드 스플리팅(별도 세션) 고려.
 - 🐛 **뷰어 백로그**: 일부 교량 IFC(예: Case Study Bridge A)가 "누워서" 렌더됨.
   뷰어는 이미 Z-up→Y-up 회전 적용(`IfcViewer.ts:130`)하므로, 원인은 교량 IFC의
@@ -70,6 +89,7 @@
   영역). S4(4D, 뷰어 중심)에서 같이 보정하거나 짧은 단독 수정 세션으로 처리.
 
 ## 다음 세션 인수인계 (한 줄)
-> S3 완료: Vercel 배포 + CI 추가, 실제 URL에서 로그인 라이브 검증 통과, PR #2(main 병합 대기).
-> 다음은 S2(관리자 콘솔: 사용자/프로젝트/멤버 UI, service_role 자동가입) 권장 — 현재 사용자
-> 추가가 Supabase 대시보드 수동이라 이걸 풀면 운영이 크게 편해짐. 또는 S4(4D).
+> S2 완료: 관리자 콘솔(`/admin`, 프로젝트·사용자·멤버 3탭) + service_role 서버리스 함수
+> (`api/admin.ts`)로 사용자 자동가입 → 한글 보정 SQL 제거. typecheck/build 통과, main PR 대기.
+> 배포 시 Vercel 서버 전용 env(`SUPABASE_URL`,`SUPABASE_SERVICE_ROLE_KEY`)+`0002_admin.sql`
+> 실행+첫 관리자 승격 1회 필요(README/OPERATIONS 0-A). 다음은 S2 라이브 검증 또는 S4(4D).

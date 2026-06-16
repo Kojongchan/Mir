@@ -82,10 +82,15 @@ npm run typecheck
 5. 관리자 승격 + 프로젝트/배정은 **`supabase/seed.sql`** 을 열어 사용자명만 바꿔
    SQL Editor 에서 실행합니다 (관리자 `is_admin=true`, 프로젝트 생성, 멤버 배정까지
    한 번에 · 멱등).
+6. **S2 관리자 콘솔**을 쓰려면(권장): `supabase/migrations/0002_admin.sql` 실행 +
+   Vercel 서버 전용 환경변수(`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`) 설정.
+   이후 첫 관리자(5번)만 SQL로 승격하면, **그 다음부터는 화면에서** 사용자/프로젝트/
+   멤버를 관리할 수 있습니다(한글 아이디 보정 SQL 불필요). 자세한 건 OPERATIONS 0-A.
 
 > 사용자는 로그인 화면에 **아이디만** 입력합니다(`@mir.local` 은 내부 매핑, 노출 안 됨).
 
-> 📘 **운영 중 프로젝트/사용자 추가**는 [`docs/OPERATIONS.md`](docs/OPERATIONS.md) 참고.
+> 📘 **운영 중 프로젝트/사용자 추가**는 [`docs/OPERATIONS.md`](docs/OPERATIONS.md) 참고
+> (S2 이후엔 관리자 콘솔 `/admin` 화면에서 처리 — 위 4·5번 수동 절차 대체).
 
 ### 연결 검증 (브라우저 없이)
 
@@ -106,12 +111,18 @@ web-ifc WASM 을 `public/web-ifc/` 로 복사하므로 `dist/` 결과물에 포�
 1. **프로젝트 연결**: [vercel.com](https://vercel.com) → *Add New… → Project* →
    이 GitHub 레포 import. Framework 는 `vercel.json`(`framework: "vite"`) 로 자동 감지됩니다.
    - Build Command: `npm run build` · Output Directory: `dist` (vercel.json 에 명시됨)
-2. **환경변수 설정**: *Settings → Environment Variables* 에 아래 2개를 추가
+2. **환경변수 설정**: *Settings → Environment Variables* 에 추가
    (Production·Preview·Development 모두 체크). 값은 Supabase *Settings → API* 에서 복사:
-   - `VITE_SUPABASE_URL` = `https://<your-project>.supabase.co`
-   - `VITE_SUPABASE_ANON_KEY` = `anon public` 키
-   > ⚠️ `anon` 키만 넣습니다. **`service_role` 키는 프론트엔드/Vercel 에 절대 넣지 마세요.**
-   > `VITE_` 접두사가 붙은 값은 클라이언트 번들에 노출됩니다(공개 키만 허용).
+   - **클라이언트(`VITE_` 접두사, 공개)** — 번들에 포함되어 브라우저에 노출됩니다(공개 키만):
+     - `VITE_SUPABASE_URL` = `https://<your-project>.supabase.co`
+     - `VITE_SUPABASE_ANON_KEY` = `anon public` 키
+   - **서버 전용(접두사 없음, 비밀)** — S2 관리자 콘솔의 사용자 생성/삭제(`api/admin.ts`)용:
+     - `SUPABASE_URL` = `https://<your-project>.supabase.co`
+     - `SUPABASE_SERVICE_ROLE_KEY` = `service_role` 비밀키
+   > ⚠️ `service_role` 키는 RLS를 우회하는 **비밀키**입니다. **`VITE_` 접두사를 절대
+   > 붙이지 마세요**(붙이면 클라이언트 번들에 노출). 접두사 없는 서버 전용 변수로만
+   > 두면 서버리스 함수(`/api/admin`)에서만 읽혀 안전합니다. 레포 커밋도 금지.
+   > 관리자 콘솔을 쓰지 않을 거면 서버 전용 2개는 생략해도 됩니다.
 3. **Deploy** → 발급된 URL 로 접속해 **로그인 → 프로젝트 선택 → IFC 열람** 동작 확인.
 4. **SPA 새로고침**: `vercel.json` 의 `rewrites` 가 모든 경로를 `index.html` 로
    넘겨 react-router(`BrowserRouter`) 의 `/login` 등 직접 접속·새로고침 404 를 방지합니다.

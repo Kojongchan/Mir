@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { Login } from './pages/Login';
 import { ProjectSelect } from './pages/ProjectSelect';
 import { Workspace } from './pages/Workspace';
+import { Admin } from './pages/Admin';
 
 function Protected({ children }: { children: ReactElement }) {
   const { session, loading } = useAuth();
@@ -15,6 +16,20 @@ function Protected({ children }: { children: ReactElement }) {
     );
   }
   if (!session) return <Navigate to="/login" replace />;
+  return children;
+}
+
+function AdminOnly({ children }: { children: ReactElement }) {
+  const { session, profile, loading } = useAuth();
+  if (loading || (session && !profile)) {
+    return (
+      <div className="auth-screen">
+        <p className="muted">권한 확인 중…</p>
+      </div>
+    );
+  }
+  if (!session) return <Navigate to="/login" replace />;
+  if (!profile?.is_admin) return <Navigate to="/" replace />;
   return children;
 }
 
@@ -38,6 +53,14 @@ export default function App() {
               <Protected>
                 <Workspace />
               </Protected>
+            }
+          />
+          <Route
+            path="/admin"
+            element={
+              <AdminOnly>
+                <Admin />
+              </AdminOnly>
             }
           />
           <Route path="*" element={<Navigate to="/" replace />} />
