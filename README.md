@@ -98,6 +98,33 @@ TEST_USER=tester TEST_PASS=... TEST_UPLOAD=1 npm run verify:e2e
 로그인 → RLS 프로젝트 목록 → 모델 목록 → (옵션) Storage 업로드/다운로드 왕복을
 점검하고 결과를 출력합니다. `SUPABASE_URL`/`SUPABASE_ANON_KEY` 는 `.env` 에서 읽습니다.
 
+## 배포 (Vercel)
+
+이 앱은 정적 SPA(Vite 빌드)라 Vercel에 그대로 올라갑니다. 빌드 시 `prebuild` 훅이
+web-ifc WASM 을 `public/web-ifc/` 로 복사하므로 `dist/` 결과물에 포함됩니다.
+
+1. **프로젝트 연결**: [vercel.com](https://vercel.com) → *Add New… → Project* →
+   이 GitHub 레포 import. Framework 는 `vercel.json`(`framework: "vite"`) 로 자동 감지됩니다.
+   - Build Command: `npm run build` · Output Directory: `dist` (vercel.json 에 명시됨)
+2. **환경변수 설정**: *Settings → Environment Variables* 에 아래 2개를 추가
+   (Production·Preview·Development 모두 체크). 값은 Supabase *Settings → API* 에서 복사:
+   - `VITE_SUPABASE_URL` = `https://<your-project>.supabase.co`
+   - `VITE_SUPABASE_ANON_KEY` = `anon public` 키
+   > ⚠️ `anon` 키만 넣습니다. **`service_role` 키는 프론트엔드/Vercel 에 절대 넣지 마세요.**
+   > `VITE_` 접두사가 붙은 값은 클라이언트 번들에 노출됩니다(공개 키만 허용).
+3. **Deploy** → 발급된 URL 로 접속해 **로그인 → 프로젝트 선택 → IFC 열람** 동작 확인.
+4. **SPA 새로고침**: `vercel.json` 의 `rewrites` 가 모든 경로를 `index.html` 로
+   넘겨 react-router(`BrowserRouter`) 의 `/login` 등 직접 접속·새로고침 404 를 방지합니다.
+
+> Supabase *Authentication → URL Configuration* 의 Site URL/Redirect URL 에 Vercel
+> 배포 URL 을 추가하면 좋습니다(현재는 아이디/비번 로그인이라 필수는 아님).
+
+### CI (빌드 체크)
+
+`.github/workflows/ci.yml` 가 `main` 으로의 PR·푸시마다 `npm ci → typecheck → build`
+를 실행합니다. 빌드 검증에는 Supabase 자격증명이 필요 없습니다(미설정 시 안전한
+플레이스홀더로 폴백). 실제 런타임 연결은 Vercel 환경변수로만 주입됩니다.
+
 ## 보안 / 백업
 
 - 🔐 HTTPS/TLS, 비밀번호 해싱·세션은 Supabase Auth가 처리 / 옵션 2FA
