@@ -55,6 +55,13 @@ npm run typecheck
 3. **Storage** 에서 **비공개(private) 버킷 `models`** 생성
 4. 관리자/사용자 생성 — **Authentication → Users → Add user**:
    - Email: `<아이디>@mir.local` (예: `kim@mir.local`)  ← 사용자에겐 `kim` 만 노출
+   - **한글 아이디**(예: `고종찬`)는 인증용 이메일을 ASCII로 인코딩해야 합니다.
+     아래 헬퍼로 Email/Metadata 를 그대로 복사해 붙여넣으세요(사용자는 여전히
+     로그인 화면에 한글 아이디만 입력):
+     ```bash
+     node scripts/username-email.mjs 고종찬 "고종찬"
+     # email: u-<hex>@mir.local · metadata: {"username":"고종찬","full_name":"고종찬"}
+     ```
    - Password 지정, **Auto Confirm User** 체크
    - User Metadata: `{ "username": "kim", "full_name": "김현장" }`
    - 첫 관리자는 생성 후 `profiles.is_admin = true` 로 업데이트

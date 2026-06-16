@@ -30,9 +30,11 @@
   `hdjgwdrladzbbvrkhejd.supabase.co` (안전하게는 `*.supabase.co`). 단, 정책 변경은
   **새 세션부터 적용** → 다음 세션에서 `npm run verify:e2e` 로 라이브 검증·버그픽스·PR.
   (egress 설정: https://code.claude.com/docs/en/claude-code-on-the-web 의 네트워크 정책)
-- ‼️ **버그 후보**: 한글 아이디(`고종찬`) → 매핑 이메일 `고종찬@mir.local` 의 비-ASCII
-  local-part 를 GoTrue 가 거부할 수 있음. 권고: 로그인 아이디는 ASCII(`gojongchan` 등),
-  표시명은 `full_name='고종찬'` 으로(앱은 full_name 우선 표시). S2 자동가입에서 정책 확정.
+- ✅ **한글 아이디 지원 구현**: `usernameToEmail` 이 ASCII 아이디는 그대로
+  (`admin@mir.local`), 비-ASCII 는 가역 인코딩(`u-<hex>@mir.local`)으로 매핑 →
+  GoTrue 의 비-ASCII local-part 거부 회피. 사용자는 한글 아이디 그대로 로그인.
+  대시보드 사용자 생성용 헬퍼: `node scripts/username-email.mjs <아이디> "<이름>"`.
+  (src/lib/supabase.ts ↔ scripts/username-email.mjs 동기 유지 필요)
 
 ## 다음 할 일 (우선순위)
 1. **S1 마무리**: 위 "사용자 입력 대기" 항목 → 라이브 검증.

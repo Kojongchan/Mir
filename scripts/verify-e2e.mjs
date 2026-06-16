@@ -15,6 +15,7 @@
 // =====================================================================
 import { readFileSync } from 'node:fs';
 import { createClient } from '@supabase/supabase-js';
+import { usernameToEmail } from './username-email.mjs';
 
 // --- tiny .env loader (no extra deps) --------------------------------
 function loadDotEnv() {
@@ -31,7 +32,6 @@ const URL_ = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 const USER = process.env.TEST_USER;
 const PASS = process.env.TEST_PASS;
-const DOMAIN = 'mir.local';
 
 const ok = (m) => console.log(`  \x1b[32m✓\x1b[0m ${m}`);
 const fail = (m, e) => { console.error(`  \x1b[31m✗\x1b[0m ${m}${e ? `: ${e.message || e}` : ''}`); process.exitCode = 1; };
@@ -45,7 +45,7 @@ console.log(`\nMIR_VDC e2e check → ${URL_}`);
 
 // 1) sign in
 const { data: auth, error: authErr } = await supabase.auth.signInWithPassword({
-  email: `${USER.trim().toLowerCase()}@${DOMAIN}`,
+  email: usernameToEmail(USER),
   password: PASS,
 });
 if (authErr) { fail('sign in', authErr); process.exit(1); }
