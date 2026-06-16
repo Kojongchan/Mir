@@ -29,7 +29,7 @@ export function Login() {
     <div className="auth-screen">
       <form className="auth-card" onSubmit={onSubmit}>
         <div className="auth-brand">MIR_VDC</div>
-        <p className="muted auth-sub">Model Integrated Reality · Virtual Design &amp; Construction</p>
+        <p className="muted auth-sub">Virtual Design &amp; Construction</p>
 
         {!isSupabaseConfigured && (
           <div className="auth-warn">
