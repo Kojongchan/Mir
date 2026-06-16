@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
-import { supabase, usernameToEmail } from '../lib/supabase';
+import { supabase, usernameToEmail, isSupabaseConfigured } from '../lib/supabase';
 
 interface Profile {
   id: string;
@@ -25,6 +25,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Without real keys the client points at a placeholder host; skip the
+    // network calls so the app renders the "not configured" notice instead.
+    if (!isSupabaseConfigured) {
+      setLoading(false);
+      return;
+    }
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setLoading(false);
@@ -45,7 +51,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .select('id, username, full_name, is_admin')
       .eq('id', session.user.id)
       .single()
-      .then(({ data }) => setProfile((data as Profile) ?? null));
+      .then(
+        ({ data }) => setProfile((data as Profile) ?? null),
+        () => setProfile(null),
+      );
   }, [session]);
 
   const signIn = async (username: string, password: string) => {

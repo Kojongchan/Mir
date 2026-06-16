@@ -55,17 +55,48 @@ npm run typecheck
 3. **Storage** 에서 **비공개(private) 버킷 `models`** 생성
 4. 관리자/사용자 생성 — **Authentication → Users → Add user**:
    - Email: `<아이디>@mir.local` (예: `kim@mir.local`)  ← 사용자에겐 `kim` 만 노출
+   - **한글 아이디**(예: `고종찬`)는 인증용 이메일을 ASCII로 인코딩해야 합니다.
+     아래 헬퍼로 Email/Metadata 를 그대로 복사해 붙여넣으세요(사용자는 여전히
+     로그인 화면에 한글 아이디만 입력):
+     ```bash
+     node scripts/username-email.mjs 고종찬 "고종찬"
+     # email: u-<hex>@mir.local · metadata: {"username":"고종찬","full_name":"고종찬"}
+     ```
+     ⚠️ 대시보드의 빠른 "Add user" 폼은 **User Metadata 입력란이 없을 수 있습니다**.
+     이 경우 한글 사용자는 생성 직후 `profiles.username` 이 hex 로 잡히므로, SQL Editor
+     에서 아래를 **한 문장씩** 실행해 이름을 보정하고 프로젝트에 배정하세요
+     (이메일은 위 헬퍼가 출력한 값):
+     ```sql
+     update public.profiles set username = '고종찬', full_name = '고종찬'
+      where id = (select id from auth.users where email = 'u-<hex>@mir.local');
+     ```
+     ```sql
+     insert into public.project_members (project_id, user_id, role)
+     values ((select id from public.projects where code = '5공구'),
+             (select id from auth.users where email = 'u-<hex>@mir.local'), 'editor')
+     on conflict (project_id, user_id) do update set role = excluded.role;
+     ```
    - Password 지정, **Auto Confirm User** 체크
    - User Metadata: `{ "username": "kim", "full_name": "김현장" }`
    - 첫 관리자는 생성 후 `profiles.is_admin = true` 로 업데이트
-5. 프로젝트/배정 추가 (SQL 또는 추후 관리자 UI):
-   ```sql
-   insert into projects (name, code) values ('평택-오송 5공구', '5공구');
-   insert into project_members (project_id, user_id, role)
-   values ('<project_id>', '<user_id>', 'editor');
-   ```
+5. 관리자 승격 + 프로젝트/배정은 **`supabase/seed.sql`** 을 열어 사용자명만 바꿔
+   SQL Editor 에서 실행합니다 (관리자 `is_admin=true`, 프로젝트 생성, 멤버 배정까지
+   한 번에 · 멱등).
 
 > 사용자는 로그인 화면에 **아이디만** 입력합니다(`@mir.local` 은 내부 매핑, 노출 안 됨).
+
+> 📘 **운영 중 프로젝트/사용자 추가**는 [`docs/OPERATIONS.md`](docs/OPERATIONS.md) 참고.
+
+### 연결 검증 (브라우저 없이)
+
+`.env` 와 위 설정이 끝나면 헤드리스 e2e 점검으로 인증·RLS·Storage 동작을 확인합니다:
+
+```bash
+TEST_USER=tester TEST_PASS=... TEST_UPLOAD=1 npm run verify:e2e
+```
+
+로그인 → RLS 프로젝트 목록 → 모델 목록 → (옵션) Storage 업로드/다운로드 왕복을
+점검하고 결과를 출력합니다. `SUPABASE_URL`/`SUPABASE_ANON_KEY` 는 `.env` 에서 읽습니다.
 
 ## 보안 / 백업
 
