@@ -1,37 +1,48 @@
-import { useEffect, useRef, useState } from 'react';
-import { IfcViewer } from './viewer/IfcViewer';
-import { useStore } from './store/useStore';
-import { Toolbar } from './components/Toolbar';
-import { PropertiesPanel } from './components/PropertiesPanel';
+import type { ReactElement } from 'react';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { AuthProvider, useAuth } from './auth/AuthProvider';
+import { Login } from './pages/Login';
+import { ProjectSelect } from './pages/ProjectSelect';
+import { Workspace } from './pages/Workspace';
+
+function Protected({ children }: { children: ReactElement }) {
+  const { session, loading } = useAuth();
+  if (loading) {
+    return (
+      <div className="auth-screen">
+        <p className="muted">로딩 중…</p>
+      </div>
+    );
+  }
+  if (!session) return <Navigate to="/login" replace />;
+  return children;
+}
 
 export default function App() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [viewer, setViewer] = useState<IfcViewer | null>(null);
-  const { status, modelCount, setSelected } = useStore();
-
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const v = new IfcViewer(containerRef.current);
-    v.setOnSelect(setSelected);
-    setViewer(v);
-    return () => v.dispose();
-  }, [setSelected]);
-
   return (
-    <div className="app">
-      <header className="topbar">
-        <span className="brand">Mir BIM</span>
-        <Toolbar viewer={viewer} />
-      </header>
-
-      <div className="viewport" ref={containerRef} />
-
-      <PropertiesPanel />
-
-      <footer className="statusbar">
-        <span>{status}</span>
-        <span className="muted">모델 {modelCount}개</span>
-      </footer>
-    </div>
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route
+            path="/"
+            element={
+              <Protected>
+                <ProjectSelect />
+              </Protected>
+            }
+          />
+          <Route
+            path="/project/:projectId"
+            element={
+              <Protected>
+                <Workspace />
+              </Protected>
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
   );
 }
