@@ -44,6 +44,10 @@
 - 사용자 생성은 현재 Supabase 대시보드 수동 → S2에서 service_role 서버리스 함수로 자동화
   (메타데이터로 username 직접 지정 → 비-ASCII 보정 SQL 불필요화).
 - 번들 크기 경고(three+web-ifc) → 추후 코드 스플리팅(별도 세션) 고려.
+- 🐛 **뷰어 백로그**: 일부 교량 IFC(예: Case Study Bridge A)가 "누워서" 렌더됨.
+  뷰어는 이미 Z-up→Y-up 회전 적용(`IfcViewer.ts:130`)하므로, 원인은 교량 IFC의
+  지오레퍼런싱/좌표 오프셋·회전(IfcMapConversion/TrueNorth) 가능성. S1 무관(뷰어
+  영역). S4(4D, 뷰어 중심)에서 같이 보정하거나 짧은 단독 수정 세션으로 처리.
 
 ## 다음 세션 인수인계 (한 줄)
 > S1 완료: 실제 Supabase로 로그인~RLS~Storage~한글로그인 라이브 검증 통과, main 으로 PR.
