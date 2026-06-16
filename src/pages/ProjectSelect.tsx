@@ -25,7 +25,12 @@ export function ProjectSelect() {
             <div className="auth-brand small">MIR_VDC</div>
             <p className="muted">{profile?.full_name ?? profile?.username} 님, 프로젝트를 선택하세요</p>
           </div>
-          <button onClick={signOut}>로그아웃</button>
+          <div className="select-head-actions">
+            {profile?.is_admin && (
+              <button onClick={() => navigate('/admin')}>관리자 콘솔</button>
+            )}
+            <button onClick={signOut}>로그아웃</button>
+          </div>
         </div>
 
         {loading && <p className="muted">불러오는 중…</p>}

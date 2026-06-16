@@ -19,7 +19,7 @@ VR 검토까지. 다중 사용자가 **본인 배정 프로젝트(공구)** 만 
 | # | 세션 | 브랜치(예) | 범위 | 의존 |
 |---|---|---|---|---|
 | S1 | Supabase 연동 & 인증 검증 | `feature/supabase-wiring` | .env 연결, 로그인→프로젝트→업로드→뷰 실동작 확인 | Phase 0 |
-| S2 | 관리자 콘솔 | `feature/admin-console` | 프로젝트·사용자·멤버 관리 UI | S1 |
+| S2 | 관리자 콘솔 ✅ | `feature/admin-console` | 프로젝트·사용자·멤버 관리 UI + service_role 자동가입 | S1 |
 | S3 | 배포 & 빌드체크 | `feature/deploy-vercel` | Vercel 배포, 환경변수, CI | S1 |
 | S4 | Phase 2 · 4D | `feature/4d-simulation` | 일정(Gantt)↔객체 매핑, 타임슬라이더 | 뷰어 |
 | S5 | Phase 3 · 장비운용 | `feature/equipment-sim` | Rapier 물리, 장비 라이브러리, 경로/간섭 | S4 |
