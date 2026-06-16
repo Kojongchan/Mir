@@ -58,14 +58,22 @@ npm run typecheck
    - Password 지정, **Auto Confirm User** 체크
    - User Metadata: `{ "username": "kim", "full_name": "김현장" }`
    - 첫 관리자는 생성 후 `profiles.is_admin = true` 로 업데이트
-5. 프로젝트/배정 추가 (SQL 또는 추후 관리자 UI):
-   ```sql
-   insert into projects (name, code) values ('평택-오송 5공구', '5공구');
-   insert into project_members (project_id, user_id, role)
-   values ('<project_id>', '<user_id>', 'editor');
-   ```
+5. 관리자 승격 + 프로젝트/배정은 **`supabase/seed.sql`** 을 열어 사용자명만 바꿔
+   SQL Editor 에서 실행합니다 (관리자 `is_admin=true`, 프로젝트 생성, 멤버 배정까지
+   한 번에 · 멱등).
 
 > 사용자는 로그인 화면에 **아이디만** 입력합니다(`@mir.local` 은 내부 매핑, 노출 안 됨).
+
+### 연결 검증 (브라우저 없이)
+
+`.env` 와 위 설정이 끝나면 헤드리스 e2e 점검으로 인증·RLS·Storage 동작을 확인합니다:
+
+```bash
+TEST_USER=tester TEST_PASS=... TEST_UPLOAD=1 npm run verify:e2e
+```
+
+로그인 → RLS 프로젝트 목록 → 모델 목록 → (옵션) Storage 업로드/다운로드 왕복을
+점검하고 결과를 출력합니다. `SUPABASE_URL`/`SUPABASE_ANON_KEY` 는 `.env` 에서 읽습니다.
 
 ## 보안 / 백업
 
