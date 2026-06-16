@@ -85,6 +85,8 @@ npm run typecheck
 
 > 사용자는 로그인 화면에 **아이디만** 입력합니다(`@mir.local` 은 내부 매핑, 노출 안 됨).
 
+> 📘 **운영 중 프로젝트/사용자 추가**는 [`docs/OPERATIONS.md`](docs/OPERATIONS.md) 참고.
+
 ### 연결 검증 (브라우저 없이)
 
 `.env` 와 위 설정이 끝나면 헤드리스 e2e 점검으로 인증·RLS·Storage 동작을 확인합니다:
