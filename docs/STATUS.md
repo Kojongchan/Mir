@@ -2,7 +2,7 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-17 · S9 콘솔 로그인 아이디 변경 **구현 완료** (typecheck/build 통과)
+**마지막 업데이트**: 2026-06-17 · S11 번들 코드 스플리팅 **완료** (typecheck/build 통과, 경고 해소)
 
 ## 지금까지 한 일
 - Phase 1: 3D IFC 뷰어 (Three.js + web-ifc) — 로드·탐색·선택·속성·표시제어.
@@ -100,6 +100,23 @@
   배포 환경 또는 `vercel dev`. S2와 동일 제약.)
 - 📌 기존 미해결 질문(아이디 변경 미구현, auth.users.email 동기 필요) **해소**.
 
+## S11 결과 (branch: claude/tender-bell-l6lq1a, feature/bundle-splitting 상당)
+- ✅ 라우트 지연 로딩: `src/App.tsx` 에서 `Workspace`/`Admin` 를 `React.lazy`+`Suspense`
+  로 분리. `Workspace` 가 `IfcViewer`(three+web-ifc) 를 정적 import 하므로, 지연 로딩으로
+  three/web-ifc 가 **초기 번들에서 빠지고** `/project/:id` 진입 시에만 로드된다.
+  (`Toolbar`/`useStore` 의 IfcViewer 참조는 `import type` 이라 런타임 의존 없음)
+- ✅ `vite.config.ts` `build.rollupOptions.output.manualChunks`: `web-ifc`/`three`/
+  `react-vendor` 를 각각 별도 청크로 분리 → 개별 캐싱·병렬 다운로드.
+- ✅ 결과(빌드): 기존 **단일 4.0MB**(gz 639kB) 청크 → 분할.
+  - 초기: `index` 220kB(gz 58) + `react-vendor` 179kB(gz 59) + css.
+  - 지연(Workspace 진입 시): `three` 490kB(gz 122) + `web-ifc` 3.07MB(gz 390) + `Workspace` 14kB.
+  - `Admin` 10kB 도 별도 지연 청크.
+- ✅ 빌드 경고(500kB) **해소**: web-ifc 는 emscripten 글루라 더 못 쪼개고 이미 지연
+  로딩(초기 무관)이라, `chunkSizeWarningLimit:3200` 으로 분리 벤더 청크 경고만 무음 처리.
+- ✅ 검증: `npm run typecheck`·`npm run build` 통과, 빌드 경고 없음.
+- 📌 메모: WASM(`/web-ifc/*.wasm`) 은 기존대로 public 에서 런타임 fetch(번들 외부, 변경 없음).
+  기존 미해결 질문(번들 크기 경고 → 코드 스플리팅) **해소**.
+
 ## 다음 할 일 (우선순위)
 1. **S2 라이브 검증** — Vercel env 설정 후 `/admin` 에서 사용자 생성→로그인→프로젝트 배정 확인.
 2. **S4 4D 시뮬레이션**(뷰어 중심: 일정↔객체, 타임슬라이더).
@@ -110,13 +127,14 @@
   직접 주입으로 비-ASCII 보정 SQL 제거. 배포 환경 env 설정 후 라이브 검증만 남음.
 - ✅ (해소) 콘솔의 username(로그인 아이디) **변경** — S9 `api/admin.ts` `renameUser`
   액션으로 username+내부 이메일 동기 변경 추가(사용자 탭 `아이디 변경` 버튼).
-- 번들 크기 경고(three+web-ifc) → 추후 코드 스플리팅(별도 세션) 고려.
+- ✅ (해소) 번들 크기 경고(three+web-ifc) → S11 라우트 지연 로딩 + manualChunks 로
+  초기 번들 분리 및 경고 해소.
 - 🐛 **뷰어 백로그**: 일부 교량 IFC(예: Case Study Bridge A)가 "누워서" 렌더됨.
   뷰어는 이미 Z-up→Y-up 회전 적용(`IfcViewer.ts:130`)하므로, 원인은 교량 IFC의
   지오레퍼런싱/좌표 오프셋·회전(IfcMapConversion/TrueNorth) 가능성. S1 무관(뷰어
   영역). S4(4D, 뷰어 중심)에서 같이 보정하거나 짧은 단독 수정 세션으로 처리.
 
 ## 다음 세션 인수인계 (한 줄)
-> S9 완료: 관리자 콘솔 사용자 탭에 `아이디 변경` 추가 — `api/admin.ts` `renameUser` 액션이
-> username과 내부 인증 이메일을 함께 변경(중복 선검사). typecheck/build 통과, 라이브 검증은
-> `/api/admin`(배포/`vercel dev`) 필요. 다음은 S2/S9 라이브 검증 또는 S4(4D).
+> S11 완료: 번들 코드 스플리팅 — `App.tsx` 라우트 지연 로딩(Workspace/Admin)으로 three/web-ifc
+> 를 초기 번들에서 분리 + `vite.config` manualChunks(three/web-ifc/react-vendor), 500kB 경고 해소.
+> typecheck/build 통과. 다음은 S2/S9 라이브 검증 또는 S4(4D).
