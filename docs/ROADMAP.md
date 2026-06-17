@@ -26,7 +26,17 @@ VR 검토까지. 다중 사용자가 **본인 배정 프로젝트(공구)** 만 
 | S6 | Phase 4 · 충돌검사 | `feature/clash-detection` | 간섭 검출·리포트 | 뷰어 |
 | S7 | Phase 5 · VR | `feature/webxr` | 몰입형 검토 | 뷰어 |
 
-추천 순서: **S1 → S3 → S2 → S4 → S5 → S6 → S7**
+### 다듬기 세션 (기능 세션 사이에 끼워 진행 · 사용자 요청)
+
+| # | 세션 | 브랜치(예) | 범위 | 의존 |
+|---|---|---|---|---|
+| S8 | UI 다듬기(오버플로우/반응형) | `feature/ui-polish` | 긴 텍스트 칸 넘침(모델명·프로젝트명·관리자 테이블 등), 좁은 화면 레이아웃 정리 | 뷰어/콘솔 |
+| S9 | 콘솔: 로그인 아이디 변경 | `feature/admin-rename-username` | `username` + 인증 이메일 동기 변경(서버리스 액션 확장) | S2 |
+| S10 | 교량 IFC 누움 보정 | `feature/ifc-georef` | 일부 교량 IFC가 누워 렌더되는 지오레퍼런싱(IfcMapConversion/TrueNorth·좌표 오프셋) 분석·수정 | 뷰어 |
+| S11 | 번들 코드 스플리팅 | `feature/bundle-splitting` | three/web-ifc 동적 import·manualChunks로 빌드 경고 해소 | 빌드 |
+
+추천 순서: **S1 → S3 → S2 → (S8 → S9 → S11 → S10) → S4 → S5 → S6 → S7**
+(S1·S3·S2 완료. 사용자 요청으로 S8~S11 다듬기를 S4 4D 전에 먼저 진행.)
 
 > 각 세션은 자기 마이그레이션을 추가하므로 서로 충돌이 적습니다.
 > 세션 진행 방법은 `docs/SESSIONS.md`, 현재 상태는 `docs/STATUS.md` 참고.
