@@ -146,3 +146,11 @@ export function deleteUserAccount(userId: string): Promise<{ ok: true }> {
 export function resetUserPassword(userId: string, password: string): Promise<{ ok: true }> {
   return adminFn('resetPassword', { userId, password });
 }
+
+/** Change a user's login username (and the internal auth e-mail it maps to). */
+export function renameUserAccount(
+  userId: string,
+  username: string,
+): Promise<{ ok: true; user: { id: string; username: string } }> {
+  return adminFn('renameUser', { userId, username });
+}

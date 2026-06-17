@@ -11,6 +11,7 @@ import {
   listMembers,
   listProfiles,
   removeMember,
+  renameUserAccount,
   resetUserPassword,
   setMember,
   setUserAdmin,
@@ -238,6 +239,20 @@ function UsersTab({
     }
   };
 
+  const rename = async (u: ProfileRow) => {
+    const next = window.prompt(`${u.username} 새 로그인 아이디 (한글 가능)`, u.username);
+    if (next === null) return;
+    const trimmed = next.trim();
+    if (!trimmed || trimmed === u.username) return;
+    try {
+      await renameUserAccount(u.id, trimmed);
+      flash(`${u.username} 아이디를 "${trimmed}"(으)로 변경했습니다.`);
+      onChange();
+    } catch (e) {
+      fail(e);
+    }
+  };
+
   const resetPw = async (u: ProfileRow) => {
     const pw = window.prompt(`${u.username} 새 비밀번호 (6자 이상)`);
     if (!pw) return;
@@ -287,6 +302,7 @@ function UsersTab({
                 <td>{u.is_admin ? '✓' : '—'}</td>
                 <td className="right nowrap">
                   <button onClick={() => toggleAdmin(u)}>{u.is_admin ? '관리자 해제' : '관리자 지정'}</button>
+                  <button onClick={() => rename(u)}>아이디 변경</button>
                   <button onClick={() => resetPw(u)}>비번 변경</button>
                   <button className="danger" onClick={() => remove(u)} disabled={u.id === currentUserId}>삭제</button>
                 </td>
