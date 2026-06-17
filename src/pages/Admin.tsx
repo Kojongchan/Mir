@@ -169,26 +169,28 @@ function ProjectsTab({
         <button onClick={add} disabled={busy || !name.trim()}>추가</button>
       </div>
 
-      <table className="admin-table">
-        <thead>
-          <tr><th>이름</th><th>코드</th><th className="right">관리</th></tr>
-        </thead>
-        <tbody>
-          {projects.map((p) => (
-            <tr key={p.id}>
-              <td>{p.name}</td>
-              <td className="muted">{p.code ?? '—'}</td>
-              <td className="right nowrap">
-                <button onClick={() => rename(p)}>수정</button>
-                <button className="danger" onClick={() => remove(p)}>삭제</button>
-              </td>
-            </tr>
-          ))}
-          {projects.length === 0 && (
-            <tr><td colSpan={3} className="muted">프로젝트가 없습니다.</td></tr>
-          )}
-        </tbody>
-      </table>
+      <div className="admin-table-wrap">
+        <table className="admin-table">
+          <thead>
+            <tr><th>이름</th><th>코드</th><th className="right">관리</th></tr>
+          </thead>
+          <tbody>
+            {projects.map((p) => (
+              <tr key={p.id}>
+                <td>{p.name}</td>
+                <td className="muted">{p.code ?? '—'}</td>
+                <td className="right nowrap">
+                  <button onClick={() => rename(p)}>수정</button>
+                  <button className="danger" onClick={() => remove(p)}>삭제</button>
+                </td>
+              </tr>
+            ))}
+            {projects.length === 0 && (
+              <tr><td colSpan={3} className="muted">프로젝트가 없습니다.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -260,7 +262,7 @@ function UsersTab({
 
   return (
     <section className="admin-card">
-      <div className="admin-form-row wrap">
+      <div className="admin-form-row">
         <input placeholder="아이디 (한글 가능)" value={username} onChange={(e) => setUsername(e.target.value)} />
         <input placeholder="표시이름" value={fullName} onChange={(e) => setFullName(e.target.value)} />
         <input type="password" placeholder="비밀번호 (6자+)" value={password} onChange={(e) => setPassword(e.target.value)} />
@@ -272,28 +274,30 @@ function UsersTab({
         </button>
       </div>
 
-      <table className="admin-table">
-        <thead>
-          <tr><th>아이디</th><th>표시이름</th><th>관리자</th><th className="right">관리</th></tr>
-        </thead>
-        <tbody>
-          {users.map((u) => (
-            <tr key={u.id}>
-              <td>{u.username}{u.id === currentUserId && <span className="tag">나</span>}</td>
-              <td className="muted">{u.full_name ?? '—'}</td>
-              <td>{u.is_admin ? '✓' : '—'}</td>
-              <td className="right nowrap">
-                <button onClick={() => toggleAdmin(u)}>{u.is_admin ? '관리자 해제' : '관리자 지정'}</button>
-                <button onClick={() => resetPw(u)}>비번 변경</button>
-                <button className="danger" onClick={() => remove(u)} disabled={u.id === currentUserId}>삭제</button>
-              </td>
-            </tr>
-          ))}
-          {users.length === 0 && (
-            <tr><td colSpan={4} className="muted">사용자가 없습니다.</td></tr>
-          )}
-        </tbody>
-      </table>
+      <div className="admin-table-wrap">
+        <table className="admin-table">
+          <thead>
+            <tr><th>아이디</th><th>표시이름</th><th>관리자</th><th className="right">관리</th></tr>
+          </thead>
+          <tbody>
+            {users.map((u) => (
+              <tr key={u.id}>
+                <td>{u.username}{u.id === currentUserId && <span className="tag">나</span>}</td>
+                <td className="muted">{u.full_name ?? '—'}</td>
+                <td>{u.is_admin ? '✓' : '—'}</td>
+                <td className="right nowrap">
+                  <button onClick={() => toggleAdmin(u)}>{u.is_admin ? '관리자 해제' : '관리자 지정'}</button>
+                  <button onClick={() => resetPw(u)}>비번 변경</button>
+                  <button className="danger" onClick={() => remove(u)} disabled={u.id === currentUserId}>삭제</button>
+                </td>
+              </tr>
+            ))}
+            {users.length === 0 && (
+              <tr><td colSpan={4} className="muted">사용자가 없습니다.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -391,33 +395,35 @@ function MembersTab({
         <button onClick={add} disabled={!addUserId}>배정</button>
       </div>
 
-      <table className="admin-table">
-        <thead>
-          <tr><th>아이디</th><th>표시이름</th><th>역할</th><th className="right">관리</th></tr>
-        </thead>
-        <tbody>
-          {members.map((m) => {
-            const u = usersById.get(m.user_id);
-            return (
-              <tr key={m.user_id}>
-                <td>{u?.username ?? m.user_id.slice(0, 8)}</td>
-                <td className="muted">{u?.full_name ?? '—'}</td>
-                <td>
-                  <select value={m.role} onChange={(e) => changeRole(m.user_id, e.target.value as MemberRole)}>
-                    {MEMBER_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-                  </select>
-                </td>
-                <td className="right">
-                  <button className="danger" onClick={() => remove(m.user_id)}>해제</button>
-                </td>
-              </tr>
-            );
-          })}
-          {members.length === 0 && (
-            <tr><td colSpan={4} className="muted">배정된 멤버가 없습니다.</td></tr>
-          )}
-        </tbody>
-      </table>
+      <div className="admin-table-wrap">
+        <table className="admin-table">
+          <thead>
+            <tr><th>아이디</th><th>표시이름</th><th>역할</th><th className="right">관리</th></tr>
+          </thead>
+          <tbody>
+            {members.map((m) => {
+              const u = usersById.get(m.user_id);
+              return (
+                <tr key={m.user_id}>
+                  <td>{u?.username ?? m.user_id.slice(0, 8)}</td>
+                  <td className="muted">{u?.full_name ?? '—'}</td>
+                  <td>
+                    <select value={m.role} onChange={(e) => changeRole(m.user_id, e.target.value as MemberRole)}>
+                      {MEMBER_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                  </td>
+                  <td className="right">
+                    <button className="danger" onClick={() => remove(m.user_id)}>해제</button>
+                  </td>
+                </tr>
+              );
+            })}
+            {members.length === 0 && (
+              <tr><td colSpan={4} className="muted">배정된 멤버가 없습니다.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
       <p className="muted admin-hint">
         관리자(<code>관리자 ✓</code>)는 배정과 무관하게 모든 프로젝트를 봅니다. 역할: viewer(보기) ·
         editor(업로드) · admin(프로젝트 관리, 추후 확장).

@@ -2,7 +2,7 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-16 · S2 관리자 콘솔 **구현 완료** (typecheck/build 통과, 라이브 검증 대기)
+**마지막 업데이트**: 2026-06-17 · S8 UI 다듬기(오버플로우/반응형) **구현 완료** (typecheck/build 통과)
 
 ## 지금까지 한 일
 - Phase 1: 3D IFC 뷰어 (Three.js + web-ifc) — 로드·탐색·선택·속성·표시제어.
@@ -72,6 +72,22 @@
 - 📌 **미검증(egress)**: 실제 사용자 생성/삭제 라이브 테스트는 배포 환경 또는 `vercel dev`
   에서 필요(원격 세션 egress 제약). `npm run dev`(vite)에선 사용자 관리만 404, 프로젝트·멤버는 동작.
 
+## S8 결과 (branch: claude/vibrant-goldberg-fxpfua)
+- ✅ 긴 텍스트 오버플로우/좁은 화면 레이아웃 정리 (CSS 중심, 일부 구조 보정).
+  - **프로젝트 선택**(`ProjectSelect`): 카드 고정폭(340/460px) → `width:100% + max-width`로
+    반응형. `관리자 콘솔`/`로그아웃` 버튼 줄바꿈 방지(`white-space:nowrap` 전역 + 액션
+    `flex-shrink:0`), 인사문구 블록 `min-width:0`로 축소·줄바꿈. 프로젝트명 말줄임(ellipsis),
+    코드 칩 `flex-shrink:0`.
+  - **워크스페이스**(`Workspace`): 상단바 `overflow:hidden`, 브랜드/툴바/버튼 `flex-shrink:0`,
+    프로젝트명(`project-title`)·모델명(`model-name`)은 `min-width:0`+ellipsis로 말줄임.
+  - **관리자 콘솔**(`Admin`): 상단바 사용자명 말줄임(`max-width:30vw`), 탭 `overflow-x:auto`,
+    폼 행 `flex-wrap:wrap`, 3개 테이블을 `.admin-table-wrap`(가로 스크롤)로 감싸고
+    `min-width:480px` 유지 → 좁은 화면에서 칸 깨짐 대신 가로 스크롤.
+  - **속성 패널**·**모바일**: `.panel` 폭 `min(300px, 100vw-24px)`, `@media(max-width:640px)`
+    에서 사이드바 260→180px 축소·여백 보정.
+- ✅ 검증: `npm run typecheck`·`npm run build` 통과. (라이브 눈 검증은 사용자 화면에서 확인 권장)
+- 📌 메모: 데이터 변경/마이그레이션 없음, 순수 표현(레이아웃) 변경.
+
 ## 다음 할 일 (우선순위)
 1. **S2 라이브 검증** — Vercel env 설정 후 `/admin` 에서 사용자 생성→로그인→프로젝트 배정 확인.
 2. **S4 4D 시뮬레이션**(뷰어 중심: 일정↔객체, 타임슬라이더).
@@ -89,7 +105,6 @@
   영역). S4(4D, 뷰어 중심)에서 같이 보정하거나 짧은 단독 수정 세션으로 처리.
 
 ## 다음 세션 인수인계 (한 줄)
-> S2 완료: 관리자 콘솔(`/admin`, 프로젝트·사용자·멤버 3탭) + service_role 서버리스 함수
-> (`api/admin.ts`)로 사용자 자동가입 → 한글 보정 SQL 제거. typecheck/build 통과, main PR 대기.
-> 배포 시 Vercel 서버 전용 env(`SUPABASE_URL`,`SUPABASE_SERVICE_ROLE_KEY`)+`0002_admin.sql`
-> 실행+첫 관리자 승격 1회 필요(README/OPERATIONS 0-A). 다음은 S2 라이브 검증 또는 S4(4D).
+> S8 완료: 전 화면(메인/워크스페이스/관리자) 긴 텍스트 오버플로우·반응형 정리(주로 `src/index.css`
+> + Admin 테이블 래퍼). 카드 반응형, 버튼 줄바꿈 방지, 이름 말줄임(ellipsis), 테이블 가로 스크롤,
+> 모바일 사이드바 축소. typecheck/build 통과. 다음은 S2 라이브 검증 또는 S4(4D).
