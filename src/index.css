@@ -56,6 +56,10 @@ body,
 .project-title {
   font-size: 14px;
   color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---- sidebar ---- */
@@ -101,9 +105,14 @@ body,
 }
 
 .model-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.model-item .muted {
+  flex-shrink: 0;
 }
 
 .empty {
@@ -113,14 +122,16 @@ body,
 
 /* ---- auth / project select ---- */
 .auth-screen {
-  height: 100vh;
+  min-height: 100vh;
   display: grid;
   place-items: center;
+  padding: 16px;
   background: radial-gradient(circle at 50% 30%, #273140, var(--bg));
 }
 
 .auth-card {
-  width: 340px;
+  width: 100%;
+  max-width: 340px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -131,7 +142,7 @@ body,
 }
 
 .auth-card.wide {
-  width: 460px;
+  max-width: 460px;
 }
 
 .auth-brand {
@@ -200,13 +211,26 @@ body,
 
 .select-head {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: flex-start;
+  gap: 10px;
   margin-bottom: 6px;
+}
+
+.select-head > div:first-child {
+  min-width: 0;
+  flex: 1 1 160px;
+}
+
+.select-head .muted {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .select-head-actions {
   display: flex;
+  flex-shrink: 0;
   gap: 8px;
 }
 
@@ -224,6 +248,7 @@ body,
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 10px;
   padding: 14px 16px;
   text-align: left;
 }
@@ -231,11 +256,16 @@ body,
 .project-name {
   font-size: 15px;
   font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .project-code {
   font-size: 12px;
   color: var(--accent);
+  flex-shrink: 0;
 }
 
 .topbar {
@@ -245,18 +275,25 @@ body,
   padding: 0 14px;
   background: var(--panel-2);
   border-bottom: 1px solid var(--border);
+  overflow: hidden;
 }
 
 .brand {
   font-weight: 700;
   letter-spacing: 0.5px;
   color: var(--accent);
+  flex-shrink: 0;
 }
 
 .toolbar {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
+}
+
+.topbar > button {
+  flex-shrink: 0;
 }
 
 .toolbar .divider {
@@ -274,6 +311,7 @@ button {
   padding: 6px 12px;
   font-size: 13px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 button:hover:not(:disabled) {
@@ -320,21 +358,40 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 0 18px;
   height: 48px;
   background: var(--panel-2);
   border-bottom: 1px solid var(--border);
 }
 
+.admin-top > div:first-child {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+}
+
 .admin-title {
   margin-left: 12px;
   font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .admin-top-actions {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
   gap: 12px;
+  min-width: 0;
+}
+
+.admin-top-actions .muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 30vw;
 }
 
 .admin-tabs {
@@ -343,6 +400,7 @@ button:disabled {
   padding: 10px 18px 0;
   border-bottom: 1px solid var(--border);
   background: var(--panel-2);
+  overflow-x: auto;
 }
 
 .admin-tabs button {
@@ -380,13 +438,10 @@ button:disabled {
 
 .admin-form-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-bottom: 14px;
-}
-
-.admin-form-row.wrap {
-  flex-wrap: wrap;
 }
 
 .admin-form-row input,
@@ -424,8 +479,13 @@ button:disabled {
   color: var(--muted);
 }
 
+.admin-table-wrap {
+  overflow-x: auto;
+}
+
 .admin-table {
   width: 100%;
+  min-width: 480px;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -500,7 +560,7 @@ button.danger:hover:not(:disabled) {
   position: absolute;
   top: 60px;
   right: 12px;
-  width: 300px;
+  width: min(300px, calc(100vw - 24px));
   max-height: calc(100vh - 110px);
   overflow: auto;
   background: rgba(42, 51, 64, 0.95);
@@ -552,4 +612,19 @@ button.danger:hover:not(:disabled) {
 
 .prop-val {
   word-break: break-word;
+}
+
+/* ---- narrow screens ---- */
+@media (max-width: 640px) {
+  .workspace {
+    grid-template-columns: 180px 1fr;
+  }
+
+  .topbar {
+    gap: 8px;
+  }
+
+  .admin-body {
+    padding: 12px;
+  }
 }
