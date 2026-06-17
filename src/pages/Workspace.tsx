@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { IfcViewer } from '../viewer/IfcViewer';
+import { IfcViewer, type UpAxis } from '../viewer/IfcViewer';
 import { useStore } from '../store/useStore';
 import { useAuth } from '../auth/AuthProvider';
 import { Toolbar } from '../components/Toolbar';
@@ -28,6 +28,11 @@ export function Workspace() {
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
+  // Up-axis correction for mis-oriented models (e.g. Y-up bridge exports).
+  // Remembered per model in localStorage so the choice survives reloads.
+  const [openModelId, setOpenModelId] = useState<string | null>(null);
+  const [upAxis, setUpAxis] = useState<UpAxis>('z');
+
   const { status, setStatus, setSelected, setModelCount } = useStore();
 
   useEffect(() => {
@@ -52,14 +57,27 @@ export function Workspace() {
     setStatus(`불러오는 중: ${m.name}`);
     try {
       const bytes = await downloadModelBytes(m.storage_path);
-      await viewer.loadIfc(bytes);
+      const saved = loadUpAxisPref(m.id);
+      const model = await viewer.loadIfc(bytes, saved ? { upAxis: saved } : undefined);
       setModelCount(viewer.modelCount);
+      setOpenModelId(m.id);
+      setUpAxis(model.upAxis);
       setStatus(`불러옴: ${m.name}`);
     } catch (e) {
       setStatus(`불러오기 실패: ${(e as Error).message}`);
     } finally {
       setBusyId(null);
     }
+  };
+
+  // Cycle the up axis (Z↔Y covers the common Z-up vs Y-up export mismatch) and
+  // remember it for this model.
+  const cycleUpAxis = () => {
+    if (!viewer) return;
+    const next: UpAxis = upAxis === 'z' ? 'y' : 'z';
+    viewer.setUpAxis(next);
+    setUpAxis(next);
+    if (openModelId) saveUpAxisPref(openModelId, next);
   };
 
   const onUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -84,7 +102,12 @@ export function Workspace() {
       <header className="topbar">
         <span className="brand">MIR_VDC</span>
         <span className="project-title">{project?.name ?? '…'}</span>
-        <Toolbar viewer={viewer} />
+        <Toolbar
+          viewer={viewer}
+          upAxis={upAxis}
+          onCycleUpAxis={cycleUpAxis}
+          canOrient={openModelId !== null}
+        />
         <div className="spacer" />
         <button onClick={() => navigate('/')}>프로젝트 변경</button>
         <button onClick={signOut}>로그아웃</button>
@@ -133,6 +156,17 @@ export function Workspace() {
       </footer>
     </div>
   );
+}
+
+const UP_AXIS_KEY = (modelId: string) => `mir.upaxis.${modelId}`;
+
+function loadUpAxisPref(modelId: string): UpAxis | null {
+  const v = localStorage.getItem(UP_AXIS_KEY(modelId));
+  return v === 'x' || v === 'y' || v === 'z' ? v : null;
+}
+
+function saveUpAxisPref(modelId: string, axis: UpAxis) {
+  localStorage.setItem(UP_AXIS_KEY(modelId), axis);
 }
 
 function sizeLabel(bytes: number | null): string {

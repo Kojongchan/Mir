@@ -100,25 +100,27 @@
   배포 환경 또는 `vercel dev`. S2와 동일 제약.)
 - 📌 기존 미해결 질문(아이디 변경 미구현, auth.users.email 동기 필요) **해소**.
 
-## S10 결과 (branch: claude/hopeful-davinci-ihxezk, 주제: ifc-georef)
-- 🐛 **교량 IFC 누움 원인 규명**: `IfcViewer.loadIfc` 가 `COORDINATE_TO_ORIGIN:true`
-  사용 → web-ifc 의 coordination matrix 는 **첫 요소의 placement(이동+회전) 역행렬**을
-  모든 형상에 굽는다. 일반 건물은 첫 요소가 축정렬이라 무해하지만, **얼라인먼트 위에
-  배치되는 교량/인프라**는 첫 요소가 접선 방향으로 회전되어 있어 그 역회전이 모델을
-  기울이고, 뒤따르는 Z-up→Y-up(`-π/2`) 회전이 옆으로 눕힌다. "일부 교량만" 누운 이유.
-  (IfcMapConversion/TrueNorth 는 **수직축 회전(평면 방위)** 뿐 → 누움의 원인 아님.)
-- ✅ **수정** (`src/viewer/IfcViewer.ts`): `COORDINATE_TO_ORIGIN:false` 로 열어 **원본
-  모델좌표(IFC 규격상 엄격히 Z-up)** 형상을 받고, **첫 요소 원점(modelOffset)** 을 모든
-  변환에서 **이동분만** 빼서 재중심화(원점 근처 유지 → 먼 지오레퍼런스 좌표의 float32
-  정밀도 보존). **요소별 회전은 보존**, 전역 회전 오염 제거. 그룹 `-π/2` X 회전은 유지.
-- ✅ 일반 모델 영향 없음(첫 요소 회전≈단위행렬 → 렌더 동일). 데이터/마이그레이션 변경 없음.
-- ✅ 검증: `npm run typecheck`·`npm run build` 통과. (실제 누운 교량 파일 눈 검증은
-  사용자 화면 권장 — "대상교량 A" 업로드 후 똑바로 서는지 확인.)
+## S10 결과 (branch: claude/hopeful-davinci-ihxezk, 주제: ifc-georef) — 라이브 검증 완료
+- 🐛 **진짜 원인(라이브로 확정)**: "대상교량 A"가 **Y-up 으로 내보내진** IFC. 뷰어는 모든
+  모델에 무조건 Z-up→Y-up(`-π/2` X) 회전을 적용 → Y-up 모델은 오히려 옆으로 눕는다.
+  (사진: 교각이 아래가 아니라 옆으로. 사용자가 콘솔 `window.__mirUpAxis('y')` 로 똑바로
+  섬을 확인.) ← 1차 가설(`COORDINATE_TO_ORIGIN` 회전 오염)은 **오답**: 그 옵션 제거로
+  방향이 안 바뀐 것이 단서였음. (IfcMapConversion/TrueNorth 는 수직축 회전 → 누움 무관.)
+- ✅ **수정** (`src/viewer/IfcViewer.ts` + `Workspace`/`Toolbar`):
+  - `COORDINATE_TO_ORIGIN:false` + 첫 요소 원점 **이동분만** 빼 재중심화(정밀도 보존).
+  - up축을 **모델 단위**로 적용: `loadIfc(data,{upAxis})`, `detectUpAxis`(컨텍스트
+    `WorldCoordinateSystem.Axis` 읽어 Z/Y/X 자동 추정, 기본 Z), `orientGroup`, `setUpAxis`.
+  - 툴바 **`세움축: Z/Y` 토글** 버튼 — 누운 모델을 클릭 한 번으로 세움. 선택은
+    `localStorage`(`mir.upaxis.<modelId>`)에 **모델별 기억** → 다시 열어도 유지.
+  - 진단: 콘솔 `[IFC-georef]` 로그(bbox·WCS축·TrueNorth·MapConversion) + 디버그용
+    `window.__mirUpAxis('x'|'y'|'z')` 유지.
+- ✅ 일반 Z-up 모델 영향 없음(기본 Z). 데이터베이스/마이그레이션 변경 없음(브라우저 기억).
+- ✅ 검증: `npm run typecheck`·`npm run build` 통과 + **사용자 라이브 확인**('y'로 똑바로 섬).
 
 ## 다음 할 일 (우선순위)
-1. **S10 눈 검증** — "대상교량 A" IFC 업로드 → 뷰어에서 똑바로 서는지 사용자 화면 확인.
-2. **S2 라이브 검증** — Vercel env 설정 후 `/admin` 에서 사용자 생성→로그인→프로젝트 배정 확인.
-3. **S4 4D 시뮬레이션**(뷰어 중심: 일정↔객체, 타임슬라이더).
+1. **S2 라이브 검증** — Vercel env 설정 후 `/admin` 에서 사용자 생성→로그인→프로젝트 배정 확인.
+2. **S4 4D 시뮬레이션**(뷰어 중심: 일정↔객체, 타임슬라이더).
+3. (선택) up축 기억을 브라우저 localStorage→DB(models 컬럼)로 승격해 사용자/기기 간 공유.
 
 ## 미해결 질문 / 메모
 - ✅ (해소) 사용자 생성 자동화 — S2 `api/admin.ts` service_role 함수 + `user_metadata.username`
@@ -130,6 +132,6 @@
   `COORDINATE_TO_ORIGIN` 의 첫 요소 회전 오염) 규명·수정. 실제 파일 눈 검증만 잔여.
 
 ## 다음 세션 인수인계 (한 줄)
-> S10 완료: 교량 IFC 누움 보정 — `IfcViewer` 에서 `COORDINATE_TO_ORIGIN` 제거(첫 요소
-> 회전 오염이 원인) + 이동분만 재중심화로 Z-up 형상 보존. typecheck/build 통과, 실제 누운
-> 교량 파일 눈 검증만 잔여. 다음은 S10 눈 검증 또는 S4(4D).
+> S10 완료(라이브 확정): "대상교량 A"는 Y-up IFC라 무조건 Z-up 회전이 눕힌 것. up축을
+> 모델 단위로 적용 + 툴바 `세움축 Z/Y` 토글 + localStorage 모델별 기억으로 해결(사용자
+> 'y'로 똑바로 섬 확인). 다음은 S2 라이브 검증 또는 S4(4D).
