@@ -2,7 +2,7 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-17 · S9 콘솔 로그인 아이디 변경 **구현 완료** (typecheck/build 통과)
+**마지막 업데이트**: 2026-06-17 · S10 교량 IFC 누움 보정 **구현 완료** (typecheck/build 통과)
 
 ## 지금까지 한 일
 - Phase 1: 3D IFC 뷰어 (Three.js + web-ifc) — 로드·탐색·선택·속성·표시제어.
@@ -100,10 +100,25 @@
   배포 환경 또는 `vercel dev`. S2와 동일 제약.)
 - 📌 기존 미해결 질문(아이디 변경 미구현, auth.users.email 동기 필요) **해소**.
 
+## S10 결과 (branch: claude/hopeful-davinci-ihxezk, 주제: ifc-georef)
+- 🐛 **교량 IFC 누움 원인 규명**: `IfcViewer.loadIfc` 가 `COORDINATE_TO_ORIGIN:true`
+  사용 → web-ifc 의 coordination matrix 는 **첫 요소의 placement(이동+회전) 역행렬**을
+  모든 형상에 굽는다. 일반 건물은 첫 요소가 축정렬이라 무해하지만, **얼라인먼트 위에
+  배치되는 교량/인프라**는 첫 요소가 접선 방향으로 회전되어 있어 그 역회전이 모델을
+  기울이고, 뒤따르는 Z-up→Y-up(`-π/2`) 회전이 옆으로 눕힌다. "일부 교량만" 누운 이유.
+  (IfcMapConversion/TrueNorth 는 **수직축 회전(평면 방위)** 뿐 → 누움의 원인 아님.)
+- ✅ **수정** (`src/viewer/IfcViewer.ts`): `COORDINATE_TO_ORIGIN:false` 로 열어 **원본
+  모델좌표(IFC 규격상 엄격히 Z-up)** 형상을 받고, **첫 요소 원점(modelOffset)** 을 모든
+  변환에서 **이동분만** 빼서 재중심화(원점 근처 유지 → 먼 지오레퍼런스 좌표의 float32
+  정밀도 보존). **요소별 회전은 보존**, 전역 회전 오염 제거. 그룹 `-π/2` X 회전은 유지.
+- ✅ 일반 모델 영향 없음(첫 요소 회전≈단위행렬 → 렌더 동일). 데이터/마이그레이션 변경 없음.
+- ✅ 검증: `npm run typecheck`·`npm run build` 통과. (실제 누운 교량 파일 눈 검증은
+  사용자 화면 권장 — "대상교량 A" 업로드 후 똑바로 서는지 확인.)
+
 ## 다음 할 일 (우선순위)
-1. **S2 라이브 검증** — Vercel env 설정 후 `/admin` 에서 사용자 생성→로그인→프로젝트 배정 확인.
-2. **S4 4D 시뮬레이션**(뷰어 중심: 일정↔객체, 타임슬라이더).
-3. (선택) 실제 IFC 업로드→뷰어 렌더 눈 검증, 교량 IFC 누움 버그 보정.
+1. **S10 눈 검증** — "대상교량 A" IFC 업로드 → 뷰어에서 똑바로 서는지 사용자 화면 확인.
+2. **S2 라이브 검증** — Vercel env 설정 후 `/admin` 에서 사용자 생성→로그인→프로젝트 배정 확인.
+3. **S4 4D 시뮬레이션**(뷰어 중심: 일정↔객체, 타임슬라이더).
 
 ## 미해결 질문 / 메모
 - ✅ (해소) 사용자 생성 자동화 — S2 `api/admin.ts` service_role 함수 + `user_metadata.username`
@@ -111,12 +126,10 @@
 - ✅ (해소) 콘솔의 username(로그인 아이디) **변경** — S9 `api/admin.ts` `renameUser`
   액션으로 username+내부 이메일 동기 변경 추가(사용자 탭 `아이디 변경` 버튼).
 - 번들 크기 경고(three+web-ifc) → 추후 코드 스플리팅(별도 세션) 고려.
-- 🐛 **뷰어 백로그**: 일부 교량 IFC(예: Case Study Bridge A)가 "누워서" 렌더됨.
-  뷰어는 이미 Z-up→Y-up 회전 적용(`IfcViewer.ts:130`)하므로, 원인은 교량 IFC의
-  지오레퍼런싱/좌표 오프셋·회전(IfcMapConversion/TrueNorth) 가능성. S1 무관(뷰어
-  영역). S4(4D, 뷰어 중심)에서 같이 보정하거나 짧은 단독 수정 세션으로 처리.
+- ✅ (해소) **뷰어 백로그**: 일부 교량 IFC 누움 → S10 에서 원인(web-ifc
+  `COORDINATE_TO_ORIGIN` 의 첫 요소 회전 오염) 규명·수정. 실제 파일 눈 검증만 잔여.
 
 ## 다음 세션 인수인계 (한 줄)
-> S9 완료: 관리자 콘솔 사용자 탭에 `아이디 변경` 추가 — `api/admin.ts` `renameUser` 액션이
-> username과 내부 인증 이메일을 함께 변경(중복 선검사). typecheck/build 통과, 라이브 검증은
-> `/api/admin`(배포/`vercel dev`) 필요. 다음은 S2/S9 라이브 검증 또는 S4(4D).
+> S10 완료: 교량 IFC 누움 보정 — `IfcViewer` 에서 `COORDINATE_TO_ORIGIN` 제거(첫 요소
+> 회전 오염이 원인) + 이동분만 재중심화로 Z-up 형상 보존. typecheck/build 통과, 실제 누운
+> 교량 파일 눈 검증만 잔여. 다음은 S10 눈 검증 또는 S4(4D).

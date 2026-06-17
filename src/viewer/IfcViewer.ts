@@ -97,13 +97,27 @@ export class IfcViewer {
   async loadIfc(data: Uint8Array): Promise<LoadedModel> {
     await this.init();
 
+    // We deliberately do NOT use web-ifc's COORDINATE_TO_ORIGIN. Its
+    // coordination matrix is derived from the *first* element's full placement
+    // — translation AND rotation. For georeferenced infrastructure models (e.g.
+    // bridges whose elements are placed along an alignment) that first element
+    // is rotated to follow the alignment tangent, so the baked-in inverse
+    // rotation tips the whole model off vertical; the Z-up→Y-up rotation below
+    // then lays it on its side ("누움"). Instead we read raw model-space
+    // geometry (strictly Z-up per the IFC spec) and recenter with a pure
+    // translation (see modelOffset) — no rotation contamination.
     const modelID = this.ifcAPI.OpenModel(data, {
-      COORDINATE_TO_ORIGIN: true,
+      COORDINATE_TO_ORIGIN: false,
     });
 
     const group = new THREE.Group();
     const elementMeshes = new Map<number, THREE.Mesh[]>();
     const materialCache = new Map<string, THREE.Material>();
+
+    // Origin of the first element seen, subtracted from every transform so
+    // geometry stays near the local origin. This preserves float32 precision
+    // for far-from-origin georeferenced coordinates without baking in rotation.
+    let modelOffset: THREE.Vector3 | null = null;
 
     this.ifcAPI.StreamAllMeshes(modelID, (flatMesh: FlatMesh) => {
       const expressID = flatMesh.expressID;
@@ -115,8 +129,19 @@ export class IfcViewer {
         const geometry = this.buildGeometry(modelID, placed);
         const material = this.getMaterial(materialCache, placed.color);
 
+        const matrix = new THREE.Matrix4().fromArray(placed.flatTransformation);
+        if (!modelOffset) {
+          modelOffset = new THREE.Vector3().setFromMatrixPosition(matrix);
+        }
+        // Strip only the global translation; per-element rotation is preserved.
+        matrix.setPosition(
+          matrix.elements[12] - modelOffset.x,
+          matrix.elements[13] - modelOffset.y,
+          matrix.elements[14] - modelOffset.z,
+        );
+
         const mesh = new THREE.Mesh(geometry, material);
-        mesh.applyMatrix4(new THREE.Matrix4().fromArray(placed.flatTransformation));
+        mesh.applyMatrix4(matrix);
         mesh.userData.expressID = expressID;
         mesh.userData.modelID = modelID;
 
@@ -127,7 +152,7 @@ export class IfcViewer {
       elementMeshes.set(expressID, meshes);
     });
 
-    // IFC is Z-up; rotate the whole model into Three.js' Y-up convention.
+    // IFC project coordinates are Z-up; rotate into Three.js' Y-up convention.
     group.rotation.x = -Math.PI / 2;
 
     this.scene.add(group);
