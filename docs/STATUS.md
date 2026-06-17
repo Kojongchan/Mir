@@ -110,12 +110,14 @@
   - `COORDINATE_TO_ORIGIN:false` + 첫 요소 원점 **이동분만** 빼 재중심화(정밀도 보존).
   - up축을 **모델 단위**로 적용: `loadIfc(data,{upAxis})`, `detectUpAxis`(컨텍스트
     `WorldCoordinateSystem.Axis` 읽어 Z/Y/X 자동 추정, 기본 Z), `orientGroup`, `setUpAxis`.
-  - 툴바 **`세움축: Z/Y` 토글** 버튼 — 누운 모델을 클릭 한 번으로 세움. 선택은
-    `localStorage`(`mir.upaxis.<modelId>`)에 **모델별 기억** → 다시 열어도 유지.
-  - 진단: 콘솔 `[IFC-georef]` 로그(bbox·WCS축·TrueNorth·MapConversion) + 디버그용
-    `window.__mirUpAxis('x'|'y'|'z')` 유지.
+  - **UI 토글은 사용자 요청으로 제거**(나중에 필요 시 복구). 대신 콘솔
+    `window.__mirUpAxis('y')` 로 세우면 그 모델은 `localStorage`(`mir.upaxis.<modelId>`)에
+    **기억**되어 재방문에도 유지(Workspace 가 로드시 저장값을 `loadIfc` 에 전달).
+  - 진단: 콘솔 `[IFC-georef]` 로그(bbox·WCS축·TrueNorth·MapConversion) 유지.
 - ✅ 일반 Z-up 모델 영향 없음(기본 Z). 데이터베이스/마이그레이션 변경 없음(브라우저 기억).
 - ✅ 검증: `npm run typecheck`·`npm run build` 통과 + **사용자 라이브 확인**('y'로 똑바로 섬).
+- 📌 **잔여**: 이 Y-up 교량은 콘솔로 1회 세팅 필요(기본은 여전히 Z). 자동 세움이 필요하면
+  (a) bbox 휴리스틱 자동감지 강화 또는 (b) UI 토글 복구 + DB(`models.up_axis`) 저장.
 
 ## 다음 할 일 (우선순위)
 1. **S2 라이브 검증** — Vercel env 설정 후 `/admin` 에서 사용자 생성→로그인→프로젝트 배정 확인.
@@ -132,6 +134,6 @@
   `COORDINATE_TO_ORIGIN` 의 첫 요소 회전 오염) 규명·수정. 실제 파일 눈 검증만 잔여.
 
 ## 다음 세션 인수인계 (한 줄)
-> S10 완료(라이브 확정): "대상교량 A"는 Y-up IFC라 무조건 Z-up 회전이 눕힌 것. up축을
-> 모델 단위로 적용 + 툴바 `세움축 Z/Y` 토글 + localStorage 모델별 기억으로 해결(사용자
-> 'y'로 똑바로 섬 확인). 다음은 S2 라이브 검증 또는 S4(4D).
+> S10 완료(라이브 확정): "대상교량 A"는 Y-up IFC. up축 모델단위 적용 + 콘솔
+> `window.__mirUpAxis('y')`(모델별 localStorage 기억)로 해결, UI 토글은 요청으로 제거.
+> 다음 권장: S4(4D 시뮬레이션, 뷰어 중심) — 새 세션/브랜치에서 시작.

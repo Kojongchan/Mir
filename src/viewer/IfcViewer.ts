@@ -84,12 +84,6 @@ export class IfcViewer {
     this.renderer.domElement.addEventListener('click', this.handleClick);
     window.addEventListener('resize', this.handleResize);
 
-    // Debug helper: flip a mis-oriented model's up axis live from the console,
-    // e.g. window.__mirUpAxis('y'). Lets us pin down the right orientation
-    // without a redeploy.
-    (window as unknown as { __mirUpAxis?: (a: 'x' | 'y' | 'z') => void }).__mirUpAxis = (a) =>
-      this.setUpAxis(a);
-
     this.animate();
   }
 
