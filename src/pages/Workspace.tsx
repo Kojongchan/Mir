@@ -28,10 +28,11 @@ export function Workspace() {
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  // Up-axis correction for mis-oriented models (e.g. Y-up bridge exports).
-  // Remembered per model in localStorage so the choice survives reloads.
-  const [openModelId, setOpenModelId] = useState<string | null>(null);
-  const [upAxis, setUpAxis] = useState<UpAxis>('z');
+  // Up-axis correction for the occasional mis-oriented model (e.g. Y-up bridge
+  // exports). There is no visible control yet — orient from the console with
+  // window.__mirUpAxis('y'); the choice is remembered per model in localStorage
+  // so it survives reloads. (A toolbar toggle can be re-added when needed.)
+  const openModelId = useRef<string | null>(null);
 
   const { status, setStatus, setSelected, setModelCount } = useStore();
 
@@ -39,6 +40,11 @@ export function Workspace() {
     if (!containerRef.current) return;
     const v = new IfcViewer(containerRef.current);
     v.setOnSelect(setSelected);
+    // Console override that also remembers the choice for the open model.
+    (window as unknown as { __mirUpAxis?: (a: UpAxis) => void }).__mirUpAxis = (a) => {
+      v.setUpAxis(a);
+      if (openModelId.current) saveUpAxisPref(openModelId.current, a);
+    };
     setViewer(v);
     return () => v.dispose();
   }, [setSelected]);
@@ -58,26 +64,15 @@ export function Workspace() {
     try {
       const bytes = await downloadModelBytes(m.storage_path);
       const saved = loadUpAxisPref(m.id);
-      const model = await viewer.loadIfc(bytes, saved ? { upAxis: saved } : undefined);
+      await viewer.loadIfc(bytes, saved ? { upAxis: saved } : undefined);
       setModelCount(viewer.modelCount);
-      setOpenModelId(m.id);
-      setUpAxis(model.upAxis);
+      openModelId.current = m.id;
       setStatus(`불러옴: ${m.name}`);
     } catch (e) {
       setStatus(`불러오기 실패: ${(e as Error).message}`);
     } finally {
       setBusyId(null);
     }
-  };
-
-  // Cycle the up axis (Z↔Y covers the common Z-up vs Y-up export mismatch) and
-  // remember it for this model.
-  const cycleUpAxis = () => {
-    if (!viewer) return;
-    const next: UpAxis = upAxis === 'z' ? 'y' : 'z';
-    viewer.setUpAxis(next);
-    setUpAxis(next);
-    if (openModelId) saveUpAxisPref(openModelId, next);
   };
 
   const onUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -102,12 +97,7 @@ export function Workspace() {
       <header className="topbar">
         <span className="brand">MIR_VDC</span>
         <span className="project-title">{project?.name ?? '…'}</span>
-        <Toolbar
-          viewer={viewer}
-          upAxis={upAxis}
-          onCycleUpAxis={cycleUpAxis}
-          canOrient={openModelId !== null}
-        />
+        <Toolbar viewer={viewer} />
         <div className="spacer" />
         <button onClick={() => navigate('/')}>프로젝트 변경</button>
         <button onClick={signOut}>로그아웃</button>
