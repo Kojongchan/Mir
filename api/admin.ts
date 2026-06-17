@@ -103,6 +103,43 @@ export default async function handler(req: Request): Promise<Response> {
       return json({ ok: true, user: { id: created.user.id, username, full_name: fullName, is_admin: isAdmin } });
     }
 
+    if (action === 'renameUser') {
+      const userId = String(body.userId ?? '');
+      const username = String(body.username ?? '').trim();
+      if (!userId) return json({ error: 'userId required' }, 400);
+      if (!username) return json({ error: '새 아이디를 입력하세요.' }, 400);
+
+      // The login username also drives the internal auth e-mail (D4), so
+      // both must change together. Guard against collisions up-front: the
+      // profiles.username column and auth.users.email are both UNIQUE.
+      const email = usernameToEmail(username);
+      const { data: clash } = await admin
+        .from('profiles')
+        .select('id')
+        .eq('username', username)
+        .neq('id', userId)
+        .maybeSingle();
+      if (clash) return json({ error: '이미 사용 중인 아이디입니다.' }, 409);
+
+      // 1) sync the internal auth e-mail + metadata (email_confirm avoids a
+      // re-confirmation flow on the synthetic address).
+      const { error: authErr } = await admin.auth.admin.updateUserById(userId, {
+        email,
+        email_confirm: true,
+        user_metadata: { username },
+      });
+      if (authErr) return json({ error: authErr.message }, 400);
+
+      // 2) reflect the new username in the profile row.
+      const { error: profErr } = await admin
+        .from('profiles')
+        .update({ username })
+        .eq('id', userId);
+      if (profErr) return json({ error: profErr.message }, 400);
+
+      return json({ ok: true, user: { id: userId, username } });
+    }
+
     if (action === 'resetPassword') {
       const userId = String(body.userId ?? '');
       const password = String(body.password ?? '');
