@@ -1,6 +1,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { IfcAPI, type FlatMesh, type PlacedGeometry } from 'web-ifc';
+import {
+  IfcAPI,
+  IFCGEOMETRICREPRESENTATIONCONTEXT,
+  IFCMAPCONVERSION,
+  type FlatMesh,
+  type PlacedGeometry,
+} from 'web-ifc';
 
 export interface ElementProperties {
   modelID: number;
@@ -73,6 +79,12 @@ export class IfcViewer {
 
     this.renderer.domElement.addEventListener('click', this.handleClick);
     window.addEventListener('resize', this.handleResize);
+
+    // Debug helper: flip a mis-oriented model's up axis live from the console,
+    // e.g. window.__mirUpAxis('y'). Lets us pin down the right orientation
+    // without a redeploy.
+    (window as unknown as { __mirUpAxis?: (a: 'x' | 'y' | 'z') => void }).__mirUpAxis = (a) =>
+      this.setUpAxis(a);
 
     this.animate();
   }
@@ -152,16 +164,86 @@ export class IfcViewer {
       elementMeshes.set(expressID, meshes);
     });
 
-    // IFC project coordinates are Z-up; rotate into Three.js' Y-up convention.
-    group.rotation.x = -Math.PI / 2;
+    // Diagnose orientation: log georeferencing + the model-space bounding box
+    // (computed BEFORE any orientation rotation is applied) so we can see which
+    // axis the geometry actually grows along.
+    const upAxis = this.detectUpAxis(modelID, group);
 
     this.scene.add(group);
 
     const model: LoadedModel = { modelID, group, elementMeshes };
     this.models.push(model);
 
+    this.orientGroup(group, upAxis);
     this.fitToObject(group);
     return model;
+  }
+
+  /**
+   * Rotate a freshly-loaded model group so its "up" axis points along Three.js'
+   * +Y. IFC is Z-up by spec, but some infrastructure exports (notably the bridge
+   * case study) deliver Y-up geometry; blindly applying the Z-up→Y-up rotation
+   * then lays them on their side. `axis` is the model-space up axis.
+   */
+  private orientGroup(group: THREE.Group, axis: 'x' | 'y' | 'z') {
+    group.rotation.set(0, 0, 0);
+    if (axis === 'z') group.rotation.x = -Math.PI / 2; // Z-up → Y-up (default)
+    else if (axis === 'x') group.rotation.z = Math.PI / 2; // X-up → Y-up (rare)
+    // axis === 'y' → already Y-up, no rotation
+    group.updateMatrixWorld(true);
+  }
+
+  /**
+   * Best-effort detection of the model's up axis. Reads the geometric
+   * representation context's WorldCoordinateSystem (the spec-correct place to
+   * declare a non-Z up) and logs georeferencing + bounding-box diagnostics. If
+   * the context doesn't declare it, falls back to Z-up. The result can be
+   * overridden at runtime via `setUpAxis()` / `window.__mirUpAxis()`.
+   */
+  private detectUpAxis(modelID: number, group: THREE.Group): 'x' | 'y' | 'z' {
+    let axis: 'x' | 'y' | 'z' = 'z';
+    try {
+      const box = new THREE.Box3().setFromObject(group);
+      const size = box.getSize(new THREE.Vector3());
+      console.info(
+        `[IFC-georef] model-space bbox size = x:${size.x.toFixed(1)} y:${size.y.toFixed(1)} z:${size.z.toFixed(1)}`,
+      );
+
+      const ctxIDs = this.ifcAPI.GetLineIDsWithType(modelID, IFCGEOMETRICREPRESENTATIONCONTEXT);
+      for (let i = 0; i < ctxIDs.size(); i++) {
+        const ctx = this.ifcAPI.GetLine(modelID, ctxIDs.get(i), true) as Record<string, any>;
+        const wcsAxis = ctx?.WorldCoordinateSystem?.Axis?.DirectionRatios as number[] | undefined;
+        const trueNorth = ctx?.TrueNorth?.DirectionRatios as number[] | undefined;
+        console.info(
+          `[IFC-georef] context "${ctx?.ContextType?.value ?? '?'}" WCS.Axis=${JSON.stringify(wcsAxis)} TrueNorth=${JSON.stringify(trueNorth)}`,
+        );
+        if (wcsAxis) {
+          // The WCS "Axis" is the local +Z (up) direction. If it leans toward Y
+          // or X instead of Z, the geometry's up is that axis.
+          const [ax, ay, az] = [Math.abs(wcsAxis[0] ?? 0), Math.abs(wcsAxis[1] ?? 0), Math.abs(wcsAxis[2] ?? 0)];
+          if (ay > az && ay > ax) axis = 'y';
+          else if (ax > az && ax > ay) axis = 'x';
+        }
+      }
+
+      const mapIDs = this.ifcAPI.GetLineIDsWithType(modelID, IFCMAPCONVERSION);
+      for (let i = 0; i < mapIDs.size(); i++) {
+        const m = this.ifcAPI.GetLine(modelID, mapIDs.get(i), true) as Record<string, any>;
+        console.info(
+          `[IFC-georef] IfcMapConversion E=${m?.Eastings?.value} N=${m?.Northings?.value} H=${m?.OrthogonalHeight?.value} XAxis=(${m?.XAxisAbscissa?.value},${m?.XAxisOrdinate?.value}) scale=${m?.Scale?.value}`,
+        );
+      }
+    } catch (err) {
+      console.warn('[IFC-georef] diagnostic read failed', err);
+    }
+    console.info(`[IFC-georef] using up axis = ${axis} (override: window.__mirUpAxis('x'|'y'|'z'))`);
+    return axis;
+  }
+
+  /** Re-orient every loaded model to the given up axis and refit the camera. */
+  setUpAxis(axis: 'x' | 'y' | 'z') {
+    for (const model of this.models) this.orientGroup(model.group, axis);
+    if (this.models.length) this.fitToObject(this.models[0].group);
   }
 
   private buildGeometry(modelID: number, placed: PlacedGeometry): THREE.BufferGeometry {
