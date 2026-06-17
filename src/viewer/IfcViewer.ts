@@ -21,7 +21,11 @@ interface LoadedModel {
   group: THREE.Group;
   /** expressID -> the meshes that make up that IFC element */
   elementMeshes: Map<number, THREE.Mesh[]>;
+  /** model-space up axis used to orient the group into Three.js' Y-up world */
+  upAxis: UpAxis;
 }
+
+export type UpAxis = 'x' | 'y' | 'z';
 
 type SelectCallback = (props: ElementProperties | null) => void;
 
@@ -106,7 +110,7 @@ export class IfcViewer {
 
   // --- IFC loading -------------------------------------------------------
 
-  async loadIfc(data: Uint8Array): Promise<LoadedModel> {
+  async loadIfc(data: Uint8Array, opts?: { upAxis?: UpAxis }): Promise<LoadedModel> {
     await this.init();
 
     // We deliberately do NOT use web-ifc's COORDINATE_TO_ORIGIN. Its
@@ -164,14 +168,13 @@ export class IfcViewer {
       elementMeshes.set(expressID, meshes);
     });
 
-    // Diagnose orientation: log georeferencing + the model-space bounding box
-    // (computed BEFORE any orientation rotation is applied) so we can see which
-    // axis the geometry actually grows along.
-    const upAxis = this.detectUpAxis(modelID, group);
+    // Up axis: caller-provided override (a remembered per-model choice) wins;
+    // otherwise auto-detect from the model's representation context.
+    const upAxis = opts?.upAxis ?? this.detectUpAxis(modelID, group);
 
     this.scene.add(group);
 
-    const model: LoadedModel = { modelID, group, elementMeshes };
+    const model: LoadedModel = { modelID, group, elementMeshes, upAxis };
     this.models.push(model);
 
     this.orientGroup(group, upAxis);
@@ -185,7 +188,7 @@ export class IfcViewer {
    * case study) deliver Y-up geometry; blindly applying the Z-up→Y-up rotation
    * then lays them on their side. `axis` is the model-space up axis.
    */
-  private orientGroup(group: THREE.Group, axis: 'x' | 'y' | 'z') {
+  private orientGroup(group: THREE.Group, axis: UpAxis) {
     group.rotation.set(0, 0, 0);
     if (axis === 'z') group.rotation.x = -Math.PI / 2; // Z-up → Y-up (default)
     else if (axis === 'x') group.rotation.z = Math.PI / 2; // X-up → Y-up (rare)
@@ -200,8 +203,8 @@ export class IfcViewer {
    * the context doesn't declare it, falls back to Z-up. The result can be
    * overridden at runtime via `setUpAxis()` / `window.__mirUpAxis()`.
    */
-  private detectUpAxis(modelID: number, group: THREE.Group): 'x' | 'y' | 'z' {
-    let axis: 'x' | 'y' | 'z' = 'z';
+  private detectUpAxis(modelID: number, group: THREE.Group): UpAxis {
+    let axis: UpAxis = 'z';
     try {
       const box = new THREE.Box3().setFromObject(group);
       const size = box.getSize(new THREE.Vector3());
@@ -241,9 +244,17 @@ export class IfcViewer {
   }
 
   /** Re-orient every loaded model to the given up axis and refit the camera. */
-  setUpAxis(axis: 'x' | 'y' | 'z') {
-    for (const model of this.models) this.orientGroup(model.group, axis);
+  setUpAxis(axis: UpAxis) {
+    for (const model of this.models) {
+      this.orientGroup(model.group, axis);
+      model.upAxis = axis;
+    }
     if (this.models.length) this.fitToObject(this.models[0].group);
+  }
+
+  /** Up axis currently applied to the most recently loaded model. */
+  get upAxis(): UpAxis {
+    return this.models.length ? this.models[this.models.length - 1].upAxis : 'z';
   }
 
   private buildGeometry(modelID: number, placed: PlacedGeometry): THREE.BufferGeometry {
