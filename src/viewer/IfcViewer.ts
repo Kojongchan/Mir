@@ -27,6 +27,19 @@ interface LoadedModel {
 
 export type UpAxis = 'x' | 'y' | 'z';
 
+/** Minimal element descriptor used by the 4D layer to map schedule ↔ objects. */
+export interface ElementInfo {
+  modelID: number;
+  expressID: number;
+  name: string;
+}
+
+/** Per-element construction state for the 4D timeline. */
+export type BuildState = 'built' | 'active' | 'future';
+
+/** What to do with not-yet-built elements: fully hide or show as a faint ghost. */
+export type FutureMode = 'hidden' | 'ghost';
+
 type SelectCallback = (props: ElementProperties | null) => void;
 
 const HIGHLIGHT_COLOR = new THREE.Color(0xffaa00);
@@ -53,6 +66,17 @@ export class IfcViewer {
 
   /** material clones swapped in for the current selection, kept so we can restore */
   private highlighted: { mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] }[] = [];
+
+  /** original {material, visible} saved before the 4D layer overrides a mesh */
+  private constructionOverrides = new Map<
+    THREE.Mesh,
+    { material: THREE.Material | THREE.Material[]; visible: boolean }
+  >();
+  /** shared materials for 4D appearance (lazily reused, never per-mesh cloned) */
+  private ghostMaterial: THREE.Material | null = null;
+  private activeMaterial: THREE.Material | null = null;
+  /** expressID name cache per model, populated on first catalog request */
+  private nameCache = new Map<number, Map<number, string>>();
 
   private onSelect: SelectCallback = () => {};
   private initialized = false;
@@ -415,6 +439,106 @@ export class IfcViewer {
       box.expandByObject(mesh);
     }
     if (!box.isEmpty()) this.frameBox(box);
+  }
+
+  // --- 4D construction layer ---------------------------------------------
+
+  /**
+   * Catalog of every loaded element with its IFC Name, used by the 4D layer to
+   * map schedule tasks to objects. Names are read once per model and cached.
+   */
+  getElementCatalog(): ElementInfo[] {
+    const out: ElementInfo[] = [];
+    for (const model of this.models) {
+      let cache = this.nameCache.get(model.modelID);
+      if (!cache) {
+        cache = new Map<number, string>();
+        for (const expressID of model.elementMeshes.keys()) {
+          cache.set(expressID, this.readName(model.modelID, expressID));
+        }
+        this.nameCache.set(model.modelID, cache);
+      }
+      for (const [expressID, name] of cache) {
+        out.push({ modelID: model.modelID, expressID, name });
+      }
+    }
+    return out;
+  }
+
+  private readName(modelID: number, expressID: number): string {
+    try {
+      const line = this.ifcAPI.GetLine(modelID, expressID, false) as Record<string, any>;
+      const n = line?.Name?.value;
+      return typeof n === 'string' ? n : '';
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Apply per-element construction states for a point in time. Elements not in
+   * `states` are left untouched (stay fully visible). Built → original look,
+   * active → orange tint, future → hidden or faint ghost per `futureMode`.
+   * Restores any previous 4D override first, so it's safe to call every tick.
+   */
+  applyConstruction(
+    states: Iterable<{ modelID: number; expressID: number; state: BuildState }>,
+    futureMode: FutureMode,
+  ) {
+    this.clearConstruction();
+    for (const { modelID, expressID, state } of states) {
+      for (const mesh of this.meshesFor(modelID, expressID)) {
+        if (!this.constructionOverrides.has(mesh)) {
+          this.constructionOverrides.set(mesh, { material: mesh.material, visible: mesh.visible });
+        }
+        if (state === 'built') {
+          mesh.visible = true; // original material already restored by clear
+        } else if (state === 'active') {
+          mesh.visible = true;
+          mesh.material = this.getActiveMaterial();
+        } else if (futureMode === 'hidden') {
+          mesh.visible = false;
+        } else {
+          mesh.visible = true;
+          mesh.material = this.getGhostMaterial();
+        }
+      }
+    }
+  }
+
+  /** Restore every mesh the 4D layer touched to its pre-4D material/visibility. */
+  clearConstruction() {
+    for (const [mesh, saved] of this.constructionOverrides) {
+      mesh.material = saved.material;
+      mesh.visible = saved.visible;
+    }
+    this.constructionOverrides.clear();
+  }
+
+  private getGhostMaterial(): THREE.Material {
+    if (!this.ghostMaterial) {
+      this.ghostMaterial = new THREE.MeshLambertMaterial({
+        color: 0x6b7686,
+        transparent: true,
+        opacity: 0.16,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+    }
+    return this.ghostMaterial;
+  }
+
+  private getActiveMaterial(): THREE.Material {
+    if (!this.activeMaterial) {
+      this.activeMaterial = new THREE.MeshLambertMaterial({
+        color: HIGHLIGHT_COLOR,
+        emissive: new THREE.Color(0x442200),
+        transparent: true,
+        opacity: 0.92,
+        side: THREE.DoubleSide,
+      });
+    }
+    return this.activeMaterial;
   }
 
   // --- helpers -----------------------------------------------------------
