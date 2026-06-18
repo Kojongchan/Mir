@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { ElementProperties } from '../viewer/IfcViewer';
-import type { FutureMode } from '../viewer/IfcViewer';
+import { type AppearanceSettings, DEFAULT_APPEARANCE } from '../viewer/IfcViewer';
 import type { ScheduleTask, ScheduleSource } from '../lib/schedule';
 import type { TaskMapping } from '../lib/fourd';
 
@@ -28,7 +28,8 @@ export interface FourDState {
   rangeEnd: number;
   /** 현재 시점(타임슬라이더, epoch ms) */
   currentTime: number;
-  futureMode: FutureMode;
+  /** 표시 설정(유형별 색상·반투명·미시공 ghost) */
+  appearance: AppearanceSettings;
   /** 작업 id → 요소 참조 */
   mapping: TaskMapping;
   /** 매핑 통계(표시용) */
@@ -44,7 +45,7 @@ export interface FourDState {
   clearSchedule: () => void;
   setEnabled: (v: boolean) => void;
   setCurrentTime: (t: number) => void;
-  setFutureMode: (m: FutureMode) => void;
+  setAppearance: (patch: Partial<AppearanceSettings>) => void;
   setMapping: (m: TaskMapping, tasks: number, elements: number) => void;
 }
 
@@ -55,7 +56,7 @@ const emptyFourD = {
   rangeStart: NaN,
   rangeEnd: NaN,
   currentTime: NaN,
-  futureMode: 'hidden' as FutureMode,
+  appearance: { ...DEFAULT_APPEARANCE },
   mapping: {} as TaskMapping,
   mappedTasks: 0,
   mappedElements: 0,
@@ -89,11 +90,11 @@ export const useStore = create<AppState>((set) => ({
           mappedElements: 0,
         },
       })),
-    clearSchedule: () =>
-      set((s) => ({ fourd: { ...s.fourd, ...emptyFourD } })),
+    clearSchedule: () => set((s) => ({ fourd: { ...s.fourd, ...emptyFourD } })),
     setEnabled: (v) => set((s) => ({ fourd: { ...s.fourd, enabled: v } })),
     setCurrentTime: (t) => set((s) => ({ fourd: { ...s.fourd, currentTime: t } })),
-    setFutureMode: (m) => set((s) => ({ fourd: { ...s.fourd, futureMode: m } })),
+    setAppearance: (patch) =>
+      set((s) => ({ fourd: { ...s.fourd, appearance: { ...s.fourd.appearance, ...patch } } })),
     setMapping: (mapping, mappedTasks, mappedElements) =>
       set((s) => ({ fourd: { ...s.fourd, mapping, mappedTasks, mappedElements } })),
   },

@@ -640,7 +640,7 @@ button.danger:hover:not(:disabled) {
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  max-height: 280px;
+  max-height: 340px;
 }
 
 .timeline.collapsed {
@@ -816,4 +816,215 @@ button.danger:hover:not(:disabled) {
 }
 .tl-bar-built {
   background: #4a7a5a;
+}
+
+/* ---- 4D: 표시 설정 패널 ---- */
+.tl-settings {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 4px 12px 8px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+}
+.tl-settings input[type='color'] {
+  width: 28px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: none;
+  cursor: pointer;
+}
+.tl-settings input[type='range'] {
+  width: 120px;
+  accent-color: var(--accent);
+}
+
+/* ---- 4D: 작업 테이블(헤더/열) + 간트 ---- */
+.tl-table {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.tl-thead {
+  display: flex;
+  align-items: stretch;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.tl-thead .th {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border-right: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tl-thead .th-gantt {
+  flex: 1;
+  min-width: 120px;
+}
+.tl-tbody {
+  position: relative;
+  overflow-y: auto;
+  min-height: 0;
+}
+.tl-tbody .tr {
+  display: flex;
+  align-items: stretch;
+  height: 22px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+.tl-tbody .tr:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.tl-tbody .td {
+  flex-shrink: 0;
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 22px;
+  border-right: 1px solid rgba(255, 255, 255, 0.04);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tl-tbody .td.num {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.tl-tbody .td-map {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tl-tbody .td-gantt {
+  position: relative;
+  flex: 1;
+  min-width: 120px;
+}
+
+/* 상태 칩 */
+.tl-status {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.tl-status-before {
+  background: #3a4555;
+  color: var(--muted);
+}
+.tl-status-active {
+  background: #5a4a1e;
+  color: #ffcf6b;
+}
+.tl-status-done {
+  background: #2d4a36;
+  color: #9fe0b4;
+}
+
+/* 간트 바: 유형 색 + 상태 투명도 */
+.tl-bar {
+  position: absolute;
+  top: 5px;
+  height: 12px;
+  border-radius: 3px;
+  min-width: 2px;
+}
+.tl-bar-construct,
+.tl-bar-other,
+.tl-bar-equipment {
+  background: #4a7a5a;
+}
+.tl-bar-demolish {
+  background: #b05050;
+}
+.tl-bar-temporary {
+  background: #b0a050;
+}
+.tl-bar-before {
+  opacity: 0.4;
+}
+.tl-bar-active {
+  outline: 1px solid var(--accent);
+}
+
+/* ---- 모달(열 매핑) ---- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  width: min(560px, 94vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+.modal-head {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-head h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+.modal-body {
+  padding: 12px 16px;
+  overflow: auto;
+}
+.modal-foot {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.modal-foot .primary,
+.primary {
+  background: var(--accent);
+  color: #1e2430;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.map-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.map-table th,
+.map-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.map-table th {
+  color: var(--muted);
+  font-weight: 500;
+}
+.map-table select {
+  width: 100%;
+  max-width: 220px;
+}
+.map-table .preview {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.req {
+  color: #ff8c8c;
 }
