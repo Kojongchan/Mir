@@ -33,7 +33,7 @@ export function Login() {
         <ThemeToggle />
       </div>
       <form className="auth-card" onSubmit={onSubmit}>
-        <div className="auth-brand"><BrandLogo size="md" /></div>
+        <div className="auth-brand"><BrandLogo size="lg" /></div>
         <p className="auth-sub">
           쌍용건설 <strong>스마트 건설기술 플랫폼</strong>에 오신 것을 환영합니다.
         </p>
@@ -76,7 +76,10 @@ export function Login() {
           © Copyright <strong>Ssangyong E&amp;C</strong>. All Rights Reserved
         </span>
         <span className="footer-credit">
-          Designed by <span className="footer-team">Digital Construction Part</span>
+          Designed by{' '}
+          <span className="footer-team">
+            Civil Engineering Technology Team, Smart Construction Part
+          </span>
         </span>
       </footer>
     </div>
