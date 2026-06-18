@@ -7,7 +7,7 @@
 //    조합에서도 시각적으로 동작하는 빠른 데모용).
 // DB(추가형 마이그레이션) 기반 정밀 매핑은 설계만 잡아둔다(supabase/migrations).
 
-import type { ScheduleTask } from './schedule';
+import type { ScheduleTask, TaskKind } from './schedule';
 
 /** 모델 내 한 요소를 가리키는 참조 */
 export interface ElementRef {
@@ -23,18 +23,20 @@ export interface ElementInfo extends ElementRef {
 /** 작업 id → 그 작업이 만드는 요소들 */
 export type TaskMapping = Record<string, ElementRef[]>;
 
-// future  : 아직 생성 전(숨김 / ghost)
-// active   : 현재 작업 진행 중(주황 강조)
-// built    : 생성 완료되어 존재
-// removed  : 철거(또는 임시)되어 사라짐(항상 숨김)
-export type BuildState = 'built' | 'active' | 'future' | 'removed';
-
-type Effect = 'build' | 'remove';
-
-/** 작업 유형 → 요소에 끼치는 효과(생성/제거). 철거·임시는 끝나면 사라진다. */
-function effectOf(kind: string): Effect {
-  return kind === 'demolish' || kind === 'temporary' ? 'remove' : 'build';
-}
+// 셀 상태(Navisworks TimeLiner 모양 정의 모델):
+//  - hidden            : 보이지 않음(철거 완료/임시 종료/시뮬 시작 전 기본)
+//  - normal            : 모형 모양(시공 완료, 또는 철거 전 기시공 상태)
+//  - ghost             : 시공 시작 전(미시공) — ghost 토글 시 흐릿하게, 아니면 숨김
+//  - active-construct  : 시공 진행 중(초록 반투명)
+//  - active-demolish   : 철거 진행 중(빨강 반투명)
+//  - active-temporary  : 임시 설치 중(노랑 반투명)
+export type CellState =
+  | 'hidden'
+  | 'normal'
+  | 'ghost'
+  | 'active-construct'
+  | 'active-demolish'
+  | 'active-temporary';
 
 export const elementKey = (e: ElementRef): string => `${e.modelID}:${e.expressID}`;
 
@@ -128,30 +130,42 @@ export function mappingStats(mapping: TaskMapping): { tasks: number; elements: n
 interface ElementEvent {
   start: number;
   end: number;
-  effect: Effect;
+  kind: TaskKind;
+}
+
+// 작업 유형별 "진행 중" 색상 상태
+function activeState(kind: TaskKind): CellState {
+  if (kind === 'demolish') return 'active-demolish';
+  if (kind === 'temporary') return 'active-temporary';
+  return 'active-construct'; // construct/equipment/other
+}
+
+// 작업 유형별 "완료 후" 상태
+function afterState(kind: TaskKind): CellState {
+  if (kind === 'demolish' || kind === 'temporary') return 'hidden';
+  return 'normal'; // construct/equipment/other → 모형 모양 유지
 }
 
 /**
- * 특정 시점(now)에 매핑된 모든 요소의 시공 상태를 계산. 한 요소가 여러 작업에
- * 걸리면(예: 생성 후 철거) 작업을 시작 시각 순으로 적용해 생애주기를 따른다.
- *  - 진행 중인 작업이 있으면 active
- *  - 그 외에는 마지막으로 끝난 작업의 효과에 따라 built(생성) / removed(철거)
- *  - 아직 어떤 작업도 시작되지 않았으면 future
+ * 특정 시점(now)에 매핑된 모든 요소의 표시 상태를 계산. 한 요소가 여러 작업에
+ * 걸리면(예: 시공 후 철거) 작업을 시작 시각 순으로 적용해 생애주기를 따른다.
+ *  - 시작 전: 첫 작업이 '철거'면 normal(기시공 상태로 이미 존재), 아니면 ghost(미시공)
+ *  - 진행 중: 유형별 색상(active-construct/demolish/temporary)
+ *  - 완료 후: 시공→normal, 철거/임시→hidden
  * 매핑되지 않은 요소는 결과에 없으며(=항상 보이게 유지) 모델이 통째로 사라지지 않는다.
  */
 export function computeStates(
   tasks: ScheduleTask[],
   mapping: TaskMapping,
   now: number,
-): Map<string, { ref: ElementRef; state: BuildState }> {
+): Map<string, { ref: ElementRef; state: CellState }> {
   const byId = new Map(tasks.map((t) => [t.id, t]));
 
-  // 요소별 이벤트 수집
   const events = new Map<string, { ref: ElementRef; list: ElementEvent[] }>();
   for (const [taskId, refs] of Object.entries(mapping)) {
     const task = byId.get(taskId);
     if (!task) continue;
-    const ev: ElementEvent = { start: task.start, end: task.end, effect: effectOf(task.type) };
+    const ev: ElementEvent = { start: task.start, end: task.end, kind: task.type };
     for (const ref of refs) {
       const key = elementKey(ref);
       let entry = events.get(key);
@@ -163,14 +177,14 @@ export function computeStates(
     }
   }
 
-  const result = new Map<string, { ref: ElementRef; state: BuildState }>();
+  const result = new Map<string, { ref: ElementRef; state: CellState }>();
   for (const [key, { ref, list }] of events) {
     list.sort((a, b) => a.start - b.start || a.end - b.end);
-    let state: BuildState = 'future';
+    // 시작 전 상태: 첫 작업이 철거면 기존재(normal), 아니면 미시공(ghost)
+    let state: CellState = list[0].kind === 'demolish' ? 'normal' : 'ghost';
     for (const ev of list) {
       if (ev.start > now) continue; // 아직 시작 안 한 작업은 무시
-      if (now < ev.end) state = 'active';
-      else state = ev.effect === 'build' ? 'built' : 'removed';
+      state = now < ev.end ? activeState(ev.kind) : afterState(ev.kind);
     }
     result.set(key, { ref, state });
   }

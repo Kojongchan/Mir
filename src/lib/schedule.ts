@@ -1,39 +1,76 @@
 // 4D 일정(공정표) 파싱 — Navisworks / Fuzor TimeLiner CSV 내보내기를 모두 지원.
 //
-// 두 포맷 모두 헤더 기반으로 컬럼을 찾으므로(영문/한글), 한 파서로 처리한다.
-//  - Navisworks: 한글 헤더(EUC-KR 인코딩), 날짜 "2015-06-01", 동기화 ID 컬럼.
-//  - Fuzor:      영문 헤더(UTF-8),        날짜 ISO "2025-01-01T00:00:00", Fuzor GUID.
-//
-// IFC 객체와의 정밀 매핑(동기화 ID/GUID ↔ 모델 요소)은 추후 과제이며, 지금은
-// 일정만 추출한다. 매핑은 src/lib/fourd.ts 에서 이름/순서 기반으로 처리한다.
+// 두 단계로 나뉜다:
+//  1) readCsv(bytes): 디코딩 + 행 분해 + 포맷/열 자동추정(ColumnMap guess)
+//  2) buildSchedule(doc, columnMap): 사용자가 확정한 열 매핑으로 작업을 생성
+// 임포트 UI 가 1)→(열 매핑 모달)→2) 순으로 호출한다. parseSchedule() 는 자동추정
+// 으로 한 번에 처리하는 편의 함수(테스트/단순 경로).
 
 export interface ScheduleTask {
   /** 안정적인 작업 식별자(원본 ID 컬럼이 있으면 사용, 없으면 생성) */
   id: string;
   /** 표시용 이름 */
   name: string;
-  /** 정규화된 작업 유형 라벨(예: 시공/철거/장비/임시) */
+  /** 정규화된 작업 유형 */
   type: TaskKind;
   /** 원본 작업 유형 문자열(진단용) */
   rawType: string;
-  /** 시작 시각(epoch ms) */
+  /** 계획 시작/종료(epoch ms) — 시뮬레이션 기준 */
   start: number;
-  /** 종료 시각(epoch ms) */
   end: number;
+  /** 실제 시작/종료(epoch ms, 없으면 null) */
+  actualStart: number | null;
+  actualEnd: number | null;
+  /** 비용(숫자, 없으면 null) */
+  cost: number | null;
   /** 동기화 ID / GUID 등 외부 식별자(추후 정밀 매핑용, 없으면 null) */
   externalId: string | null;
+  /** 매핑되지 않은 나머지 열(헤더→값) — 테이블의 "사용자 값" 표시용 */
+  custom: Record<string, string>;
 }
 
 export type TaskKind = 'construct' | 'demolish' | 'equipment' | 'temporary' | 'other';
 
 export type ScheduleSource = 'navisworks' | 'fuzor' | 'generic';
 
+/** 각 역할에 매핑된 열 인덱스(-1 = 없음) */
+export interface ColumnMap {
+  name: number;
+  type: number;
+  start: number;
+  end: number;
+  actualStart: number;
+  actualEnd: number;
+  cost: number;
+  externalId: number;
+  outline: number;
+}
+
+/** readCsv 결과: 헤더/행 + 포맷·열 자동추정 */
+export interface CsvDoc {
+  header: string[];
+  rows: string[][];
+  source: ScheduleSource;
+  guess: ColumnMap;
+}
+
+/** 임포트 열 매핑 모달에 표시할 역할 목록 */
+export const COLUMN_ROLES: { key: keyof ColumnMap; label: string; required?: boolean }[] = [
+  { key: 'name', label: '작업 이름', required: true },
+  { key: 'type', label: '작업 유형' },
+  { key: 'start', label: '계획 시작 날짜', required: true },
+  { key: 'end', label: '계획 끝 날짜', required: true },
+  { key: 'actualStart', label: '실제 시작 날짜' },
+  { key: 'actualEnd', label: '실제 끝 날짜' },
+  { key: 'cost', label: '비용' },
+  { key: 'externalId', label: '동기화 ID / GUID' },
+  { key: 'outline', label: '개요 번호(계층)' },
+];
+
 export interface ParsedSchedule {
   tasks: ScheduleTask[];
   source: ScheduleSource;
-  /** 전체 일정의 최소 시작 시각 */
   start: number;
-  /** 전체 일정의 최대 종료 시각 */
   end: number;
   warnings: string[];
 }
@@ -43,23 +80,20 @@ export interface ParsedSchedule {
 /**
  * CSV 바이트를 문자열로 디코딩. 먼저 UTF-8 로 시도하고, 치환문자(U+FFFD)가
  * 섞이면 한국어 Windows 기본 인코딩(EUC-KR/CP949)으로 재시도한다.
- * (Navisworks 한글 내보내기가 EUC-KR 이기 때문.)
  */
 export function decodeCsvBytes(bytes: Uint8Array): string {
-  // UTF-8 BOM 제거
   let buf = bytes;
   if (buf.length >= 3 && buf[0] === 0xef && buf[1] === 0xbb && buf[2] === 0xbf) {
-    buf = buf.subarray(3);
+    buf = buf.subarray(3); // UTF-8 BOM 제거
   }
   const utf8 = new TextDecoder('utf-8').decode(buf);
   if (!utf8.includes('�')) return utf8;
   try {
     const euckr = new TextDecoder('euc-kr').decode(buf);
-    // 재디코딩 결과가 더 깨끗하면(치환문자 적으면) 채택
     if (!euckr.includes('�')) return euckr;
     return countChar(euckr, '�') < countChar(utf8, '�') ? euckr : utf8;
   } catch {
-    return utf8; // 환경에 euc-kr 디코더가 없으면 UTF-8 폴백
+    return utf8;
   }
 }
 
@@ -112,13 +146,15 @@ export function parseCsvRows(text: string): string[][] {
   return rows;
 }
 
-// --- 컬럼 매핑 -----------------------------------------------------------
+// --- 컬럼 추정 -----------------------------------------------------------
 
-// 우선순위 순서대로 매칭(앞쪽이 우선). 한글/영문 헤더 모두 대응.
 const NAME_KEYS = ['name', '이름'];
-const START_KEYS = ['planned start', '계획된 시작', 'main start', 'actual start', '실제 시작', 'start', '시작'];
-const END_KEYS = ['planned end', '계획된 끝', 'main end', 'actual end', '실제 끝', 'end', '끝'];
+const START_KEYS = ['planned start', '계획된 시작', 'main start', 'start', '시작'];
+const END_KEYS = ['planned end', '계획된 끝', 'main end', 'end', '끝'];
+const ASTART_KEYS = ['actual start', '실제 시작'];
+const AEND_KEYS = ['actual end', '실제 끝'];
 const TYPE_KEYS = ['task type', '작업 유형', 'type'];
+const COST_KEYS = ['planned total cost', 'main total cost', 'total cost', '비용 합계', '총 비용', '총비용', '재료비'];
 const ID_KEYS = ['id'];
 const EXTID_KEYS = ['fuzor guid', 'unique id', '동기화 id', '표시 id'];
 const OUTLINE_KEYS = ['outlinenumber', 'outline number'];
@@ -142,11 +178,18 @@ function normalizeKind(raw: string): TaskKind {
   return 'other';
 }
 
-function parseDate(raw: string): number {
-  const s = raw.trim();
+function parseDate(raw: string | undefined): number {
+  const s = (raw ?? '').trim();
   if (!s) return NaN;
   const t = Date.parse(s);
   return Number.isNaN(t) ? NaN : t;
+}
+
+function parseCost(raw: string | undefined): number | null {
+  const s = (raw ?? '').trim().replace(/[, ]/g, '');
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
 }
 
 function detectSource(header: string[]): ScheduleSource {
@@ -156,66 +199,81 @@ function detectSource(header: string[]): ScheduleSource {
   return 'generic';
 }
 
-/**
- * CSV 텍스트를 일정으로 파싱. 유효한 시작/종료 날짜가 없는 행, 루트(합계) 행은
- * 건너뛴다. 매핑되지 않은 행 수 등은 warnings 로 보고한다.
- */
-export function parseSchedule(text: string): ParsedSchedule {
+function guessColumns(header: string[]): ColumnMap {
+  return {
+    name: findIndex(header, NAME_KEYS),
+    type: findIndex(header, TYPE_KEYS),
+    start: findIndex(header, START_KEYS),
+    end: findIndex(header, END_KEYS),
+    actualStart: findIndex(header, ASTART_KEYS),
+    actualEnd: findIndex(header, AEND_KEYS),
+    cost: findIndex(header, COST_KEYS),
+    externalId: findIndex(header, EXTID_KEYS),
+    outline: findIndex(header, OUTLINE_KEYS),
+  };
+}
+
+// --- 1) 읽기/추정 --------------------------------------------------------
+
+/** 바이트 → 디코딩 + 행 분해 + 포맷/열 자동추정. 임포트 모달이 사용. */
+export function readCsv(bytes: Uint8Array): CsvDoc {
+  const text = decodeCsvBytes(bytes);
+  const all = parseCsvRows(text).filter((r) => r.some((c) => c.trim() !== ''));
+  const header = all[0] ?? [];
+  const rows = all.slice(1);
+  return { header, rows, source: detectSource(header), guess: guessColumns(header) };
+}
+
+// --- 2) 작업 생성 --------------------------------------------------------
+
+/** 확정된 열 매핑으로 작업을 생성. 루트/합계/날짜 없는 행은 제외. */
+export function buildSchedule(doc: CsvDoc, map: ColumnMap): ParsedSchedule {
+  const { header, rows, source } = doc;
   const warnings: string[] = [];
-  const rows = parseCsvRows(text).filter((r) => r.some((c) => c.trim() !== ''));
-  if (rows.length < 2) {
-    return { tasks: [], source: 'generic', start: NaN, end: NaN, warnings: ['빈 파일이거나 헤더만 있습니다.'] };
-  }
+  if (map.name < 0) warnings.push('이름 열이 지정되지 않았습니다.');
+  if (map.start < 0 || map.end < 0) warnings.push('시작/종료 열이 지정되지 않았습니다.');
 
-  const header = rows[0];
-  const source = detectSource(header);
-  const iName = findIndex(header, NAME_KEYS);
-  const iStart = findIndex(header, START_KEYS);
-  const iEnd = findIndex(header, END_KEYS);
-  const iType = findIndex(header, TYPE_KEYS);
-  const iId = findIndex(header, ID_KEYS);
-  const iExt = findIndex(header, EXTID_KEYS);
-  const iOutline = findIndex(header, OUTLINE_KEYS);
-
-  if (iName < 0) warnings.push('이름 컬럼을 찾지 못했습니다.');
-  if (iStart < 0 || iEnd < 0) warnings.push('시작/종료 날짜 컬럼을 찾지 못했습니다.');
-
-  // OutlineNumber 가 있으면 상위(합계) 작업을 판별: 다른 행이 "this." 로 시작하면
-  // 그 행은 자식을 가진 요약 작업이므로 시뮬레이션 대상에서 제외한다(Fuzor 루트 등).
+  // OutlineNumber 상위(합계) 작업 판별
   const summaryOutlines = new Set<string>();
-  if (iOutline >= 0) {
-    const outlines = rows.slice(1).map((c) => (c[iOutline] ?? '').trim()).filter(Boolean);
+  if (map.outline >= 0) {
+    const outlines = rows.map((c) => (c[map.outline] ?? '').trim()).filter(Boolean);
     for (const o of outlines) {
-      if (outlines.some((other) => other !== o && other.startsWith(o + '.'))) {
-        summaryOutlines.add(o);
-      }
+      if (outlines.some((other) => other !== o && other.startsWith(o + '.'))) summaryOutlines.add(o);
     }
   }
 
+  // id 열(있으면) — 작업 식별자에 사용. ColumnMap 엔 두지 않고 헤더에서 직접 찾는다.
+  const idCol = findIndex(header, ID_KEYS);
+
+  // 역할에 쓰인 열(사용자 값에서 제외)
+  const usedCols = new Set(Object.values(map).filter((i) => i >= 0));
+  if (idCol >= 0) usedCols.add(idCol);
+
   const tasks: ScheduleTask[] = [];
   let skipped = 0;
-  for (let r = 1; r < rows.length; r++) {
+  for (let r = 0; r < rows.length; r++) {
     const cols = rows[r];
-    const name = (iName >= 0 ? cols[iName] : '')?.trim() ?? '';
-    const start = parseDate(iStart >= 0 ? cols[iStart] ?? '' : '');
-    const end = parseDate(iEnd >= 0 ? cols[iEnd] ?? '' : '');
-    const outline = iOutline >= 0 ? (cols[iOutline] ?? '').trim() : '';
+    const name = (map.name >= 0 ? cols[map.name] : '')?.trim() ?? '';
+    const start = parseDate(map.start >= 0 ? cols[map.start] : '');
+    const end = parseDate(map.end >= 0 ? cols[map.end] : '');
+    const outline = map.outline >= 0 ? (cols[map.outline] ?? '').trim() : '';
 
-    // 루트/합계 행과 날짜 없는 행은 제외
-    if (
-      !name ||
-      /\(root\)/i.test(name) ||
-      summaryOutlines.has(outline) ||
-      Number.isNaN(start) ||
-      Number.isNaN(end)
-    ) {
+    if (!name || /\(root\)/i.test(name) || summaryOutlines.has(outline) || Number.isNaN(start) || Number.isNaN(end)) {
       skipped++;
       continue;
     }
 
-    const rawType = iType >= 0 ? (cols[iType] ?? '').trim() : '';
-    const externalId = iExt >= 0 ? (cols[iExt] ?? '').trim() || null : null;
-    const rawId = iId >= 0 ? (cols[iId] ?? '').trim() : '';
+    const rawType = map.type >= 0 ? (cols[map.type] ?? '').trim() : '';
+    const externalId = map.externalId >= 0 ? (cols[map.externalId] ?? '').trim() || null : null;
+    const rawId = idCol >= 0 ? (cols[idCol] ?? '').trim() : '';
+
+    const custom: Record<string, string> = {};
+    for (let c = 0; c < header.length; c++) {
+      if (usedCols.has(c)) continue;
+      const v = (cols[c] ?? '').trim();
+      const key = (header[c] ?? `열${c + 1}`).trim();
+      if (v && key) custom[key] = v;
+    }
 
     tasks.push({
       id: rawId || externalId || `task-${r}`,
@@ -223,19 +281,36 @@ export function parseSchedule(text: string): ParsedSchedule {
       type: normalizeKind(rawType),
       rawType,
       start,
-      end: Math.max(end, start), // 종료가 시작보다 이르면 보정
+      end: Math.max(end, start),
+      actualStart: nullIfNaN(parseDate(map.actualStart >= 0 ? cols[map.actualStart] : '')),
+      actualEnd: nullIfNaN(parseDate(map.actualEnd >= 0 ? cols[map.actualEnd] : '')),
+      cost: map.cost >= 0 ? parseCost(cols[map.cost]) : null,
       externalId,
+      custom,
     });
   }
 
-  if (skipped > 0) warnings.push(`${skipped}개 행을 건너뜀(루트/날짜 없음).`);
+  if (skipped > 0) warnings.push(`${skipped}개 행을 건너뜀(루트/합계/날짜 없음).`);
 
   const starts = tasks.map((t) => t.start);
   const ends = tasks.map((t) => t.end);
-  const start = starts.length ? Math.min(...starts) : NaN;
-  const end = ends.length ? Math.max(...ends) : NaN;
+  return {
+    tasks,
+    source,
+    start: starts.length ? Math.min(...starts) : NaN,
+    end: ends.length ? Math.max(...ends) : NaN,
+    warnings,
+  };
+}
 
-  return { tasks, source, start, end, warnings };
+function nullIfNaN(n: number): number | null {
+  return Number.isNaN(n) ? null : n;
+}
+
+/** 자동추정으로 한 번에 파싱(테스트/단순 경로). */
+export function parseSchedule(text: string): ParsedSchedule {
+  const doc = readCsv(new TextEncoder().encode(text));
+  return buildSchedule(doc, doc.guess);
 }
 
 // --- 표시 헬퍼 -----------------------------------------------------------
@@ -250,9 +325,8 @@ export const TASK_KIND_LABEL: Record<TaskKind, string> = {
 
 const DAY = 24 * 60 * 60 * 1000;
 
-/** epoch ms 를 "YYYY-MM-DD" 로 포맷(로컬 타임존). */
-export function formatDate(ms: number): string {
-  if (Number.isNaN(ms)) return '—';
+export function formatDate(ms: number | null): string {
+  if (ms == null || Number.isNaN(ms)) return '—';
   const d = new Date(ms);
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');

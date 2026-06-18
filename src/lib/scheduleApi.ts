@@ -129,7 +129,12 @@ export async function loadSchedule(scheduleId: string): Promise<LoadedSchedule> 
     rawType: (r.kind as string) ?? '',
     start: Date.parse(r.start_at as string),
     end: Date.parse(r.end_at as string),
+    // 0003 스키마는 계획 날짜/유형/외부ID 만 저장 → 나머지는 기본값(추후 컬럼 확장).
+    actualStart: null,
+    actualEnd: null,
+    cost: null,
     externalId: (r.external_id as string) ?? null,
+    custom: {},
   }));
 
   const taskIds = tasks.map((t) => t.id);

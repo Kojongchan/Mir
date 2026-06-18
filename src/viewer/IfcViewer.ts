@@ -34,11 +34,40 @@ export interface ElementInfo {
   name: string;
 }
 
-/** Per-element construction state for the 4D timeline. */
-export type BuildState = 'built' | 'active' | 'future' | 'removed';
+/**
+ * Per-element appearance state for the 4D timeline (Navisworks-style):
+ * hidden / normal(model) / ghost(not-yet) / active per task kind.
+ */
+export type CellState =
+  | 'hidden'
+  | 'normal'
+  | 'ghost'
+  | 'active-construct'
+  | 'active-demolish'
+  | 'active-temporary';
 
 /** What to do with not-yet-built elements: fully hide or show as a faint ghost. */
 export type FutureMode = 'hidden' | 'ghost';
+
+/** Tunable look of the 4D layer (per-kind active colors + opacity). */
+export interface AppearanceSettings {
+  /** opacity of in-progress (active) elements, 0..1 */
+  activeOpacity: number;
+  /** CSS hex colors for active states by task kind */
+  colorConstruct: string;
+  colorDemolish: string;
+  colorTemporary: string;
+  /** show not-yet-built elements as a faint ghost instead of hiding them */
+  ghostFuture: boolean;
+}
+
+export const DEFAULT_APPEARANCE: AppearanceSettings = {
+  activeOpacity: 0.5,
+  colorConstruct: '#22c55e', // green
+  colorDemolish: '#ef4444', // red
+  colorTemporary: '#eab308', // yellow
+  ghostFuture: false,
+};
 
 type SelectCallback = (props: ElementProperties | null) => void;
 
@@ -75,9 +104,9 @@ export class IfcViewer {
     THREE.Mesh,
     { saved: { material: THREE.Material | THREE.Material[]; visible: boolean }; key: string }
   >();
-  /** shared materials for 4D appearance (lazily reused, never per-mesh cloned) */
+  /** shared 4D materials, keyed by `${hex}|${opacity}` (never per-mesh cloned) */
+  private material4dCache = new Map<string, THREE.Material>();
   private ghostMaterial: THREE.Material | null = null;
-  private activeMaterial: THREE.Material | null = null;
   /** expressID name cache per model, populated on first catalog request */
   private nameCache = new Map<number, Map<number, string>>();
 
@@ -484,26 +513,24 @@ export class IfcViewer {
   }
 
   /**
-   * Apply per-element construction states for a point in time. Elements not in
-   * `states` are restored to their pre-4D look (so de-mapped/unmapped objects
-   * stay visible). Built → original look, active → orange tint, future → hidden
-   * or faint ghost per `futureMode`, removed (demolished) → always hidden.
+   * Apply per-element appearance states for a point in time, using `opts` for
+   * per-kind active colors / opacity / ghost mode. Elements not in `states` are
+   * restored to their pre-4D look (so unmapped objects stay visible).
    *
-   * Incremental: each mesh remembers its last applied appearance, so during
-   * playback only the meshes whose state actually changed are mutated — large
-   * models don't churn every tick.
+   * Incremental: each mesh remembers its last applied appearance (state + the
+   * settings signature), so during playback only changed meshes are mutated —
+   * large models don't churn every tick.
    */
   applyConstruction(
-    states: Iterable<{ modelID: number; expressID: number; state: BuildState }>,
-    futureMode: FutureMode,
+    states: Iterable<{ modelID: number; expressID: number; state: CellState }>,
+    opts: AppearanceSettings,
   ) {
-    // Resolve desired state per mesh.
-    const desired = new Map<THREE.Mesh, BuildState>();
+    const desired = new Map<THREE.Mesh, CellState>();
     for (const { modelID, expressID, state } of states) {
       for (const mesh of this.meshesFor(modelID, expressID)) desired.set(mesh, state);
     }
 
-    // Restore meshes that are no longer governed by the 4D layer.
+    // Restore meshes no longer governed by the 4D layer.
     for (const [mesh, rec] of this.constructionOverrides) {
       if (!desired.has(mesh)) {
         mesh.material = rec.saved.material;
@@ -512,42 +539,54 @@ export class IfcViewer {
       }
     }
 
-    // Apply/update governed meshes, skipping ones already in the target look.
+    const sig = `${opts.activeOpacity}|${opts.colorConstruct}|${opts.colorDemolish}|${opts.colorTemporary}|${opts.ghostFuture}`;
     for (const [mesh, state] of desired) {
       let rec = this.constructionOverrides.get(mesh);
       if (!rec) {
         rec = { saved: { material: mesh.material, visible: mesh.visible }, key: '' };
         this.constructionOverrides.set(mesh, rec);
       }
-      const key = `${state}|${futureMode}`;
+      const key = `${state}|${sig}`;
       if (rec.key === key) continue;
       rec.key = key;
-      this.applyMeshState(mesh, state, futureMode, rec.saved.material);
+      this.applyMeshState(mesh, state, opts, rec.saved.material);
     }
   }
 
   private applyMeshState(
     mesh: THREE.Mesh,
-    state: BuildState,
-    futureMode: FutureMode,
+    state: CellState,
+    opts: AppearanceSettings,
     original: THREE.Material | THREE.Material[],
   ) {
-    if (state === 'active') {
-      mesh.material = this.getActiveMaterial();
-      mesh.visible = true;
-    } else if (state === 'future') {
-      if (futureMode === 'ghost') {
-        mesh.material = this.getGhostMaterial();
-        mesh.visible = true;
-      } else {
+    switch (state) {
+      case 'hidden':
         mesh.visible = false;
-      }
-    } else if (state === 'removed') {
-      mesh.visible = false;
-    } else {
-      // built
-      mesh.material = original;
-      mesh.visible = true;
+        break;
+      case 'normal':
+        mesh.material = original;
+        mesh.visible = true;
+        break;
+      case 'ghost':
+        if (opts.ghostFuture) {
+          mesh.material = this.getGhostMaterial();
+          mesh.visible = true;
+        } else {
+          mesh.visible = false;
+        }
+        break;
+      case 'active-construct':
+        mesh.material = this.getColorMaterial(opts.colorConstruct, opts.activeOpacity);
+        mesh.visible = true;
+        break;
+      case 'active-demolish':
+        mesh.material = this.getColorMaterial(opts.colorDemolish, opts.activeOpacity);
+        mesh.visible = true;
+        break;
+      case 'active-temporary':
+        mesh.material = this.getColorMaterial(opts.colorTemporary, opts.activeOpacity);
+        mesh.visible = true;
+        break;
     }
   }
 
@@ -560,30 +599,33 @@ export class IfcViewer {
     this.constructionOverrides.clear();
   }
 
+  private getColorMaterial(hex: string, opacity: number): THREE.Material {
+    const key = `${hex}|${opacity}`;
+    let mat = this.material4dCache.get(key);
+    if (!mat) {
+      mat = new THREE.MeshLambertMaterial({
+        color: new THREE.Color(hex),
+        transparent: opacity < 1,
+        opacity,
+        depthWrite: opacity >= 1,
+        side: THREE.DoubleSide,
+      });
+      this.material4dCache.set(key, mat);
+    }
+    return mat;
+  }
+
   private getGhostMaterial(): THREE.Material {
     if (!this.ghostMaterial) {
       this.ghostMaterial = new THREE.MeshLambertMaterial({
         color: 0x6b7686,
         transparent: true,
-        opacity: 0.16,
+        opacity: 0.14,
         depthWrite: false,
         side: THREE.DoubleSide,
       });
     }
     return this.ghostMaterial;
-  }
-
-  private getActiveMaterial(): THREE.Material {
-    if (!this.activeMaterial) {
-      this.activeMaterial = new THREE.MeshLambertMaterial({
-        color: HIGHLIGHT_COLOR,
-        emissive: new THREE.Color(0x442200),
-        transparent: true,
-        opacity: 0.92,
-        side: THREE.DoubleSide,
-      });
-    }
-    return this.activeMaterial;
   }
 
   // --- helpers -----------------------------------------------------------
