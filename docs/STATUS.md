@@ -2,8 +2,8 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-18 · S11(UI)·S12(브랜딩)·**S13(문서·미디어 뷰어 1단계) 완료**
-+ 확장 기획창(`docs/PLANNING.md`) 신설·로드맵 재정렬. **다음=S14(CDE)**.
+**마지막 업데이트**: 2026-06-18 · S11(UI)·S12(브랜딩)·S13(문서·미디어 뷰어 1단계)
++ **S14(CDE 토대 + 파일 저장소 MVP) 완료**. **다음=S13/S14 배포 셋업 라이브 검증 · S15/S16 입력대기**.
 
 ## 지금까지 한 일
 - Phase 1: 3D IFC 뷰어 (Three.js + web-ifc) — 로드·탐색·선택·속성·표시제어.
@@ -227,9 +227,31 @@
   최종: S11 UI✅ · S12 브랜딩✅ · S13 문서뷰어✅ · **S14 CDE** · S15 NW · S16 장비 · S17 네이티브 · S18 스플리팅.
 - ✅ `ROADMAP.md` Phase 6~10 + 세션 S11~S18 반영(재정렬).
 
+## S14 결과 (branch: claude/busy-lovelace-cj8adq, 주제: cde-foundation) — Phase 7 CDE 토대 + 파일 저장소 MVP
+- ✅ **마이그레이션 `supabase/migrations/0005_cde.sql`**(추가형, 0001~0004 무수정): `folders`
+  (프로젝트 폴더트리, parent_id) · `file_versions`(파일당 다중 버전, `<project>/<file>/v<n>.<ext>`) ·
+  `activity_log`(감사 이력) 신설 + `files` 에 `folder_id`(on delete set null=문서 보존) ·
+  `status`(enum `file_status` WIP/Shared/Published/Archived, 기본 WIP) · `current_version_id`(FK) 추가.
+  RLS는 **기존 `is_member`/`is_admin` 재사용**(file_versions 는 부모 파일의 project로 멤버십 판정).
+  기존 S13 파일은 **v1 자동 백필** + `files_update` 정책 추가(상태/이동). `docs` 버킷 그대로 사용.
+- ✅ **데이터층 `src/lib/cde.ts`**: 폴더 CRUD, `listCdeFiles`(폴더별), `uploadNewFile`(v1 생성),
+  `uploadNewVersion`(v2+ 누적 + `files.storage_path` 최신 버전으로 재지정 → 뷰어는 항상 최신 열람),
+  `listVersions`, `setFileStatus`, `moveFile`, `deleteCdeFile`(모든 버전+오브젝트, admin RLS),
+  `signedUrl`, `logActivity`/`listActivity`, `buildFolderTree`.
+- ✅ **화면 `/project/:id/docs`**(`src/pages/DocumentManager.tsx`) + 컴포넌트
+  (`components/cde/FolderTree·StatusBadge·VersionHistory·ActivityLog`): 좌측 폴더트리(생성·이름변경·
+  빈 폴더 삭제) + 우측 문서 테이블(상태 뱃지·상태 변경 select·이력·새 버전·삭제[admin]·새 탭 미리보기),
+  브레드크럼, 활동 로그 모달. App.tsx 라우트 추가, 워크스페이스 상단 **`자료 관리`** 진입 버튼.
+- ✅ **워크스페이스 연동**: 사이드바 `문서·미디어` 업로드를 `cde.uploadNewFile`(루트=미분류, v1+활동)로
+  일원화 → 두 경로 모두 버전·활동이 일관. 기존 `/view/:fileId` 뷰어는 그대로(최신 버전 storage_path).
+- ✅ 검증: `npm run typecheck`·`npm run build` 통과(CSS 25.68kB). 라이브 눈 검증은 `0005` 적용 후 권장.
+- 📌 **배포 셋업 필요**: `0005_cde.sql` 실행(docs/OPERATIONS.md **0-C**). 새 버킷 불필요(0-B `docs` 재사용).
+- 📌 한계/다음: 활동 로그는 actor를 username으로 미해석(profiles RLS=본인/admin만) → 시간+동작+대상명
+  표시. 폴더 삭제는 빈 폴더만(클라 가드). 체크인/체크아웃·승인 워크플로우·자료전송(transmittal)·
+  태그/검색은 후속. 문서 폴더 이동 UI는 데이터층(`moveFile`)만 준비(버튼 미노출).
+
 ## 다음 할 일 (우선순위)
-1. **S14 — CDE 토대 + 파일 저장소**(사용자 다음 요청). 좌측 정보구조 재편 + `0005_cde.sql`
-   (PR #22 의 `files`·`docs` 버킷 위에 folders/versions/status/activity).
+1. **S14 배포 셋업 + 라이브 검증**(사용자): `0005_cde.sql` 실행 후 폴더·업로드·새 버전·상태·활동 확인.
 2. **S13 배포 셋업 완료**(사용자) — `docs` 버킷 + `0004_files.sql` 적용 후 **라이브 검증**:
    이미지·PDF·동영상·xlsx·docx 동작 확인. **품질 평가**: Word/Excel 충실도 보통, PPT/HWP 미지원.
    → **결정 D10(단기+장기)**. 후속: **S19(docx-preview 등 무료 클라 업그레이드)** /
@@ -249,10 +271,10 @@
   `COORDINATE_TO_ORIGIN` 의 첫 요소 회전 오염) 규명·수정. 실제 파일 눈 검증만 잔여.
 
 ## 다음 세션 인수인계 (한 줄)
-> S11(UI)·S12(브랜딩)·S13(문서·미디어 뷰어 1단계, PR #22 병합) 완료 + 기획창 `docs/PLANNING.md` 신설.
-> **세션번호**: S12=브랜딩 선점으로 CDE는 S12→**S14** 이동.
-> **다음 권장: S14 CDE 토대 + 파일 저장소** — 좌측 정보구조 재편, `0005_cde.sql`
-> (PR #22 의 `files`·`docs` 버킷 위에 folders/versions/status/activity). S15 NW·S16 장비는
-> 입력 대기, S17 네이티브는 APS 결정 후.
-> **S13 배포 셋업 잔여**: Supabase `docs` 버킷 생성 + `0004_files.sql` 실행(OPERATIONS 0-B).
+> S11(UI)·S12(브랜딩)·S13(문서뷰어)·**S14(CDE 토대 + 파일 저장소 MVP) 완료**(branch
+> `claude/busy-lovelace-cj8adq`). `0005_cde.sql`(folders/file_versions/activity_log + files 컬럼) +
+> `src/lib/cde.ts` + `/project/:id/docs`(`DocumentManager`) + `components/cde/*`. 워크스페이스
+> 상단 `자료 관리` 진입. **배포 셋업 잔여**: `0005_cde.sql` 실행(OPERATIONS **0-C**, 새 버킷 불필요).
+> **다음**: S14 라이브 검증 + S13 배포 셋업(OPERATIONS 0-B). S15 NW·S16 장비는 입력 대기,
+> S17 네이티브는 APS 결정 후. CDE 후속(체크인/락·승인 워크플로우·transmittal·검색)은 별도 세션.
 > (뷰어) S10: 교량 누움은 up축 기본 Y-up 고정으로 해결(override 콘솔 `__mirUpAxis('z')`).

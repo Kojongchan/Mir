@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { Login } from './pages/Login';
 import { ProjectSelect } from './pages/ProjectSelect';
 import { Workspace } from './pages/Workspace';
+import { DocumentManager } from './pages/DocumentManager';
 import { Admin } from './pages/Admin';
 import { FileViewer } from './pages/FileViewer';
 
@@ -53,6 +54,14 @@ export default function App() {
             element={
               <Protected>
                 <Workspace />
+              </Protected>
+            }
+          />
+          <Route
+            path="/project/:projectId/docs"
+            element={
+              <Protected>
+                <DocumentManager />
               </Protected>
             }
           />
