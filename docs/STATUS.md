@@ -171,9 +171,13 @@
   푸터(좌: `© Copyright Ssangyong E&C. All Rights Reserved` / 우:
   `Designed by Civil Engineering Technology Team, Smart Construction Part`).
 - ✅ 검증: `npm run typecheck`·`npm run build` 통과, `dist/brand/*` 포함 확인.
-- 📌 **도메인(코드 밖)**: 현재 `mir-kappa...`(Vercel 자동 서브도메인). `mir_smart`(언더스코어)
-  는 호스트명 규칙상 불가 → `mir-smart.ssyenc.com`(권장, ssyenc.com DNS+Vercel 도메인
-  연결 필요) 또는 별도 루트 `mir-smart-ssyenc.com`(해당 도메인 보유 시). Vercel 대시보드 설정.
+- ✅ **로그인 리파인(후속)**: 로고 크기 축소(lg→md), 부제 "스마트 건설기술 플랫폼" 굵게
+  강조, 우상단 쌍용 CI 제거(테마 토글 우상단 원위치), 푸터 고급화(상단 구분선·글래스 배경·
+  회사명 굵게·팀명 강조색, 문구 `Designed by Digital Construction Part`), 배경에 톤다운
+  블루프린트 그리드+블루 글로우(CSS, 외부 이미지 불필요). `ssyenc-ci.png` 는 미사용 보존.
+- 📌 **도메인(코드 밖)**: 현재 `mir-kappa...`(Vercel 자동 서브도메인). 사용자는 당분간
+  Vercel 주소 유지(`mir-smart...vercel.app` 로 프로젝트명 변경은 대시보드에서), `.com`(ssyenc)
+  은 사내 전산실 DNS 호스팅으로 추후 연결 예정. `mir_smart`(언더스코어)는 호스트명 불가.
 
 ## 다음 할 일 (우선순위)
 1. **S4 라이브 눈 검증** — 실 IFC 모델 + 샘플 CSV 임포트 → 순서배정 → 슬라이더/재생 확인.
