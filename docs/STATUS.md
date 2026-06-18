@@ -2,7 +2,8 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-18 · S11 UI/UX 리뉴얼(화이트+네이비 디자인 토큰) **완료** (typecheck/build 통과)
+**마지막 업데이트**: 2026-06-18 · S11(UI 리뉴얼)·S12(브랜딩 MIR SMART) **완료** + **확장
+기획창(`docs/PLANNING.md`) 신설** 및 로드맵 세션번호 재정렬(S13 문서뷰어 진행, **CDE→S14**).
 
 ## 지금까지 한 일
 - Phase 1: 3D IFC 뷰어 (Three.js + web-ifc) — 로드·탐색·선택·속성·표시제어.
@@ -183,26 +184,42 @@
   Vercel 주소 유지(`mir-smart...vercel.app` 로 프로젝트명 변경은 대시보드에서), `.com`(ssyenc)
   은 사내 전산실 DNS 호스팅으로 추후 연결 예정. `mir_smart`(언더스코어)는 호스트명 불가.
 
+## 확장 기획 (PLAN, branch: claude/eager-dirac-a0dacr) — 기획창 신설 + 로드맵 재정렬
+- ✅ **`docs/PLANNING.md` 신설**: 사용자가 준 7개 확장 요구를 가능여부 판단과 함께 정리.
+  - ① UI 리뉴얼(화이트+네이비) → **S11 ✅ 완료** (+ S12 브랜딩 MIR SMART ✅ 완료).
+  - ③ 문서·미디어 뷰어(새 탭): 이미지/PDF/mp4/xlsx/docx = 🟢, avi/pptx/doc/hwp = 🟡 서버변환
+    → **하이브리드** → **S13 🔄 진행(PR #22)**.
+  - ④ CDE(ISO 19650): 좌측 "모듈+폴더트리" 재편 + 파일 저장소(버전/이력, 상태
+    `WIP→Shared→Published→Archived`), 활동로그 → **S14(다음 권장)**. PR #22 가 만든 `files`
+    테이블·`docs` 버킷 위에 folders/versions/status/activity 를 얹는다(마이그레이션 `0005_cde.sql`).
+  - ⑤ Navisworks 기능군 → **S15 ⏳ 입력대기** · ⑥ 장비 시뮬(Rapier) → **S16 ⏳ 이미지대기**
+    · ⑦ 네이티브 BIM(rvt/nwd/dwg) 🔴 → **하이브리드 권장**(IFC=web-ifc 유지, 원본은 CDE 보관/
+    다운로드, 열람은 APS Viewer 또는 IFC export) → **S17 🔴 결정대기**.
+- 📌 **세션번호 재정렬**: main 이 S12 를 브랜딩으로 선점 → 기획안의 S12(CDE)를 **S14** 로 이동.
+  최종: S11 UI✅ · S12 브랜딩✅ · S13 문서뷰어🔄 · **S14 CDE** · S15 NW · S16 장비 · S17 네이티브 · S18 스플리팅.
+- ✅ `ROADMAP.md` Phase 6~10 + 세션 S11~S18 반영(재정렬). 본 변경은 **문서 전용**.
+
 ## 다음 할 일 (우선순위)
-1. **S4 라이브 눈 검증** — 실 IFC 모델 + 샘플 CSV 임포트 → 순서배정 → 슬라이더/재생 확인.
-2. **S2 라이브 검증** — Vercel env 설정 후 `/admin` 에서 사용자 생성→로그인→프로젝트 배정 확인.
-3. **S5 장비운용**(Rapier) 또는 S4 후속(철거 의미·정밀 매핑·DB 저장/로드).
-4. (선택) up축 기억을 브라우저 localStorage→DB(models 컬럼)로 승격해 사용자/기기 간 공유.
+1. **S14 — CDE 토대 + 파일 저장소**(사용자 다음 요청). 좌측 정보구조 재편 + `0005_cde.sql`
+   (PR #22 의 `files`·`docs` 버킷 위에 folders/versions/status/activity).
+2. **S13 문서·미디어 뷰어**(PR #22) 머지·라이브 검증(`docs` 버킷 생성 + `0004_files.sql` 적용).
+3. **사용자 입력 필요**: S15(Navisworks 기능 목록), S16(장비 샘플 이미지), S17(APS 도입·예산 결정).
+4. **S4 라이브 눈 검증** — 실 IFC 모델 + 샘플 CSV 임포트 → 순서배정 → 슬라이더/재생 확인.
+5. (선택) up축 기억을 브라우저 localStorage→DB(models 컬럼)로 승격해 사용자/기기 간 공유.
 
 ## 미해결 질문 / 메모
 - ✅ (해소) 사용자 생성 자동화 — S2 `api/admin.ts` service_role 함수 + `user_metadata.username`
   직접 주입으로 비-ASCII 보정 SQL 제거. 배포 환경 env 설정 후 라이브 검증만 남음.
 - ✅ (해소) 콘솔의 username(로그인 아이디) **변경** — S9 `api/admin.ts` `renameUser`
   액션으로 username+내부 이메일 동기 변경 추가(사용자 탭 `아이디 변경` 버튼).
-- 번들 크기 경고(three+web-ifc) → 추후 코드 스플리팅(별도 세션) 고려.
+- 번들 크기 경고(three+web-ifc) → **S18(성능·코드 스플리팅)**. S13(PR #22)에서 무거운
+  뷰어를 `React.lazy` 로 분리해 메인 번들 1006KB→650KB 로 **일부 선반영**됨.
 - ✅ (해소) **뷰어 백로그**: 일부 교량 IFC 누움 → S10 에서 원인(web-ifc
   `COORDINATE_TO_ORIGIN` 의 첫 요소 회전 오염) 규명·수정. 실제 파일 눈 검증만 잔여.
 
 ## 다음 세션 인수인계 (한 줄)
-> S11 완료: 화이트+네이비 디자인 토큰(`src/index.css`)+Pretendard+다크 토글
-> (`src/lib/theme.ts`,`ThemeToggle`), 설계는 `docs/DESIGN.md`. 새 색은 토큰으로만
-> 추가(light/dark 둘 다).
-> (뷰어) S10 마무리: 교량 누움은 up축 **기본 Y-up 고정**으로 해결(자동감지·토글 폐기,
-> override는 콘솔 `window.__mirUpAxis('z')`). 정통 Z-up IFC는 눕으니 후속으로
-> `bim-thesis-viewer` 방식 참고 또는 `models.up_axis` 저장 고려.
-> 다음 권장: 라이트/다크 눈 검증 또는 S5(장비운용, Rapier).
+> S11(UI 리뉴얼)·S12(브랜딩 MIR SMART) 완료 + 확장 기획창 `docs/PLANNING.md` 신설.
+> **세션번호 재정렬**: S13 문서뷰어(PR #22 진행), CDE는 S12→**S14**(S12 는 브랜딩이 선점).
+> 다음 권장: **S14 CDE 토대 + 파일 저장소**(좌측 정보구조 재편, `0005_cde.sql` — 0004 는
+> PR #22 files 가 선점). S15 NW·S16 장비는 입력 대기, S17 네이티브는 APS 결정 후.
+> (뷰어) S10 마무리: 교량 누움은 up축 **기본 Y-up 고정**으로 해결(override 콘솔 `__mirUpAxis('z')`).
