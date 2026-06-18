@@ -2,7 +2,7 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-18 · S4 4D 시공 시뮬레이션 1차 **구현 완료** (typecheck/build 통과)
+**마지막 업데이트**: 2026-06-18 · S11 UI/UX 리뉴얼(화이트+네이비 디자인 토큰) **완료** (typecheck/build 통과)
 
 ## 지금까지 한 일
 - Phase 1: 3D IFC 뷰어 (Three.js + web-ifc) — 로드·탐색·선택·속성·표시제어.
@@ -140,6 +140,22 @@
 - 📌 한계/다음: 정밀 GUID 매핑은 **기준 정립 후 보완**(사용자 결정으로 현재 미추가).
   DB 저장/로드 **라이브 검증**은 0003 적용 + 배포 환경 필요(원격 egress 제약).
 
+## S11 결과 (branch: claude/youthful-meitner-nu7ojt, 주제: ui-refresh) — Phase 6 UI/UX 리뉴얼
+- ✅ **디자인 토큰화**(`src/index.css`): 라이트 기본 + **네이비 구조색**(상단바·상태바·
+  관리자 헤더) + **블루 강조**. 모든 색을 `--*` 토큰으로만 참조하도록 재작성(레이아웃·
+  클래스명·반응형은 그대로 — S8 표현만 원칙). 4D 칩/간트 바의 하드코딩 색도 토큰화해
+  라이트/다크 양쪽에서 가독성 확보.
+- ✅ **다크모드 토글 보존**: `src/lib/theme.ts`(`<html data-theme>` + `localStorage('mir.theme')`,
+  기본 light) + `src/components/ThemeToggle.tsx`. `main.tsx` 에서 `initTheme()` 렌더 전
+  호출(깜빡임 방지). 토글을 로그인·프로젝트선택·워크스페이스 상단바·관리자 헤더에 배치.
+- ✅ **Pretendard** 도입(`index.css` 상단 jsDelivr CDN `@import`, 동적 서브셋) + 시스템 폴백.
+- ✅ **리스킨**: 로그인→프로젝트선택→워크스페이스→관리자→타임라인 순으로 표면/강조/그림자/
+  라운드/입력 focus 링/고스트 버튼 적용. 기능·데이터·마이그레이션 변경 **없음**.
+- ✅ **디자인 시스템 문서 분리**: `docs/DESIGN.md`(토큰 표·테마 규칙·타이포·인터랙션).
+- ✅ 검증: `npm run typecheck`·`npm run build` 통과(CSS 16.76kB). 라이트/다크 눈 검증은 사용자 화면 권장.
+- 📌 브랜치 메모: 요청은 `feature/ui-refresh` 였으나 원격 세션이 지정한 작업 브랜치
+  `claude/youthful-meitner-nu7ojt` 에서 작업·푸시 → main 으로 PR.
+
 ## 다음 할 일 (우선순위)
 1. **S4 라이브 눈 검증** — 실 IFC 모델 + 샘플 CSV 임포트 → 순서배정 → 슬라이더/재생 확인.
 2. **S2 라이브 검증** — Vercel env 설정 후 `/admin` 에서 사용자 생성→로그인→프로젝트 배정 확인.
@@ -156,6 +172,6 @@
   `COORDINATE_TO_ORIGIN` 의 첫 요소 회전 오염) 규명·수정. 실제 파일 눈 검증만 잔여.
 
 ## 다음 세션 인수인계 (한 줄)
-> S4(4D) 1차 완료: 하단 타임라인에서 Navisworks/Fuzor CSV 임포트→이름/순서 매핑→
-> 슬라이더·재생으로 시공 시뮬레이션. 샘플 `public/samples/`, 설계 `docs/4D.md`,
-> DB는 0003 설계만. 다음 권장: S4 라이브 눈 검증 또는 S5(장비운용, Rapier).
+> S11 완료: 화이트+네이비 디자인 토큰(`src/index.css`)+Pretendard+다크 토글
+> (`src/lib/theme.ts`,`ThemeToggle`), 설계는 `docs/DESIGN.md`. 새 색은 토큰으로만
+> 추가(light/dark 둘 다). 다음 권장: 라이트/다크 눈 검증 또는 S5(장비운용, Rapier).

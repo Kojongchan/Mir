@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { listProjects, type Project } from '../lib/api';
 import { useAuth } from '../auth/AuthProvider';
+import { ThemeToggle } from '../components/ThemeToggle';
 
 export function ProjectSelect() {
   const navigate = useNavigate();
@@ -26,6 +27,7 @@ export function ProjectSelect() {
             <p className="muted">{profile?.full_name ?? profile?.username} 님, 프로젝트를 선택하세요</p>
           </div>
           <div className="select-head-actions">
+            <ThemeToggle />
             {profile?.is_admin && (
               <button onClick={() => navigate('/admin')}>관리자 콘솔</button>
             )}
