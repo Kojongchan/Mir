@@ -2,7 +2,7 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-17 · S10 교량 IFC 누움 보정 **구현 완료** (typecheck/build 통과)
+**마지막 업데이트**: 2026-06-18 · S4 4D 시공 시뮬레이션 1차 **구현 완료** (typecheck/build 통과)
 
 ## 지금까지 한 일
 - Phase 1: 3D IFC 뷰어 (Three.js + web-ifc) — 로드·탐색·선택·속성·표시제어.
@@ -119,10 +119,29 @@
 - 📌 **잔여**: 이 Y-up 교량은 콘솔로 1회 세팅 필요(기본은 여전히 Z). 자동 세움이 필요하면
   (a) bbox 휴리스틱 자동감지 강화 또는 (b) UI 토글 복구 + DB(`models.up_axis`) 저장.
 
+## S4 결과 (branch: feature/4d-simulation → main PR) — 4D 시공 시뮬레이션 1차
+- ✅ 공정표 CSV 임포트: **Navisworks(한글·EUC-KR)·Fuzor(영문·UTF-8) 자동 인식**.
+  헤더 기반 파서(`src/lib/schedule.ts`) — 인코딩 자동 디코딩, `OutlineNumber` 상위
+  (합계) 작업 제외, 작업 유형(시공/철거/장비/임시) 정규화.
+- ✅ 일정↔객체 매핑(`src/lib/fourd.ts`): **이름 매핑** + **순서 자동배정**(이름이 안
+  맞으면 5% 미만 시 자동 폴백). 한 요소가 여러 작업이면 built>active>future 우선순위.
+- ✅ 뷰어 연동: `IfcViewer.getElementCatalog/applyConstruction/clearConstruction`
+  추가(기존 `setElementVisible` 위에서). 시공완료=원색, 진행중=주황, 미시공=숨김/반투명.
+- ✅ UI(`src/components/Timeline.tsx`): 하단 패널 — 임포트·4D토글·매핑·재생(속도)·
+  타임슬라이더·간트(현재시점 커서). Workspace 그리드에 `tl` 행 추가, 모델 교체 시 매핑 초기화.
+- ✅ DB **설계만**: `supabase/migrations/0003_schedule.sql`(schedules/schedule_tasks/
+  task_elements 다대다 + models 동일 RLS). 현재는 프론트 로컬상태+CSV로 동작.
+- ✅ 샘플: `public/samples/`(두 CSV + README), 설계 문서 `docs/4D.md`.
+- ✅ 검증: `npm run typecheck`·`npm run build` 통과 + 파서 두 샘플 파싱 확인
+  (Navisworks 21작업, Fuzor 59작업). 라이브 눈 검증(실 IFC+슬라이더)은 사용자 화면 권장.
+- 📌 한계/다음: 철거(demolish) 의미 미반영(현재 전부 "생성" 취급), 정밀 매핑(GUID↔
+  GlobalId), 수동 매핑 UI, DB 저장/로드, 대형 모델 증분 갱신 — 후속 세션.
+
 ## 다음 할 일 (우선순위)
-1. **S2 라이브 검증** — Vercel env 설정 후 `/admin` 에서 사용자 생성→로그인→프로젝트 배정 확인.
-2. **S4 4D 시뮬레이션**(뷰어 중심: 일정↔객체, 타임슬라이더).
-3. (선택) up축 기억을 브라우저 localStorage→DB(models 컬럼)로 승격해 사용자/기기 간 공유.
+1. **S4 라이브 눈 검증** — 실 IFC 모델 + 샘플 CSV 임포트 → 순서배정 → 슬라이더/재생 확인.
+2. **S2 라이브 검증** — Vercel env 설정 후 `/admin` 에서 사용자 생성→로그인→프로젝트 배정 확인.
+3. **S5 장비운용**(Rapier) 또는 S4 후속(철거 의미·정밀 매핑·DB 저장/로드).
+4. (선택) up축 기억을 브라우저 localStorage→DB(models 컬럼)로 승격해 사용자/기기 간 공유.
 
 ## 미해결 질문 / 메모
 - ✅ (해소) 사용자 생성 자동화 — S2 `api/admin.ts` service_role 함수 + `user_metadata.username`
@@ -134,6 +153,6 @@
   `COORDINATE_TO_ORIGIN` 의 첫 요소 회전 오염) 규명·수정. 실제 파일 눈 검증만 잔여.
 
 ## 다음 세션 인수인계 (한 줄)
-> S10 완료(라이브 확정): "대상교량 A"는 Y-up IFC. up축 모델단위 적용 + 콘솔
-> `window.__mirUpAxis('y')`(모델별 localStorage 기억)로 해결, UI 토글은 요청으로 제거.
-> 다음 권장: S4(4D 시뮬레이션, 뷰어 중심) — 새 세션/브랜치에서 시작.
+> S4(4D) 1차 완료: 하단 타임라인에서 Navisworks/Fuzor CSV 임포트→이름/순서 매핑→
+> 슬라이더·재생으로 시공 시뮬레이션. 샘플 `public/samples/`, 설계 `docs/4D.md`,
+> DB는 0003 설계만. 다음 권장: S4 라이브 눈 검증 또는 S5(장비운용, Rapier).
