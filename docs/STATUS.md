@@ -2,8 +2,8 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-18 · S11(UI 리뉴얼)·S12(브랜딩 MIR SMART) **완료** + **확장
-기획창(`docs/PLANNING.md`) 신설** 및 로드맵 세션번호 재정렬(S13 문서뷰어 진행, **CDE→S14**).
+**마지막 업데이트**: 2026-06-18 · S11(UI)·S12(브랜딩)·**S13(문서·미디어 뷰어 1단계) 완료**
++ 확장 기획창(`docs/PLANNING.md`) 신설·로드맵 재정렬. **다음=S14(CDE)**.
 
 ## 지금까지 한 일
 - Phase 1: 3D IFC 뷰어 (Three.js + web-ifc) — 로드·탐색·선택·속성·표시제어.
@@ -184,11 +184,39 @@
   Vercel 주소 유지(`mir-smart...vercel.app` 로 프로젝트명 변경은 대시보드에서), `.com`(ssyenc)
   은 사내 전산실 DNS 호스팅으로 추후 연결 예정. `mir_smart`(언더스코어)는 호스트명 불가.
 
+## S13 결과 (branch: claude/magical-cray-dh6tb5, 주제: doc-viewers) — Phase 8 문서·미디어 뷰어 1단계
+- ✅ **새 라우트 `/view/:fileId`**(`src/pages/FileViewer.tsx`) — 저장소 파일을 **새 탭**
+  으로 열어 미리보기. 파일 레코드 조회(RLS) → **짧은 만료(10분) 서명 URL** 발급 →
+  mime/확장자로 뷰어 분기(`src/lib/files.ts` `viewerKindFor`). App.tsx 에 `Protected` 라우트 추가.
+- ✅ **데이터/스토리지**: 마이그레이션 `supabase/migrations/0004_files.sql` — `public.files`
+  테이블 + RLS(멤버 select/insert, admin delete) + Storage **`docs`** 버킷 정책(모델과
+  동일한 `<project_id>/<file_id>.<ext>` 경로 규칙 → 멤버만 접근). `src/lib/files.ts`:
+  `listFiles/getFile/uploadFile/deleteFile/signedFileUrl` + 카테고리 판별·sizeLabel.
+- ✅ **뷰어(웹 단독·서버 0원)** `src/components/viewers/`: 이미지(native `<img>`),
+  동영상(native `<video>`), 오디오(native `<audio>`), **PDF=PDF.js**(페이지별 canvas
+  렌더, `pdf.worker.min.mjs?url`), **Excel=SheetJS**(xlsx/xls/csv → 시트 탭 + HTML 테이블),
+  **Word=mammoth.js**(docx → HTML), 텍스트(txt/md/json…). 미지원(avi/pptx/doc/hwp 등)은
+  **다운로드 폴백**(`DownloadFallback`)으로 막다른 길 없음.
+- ✅ **워크스페이스 연동**(`src/pages/Workspace.tsx`): 사이드바에 **`문서 · 미디어`** 섹션
+  (업로드 + 목록), 항목 클릭 시 `window.open('/view/:id', '_blank')` 새 탭.
+- ✅ **코드 스플리팅**: 무거운 뷰어(PDF.js/SheetJS/mammoth)를 `React.lazy`로 분리 →
+  메인 번들 gzip **1006KB→650KB**. (PdfViewer/SheetViewer/DocxViewer 별도 청크 + pdf.worker)
+- ✅ 검증: `npm run typecheck`·`npm run build` 통과. 라이브 눈 검증은 `docs` 버킷 생성 +
+  0004 적용 후 사용자 화면 권장(원격 egress 제약).
+- 📌 **배포 셋업 필요**: `0004_files.sql` 실행 + Supabase **`docs`(Private) 버킷 생성**.
+  (docs/OPERATIONS.md 0-B 참고)
+- ⚠️ **SheetJS 보안 한계**: npm `xlsx`는 0.18.5(prototype pollution·ReDoS advisory)만 제공,
+  패치판(≥0.20.x)은 `cdn.sheetjs.com`에서만 배포되는데 **네트워크 정책 차단**. 파일은
+  프로젝트 멤버만 업로드 가능(RLS)해 노출이 제한되지만, 정책 허용 시 CDN 빌드로 교체 권장.
+- 🔜 **2단계(별도 세션)**: 서버 변환 파이프라인(avi→mp4, pptx/doc/hwp→PDF) — 분리.
+- 📌 브랜치 메모: 작업 브랜치 `claude/magical-cray-dh6tb5`(원격 세션 지정)에서 작업·푸시.
+  요청 주제명은 `feature/doc-viewers`. **PR #22 main 병합 완료.**
+
 ## 확장 기획 (PLAN, branch: claude/eager-dirac-a0dacr) — 기획창 신설 + 로드맵 재정렬
 - ✅ **`docs/PLANNING.md` 신설**: 사용자가 준 7개 확장 요구를 가능여부 판단과 함께 정리.
   - ① UI 리뉴얼(화이트+네이비) → **S11 ✅ 완료** (+ S12 브랜딩 MIR SMART ✅ 완료).
   - ③ 문서·미디어 뷰어(새 탭): 이미지/PDF/mp4/xlsx/docx = 🟢, avi/pptx/doc/hwp = 🟡 서버변환
-    → **하이브리드** → **S13 🔄 진행(PR #22)**.
+    → **하이브리드** → **S13 ✅ 완료(PR #22 병합, 1단계)**.
   - ④ CDE(ISO 19650): 좌측 "모듈+폴더트리" 재편 + 파일 저장소(버전/이력, 상태
     `WIP→Shared→Published→Archived`), 활동로그 → **S14(다음 권장)**. PR #22 가 만든 `files`
     테이블·`docs` 버킷 위에 folders/versions/status/activity 를 얹는다(마이그레이션 `0005_cde.sql`).
@@ -196,13 +224,14 @@
     · ⑦ 네이티브 BIM(rvt/nwd/dwg) 🔴 → **하이브리드 권장**(IFC=web-ifc 유지, 원본은 CDE 보관/
     다운로드, 열람은 APS Viewer 또는 IFC export) → **S17 🔴 결정대기**.
 - 📌 **세션번호 재정렬**: main 이 S12 를 브랜딩으로 선점 → 기획안의 S12(CDE)를 **S14** 로 이동.
-  최종: S11 UI✅ · S12 브랜딩✅ · S13 문서뷰어🔄 · **S14 CDE** · S15 NW · S16 장비 · S17 네이티브 · S18 스플리팅.
-- ✅ `ROADMAP.md` Phase 6~10 + 세션 S11~S18 반영(재정렬). 본 변경은 **문서 전용**.
+  최종: S11 UI✅ · S12 브랜딩✅ · S13 문서뷰어✅ · **S14 CDE** · S15 NW · S16 장비 · S17 네이티브 · S18 스플리팅.
+- ✅ `ROADMAP.md` Phase 6~10 + 세션 S11~S18 반영(재정렬).
 
 ## 다음 할 일 (우선순위)
 1. **S14 — CDE 토대 + 파일 저장소**(사용자 다음 요청). 좌측 정보구조 재편 + `0005_cde.sql`
    (PR #22 의 `files`·`docs` 버킷 위에 folders/versions/status/activity).
-2. **S13 문서·미디어 뷰어**(PR #22) 머지·라이브 검증(`docs` 버킷 생성 + `0004_files.sql` 적용).
+2. **S13 배포 셋업**(PR #22 병합됨): Supabase `docs`(Private) 버킷 생성 + `0004_files.sql`
+   실행 → 새 탭 뷰어 라이브 검증(OPERATIONS 0-B). SheetJS CDN 교체는 네트워크 정책 허용 시.
 3. **사용자 입력 필요**: S15(Navisworks 기능 목록), S16(장비 샘플 이미지), S17(APS 도입·예산 결정).
 4. **S4 라이브 눈 검증** — 실 IFC 모델 + 샘플 CSV 임포트 → 순서배정 → 슬라이더/재생 확인.
 5. (선택) up축 기억을 브라우저 localStorage→DB(models 컬럼)로 승격해 사용자/기기 간 공유.
@@ -218,8 +247,10 @@
   `COORDINATE_TO_ORIGIN` 의 첫 요소 회전 오염) 규명·수정. 실제 파일 눈 검증만 잔여.
 
 ## 다음 세션 인수인계 (한 줄)
-> S11(UI 리뉴얼)·S12(브랜딩 MIR SMART) 완료 + 확장 기획창 `docs/PLANNING.md` 신설.
-> **세션번호 재정렬**: S13 문서뷰어(PR #22 진행), CDE는 S12→**S14**(S12 는 브랜딩이 선점).
-> 다음 권장: **S14 CDE 토대 + 파일 저장소**(좌측 정보구조 재편, `0005_cde.sql` — 0004 는
-> PR #22 files 가 선점). S15 NW·S16 장비는 입력 대기, S17 네이티브는 APS 결정 후.
-> (뷰어) S10 마무리: 교량 누움은 up축 **기본 Y-up 고정**으로 해결(override 콘솔 `__mirUpAxis('z')`).
+> S11(UI)·S12(브랜딩)·S13(문서·미디어 뷰어 1단계, PR #22 병합) 완료 + 기획창 `docs/PLANNING.md` 신설.
+> **세션번호**: S12=브랜딩 선점으로 CDE는 S12→**S14** 이동.
+> **다음 권장: S14 CDE 토대 + 파일 저장소** — 좌측 정보구조 재편, `0005_cde.sql`
+> (PR #22 의 `files`·`docs` 버킷 위에 folders/versions/status/activity). S15 NW·S16 장비는
+> 입력 대기, S17 네이티브는 APS 결정 후.
+> **S13 배포 셋업 잔여**: Supabase `docs` 버킷 생성 + `0004_files.sql` 실행(OPERATIONS 0-B).
+> (뷰어) S10: 교량 누움은 up축 기본 Y-up 고정으로 해결(override 콘솔 `__mirUpAxis('z')`).

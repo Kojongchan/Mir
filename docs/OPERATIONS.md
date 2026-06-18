@@ -24,6 +24,25 @@
   환경(Vercel)** 또는 로컬 `vercel dev`에서 동작. 일반 `npm run dev`(vite)에서는 사용자
   관리만 404가 나며, 프로젝트·멤버 관리는 정상 동작합니다.
 
+## 0-B. 문서·미디어 통합 뷰어 (S13, Phase 8)
+- **사전 1회 셋업**:
+  1. `supabase/migrations/0004_files.sql` 실행 → `public.files` 테이블 + RLS +
+     Storage `docs` 버킷 정책 추가(추가형, 멱등).
+  2. Supabase 대시보드 **Storage → New bucket** 으로 **`docs`** 버킷을 **Private**
+     로 생성(0004 의 정책은 버킷이 있어야 적용됨; 또는 0004 안 주석의 insert 해제).
+- **동작**: 워크스페이스 좌측 사이드바 **`문서 · 미디어`** 에서 파일 업로드 → 목록
+  클릭 시 **새 탭 `/view/:fileId`** 로 미리보기. 경로 규칙은 모델과 동일
+  (`<project_id>/<file_id>.<ext>`)이라 **프로젝트 멤버(RLS)** 만 접근 가능하며,
+  열람 시 **짧은 만료(10분) 서명 URL** 을 발급합니다.
+- **지원 포맷(1단계·웹 단독·서버 0원)**: 이미지(jpg/png/webp/gif/bmp/svg)·동영상
+  (mp4/webm/ogg)·오디오·PDF(PDF.js)·Excel(xlsx/xls/csv, SheetJS)·Word(docx,
+  mammoth)·텍스트(txt/md/json/…). 미지원(avi/pptx/doc/hwp 등)은 **다운로드 폴백**.
+- ⚠️ **SheetJS 보안 메모**: npm 레지스트리가 주는 `xlsx`는 0.18.5(취약점 advisory 있음)
+  뿐이고, 패치판(≥0.20.x)은 `cdn.sheetjs.com` 에서만 배포되는데 현재 네트워크 정책이
+  차단합니다. 파일은 프로젝트 멤버만 올릴 수 있어 노출이 제한되지만, 정책이 허용되면
+  CDN 빌드로 교체 권장. (`src/components/viewers/SheetViewer.tsx` 주석 참고)
+- 🔜 **2단계(별도 세션)**: 서버 변환 파이프라인(avi→mp4, pptx/doc/hwp→PDF 등).
+
 ---
 
 > 아래는 대시보드 **수동 백업 절차**입니다. 작업 위치: Authentication(계정) /

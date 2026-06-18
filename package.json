@@ -15,11 +15,14 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
+    "mammoth": "^1.12.0",
+    "pdfjs-dist": "^4.10.38",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.17.0",
     "three": "^0.171.0",
     "web-ifc": "0.0.68",
+    "xlsx": "^0.18.5",
     "zustand": "^4.5.5"
   },
   "devDependencies": {
