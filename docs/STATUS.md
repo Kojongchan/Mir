@@ -171,10 +171,13 @@
   푸터(좌: `© Copyright Ssangyong E&C. All Rights Reserved` / 우:
   `Designed by Civil Engineering Technology Team, Smart Construction Part`).
 - ✅ 검증: `npm run typecheck`·`npm run build` 통과, `dist/brand/*` 포함 확인.
-- ✅ **로그인 리파인(후속)**: 로고 크기 축소(lg→md), 부제 "스마트 건설기술 플랫폼" 굵게
-  강조, 우상단 쌍용 CI 제거(테마 토글 우상단 원위치), 푸터 고급화(상단 구분선·글래스 배경·
-  회사명 굵게·팀명 강조색, 문구 `Designed by Digital Construction Part`), 배경에 톤다운
-  블루프린트 그리드+블루 글로우(CSS, 외부 이미지 불필요). `ssyenc-ci.png` 는 미사용 보존.
+- ✅ **로그인 리파인(후속)**: 부제 "스마트 건설기술 플랫폼" 굵게 강조, 우상단 쌍용 CI
+  제거(테마 토글 우상단 원위치), 푸터 고급화(상단 구분선·글래스 배경·회사명 굵게·팀명
+  강조색), 배경에 톤다운 블루프린트 그리드+블루 글로우(CSS, 외부 이미지 불필요).
+  `ssyenc-ci.png` 는 미사용 보존.
+- ✅ **로고/카드 마무리**: 로그인 로고 lg 복귀 + MIR SMART 글자를 마크 높이에 맞춰 확대
+  (lg word 52px), 카드 폭 460px 로 넓혀 부제 한 줄. 푸터 최종 문구 확정
+  `Designed by Civil Engineering Technology Team, Smart Construction Part`.
 - 📌 **도메인(코드 밖)**: 현재 `mir-kappa...`(Vercel 자동 서브도메인). 사용자는 당분간
   Vercel 주소 유지(`mir-smart...vercel.app` 로 프로젝트명 변경은 대시보드에서), `.com`(ssyenc)
   은 사내 전산실 DNS 호스팅으로 추후 연결 예정. `mir_smart`(언더스코어)는 호스트명 불가.
