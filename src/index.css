@@ -299,11 +299,11 @@ body {
 
 .auth-card {
   width: 100%;
-  max-width: 460px;
+  max-width: 384px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 28px;
+  gap: 16px;
+  padding: 40px 28px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -352,15 +352,15 @@ body {
 .brand-smart {
   color: var(--brand-red);
 }
-/* 로고(SS 마크) 높이에 맞춰 MIR SMART 글자를 키움 — 대문자 높이 ≈ 마크 높이 */
+/* 로고(SS 마크) 높이에 맞춰 MIR SMART 글자 크기 조절 — 대문자 높이 ≈ 마크 높이 */
 .brand-logo-lg {
-  gap: 10px;
+  gap: 8px;
 }
 .brand-logo-lg .brand-word {
-  font-size: 52px;
+  font-size: 36px;
 }
 .brand-logo-lg .brand-mark-img {
-  height: 40px;
+  height: 28px;
 }
 .brand-logo-md .brand-word {
   font-size: 20px;
