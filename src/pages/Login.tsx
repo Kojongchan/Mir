@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 import { isSupabaseConfigured } from '../lib/supabase';
+import { ThemeToggle } from '../components/ThemeToggle';
+import { BrandLogo } from '../components/BrandLogo';
 
 export function Login() {
   const { signIn } = useAuth();
@@ -27,9 +29,14 @@ export function Login() {
 
   return (
     <div className="auth-screen">
+      <div className="auth-toggle">
+        <ThemeToggle />
+      </div>
       <form className="auth-card" onSubmit={onSubmit}>
-        <div className="auth-brand">MIR_VDC</div>
-        <p className="muted auth-sub">Virtual Design &amp; Construction</p>
+        <div className="auth-brand"><BrandLogo size="lg" /></div>
+        <p className="auth-sub">
+          쌍용건설 <strong>스마트 건설기술 플랫폼</strong>에 오신 것을 환영합니다.
+        </p>
 
         {!isSupabaseConfigured && (
           <div className="auth-warn">
@@ -63,6 +70,18 @@ export function Login() {
           {busy ? '로그인 중…' : '로그인'}
         </button>
       </form>
+
+      <footer className="auth-footer">
+        <span className="footer-copy">
+          © Copyright <strong>Ssangyong E&amp;C</strong>. All Rights Reserved
+        </span>
+        <span className="footer-credit">
+          Designed by{' '}
+          <span className="footer-team">
+            Civil Engineering Technology Team, Smart Construction Part
+          </span>
+        </span>
+      </footer>
     </div>
   );
 }

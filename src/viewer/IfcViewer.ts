@@ -27,6 +27,48 @@ interface LoadedModel {
 
 export type UpAxis = 'x' | 'y' | 'z';
 
+/** Minimal element descriptor used by the 4D layer to map schedule ↔ objects. */
+export interface ElementInfo {
+  modelID: number;
+  expressID: number;
+  name: string;
+}
+
+/**
+ * Per-element appearance state for the 4D timeline (Navisworks-style):
+ * hidden / normal(model) / ghost(not-yet) / active per task kind.
+ */
+export type CellState =
+  | 'hidden'
+  | 'normal'
+  | 'ghost'
+  | 'active-construct'
+  | 'active-demolish'
+  | 'active-temporary';
+
+/** What to do with not-yet-built elements: fully hide or show as a faint ghost. */
+export type FutureMode = 'hidden' | 'ghost';
+
+/** Tunable look of the 4D layer (per-kind active colors + opacity). */
+export interface AppearanceSettings {
+  /** opacity of in-progress (active) elements, 0..1 */
+  activeOpacity: number;
+  /** CSS hex colors for active states by task kind */
+  colorConstruct: string;
+  colorDemolish: string;
+  colorTemporary: string;
+  /** show not-yet-built elements as a faint ghost instead of hiding them */
+  ghostFuture: boolean;
+}
+
+export const DEFAULT_APPEARANCE: AppearanceSettings = {
+  activeOpacity: 0.5,
+  colorConstruct: '#22c55e', // green
+  colorDemolish: '#ef4444', // red
+  colorTemporary: '#eab308', // yellow
+  ghostFuture: false,
+};
+
 type SelectCallback = (props: ElementProperties | null) => void;
 
 const HIGHLIGHT_COLOR = new THREE.Color(0xffaa00);
@@ -54,6 +96,20 @@ export class IfcViewer {
   /** material clones swapped in for the current selection, kept so we can restore */
   private highlighted: { mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] }[] = [];
 
+  /**
+   * Per-mesh 4D record: the pre-4D {material, visible} to restore, plus the
+   * last applied appearance key so playback only mutates meshes that changed.
+   */
+  private constructionOverrides = new Map<
+    THREE.Mesh,
+    { saved: { material: THREE.Material | THREE.Material[]; visible: boolean }; key: string }
+  >();
+  /** shared 4D materials, keyed by `${hex}|${opacity}` (never per-mesh cloned) */
+  private material4dCache = new Map<string, THREE.Material>();
+  private ghostMaterial: THREE.Material | null = null;
+  /** expressID name cache per model, populated on first catalog request */
+  private nameCache = new Map<number, Map<number, string>>();
+
   private onSelect: SelectCallback = () => {};
   private initialized = false;
   private disposed = false;
@@ -61,7 +117,7 @@ export class IfcViewer {
   constructor(container: HTMLElement) {
     this.container = container;
 
-    this.scene.background = new THREE.Color(0x1e2430);
+    this.scene.background = new THREE.Color(0xffffff);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(window.devicePixelRatio);
@@ -100,6 +156,11 @@ export class IfcViewer {
 
   get modelCount() {
     return this.models.length;
+  }
+
+  /** Runtime web-ifc modelID of the most recently loaded model (null if none). */
+  get primaryModelID(): number | null {
+    return this.models.length ? this.models[this.models.length - 1].modelID : null;
   }
 
   // --- IFC loading -------------------------------------------------------
@@ -406,6 +467,156 @@ export class IfcViewer {
     if (!box.isEmpty()) this.frameBox(box);
   }
 
+  // --- 4D construction layer ---------------------------------------------
+
+  /**
+   * Catalog of every loaded element with its IFC Name, used by the 4D layer to
+   * map schedule tasks to objects. Names are read once per model and cached.
+   */
+  getElementCatalog(): ElementInfo[] {
+    const out: ElementInfo[] = [];
+    for (const model of this.models) {
+      let cache = this.nameCache.get(model.modelID);
+      if (!cache) {
+        cache = new Map<number, string>();
+        for (const expressID of model.elementMeshes.keys()) {
+          cache.set(expressID, this.readName(model.modelID, expressID));
+        }
+        this.nameCache.set(model.modelID, cache);
+      }
+      for (const [expressID, name] of cache) {
+        out.push({ modelID: model.modelID, expressID, name });
+      }
+    }
+    return out;
+  }
+
+  private readName(modelID: number, expressID: number): string {
+    try {
+      const line = this.ifcAPI.GetLine(modelID, expressID, false) as Record<string, any>;
+      const n = line?.Name?.value;
+      return typeof n === 'string' ? n : '';
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * Apply per-element appearance states for a point in time, using `opts` for
+   * per-kind active colors / opacity / ghost mode. Elements not in `states` are
+   * restored to their pre-4D look (so unmapped objects stay visible).
+   *
+   * Incremental: each mesh remembers its last applied appearance (state + the
+   * settings signature), so during playback only changed meshes are mutated —
+   * large models don't churn every tick.
+   */
+  applyConstruction(
+    states: Iterable<{ modelID: number; expressID: number; state: CellState }>,
+    opts: AppearanceSettings,
+  ) {
+    const desired = new Map<THREE.Mesh, CellState>();
+    for (const { modelID, expressID, state } of states) {
+      for (const mesh of this.meshesFor(modelID, expressID)) desired.set(mesh, state);
+    }
+
+    // Restore meshes no longer governed by the 4D layer.
+    for (const [mesh, rec] of this.constructionOverrides) {
+      if (!desired.has(mesh)) {
+        mesh.material = rec.saved.material;
+        mesh.visible = rec.saved.visible;
+        this.constructionOverrides.delete(mesh);
+      }
+    }
+
+    const sig = `${opts.activeOpacity}|${opts.colorConstruct}|${opts.colorDemolish}|${opts.colorTemporary}|${opts.ghostFuture}`;
+    for (const [mesh, state] of desired) {
+      let rec = this.constructionOverrides.get(mesh);
+      if (!rec) {
+        rec = { saved: { material: mesh.material, visible: mesh.visible }, key: '' };
+        this.constructionOverrides.set(mesh, rec);
+      }
+      const key = `${state}|${sig}`;
+      if (rec.key === key) continue;
+      rec.key = key;
+      this.applyMeshState(mesh, state, opts, rec.saved.material);
+    }
+  }
+
+  private applyMeshState(
+    mesh: THREE.Mesh,
+    state: CellState,
+    opts: AppearanceSettings,
+    original: THREE.Material | THREE.Material[],
+  ) {
+    switch (state) {
+      case 'hidden':
+        mesh.visible = false;
+        break;
+      case 'normal':
+        mesh.material = original;
+        mesh.visible = true;
+        break;
+      case 'ghost':
+        if (opts.ghostFuture) {
+          mesh.material = this.getGhostMaterial();
+          mesh.visible = true;
+        } else {
+          mesh.visible = false;
+        }
+        break;
+      case 'active-construct':
+        mesh.material = this.getColorMaterial(opts.colorConstruct, opts.activeOpacity);
+        mesh.visible = true;
+        break;
+      case 'active-demolish':
+        mesh.material = this.getColorMaterial(opts.colorDemolish, opts.activeOpacity);
+        mesh.visible = true;
+        break;
+      case 'active-temporary':
+        mesh.material = this.getColorMaterial(opts.colorTemporary, opts.activeOpacity);
+        mesh.visible = true;
+        break;
+    }
+  }
+
+  /** Restore every mesh the 4D layer touched to its pre-4D material/visibility. */
+  clearConstruction() {
+    for (const [mesh, rec] of this.constructionOverrides) {
+      mesh.material = rec.saved.material;
+      mesh.visible = rec.saved.visible;
+    }
+    this.constructionOverrides.clear();
+  }
+
+  private getColorMaterial(hex: string, opacity: number): THREE.Material {
+    const key = `${hex}|${opacity}`;
+    let mat = this.material4dCache.get(key);
+    if (!mat) {
+      mat = new THREE.MeshLambertMaterial({
+        color: new THREE.Color(hex),
+        transparent: opacity < 1,
+        opacity,
+        depthWrite: opacity >= 1,
+        side: THREE.DoubleSide,
+      });
+      this.material4dCache.set(key, mat);
+    }
+    return mat;
+  }
+
+  private getGhostMaterial(): THREE.Material {
+    if (!this.ghostMaterial) {
+      this.ghostMaterial = new THREE.MeshLambertMaterial({
+        color: 0x6b7686,
+        transparent: true,
+        opacity: 0.14,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+    }
+    return this.ghostMaterial;
+  }
+
   // --- helpers -----------------------------------------------------------
 
   private meshesFor(modelID: number, expressID: number): THREE.Mesh[] {
@@ -448,7 +659,8 @@ export class IfcViewer {
     dir.position.set(10, 20, 10);
     this.scene.add(dir);
 
-    const grid = new THREE.GridHelper(100, 100, 0x445566, 0x2a3340);
+    // 흰색 배경에서 보이도록 밝은 회색 그리드(중심선은 약간 진하게).
+    const grid = new THREE.GridHelper(100, 100, 0x9aa5b5, 0xd7dde6);
     this.scene.add(grid);
   }
 

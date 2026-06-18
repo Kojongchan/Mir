@@ -2,7 +2,7 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-17 · S10 교량 IFC 누움 보정 **구현 완료** (typecheck/build 통과)
+**마지막 업데이트**: 2026-06-18 · S11 UI/UX 리뉴얼(화이트+네이비 디자인 토큰) **완료** (typecheck/build 통과)
 
 ## 지금까지 한 일
 - Phase 1: 3D IFC 뷰어 (Three.js + web-ifc) — 로드·탐색·선택·속성·표시제어.
@@ -120,10 +120,74 @@
   맞추면 양쪽(Z/Y) 모두 정확히 처리 가능 — 세션 권한이 mir로 한정돼 직접 못 읽음(코드
   공유 시 반영). DB(`models.up_axis`) 저장으로 승격도 후보.
 
+## S4 결과 (branch: feature/4d-simulation → main PR) — 4D 시공 시뮬레이션 1차
+- ✅ 공정표 CSV 임포트: **Navisworks(한글·EUC-KR)·Fuzor(영문·UTF-8) 자동 인식**.
+  헤더 기반 파서(`src/lib/schedule.ts`) — 인코딩 자동 디코딩, `OutlineNumber` 상위
+  (합계) 작업 제외, 작업 유형(시공/철거/장비/임시) 정규화.
+- ✅ 일정↔객체 매핑(`src/lib/fourd.ts`): **이름 매핑** + **순서 자동배정**(이름이 안
+  맞으면 5% 미만 시 자동 폴백). 한 요소가 여러 작업이면 built>active>future 우선순위.
+- ✅ 뷰어 연동: `IfcViewer.getElementCatalog/applyConstruction/clearConstruction`
+  추가(기존 `setElementVisible` 위에서). 시공완료=원색, 진행중=주황, 미시공=숨김/반투명.
+- ✅ UI(`src/components/Timeline.tsx`): 하단 패널 — 임포트·4D토글·매핑·재생(속도)·
+  타임슬라이더·간트(현재시점 커서). Workspace 그리드에 `tl` 행 추가, 모델 교체 시 매핑 초기화.
+- ✅ DB **설계만**: `supabase/migrations/0003_schedule.sql`(schedules/schedule_tasks/
+  task_elements 다대다 + models 동일 RLS). 현재는 프론트 로컬상태+CSV로 동작.
+- ✅ 샘플: `public/samples/`(두 CSV + README), 설계 문서 `docs/4D.md`.
+- ✅ 검증: `npm run typecheck`·`npm run build` 통과 + 파서 두 샘플 파싱 확인
+  (Navisworks 21작업, Fuzor 59작업). 라이브 눈 검증(실 IFC+슬라이더)은 사용자 화면 권장.
+- ✅ **후속 보강(동 세션)**: 철거(demolish) **생애주기** 반영(생성 후 철거→removed/숨김),
+  **수동 매핑 UI**(간트 행 ＋로 선택 객체 연결), **증분 갱신**(상태 바뀐 메시만),
+  **DB 저장/로드**(`src/lib/scheduleApi.ts` + 타임라인 DB 저장/불러오기/삭제, 0003 스키마).
+- 📌 한계/다음: 정밀 GUID 매핑은 **기준 정립 후 보완**(사용자 결정으로 현재 미추가).
+  DB 저장/로드 **라이브 검증**은 0003 적용 + 배포 환경 필요(원격 egress 제약).
+
+## S11 결과 (branch: claude/youthful-meitner-nu7ojt, 주제: ui-refresh) — Phase 6 UI/UX 리뉴얼
+- ✅ **디자인 토큰화**(`src/index.css`): 라이트 기본 + **네이비 구조색**(상단바·상태바·
+  관리자 헤더) + **블루 강조**. 모든 색을 `--*` 토큰으로만 참조하도록 재작성(레이아웃·
+  클래스명·반응형은 그대로 — S8 표현만 원칙). 4D 칩/간트 바의 하드코딩 색도 토큰화해
+  라이트/다크 양쪽에서 가독성 확보.
+- ✅ **다크모드 토글 보존**: `src/lib/theme.ts`(`<html data-theme>` + `localStorage('mir.theme')`,
+  기본 light) + `src/components/ThemeToggle.tsx`. `main.tsx` 에서 `initTheme()` 렌더 전
+  호출(깜빡임 방지). 토글을 로그인·프로젝트선택·워크스페이스 상단바·관리자 헤더에 배치.
+- ✅ **Pretendard** 도입(`index.css` 상단 jsDelivr CDN `@import`, 동적 서브셋) + 시스템 폴백.
+- ✅ **리스킨**: 로그인→프로젝트선택→워크스페이스→관리자→타임라인 순으로 표면/강조/그림자/
+  라운드/입력 focus 링/고스트 버튼 적용. 기능·데이터·마이그레이션 변경 **없음**.
+- ✅ **디자인 시스템 문서 분리**: `docs/DESIGN.md`(토큰 표·테마 규칙·타이포·인터랙션).
+- ✅ 검증: `npm run typecheck`·`npm run build` 통과(CSS 16.76kB). 라이트/다크 눈 검증은 사용자 화면 권장.
+- 📌 브랜치 메모: 요청은 `feature/ui-refresh` 였으나 원격 세션이 지정한 작업 브랜치
+  `claude/youthful-meitner-nu7ojt` 에서 작업·푸시 → main 으로 PR(#14 머지됨).
+- ✅ **S11 후속(브랜딩)**: 3D 뷰포트 배경 **흰색**(`IfcViewer` `scene.background=0xffffff`,
+  그리드도 밝은 회색으로). 브랜드를 로고 색으로 — `BrandLogo`(SS 마크 + **MIR 회색
+  / VDC 빨강**), 토큰 `--brand-gray`/`--brand-red`. 로그인·프로젝트선택·워크스페이스·
+  관리자 4곳 적용. SS 마크는 공식 로고 근사 인라인 SVG(공식 에셋 받으면 교체 가능).
+
+## S12 결과 (branch: claude/youthful-meitner-nu7ojt, 주제: branding-rename)
+- ✅ **제품명 MIR_VDC → MIR SMART** (UI 전반: `BrandLogo` 워드마크 MIR(회색)/SMART(빨강),
+  `index.html` 제목·파비콘, 로그인 부제). 내부 docs 일부 표기는 점진 정리.
+- ✅ **공식 로고 적용**: `public/brand/ss-logo.png`(SS 마크, 인라인 SVG 근사 → 실제
+  이미지로 교체), `public/brand/ssyenc-ci.png`(쌍용건설 CI). `public/samples/` 에서
+  ASCII 경로로 이동.
+- ✅ **로그인(메인 홈) 보강**: 우상단 **쌍용건설 CI**(다크 테마는 흰 칩 위), 좌상단
+  테마 토글, 부제 "쌍용건설 스마트 건설기술 플랫폼에 오신 것을 환영합니다.", 하단
+  푸터(좌: `© Copyright Ssangyong E&C. All Rights Reserved` / 우:
+  `Designed by Civil Engineering Technology Team, Smart Construction Part`).
+- ✅ 검증: `npm run typecheck`·`npm run build` 통과, `dist/brand/*` 포함 확인.
+- ✅ **로그인 리파인(후속)**: 부제 "스마트 건설기술 플랫폼" 굵게 강조, 우상단 쌍용 CI
+  제거(테마 토글 우상단 원위치), 푸터 고급화(상단 구분선·글래스 배경·회사명 굵게·팀명
+  강조색), 배경에 톤다운 블루프린트 그리드+블루 글로우(CSS, 외부 이미지 불필요).
+  `ssyenc-ci.png` 는 미사용 보존.
+- ✅ **로고/카드 마무리**: 로그인 로고 lg 복귀 + MIR SMART 글자를 마크 높이에 맞춰 확대
+  (lg word 52px), 카드 폭 460px 로 넓혀 부제 한 줄. 푸터 최종 문구 확정
+  `Designed by Civil Engineering Technology Team, Smart Construction Part`.
+- 📌 **도메인(코드 밖)**: 현재 `mir-kappa...`(Vercel 자동 서브도메인). 사용자는 당분간
+  Vercel 주소 유지(`mir-smart...vercel.app` 로 프로젝트명 변경은 대시보드에서), `.com`(ssyenc)
+  은 사내 전산실 DNS 호스팅으로 추후 연결 예정. `mir_smart`(언더스코어)는 호스트명 불가.
+
 ## 다음 할 일 (우선순위)
-1. **S2 라이브 검증** — Vercel env 설정 후 `/admin` 에서 사용자 생성→로그인→프로젝트 배정 확인.
-2. **S4 4D 시뮬레이션**(뷰어 중심: 일정↔객체, 타임슬라이더).
-3. (선택) up축 기억을 브라우저 localStorage→DB(models 컬럼)로 승격해 사용자/기기 간 공유.
+1. **S4 라이브 눈 검증** — 실 IFC 모델 + 샘플 CSV 임포트 → 순서배정 → 슬라이더/재생 확인.
+2. **S2 라이브 검증** — Vercel env 설정 후 `/admin` 에서 사용자 생성→로그인→프로젝트 배정 확인.
+3. **S5 장비운용**(Rapier) 또는 S4 후속(철거 의미·정밀 매핑·DB 저장/로드).
+4. (선택) up축 기억을 브라우저 localStorage→DB(models 컬럼)로 승격해 사용자/기기 간 공유.
 
 ## 미해결 질문 / 메모
 - ✅ (해소) 사용자 생성 자동화 — S2 `api/admin.ts` service_role 함수 + `user_metadata.username`
@@ -135,6 +199,10 @@
   `COORDINATE_TO_ORIGIN` 의 첫 요소 회전 오염) 규명·수정. 실제 파일 눈 검증만 잔여.
 
 ## 다음 세션 인수인계 (한 줄)
-> S10 완료: "대상교량 A"는 Y-up IFC라 up축 **기본 Y-up 고정**으로 똑바로 세움(자동감지·
-> 토글 폐기, override는 콘솔로 유지). 정통 Z-up은 눕으므로 후속으로 `bim-thesis-viewer`
-> 방식 참고/`models.up_axis` 저장 고려. 다음 권장: S4(4D).
+> S11 완료: 화이트+네이비 디자인 토큰(`src/index.css`)+Pretendard+다크 토글
+> (`src/lib/theme.ts`,`ThemeToggle`), 설계는 `docs/DESIGN.md`. 새 색은 토큰으로만
+> 추가(light/dark 둘 다).
+> (뷰어) S10 마무리: 교량 누움은 up축 **기본 Y-up 고정**으로 해결(자동감지·토글 폐기,
+> override는 콘솔 `window.__mirUpAxis('z')`). 정통 Z-up IFC는 눕으니 후속으로
+> `bim-thesis-viewer` 방식 참고 또는 `models.up_axis` 저장 고려.
+> 다음 권장: 라이트/다크 눈 검증 또는 S5(장비운용, Rapier).
