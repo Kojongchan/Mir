@@ -167,7 +167,7 @@ UI 리뉴얼·CDE·문서뷰어·Navisworks 기능군·장비 시뮬·네이티�
   직접 주입으로 비-ASCII 보정 SQL 제거. 배포 환경 env 설정 후 라이브 검증만 남음.
 - ✅ (해소) 콘솔의 username(로그인 아이디) **변경** — S9 `api/admin.ts` `renameUser`
   액션으로 username+내부 이메일 동기 변경 추가(사용자 탭 `아이디 변경` 버튼).
-- 번들 크기 경고(three+web-ifc) → 추후 코드 스플리팅(별도 세션) 고려.
+- 번들 크기 경고(three+web-ifc) → **S17(성능 최적화·코드 스플리팅)** 으로 ROADMAP 등록. 독립 작업이라 아무 때나 착수 가능.
 - ✅ (해소) **뷰어 백로그**: 일부 교량 IFC 누움 → S10 에서 원인(web-ifc
   `COORDINATE_TO_ORIGIN` 의 첫 요소 회전 오염) 규명·수정. 실제 파일 눈 검증만 잔여.
 

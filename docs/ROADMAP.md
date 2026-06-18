@@ -38,6 +38,7 @@ VR 검토까지. 다중 사용자가 **본인 배정 프로젝트(공구)** 만 
 | S14 | Phase 9 · Navisworks 기능군 | `feature/nw-features` | 측정·단면·마크업·뷰포인트 (입력대기) | 뷰어 |
 | S15 | Phase 3 · 장비운용 | `feature/equipment-sim` | Rapier 물리·장비·경로/간섭 (이미지대기) | S4 |
 | S16 | Phase 10 · 네이티브 BIM | `feature/native-bim` | DWG/RVT/NWD 업로드·변환(APS 평가) | S12 |
+| S17 | 성능 최적화 · 코드 스플리팅 | `feature/code-splitting` | 번들 분할(three+web-ifc 동적 import)·청크 경고 해소 | — |
 
 추천 순서: **S1 → S3 → S2 → S4 → (확장) S11 → S12 → S13 → S14/S15 → S16**
 (확장 단계 S11~S16 의 상세는 `docs/PLANNING.md`. S14/S15 는 사용자 입력 도착 시, S16 은 전략 결정 후 착수.)
