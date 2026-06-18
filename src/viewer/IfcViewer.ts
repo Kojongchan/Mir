@@ -129,6 +129,11 @@ export class IfcViewer {
     return this.models.length;
   }
 
+  /** Runtime web-ifc modelID of the most recently loaded model (null if none). */
+  get primaryModelID(): number | null {
+    return this.models.length ? this.models[this.models.length - 1].modelID : null;
+  }
+
   // --- IFC loading -------------------------------------------------------
 
   async loadIfc(data: Uint8Array, opts?: { upAxis?: UpAxis }): Promise<LoadedModel> {

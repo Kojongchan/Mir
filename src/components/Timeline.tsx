@@ -17,9 +17,18 @@ import {
   type TaskMapping,
   type ElementRef,
 } from '../lib/fourd';
+import {
+  listSchedules,
+  saveSchedule,
+  loadSchedule,
+  deleteSchedule,
+  type SavedScheduleMeta,
+} from '../lib/scheduleApi';
 
 interface Props {
   viewer: IfcViewer | null;
+  projectId: string;
+  modelDbId: string | null;
 }
 
 /**
@@ -27,7 +36,7 @@ interface Props {
  * 현재 시점을 옮기면 그 시점까지 시공된 객체만 보이도록 뷰어를 제어한다.
  * 뷰어의 getElementCatalog/applyConstruction/clearConstruction 헬퍼를 사용한다.
  */
-export function Timeline({ viewer }: Props) {
+export function Timeline({ viewer, projectId, modelDbId }: Props) {
   const fourd = useStore((s) => s.fourd);
   const setStatus = useStore((s) => s.setStatus);
   const selected = useStore((s) => s.selected);
@@ -132,6 +141,105 @@ export function Timeline({ viewer }: Props) {
     setStatus('작업의 매핑을 비웠습니다.');
   };
 
+  // --- DB 저장/로드 ---
+  const [saved, setSaved] = useState<SavedScheduleMeta[]>([]);
+  const [savedId, setSavedId] = useState<string>('');
+  const [dbBusy, setDbBusy] = useState(false);
+
+  const refreshSaved = async () => {
+    if (!projectId) return;
+    try {
+      const list = await listSchedules(projectId);
+      setSaved(list);
+      if (list.length && !list.some((s) => s.id === savedId)) setSavedId(list[0].id);
+    } catch {
+      /* 마이그레이션 미적용/권한 등 — 조용히 무시(저장 시 에러로 안내) */
+    }
+  };
+
+  useEffect(() => {
+    refreshSaved();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  const onSave = async () => {
+    if (!hasSchedule || !projectId) return;
+    const name = window.prompt('저장할 일정 이름', `일정 ${new Date().toLocaleString()}`);
+    if (!name) return;
+    setDbBusy(true);
+    try {
+      await saveSchedule({ projectId, modelDbId, name, source: source ?? 'generic', tasks, mapping });
+      setStatus(`일정 저장 완료: ${name}${modelDbId ? '' : ' (모델 매핑 제외 — 모델 미오픈)'}`);
+      await refreshSaved();
+    } catch (e) {
+      setStatus(`일정 저장 실패: ${(e as Error).message}`);
+    } finally {
+      setDbBusy(false);
+    }
+  };
+
+  const onLoad = async () => {
+    if (!savedId) return;
+    setDbBusy(true);
+    try {
+      const ls = await loadSchedule(savedId);
+      if (ls.tasks.length === 0) {
+        setStatus('불러온 일정에 작업이 없습니다.');
+        return;
+      }
+      const starts = ls.tasks.map((t) => t.start);
+      const ends = ls.tasks.map((t) => t.end);
+      fourd.loadSchedule({
+        tasks: ls.tasks,
+        source: ls.meta.source,
+        start: Math.min(...starts),
+        end: Math.max(...ends),
+      });
+      // (db model_id, expressID) → 런타임 modelID 변환(현재 활성 모델만).
+      const runtime = viewer?.primaryModelID ?? null;
+      const nextMapping: TaskMapping = {};
+      let resolved = 0;
+      let unresolved = 0;
+      for (const [taskId, els] of Object.entries(ls.elements)) {
+        for (const el of els) {
+          if (runtime != null && el.modelDbId === modelDbId) {
+            (nextMapping[taskId] ??= []).push({ modelID: runtime, expressID: el.expressID });
+            resolved++;
+          } else {
+            unresolved++;
+          }
+        }
+      }
+      const stats = mappingStats(nextMapping);
+      fourd.setMapping(nextMapping, stats.tasks, stats.elements);
+      setStatus(
+        `일정 불러옴: ${ls.meta.name} · ${ls.tasks.length}작업 · 매핑 ${resolved}개` +
+          (unresolved ? ` (다른 모델 ${unresolved}개 제외 — 해당 모델을 여세요)` : ''),
+      );
+    } catch (e) {
+      setStatus(`일정 불러오기 실패: ${(e as Error).message}`);
+    } finally {
+      setDbBusy(false);
+    }
+  };
+
+  const onDelete = async () => {
+    if (!savedId) return;
+    const meta = saved.find((s) => s.id === savedId);
+    if (!window.confirm(`"${meta?.name ?? savedId}" 일정을 삭제할까요?`)) return;
+    setDbBusy(true);
+    try {
+      await deleteSchedule(savedId);
+      setStatus('일정 삭제 완료');
+      setSavedId('');
+      await refreshSaved();
+    } catch (e) {
+      setStatus(`일정 삭제 실패: ${(e as Error).message}`);
+    } finally {
+      setDbBusy(false);
+    }
+  };
+
   // --- 시점 변경 → 뷰어 반영 ---
   useEffect(() => {
     if (!viewer) return;
@@ -234,6 +342,38 @@ export function Timeline({ viewer }: Props) {
             <span className="muted">
               D{curDay}/{totalDays} · {source}
             </span>
+          </>
+        )}
+
+        {(hasSchedule || saved.length > 0) && projectId && (
+          <>
+            <span className="tl-divider" />
+            {hasSchedule && (
+              <button onClick={onSave} disabled={dbBusy} title="현재 일정+매핑을 DB에 저장">
+                DB 저장
+              </button>
+            )}
+            {saved.length > 0 && (
+              <>
+                <select
+                  value={savedId}
+                  onChange={(e) => setSavedId(e.target.value)}
+                  title="저장된 일정"
+                >
+                  {saved.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+                <button onClick={onLoad} disabled={dbBusy || !savedId}>
+                  불러오기
+                </button>
+                <button onClick={onDelete} disabled={dbBusy || !savedId} title="선택 일정 삭제">
+                  삭제
+                </button>
+              </>
+            )}
           </>
         )}
       </div>

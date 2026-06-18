@@ -34,6 +34,9 @@ export function Workspace() {
   // window.__mirUpAxis('y'); the choice is remembered per model in localStorage
   // so it survives reloads. (A toolbar toggle can be re-added when needed.)
   const openModelId = useRef<string | null>(null);
+  // DB(models.id) of the currently open model — used by the 4D layer to persist
+  // and resolve task↔element mappings against this model.
+  const [openModelDbId, setOpenModelDbId] = useState<string | null>(null);
 
   const { status, setStatus, setSelected, setModelCount, fourd } = useStore();
 
@@ -68,6 +71,7 @@ export function Workspace() {
       await viewer.loadIfc(bytes, saved ? { upAxis: saved } : undefined);
       setModelCount(viewer.modelCount);
       openModelId.current = m.id;
+      setOpenModelDbId(m.id);
       // 새 모델을 열면 기존 4D 매핑(이전 expressID 참조)은 무효 → 초기화
       viewer.clearConstruction();
       fourd.setMapping({}, 0, 0);
@@ -144,7 +148,7 @@ export function Workspace() {
 
       <PropertiesPanel />
 
-      <Timeline viewer={viewer} />
+      <Timeline viewer={viewer} projectId={projectId} modelDbId={openModelDbId} />
 
       <footer className="statusbar">
         <span>{status}</span>
