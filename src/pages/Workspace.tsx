@@ -147,6 +147,7 @@ export function Workspace() {
         <Toolbar viewer={viewer} />
         <div className="spacer" />
         <ThemeToggle />
+        <button onClick={() => navigate(`/project/${projectId}`)}>사업개요</button>
         <button onClick={() => navigate(`/project/${projectId}/docs`)}>자료 관리</button>
         <button onClick={() => navigate('/')}>프로젝트 변경</button>
         <button onClick={signOut}>로그아웃</button>

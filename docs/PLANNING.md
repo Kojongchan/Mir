@@ -216,6 +216,7 @@
 | S18 | 성능 최적화·코드 스플리팅 | `feature/code-splitting` | — | S13서 일부 선반영 |
 | S19 | 뷰어 충실도 — 단기(무료 클라) | `feature/viewer-fidelity` | S13 | docx-preview 등 |
 | S20 | 뷰어 충실도 — 장기(서버 변환→PDF) | `feature/doc-convert` | S13 | PPT·HWP 포함 |
+| S21 | 사업관리 포털 — 사업개요 대시보드 + 모듈 메뉴 | `feature/pmis-portal` | S14 | ✅ 완료 (PROJECT WORKS형) |
 
 **권장 착수 순서**: S11✅ → S12✅ → S13✅(뷰어) → **S14✅(CDE 토대)** → (S15/S16 은 입력
 도착 시) → S17(APS 결정 후). 다음은 **S14 라이브 검증** + S15/S16(입력 대기) / CDE 후속.

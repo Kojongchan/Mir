@@ -192,7 +192,8 @@ export function DocumentManager() {
         <span className="project-title">{project?.name ?? '…'} · 자료 관리</span>
         <div className="spacer" />
         <ThemeToggle />
-        <button onClick={() => navigate(`/project/${projectId}`)}>3D 뷰어</button>
+        <button onClick={() => navigate(`/project/${projectId}`)}>사업개요</button>
+        <button onClick={() => navigate(`/project/${projectId}/viewer`)}>3D 뷰어</button>
         <button onClick={() => navigate('/')}>프로젝트 변경</button>
         <button onClick={signOut}>로그아웃</button>
       </header>

@@ -4,6 +4,9 @@ import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { Login } from './pages/Login';
 import { ProjectSelect } from './pages/ProjectSelect';
 import { Workspace } from './pages/Workspace';
+import { ProjectShell } from './pages/ProjectShell';
+import { Dashboard } from './pages/Dashboard';
+import { DailyLogs } from './pages/DailyLogs';
 import { DocumentManager } from './pages/DocumentManager';
 import { Admin } from './pages/Admin';
 import { FileViewer } from './pages/FileViewer';
@@ -49,8 +52,21 @@ export default function App() {
               </Protected>
             }
           />
+          {/* Project portal (사업개요 대시보드 + 좌측 모듈 메뉴) */}
           <Route
             path="/project/:projectId"
+            element={
+              <Protected>
+                <ProjectShell />
+              </Protected>
+            }
+          >
+            <Route index element={<Dashboard />} />
+            <Route path="logs" element={<DailyLogs />} />
+          </Route>
+          {/* Full-screen tool modules reached from the rail */}
+          <Route
+            path="/project/:projectId/viewer"
             element={
               <Protected>
                 <Workspace />
