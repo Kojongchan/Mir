@@ -121,6 +121,7 @@ const END_KEYS = ['planned end', '계획된 끝', 'main end', 'actual end', '실
 const TYPE_KEYS = ['task type', '작업 유형', 'type'];
 const ID_KEYS = ['id'];
 const EXTID_KEYS = ['fuzor guid', 'unique id', '동기화 id', '표시 id'];
+const OUTLINE_KEYS = ['outlinenumber', 'outline number'];
 
 function findIndex(header: string[], keys: string[]): number {
   const norm = header.map((h) => h.trim().toLowerCase());
@@ -174,9 +175,22 @@ export function parseSchedule(text: string): ParsedSchedule {
   const iType = findIndex(header, TYPE_KEYS);
   const iId = findIndex(header, ID_KEYS);
   const iExt = findIndex(header, EXTID_KEYS);
+  const iOutline = findIndex(header, OUTLINE_KEYS);
 
   if (iName < 0) warnings.push('이름 컬럼을 찾지 못했습니다.');
   if (iStart < 0 || iEnd < 0) warnings.push('시작/종료 날짜 컬럼을 찾지 못했습니다.');
+
+  // OutlineNumber 가 있으면 상위(합계) 작업을 판별: 다른 행이 "this." 로 시작하면
+  // 그 행은 자식을 가진 요약 작업이므로 시뮬레이션 대상에서 제외한다(Fuzor 루트 등).
+  const summaryOutlines = new Set<string>();
+  if (iOutline >= 0) {
+    const outlines = rows.slice(1).map((c) => (c[iOutline] ?? '').trim()).filter(Boolean);
+    for (const o of outlines) {
+      if (outlines.some((other) => other !== o && other.startsWith(o + '.'))) {
+        summaryOutlines.add(o);
+      }
+    }
+  }
 
   const tasks: ScheduleTask[] = [];
   let skipped = 0;
@@ -185,9 +199,16 @@ export function parseSchedule(text: string): ParsedSchedule {
     const name = (iName >= 0 ? cols[iName] : '')?.trim() ?? '';
     const start = parseDate(iStart >= 0 ? cols[iStart] ?? '' : '');
     const end = parseDate(iEnd >= 0 ? cols[iEnd] ?? '' : '');
+    const outline = iOutline >= 0 ? (cols[iOutline] ?? '').trim() : '';
 
     // 루트/합계 행과 날짜 없는 행은 제외
-    if (!name || /\(root\)/i.test(name) || Number.isNaN(start) || Number.isNaN(end)) {
+    if (
+      !name ||
+      /\(root\)/i.test(name) ||
+      summaryOutlines.has(outline) ||
+      Number.isNaN(start) ||
+      Number.isNaN(end)
+    ) {
       skipped++;
       continue;
     }
