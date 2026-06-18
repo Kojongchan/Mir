@@ -6,6 +6,13 @@
 |---|---|---|---|
 | `navisworks-timeliner-sample.csv` | Navisworks TimeLiner 내보내기 | UTF-8(원본은 EUC-KR) | 한글 헤더, 동기화 ID 보유. 21개 작업(2015-06~09) |
 | `fuzor-timeliner-sample.csv` | Fuzor TimeLiner 내보내기 | UTF-8 | 영문 헤더, Fuzor GUID 보유. 발췌 59개 작업(2025-01~) |
+| `bridge-a-schedule.csv` | **대상교량 A(Case Study Bridge A) IFC 전용** | UTF-8 | 이 모델의 실제 객체명에 맞춘 20개 작업(2026-07~12). **이름 매핑 시 308개 객체 전부 매칭** |
+
+## 대상교량 A 전용 공정표 (`bridge-a-schedule.csv`)
+해당 IFC를 열고 이 CSV를 임포트한 뒤 **이름 매핑**을 누르면 기초→교각→교대→
+받침→거더→슬래브 순으로 바텀업 시공이 재생됩니다(검증: 308개 객체 100% 매칭, 중복 0).
+구성: 버림/직접/매스기초, 교각기둥·코핑·교대벽체·날개벽, 보강블럭·솔플레이트·무수축몰탈·
+교량받침, 거더(BEAM-30m/PSC BEAM-35m/IT BEAM-40m/강합성계열-60m), 슬래브·공동구·난간벽·탈선방지벽.
 
 ## 사용법
 1. IFC 모델을 연다(없어도 임포트·재생은 됨, 객체 제어만 비활성).
