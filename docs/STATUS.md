@@ -106,18 +106,19 @@
   (사진: 교각이 아래가 아니라 옆으로. 사용자가 콘솔 `window.__mirUpAxis('y')` 로 똑바로
   섬을 확인.) ← 1차 가설(`COORDINATE_TO_ORIGIN` 회전 오염)은 **오답**: 그 옵션 제거로
   방향이 안 바뀐 것이 단서였음. (IfcMapConversion/TrueNorth 는 수직축 회전 → 누움 무관.)
-- ✅ **수정** (`src/viewer/IfcViewer.ts` + `Workspace`/`Toolbar`):
+- ✅ **수정** (`src/viewer/IfcViewer.ts` + `Workspace`):
   - `COORDINATE_TO_ORIGIN:false` + 첫 요소 원점 **이동분만** 빼 재중심화(정밀도 보존).
-  - up축을 **모델 단위**로 적용: `loadIfc(data,{upAxis})`, `detectUpAxis`(컨텍스트
-    `WorldCoordinateSystem.Axis` 읽어 Z/Y/X 자동 추정, 기본 Z), `orientGroup`, `setUpAxis`.
-  - **UI 토글은 사용자 요청으로 제거**(나중에 필요 시 복구). 대신 콘솔
-    `window.__mirUpAxis('y')` 로 세우면 그 모델은 `localStorage`(`mir.upaxis.<modelId>`)에
-    **기억**되어 재방문에도 유지(Workspace 가 로드시 저장값을 `loadIfc` 에 전달).
-  - 진단: 콘솔 `[IFC-georef]` 로그(bbox·WCS축·TrueNorth·MapConversion) 유지.
-- ✅ 일반 Z-up 모델 영향 없음(기본 Z). 데이터베이스/마이그레이션 변경 없음(브라우저 기억).
-- ✅ 검증: `npm run typecheck`·`npm run build` 통과 + **사용자 라이브 확인**('y'로 똑바로 섬).
-- 📌 **잔여**: 이 Y-up 교량은 콘솔로 1회 세팅 필요(기본은 여전히 Z). 자동 세움이 필요하면
-  (a) bbox 휴리스틱 자동감지 강화 또는 (b) UI 토글 복구 + DB(`models.up_axis`) 저장.
+  - **up축 기본값 Y-up 고정**(사용자 결정): `loadIfc` 가 회전 없이(=Y-up) 그림. 다루는
+    교량 IFC가 Y-up으로 내보내지므로 이게 정답. `orientGroup`/`setUpAxis` 로 모델 단위 적용.
+  - 자동감지(컨텍스트 WCS·bbox·법선) 시도는 **폐기**: WCS 미선언(undefined)이고, 법선
+    기반은 사각 단면 기둥 등에서 오판 위험(사용자 지적). → 단순 고정값이 맞다.
+  - override 유지: 콘솔 `window.__mirUpAxis('z')` → `localStorage`(`mir.upaxis.<modelId>`)에
+    모델별 기억(Z-up 모델이 나중에 들어올 때 대비). 진단 `[IFC-georef]` 로그 유지.
+- ✅ 검증: `npm run typecheck`·`npm run build` 통과. (라이브: Y-up 고정으로 교량 똑바로 섬)
+- 📌 **트레이드오프**: 기본 Y-up이라 **정통 Z-up IFC는 눕는다** → 그 경우 override(`'z'`)
+  필요. 참고: 사용자 레포 `bim-thesis-viewer`(교량 안 누움)의 로딩/방향 처리 방식에
+  맞추면 양쪽(Z/Y) 모두 정확히 처리 가능 — 세션 권한이 mir로 한정돼 직접 못 읽음(코드
+  공유 시 반영). DB(`models.up_axis`) 저장으로 승격도 후보.
 
 ## 다음 할 일 (우선순위)
 1. **S2 라이브 검증** — Vercel env 설정 후 `/admin` 에서 사용자 생성→로그인→프로젝트 배정 확인.
@@ -134,6 +135,6 @@
   `COORDINATE_TO_ORIGIN` 의 첫 요소 회전 오염) 규명·수정. 실제 파일 눈 검증만 잔여.
 
 ## 다음 세션 인수인계 (한 줄)
-> S10 완료(라이브 확정): "대상교량 A"는 Y-up IFC. up축 모델단위 적용 + 콘솔
-> `window.__mirUpAxis('y')`(모델별 localStorage 기억)로 해결, UI 토글은 요청으로 제거.
-> 다음 권장: S4(4D 시뮬레이션, 뷰어 중심) — 새 세션/브랜치에서 시작.
+> S10 완료: "대상교량 A"는 Y-up IFC라 up축 **기본 Y-up 고정**으로 똑바로 세움(자동감지·
+> 토글 폐기, override는 콘솔로 유지). 정통 Z-up은 눕으므로 후속으로 `bim-thesis-viewer`
+> 방식 참고/`models.up_axis` 저장 고려. 다음 권장: S4(4D).

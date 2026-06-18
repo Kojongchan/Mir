@@ -162,9 +162,13 @@ export class IfcViewer {
       elementMeshes.set(expressID, meshes);
     });
 
-    // Up axis: caller-provided override (a remembered per-model choice) wins;
-    // otherwise auto-detect from the model's representation context.
-    const upAxis = opts?.upAxis ?? this.detectUpAxis(modelID, group);
+    this.logGeoref(modelID, group);
+
+    // Up axis: a remembered per-model override wins; otherwise default to Y-up.
+    // The IFC files we handle (bridge exports) deliver Y-up geometry, so no
+    // rotation is applied by default. If a genuinely Z-up model ever needs it,
+    // override via setUpAxis() / window.__mirUpAxis('z') (remembered per model).
+    const upAxis = opts?.upAxis ?? 'y';
 
     this.scene.add(group);
 
@@ -191,17 +195,13 @@ export class IfcViewer {
   }
 
   /**
-   * Best-effort detection of the model's up axis. Reads the geometric
-   * representation context's WorldCoordinateSystem (the spec-correct place to
-   * declare a non-Z up) and logs georeferencing + bounding-box diagnostics. If
-   * the context doesn't declare it, falls back to Z-up. The result can be
-   * overridden at runtime via `setUpAxis()` / `window.__mirUpAxis()`.
+   * Log georeferencing diagnostics (bbox, representation-context axes, map
+   * conversion) for the loaded model. Read-only — orientation uses the fixed
+   * default in `loadIfc`, overridable per model via `setUpAxis()`.
    */
-  private detectUpAxis(modelID: number, group: THREE.Group): UpAxis {
-    let axis: UpAxis = 'z';
+  private logGeoref(modelID: number, group: THREE.Group) {
     try {
-      const box = new THREE.Box3().setFromObject(group);
-      const size = box.getSize(new THREE.Vector3());
+      const size = new THREE.Box3().setFromObject(group).getSize(new THREE.Vector3());
       console.info(
         `[IFC-georef] model-space bbox size = x:${size.x.toFixed(1)} y:${size.y.toFixed(1)} z:${size.z.toFixed(1)}`,
       );
@@ -209,18 +209,9 @@ export class IfcViewer {
       const ctxIDs = this.ifcAPI.GetLineIDsWithType(modelID, IFCGEOMETRICREPRESENTATIONCONTEXT);
       for (let i = 0; i < ctxIDs.size(); i++) {
         const ctx = this.ifcAPI.GetLine(modelID, ctxIDs.get(i), true) as Record<string, any>;
-        const wcsAxis = ctx?.WorldCoordinateSystem?.Axis?.DirectionRatios as number[] | undefined;
-        const trueNorth = ctx?.TrueNorth?.DirectionRatios as number[] | undefined;
         console.info(
-          `[IFC-georef] context "${ctx?.ContextType?.value ?? '?'}" WCS.Axis=${JSON.stringify(wcsAxis)} TrueNorth=${JSON.stringify(trueNorth)}`,
+          `[IFC-georef] context "${ctx?.ContextType?.value ?? '?'}" WCS.Axis=${JSON.stringify(ctx?.WorldCoordinateSystem?.Axis?.DirectionRatios)} TrueNorth=${JSON.stringify(ctx?.TrueNorth?.DirectionRatios)}`,
         );
-        if (wcsAxis) {
-          // The WCS "Axis" is the local +Z (up) direction. If it leans toward Y
-          // or X instead of Z, the geometry's up is that axis.
-          const [ax, ay, az] = [Math.abs(wcsAxis[0] ?? 0), Math.abs(wcsAxis[1] ?? 0), Math.abs(wcsAxis[2] ?? 0)];
-          if (ay > az && ay > ax) axis = 'y';
-          else if (ax > az && ax > ay) axis = 'x';
-        }
       }
 
       const mapIDs = this.ifcAPI.GetLineIDsWithType(modelID, IFCMAPCONVERSION);
@@ -233,8 +224,6 @@ export class IfcViewer {
     } catch (err) {
       console.warn('[IFC-georef] diagnostic read failed', err);
     }
-    console.info(`[IFC-georef] using up axis = ${axis} (override: window.__mirUpAxis('x'|'y'|'z'))`);
-    return axis;
   }
 
   /** Re-orient every loaded model to the given up axis and refit the camera. */
