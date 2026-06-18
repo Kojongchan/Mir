@@ -730,16 +730,48 @@ button.danger:hover:not(:disabled) {
 }
 
 .tl-row-name {
-  width: 180px;
+  width: 150px;
   flex-shrink: 0;
   padding: 0 8px;
   font-size: 12px;
-  white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.tl-row-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tl-row-map {
+  width: 50px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 6px;
+}
+
+.tl-mini {
+  padding: 0 5px;
+  font-size: 12px;
+  line-height: 16px;
+  border-radius: 4px;
+}
+
+.tl-count {
+  font-size: 11px;
+  min-width: 14px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tl-count[role='button'] {
+  cursor: pointer;
+  color: var(--accent);
 }
 
 .tl-kind {

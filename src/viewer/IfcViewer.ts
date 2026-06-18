@@ -35,7 +35,7 @@ export interface ElementInfo {
 }
 
 /** Per-element construction state for the 4D timeline. */
-export type BuildState = 'built' | 'active' | 'future';
+export type BuildState = 'built' | 'active' | 'future' | 'removed';
 
 /** What to do with not-yet-built elements: fully hide or show as a faint ghost. */
 export type FutureMode = 'hidden' | 'ghost';
@@ -67,10 +67,13 @@ export class IfcViewer {
   /** material clones swapped in for the current selection, kept so we can restore */
   private highlighted: { mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] }[] = [];
 
-  /** original {material, visible} saved before the 4D layer overrides a mesh */
+  /**
+   * Per-mesh 4D record: the pre-4D {material, visible} to restore, plus the
+   * last applied appearance key so playback only mutates meshes that changed.
+   */
   private constructionOverrides = new Map<
     THREE.Mesh,
-    { material: THREE.Material | THREE.Material[]; visible: boolean }
+    { saved: { material: THREE.Material | THREE.Material[]; visible: boolean }; key: string }
   >();
   /** shared materials for 4D appearance (lazily reused, never per-mesh cloned) */
   private ghostMaterial: THREE.Material | null = null;
@@ -477,40 +480,77 @@ export class IfcViewer {
 
   /**
    * Apply per-element construction states for a point in time. Elements not in
-   * `states` are left untouched (stay fully visible). Built → original look,
-   * active → orange tint, future → hidden or faint ghost per `futureMode`.
-   * Restores any previous 4D override first, so it's safe to call every tick.
+   * `states` are restored to their pre-4D look (so de-mapped/unmapped objects
+   * stay visible). Built → original look, active → orange tint, future → hidden
+   * or faint ghost per `futureMode`, removed (demolished) → always hidden.
+   *
+   * Incremental: each mesh remembers its last applied appearance, so during
+   * playback only the meshes whose state actually changed are mutated — large
+   * models don't churn every tick.
    */
   applyConstruction(
     states: Iterable<{ modelID: number; expressID: number; state: BuildState }>,
     futureMode: FutureMode,
   ) {
-    this.clearConstruction();
+    // Resolve desired state per mesh.
+    const desired = new Map<THREE.Mesh, BuildState>();
     for (const { modelID, expressID, state } of states) {
-      for (const mesh of this.meshesFor(modelID, expressID)) {
-        if (!this.constructionOverrides.has(mesh)) {
-          this.constructionOverrides.set(mesh, { material: mesh.material, visible: mesh.visible });
-        }
-        if (state === 'built') {
-          mesh.visible = true; // original material already restored by clear
-        } else if (state === 'active') {
-          mesh.visible = true;
-          mesh.material = this.getActiveMaterial();
-        } else if (futureMode === 'hidden') {
-          mesh.visible = false;
-        } else {
-          mesh.visible = true;
-          mesh.material = this.getGhostMaterial();
-        }
+      for (const mesh of this.meshesFor(modelID, expressID)) desired.set(mesh, state);
+    }
+
+    // Restore meshes that are no longer governed by the 4D layer.
+    for (const [mesh, rec] of this.constructionOverrides) {
+      if (!desired.has(mesh)) {
+        mesh.material = rec.saved.material;
+        mesh.visible = rec.saved.visible;
+        this.constructionOverrides.delete(mesh);
       }
+    }
+
+    // Apply/update governed meshes, skipping ones already in the target look.
+    for (const [mesh, state] of desired) {
+      let rec = this.constructionOverrides.get(mesh);
+      if (!rec) {
+        rec = { saved: { material: mesh.material, visible: mesh.visible }, key: '' };
+        this.constructionOverrides.set(mesh, rec);
+      }
+      const key = `${state}|${futureMode}`;
+      if (rec.key === key) continue;
+      rec.key = key;
+      this.applyMeshState(mesh, state, futureMode, rec.saved.material);
+    }
+  }
+
+  private applyMeshState(
+    mesh: THREE.Mesh,
+    state: BuildState,
+    futureMode: FutureMode,
+    original: THREE.Material | THREE.Material[],
+  ) {
+    if (state === 'active') {
+      mesh.material = this.getActiveMaterial();
+      mesh.visible = true;
+    } else if (state === 'future') {
+      if (futureMode === 'ghost') {
+        mesh.material = this.getGhostMaterial();
+        mesh.visible = true;
+      } else {
+        mesh.visible = false;
+      }
+    } else if (state === 'removed') {
+      mesh.visible = false;
+    } else {
+      // built
+      mesh.material = original;
+      mesh.visible = true;
     }
   }
 
   /** Restore every mesh the 4D layer touched to its pre-4D material/visibility. */
   clearConstruction() {
-    for (const [mesh, saved] of this.constructionOverrides) {
-      mesh.material = saved.material;
-      mesh.visible = saved.visible;
+    for (const [mesh, rec] of this.constructionOverrides) {
+      mesh.material = rec.saved.material;
+      mesh.visible = rec.saved.visible;
     }
     this.constructionOverrides.clear();
   }

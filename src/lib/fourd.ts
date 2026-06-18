@@ -23,7 +23,18 @@ export interface ElementInfo extends ElementRef {
 /** 작업 id → 그 작업이 만드는 요소들 */
 export type TaskMapping = Record<string, ElementRef[]>;
 
-export type BuildState = 'built' | 'active' | 'future';
+// future  : 아직 생성 전(숨김 / ghost)
+// active   : 현재 작업 진행 중(주황 강조)
+// built    : 생성 완료되어 존재
+// removed  : 철거(또는 임시)되어 사라짐(항상 숨김)
+export type BuildState = 'built' | 'active' | 'future' | 'removed';
+
+type Effect = 'build' | 'remove';
+
+/** 작업 유형 → 요소에 끼치는 효과(생성/제거). 철거·임시는 끝나면 사라진다. */
+function effectOf(kind: string): Effect {
+  return kind === 'demolish' || kind === 'temporary' ? 'remove' : 'build';
+}
 
 export const elementKey = (e: ElementRef): string => `${e.modelID}:${e.expressID}`;
 
@@ -77,8 +88,9 @@ export function mapByName(tasks: ScheduleTask[], catalog: ElementInfo[]): TaskMa
  * 빠른 폴백. 장비/임시 유형은 형상이 없는 경우가 많아 분배 대상에서 제외한다.
  */
 export function mapSequential(tasks: ScheduleTask[], catalog: ElementInfo[]): TaskMapping {
+  // 순서 데모는 "쌓아 올리는" 시각화이므로 생성 작업에만 분배한다(철거/장비/임시 제외).
   const buildTasks = tasks
-    .filter((t) => t.type !== 'equipment' && t.type !== 'temporary')
+    .filter((t) => t.type === 'construct' || t.type === 'other')
     .slice()
     .sort((a, b) => a.start - b.start || a.end - b.end);
   const targets = buildTasks.length ? buildTasks : tasks.slice().sort((a, b) => a.start - b.start);
@@ -113,17 +125,18 @@ export function mappingStats(mapping: TaskMapping): { tasks: number; elements: n
 
 // --- 상태 계산 -----------------------------------------------------------
 
-const RANK: Record<BuildState, number> = { future: 0, active: 1, built: 2 };
-
-function stateForTask(task: ScheduleTask, now: number): BuildState {
-  if (now >= task.end) return 'built';
-  if (now >= task.start) return 'active';
-  return 'future';
+interface ElementEvent {
+  start: number;
+  end: number;
+  effect: Effect;
 }
 
 /**
- * 특정 시점(now)에 매핑된 모든 요소의 시공 상태를 계산.
- * 한 요소가 여러 작업에 속하면 더 진행된 상태(built > active > future)를 채택.
+ * 특정 시점(now)에 매핑된 모든 요소의 시공 상태를 계산. 한 요소가 여러 작업에
+ * 걸리면(예: 생성 후 철거) 작업을 시작 시각 순으로 적용해 생애주기를 따른다.
+ *  - 진행 중인 작업이 있으면 active
+ *  - 그 외에는 마지막으로 끝난 작업의 효과에 따라 built(생성) / removed(철거)
+ *  - 아직 어떤 작업도 시작되지 않았으면 future
  * 매핑되지 않은 요소는 결과에 없으며(=항상 보이게 유지) 모델이 통째로 사라지지 않는다.
  */
 export function computeStates(
@@ -131,19 +144,35 @@ export function computeStates(
   mapping: TaskMapping,
   now: number,
 ): Map<string, { ref: ElementRef; state: BuildState }> {
-  const result = new Map<string, { ref: ElementRef; state: BuildState }>();
   const byId = new Map(tasks.map((t) => [t.id, t]));
+
+  // 요소별 이벤트 수집
+  const events = new Map<string, { ref: ElementRef; list: ElementEvent[] }>();
   for (const [taskId, refs] of Object.entries(mapping)) {
     const task = byId.get(taskId);
     if (!task) continue;
-    const state = stateForTask(task, now);
+    const ev: ElementEvent = { start: task.start, end: task.end, effect: effectOf(task.type) };
     for (const ref of refs) {
       const key = elementKey(ref);
-      const prev = result.get(key);
-      if (!prev || RANK[state] > RANK[prev.state]) {
-        result.set(key, { ref, state });
+      let entry = events.get(key);
+      if (!entry) {
+        entry = { ref, list: [] };
+        events.set(key, entry);
       }
+      entry.list.push(ev);
     }
+  }
+
+  const result = new Map<string, { ref: ElementRef; state: BuildState }>();
+  for (const [key, { ref, list }] of events) {
+    list.sort((a, b) => a.start - b.start || a.end - b.end);
+    let state: BuildState = 'future';
+    for (const ev of list) {
+      if (ev.start > now) continue; // 아직 시작 안 한 작업은 무시
+      if (now < ev.end) state = 'active';
+      else state = ev.effect === 'build' ? 'built' : 'removed';
+    }
+    result.set(key, { ref, state });
   }
   return result;
 }

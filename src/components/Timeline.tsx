@@ -14,6 +14,8 @@ import {
   mapSequential,
   mappingStats,
   computeStates,
+  type TaskMapping,
+  type ElementRef,
 } from '../lib/fourd';
 
 interface Props {
@@ -28,6 +30,7 @@ interface Props {
 export function Timeline({ viewer }: Props) {
   const fourd = useStore((s) => s.fourd);
   const setStatus = useStore((s) => s.setStatus);
+  const selected = useStore((s) => s.selected);
   const {
     enabled,
     tasks,
@@ -100,6 +103,33 @@ export function Timeline({ viewer }: Props) {
     setStatus(
       `${mode === 'name' ? '이름' : '순서'} 매핑: ${stats.tasks}개 작업 · ${stats.elements}개 객체`,
     );
+  };
+
+  // --- 수동 매핑: 현재 선택한 객체를 작업에 추가/제거 ---
+  const selectedRef: ElementRef | null = selected
+    ? { modelID: selected.modelID, expressID: selected.expressID }
+    : null;
+
+  const assignSelected = (taskId: string) => {
+    if (!selectedRef) return;
+    const existing = mapping[taskId] ?? [];
+    if (existing.some((e) => e.modelID === selectedRef.modelID && e.expressID === selectedRef.expressID)) {
+      setStatus('이미 이 작업에 매핑된 객체입니다.');
+      return;
+    }
+    const next: TaskMapping = { ...mapping, [taskId]: [...existing, selectedRef] };
+    const stats = mappingStats(next);
+    fourd.setMapping(next, stats.tasks, stats.elements);
+    setStatus(`객체 #${selectedRef.expressID} → 작업에 매핑(총 ${stats.elements}개 객체)`);
+  };
+
+  const clearTaskMapping = (taskId: string) => {
+    if (!mapping[taskId]?.length) return;
+    const next: TaskMapping = { ...mapping };
+    delete next[taskId];
+    const stats = mappingStats(next);
+    fourd.setMapping(next, stats.tasks, stats.elements);
+    setStatus('작업의 매핑을 비웠습니다.');
   };
 
   // --- 시점 변경 → 뷰어 반영 ---
@@ -224,6 +254,10 @@ export function Timeline({ viewer }: Props) {
             rangeStart={rangeStart}
             rangeEnd={rangeEnd}
             currentTime={currentTime}
+            mapping={mapping}
+            canAssign={!!selectedRef}
+            onAssign={assignSelected}
+            onClear={clearTaskMapping}
           />
         </>
       ) : (
@@ -242,28 +276,55 @@ function Gantt({
   rangeStart,
   rangeEnd,
   currentTime,
+  mapping,
+  canAssign,
+  onAssign,
+  onClear,
 }: {
   tasks: ScheduleTask[];
   rangeStart: number;
   rangeEnd: number;
   currentTime: number;
+  mapping: TaskMapping;
+  canAssign: boolean;
+  onAssign: (taskId: string) => void;
+  onClear: (taskId: string) => void;
 }) {
   const span = Math.max(1, rangeEnd - rangeStart);
   const cursorPct = ((currentTime - rangeStart) / span) * 100;
 
   return (
     <div className="tl-gantt">
-      <div className="tl-cursor" style={{ left: `calc(180px + (100% - 180px) * ${cursorPct / 100})` }} />
+      <div className="tl-cursor" style={{ left: `calc(200px + (100% - 200px) * ${cursorPct / 100})` }} />
       {tasks.map((t) => {
         const leftPct = ((t.start - rangeStart) / span) * 100;
         const widthPct = Math.max(0.5, ((t.end - t.start) / span) * 100);
         const state =
           currentTime >= t.end ? 'built' : currentTime >= t.start ? 'active' : 'future';
+        const count = mapping[t.id]?.length ?? 0;
         return (
           <div className="tl-row" key={t.id}>
             <div className="tl-row-name" title={t.name}>
               <span className={`tl-kind tl-kind-${t.type}`}>{TASK_KIND_LABEL[t.type]}</span>
-              {t.name}
+              <span className="tl-row-label">{t.name}</span>
+            </div>
+            <div className="tl-row-map">
+              <button
+                className="tl-mini"
+                title="선택한 객체를 이 작업에 매핑"
+                disabled={!canAssign}
+                onClick={() => onAssign(t.id)}
+              >
+                ＋
+              </button>
+              <span
+                className={`tl-count${count ? '' : ' muted'}`}
+                title="이 작업에 매핑된 객체 수"
+                role={count ? 'button' : undefined}
+                onClick={() => count && onClear(t.id)}
+              >
+                {count}
+              </span>
             </div>
             <div className="tl-track">
               <div
