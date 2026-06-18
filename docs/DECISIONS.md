@@ -11,7 +11,7 @@
 | D5 | 프로젝트별 접근은 **Postgres RLS** (`project_members`) | 프론트가 뚫려도 DB가 차단 |
 | D6 | 브랜치: **main 통합 + feature 브랜치 → PR 병합** | 리뷰·CI·되돌리기 용이 |
 | D7 | DB 변경은 **추가형 마이그레이션** (`000N_*.sql`) | 세션 간 충돌·이력 관리 |
-| D8 | 제품명 **MIR_VDC** (MIR_Virtual Design & Construction) | 브랜드 + 건설 표준용어(VDC) |
+| D8 | 제품명 **MIR SMART** (쌍용건설 스마트 건설기술 플랫폼). 구 명칭 MIR_VDC | 사명(쌍용건설/Ssangyong E&C) 브랜딩에 맞춤 |
 | D9 | 세션 시작 **SessionStart 훅**(동기)으로 `npm install` + wasm 복사 | 세션마다 즉시 개발 가능 |
 
 ## 우선순위 (사용자 확정)

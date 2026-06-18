@@ -20,7 +20,9 @@
 
 ---
 
-## 1. UI/UX 리뉴얼 — "세련되게, 화이트+네이비" (Phase 6 / S11)
+## 1. UI/UX 리뉴얼 — "세련되게, 화이트+네이비" (Phase 6 / S11·S12) ✅ 완료
+> **상태**: S11(디자인 토큰·다크토글·Pretendard·리스킨) + S12(브랜딩 MIR SMART·쌍용 CI)
+> 로 완료. 설계는 `docs/DESIGN.md`. 아래는 당시 제안 기록(보존).
 **문제**: 현재 테마가 어두운 차콜/네이비(`--bg:#1e2430`) 단색이라 칙칙함.
 
 **제안(권장): 라이트 베이스 + 네이비 구조색 + 단일 강조색**. Forma 화면처럼
@@ -55,7 +57,9 @@
 
 ---
 
-## 3. 문서·미디어 뷰어 (새 탭으로 열기) (Phase 8 / S13)
+## 3. 문서·미디어 뷰어 (새 탭으로 열기) (Phase 8 / S13) 🔄 진행(PR #22)
+> **상태**: 1단계(웹 단독) 구현 PR #22 진행 중 — 라우트 `/view/:fileId`, PDF.js·SheetJS·
+> mammoth·native img/video, 다운로드 폴백, `0004_files.sql`(`files` 테이블 + `docs` 버킷).
 **목표**: 저장소의 파일을 클릭하면 **새 탭/라우트(`/view/:fileId`)** 에서 미리보기.
 
 ### 포맷별 가능여부
@@ -85,7 +89,7 @@
 
 ---
 
-## 4. CDE — 공통정보관리환경 + 좌측 정보구조 재편 (Phase 7 / S12)
+## 4. CDE — 공통정보관리환경 + 좌측 정보구조 재편 (Phase 7 / S14) ← 다음
 **CDE(Common Data Environment, ISO 19650)**: 프로젝트 정보를 한곳에서 **버전·상태·이력**과
 함께 관리하는 단일 출처. 현재의 "모델 목록"을 **문서/데이터 관리 체계**로 확장한다.
 
@@ -110,20 +114,23 @@
 → Archived(보관)`. 상태 전이 = 검토·승인 워크플로우 + 감사이력.
 
 ### 데이터 모델(설계 초안, 새 마이그레이션으로 추가)
+> ⚠️ **S13(PR #22)이 이미 `0004_files.sql` 로 `files` 테이블 + `docs` 버킷을 생성**한다.
+> S14 CDE 는 그 위에 폴더/버전/상태/이력을 **얹는 형태**로 `0005_cde.sql` 에 추가한다
+> (기존 `files` 에 `folder_id`·`status`·`current_version_id` 컬럼 추가 + 신규 테이블).
 - `folders(id, project_id, parent_id, name, path)` — 트리.
-- `files(id, project_id, folder_id, name, mime, status, current_version_id, tags…)`.
+- `files`(기존, PR #22) + `folder_id` / `status` / `current_version_id` 컬럼 보강.
 - `file_versions(id, file_id, version_no, storage_path, size, uploaded_by, created_at, note)`.
 - `activity_log(id, project_id, actor, action, target_type, target_id, meta, created_at)` — 이력.
 - (옵션) `transmittals`, `issues` 는 후속 세션.
-- RLS는 기존 `is_member`/`is_admin` 패턴 재사용. 추가형 마이그레이션(`0004_cde.sql`+).
+- RLS는 기존 `is_member`/`is_admin` 패턴 재사용. 추가형 마이그레이션(`0005_cde.sql`+).
 
 ### CDE 기능 단계
-- **MVP(S12)**: 폴더트리 CRUD · 업로드(다중 버전) · 버전 이력 보기 · 상태 뱃지 · 활동로그.
+- **MVP(S14)**: 폴더트리 CRUD · 업로드(다중 버전) · 버전 이력 보기 · 상태 뱃지 · 활동로그.
 - **다음**: 체크인/체크아웃(락), 승인 워크플로우, 자료전송(transmittal), 검색/필터·태그.
 
 ---
 
-## 5. Navisworks 기능군 (Phase 9 / S14) ⏳ 사용자 입력 대기
+## 5. Navisworks 기능군 (Phase 9 / S15) ⏳ 사용자 입력 대기
 **상태**: 사용자가 "몇 가지 Navisworks 기능"의 구체 내용을 제공하면 그에 맞춰 기획.
 
 참고로 Navisworks의 대표 기능(우리가 매핑할 후보):
@@ -140,7 +147,7 @@
 
 ---
 
-## 6. 장비 시뮬레이션 (Phase 3 / S15) ⏳ 샘플 이미지 대기
+## 6. 장비 시뮬레이션 (Phase 3 / S16) ⏳ 샘플 이미지 대기
 **가능여부**: 🟢 웹에서 가능. 기존 로드맵의 Phase 3(Rapier 물리)와 동일 선상.
 - **Rapier(WASM 물리엔진)**: 강체·관절(joint)로 굴착기 붐/암/버킷, 크레인 회전/인양,
   덤프트럭 주행 등 **관절 기구학 + 충돌**을 표현 가능.
@@ -151,7 +158,7 @@
 
 ---
 
-## 7. 네이티브 BIM 원본 업로드 (Phase 10 / S16) 🔴 전략 결정 필요
+## 7. 네이티브 BIM 원본 업로드 (Phase 10 / S17) 🔴 전략 결정 필요
 **질문**: Revit(.rvt) / Navisworks(.nwd·.nwc) / Civil 3D / DWG 도 업로드·열람 가능한가?
 **핵심 사실**: 이들은 **독점 바이너리 포맷**이라 브라우저에서 직접 파싱 불가.
 
@@ -185,15 +192,18 @@
 
 ---
 
-## 확장 세션 목록 (제안)
+## 확장 세션 목록 (재정렬 반영)
+> main 이 **S12 를 브랜딩(MIR SMART)** 으로 선점 → 초기 기획의 S12(CDE)는 **S14** 로 이동.
 | # | 세션 | 브랜치(예) | 의존 | 상태 |
 |---|---|---|---|---|
-| S11 | UI/디자인 시스템 리뉴얼(화이트+네이비) | `feature/ui-refresh` | — | 착수가능 |
-| S12 | CDE 정보구조 재편 + 파일 저장소 MVP | `feature/cde-foundation` | S11 권장 |  |
-| S13 | 문서·미디어 뷰어(새 탭) | `feature/doc-viewers` | S12 |  |
-| S14 | Navisworks 기능군 | `feature/nw-features` | 뷰어 | ⏳ 입력대기 |
-| S15 | 장비 시뮬레이션(Rapier) | `feature/equipment-sim` | S4 | ⏳ 이미지대기 |
-| S16 | 네이티브 BIM 업로드/변환(APS 평가) | `feature/native-bim` | S12 | 🔴 결정대기 |
+| S11 | UI/디자인 시스템 리뉴얼(화이트+네이비) | `feature/ui-refresh` | — | ✅ 완료 |
+| S12 | 브랜딩(MIR SMART·쌍용 CI·로그인 홈) | (branding-rename) | S11 | ✅ 완료 |
+| S13 | 문서·미디어 뷰어(새 탭) | `feature/doc-viewers` | S12 | 🔄 진행(PR #22) |
+| S14 | CDE 정보구조 재편 + 파일 저장소 MVP | `feature/cde-foundation` | S13 | ← **다음** |
+| S15 | Navisworks 기능군 | `feature/nw-features` | 뷰어 | ⏳ 입력대기 |
+| S16 | 장비 시뮬레이션(Rapier) | `feature/equipment-sim` | S4 | ⏳ 이미지대기 |
+| S17 | 네이티브 BIM 업로드/변환(APS 평가) | `feature/native-bim` | S14 | 🔴 결정대기 |
+| S18 | 성능 최적화·코드 스플리팅 | `feature/code-splitting` | — | S13서 일부 선반영 |
 
-**권장 착수 순서**: S11(리뉴얼) → S12(CDE 토대) → S13(뷰어) → (S14/S15는 입력 도착 시)
-→ S16(결정 후). UI를 먼저 정돈하면 이후 모든 모듈이 새 디자인 위에 얹힌다.
+**권장 착수 순서**: S11✅ → S12✅ → S13🔄(뷰어) → **S14(CDE 토대)** → (S15/S16 은 입력
+도착 시) → S17(APS 결정 후). 다음은 **S14 — CDE 정보구조 재편 + 파일 저장소**.

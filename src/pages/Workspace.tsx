@@ -6,6 +6,8 @@ import { useAuth } from '../auth/AuthProvider';
 import { Toolbar } from '../components/Toolbar';
 import { PropertiesPanel } from '../components/PropertiesPanel';
 import { Timeline } from '../components/Timeline';
+import { ThemeToggle } from '../components/ThemeToggle';
+import { BrandLogo } from '../components/BrandLogo';
 import {
   downloadModelBytes,
   getProject,
@@ -103,10 +105,11 @@ export function Workspace() {
   return (
     <div className="app workspace">
       <header className="topbar">
-        <span className="brand">MIR_VDC</span>
+        <span className="brand"><BrandLogo size="sm" /></span>
         <span className="project-title">{project?.name ?? '…'}</span>
         <Toolbar viewer={viewer} />
         <div className="spacer" />
+        <ThemeToggle />
         <button onClick={() => navigate('/')}>프로젝트 변경</button>
         <button onClick={signOut}>로그아웃</button>
       </header>
