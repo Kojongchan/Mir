@@ -10,10 +10,16 @@ VR 검토까지. 다중 사용자가 **본인 배정 프로젝트(공구)** 만 
 | 0 | 인증 + 프로젝트별 접근권한 + 데이터 저장 | ✅ 코드 완료 (Supabase 연결 대기) |
 | 1 | 3D IFC 뷰어 (탐색·선택·속성·표시제어) | ✅ 완료 |
 | 2 | 4D 시공 시뮬레이션 (일정↔객체, 타임슬라이더) | ✅ 1차 완료 (S4) |
-| 3 | 장비운용 시뮬레이션 (Rapier 물리, 강점) | ⏳ |
+| 3 | 장비운용 시뮬레이션 (Rapier 물리, 강점) | ⏳ (S16) |
 | 4 | 충돌 검사 (간섭 검출·리포트) | ⏳ |
 | 5 | VR (WebXR) | ⏳ |
+| 6 | UI/UX 리뉴얼 (화이트+네이비 디자인 시스템) | ✅ 완료 (S11·S12) |
+| 7 | CDE 공통정보관리환경 (파일 저장소·버전/이력·정보구조 재편) | 🧭 기획 (S14) |
 | 8 | 문서·미디어 통합 뷰어 (`/view/:fileId`, 이미지·PDF·동영상·xlsx·docx) | ✅ 1단계 완료 (S13, 웹 단독) · 2단계(서버 변환) ⏳ |
+| 9 | Navisworks 기능군 (측정·단면·마크업·뷰포인트 등) | 🧭 기획 (S15, 입력대기) |
+| 10 | 네이티브 BIM 업로드 (DWG/RVT/NWD — 변환/APS) | 🧭 기획 (S17, 결정대기) |
+
+> Phase 6~10 의 상세 기획·가능여부·전략은 **`docs/PLANNING.md`(기획창)** 참조.
 
 ## 작업 세션 (= 대화창 = 브랜치 1개)
 
@@ -26,8 +32,19 @@ VR 검토까지. 다중 사용자가 **본인 배정 프로젝트(공구)** 만 
 | S5 | Phase 3 · 장비운용 | `feature/equipment-sim` | Rapier 물리, 장비 라이브러리, 경로/간섭 | S4 |
 | S6 | Phase 4 · 충돌검사 | `feature/clash-detection` | 간섭 검출·리포트 | 뷰어 |
 | S7 | Phase 5 · VR | `feature/webxr` | 몰입형 검토 | 뷰어 |
+| S11 | Phase 6 · UI 리뉴얼 ✅ | `feature/ui-refresh` | 화이트+네이비 디자인 토큰·리스킨·다크토글 | — |
+| S12 | 브랜딩(MIR SMART) ✅ | (branding-rename) | 제품명/로고/쌍용 CI/로그인 홈 | S11 |
+| S13 | Phase 8 · 문서/미디어 뷰어 ✅ | `feature/doc-viewers` | 새 탭 뷰어(이미지·PDF·동영상·xlsx·docx) 1단계 완료(PR #22) | S12 |
+| S14 | Phase 7 · CDE 토대 | `feature/cde-foundation` | 좌측 정보구조 재편 + 파일 저장소(폴더·버전·상태·이력) | S13 |
+| S15 | Phase 9 · Navisworks 기능군 | `feature/nw-features` | 측정·단면·마크업·뷰포인트 (입력대기) | 뷰어 |
+| S16 | Phase 3 · 장비운용 | `feature/equipment-sim` | Rapier 물리·장비·경로/간섭 (이미지대기) | S4 |
+| S17 | Phase 10 · 네이티브 BIM | `feature/native-bim` | DWG/RVT/NWD 업로드·변환(APS 평가) | S14 |
+| S18 | 성능 최적화 · 코드 스플리팅 | `feature/code-splitting` | 번들 분할(청크 경고). S13 에서 뷰어 lazy 분리로 일부 선반영 | — |
 
-추천 순서: **S1 → S3 → S2 → S4 → S5 → S6 → S7**
+추천 순서: **… S4 → (확장) S11✅ → S12✅ → S13✅ → S14 → S15/S16 → S17**
+(확장 단계 S11~S18 의 상세는 `docs/PLANNING.md`. S11·S12·S13 완료.
+S14(CDE)가 다음. S15/S16 은 사용자 입력 도착 시, S17 은 APS 전략 결정 후 착수.)
+> **세션번호 메모**: main 이 S12 를 브랜딩으로 선점 → 초기 기획의 S12(CDE)는 **S14** 로 이동.
 
 > 각 세션은 자기 마이그레이션을 추가하므로 서로 충돌이 적습니다.
 > 세션 진행 방법은 `docs/SESSIONS.md`, 현재 상태는 `docs/STATUS.md` 참고.
