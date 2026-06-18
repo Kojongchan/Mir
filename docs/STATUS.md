@@ -2,7 +2,7 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-18 · S11 UI/UX 리뉴얼(화이트+네이비 디자인 토큰) **완료** (typecheck/build 통과)
+**마지막 업데이트**: 2026-06-18 · S13 Phase 8 문서·미디어 통합 뷰어(1단계) **완료** (typecheck/build 통과)
 
 ## 지금까지 한 일
 - Phase 1: 3D IFC 뷰어 (Three.js + web-ifc) — 로드·탐색·선택·속성·표시제어.
@@ -183,6 +183,34 @@
   Vercel 주소 유지(`mir-smart...vercel.app` 로 프로젝트명 변경은 대시보드에서), `.com`(ssyenc)
   은 사내 전산실 DNS 호스팅으로 추후 연결 예정. `mir_smart`(언더스코어)는 호스트명 불가.
 
+## S13 결과 (branch: claude/magical-cray-dh6tb5, 주제: doc-viewers) — Phase 8 문서·미디어 뷰어 1단계
+- ✅ **새 라우트 `/view/:fileId`**(`src/pages/FileViewer.tsx`) — 저장소 파일을 **새 탭**
+  으로 열어 미리보기. 파일 레코드 조회(RLS) → **짧은 만료(10분) 서명 URL** 발급 →
+  mime/확장자로 뷰어 분기(`src/lib/files.ts` `viewerKindFor`). App.tsx 에 `Protected` 라우트 추가.
+- ✅ **데이터/스토리지**: 마이그레이션 `supabase/migrations/0004_files.sql` — `public.files`
+  테이블 + RLS(멤버 select/insert, admin delete) + Storage **`docs`** 버킷 정책(모델과
+  동일한 `<project_id>/<file_id>.<ext>` 경로 규칙 → 멤버만 접근). `src/lib/files.ts`:
+  `listFiles/getFile/uploadFile/deleteFile/signedFileUrl` + 카테고리 판별·sizeLabel.
+- ✅ **뷰어(웹 단독·서버 0원)** `src/components/viewers/`: 이미지(native `<img>`),
+  동영상(native `<video>`), 오디오(native `<audio>`), **PDF=PDF.js**(페이지별 canvas
+  렌더, `pdf.worker.min.mjs?url`), **Excel=SheetJS**(xlsx/xls/csv → 시트 탭 + HTML 테이블),
+  **Word=mammoth.js**(docx → HTML), 텍스트(txt/md/json…). 미지원(avi/pptx/doc/hwp 등)은
+  **다운로드 폴백**(`DownloadFallback`)으로 막다른 길 없음.
+- ✅ **워크스페이스 연동**(`src/pages/Workspace.tsx`): 사이드바에 **`문서 · 미디어`** 섹션
+  (업로드 + 목록), 항목 클릭 시 `window.open('/view/:id', '_blank')` 새 탭.
+- ✅ **코드 스플리팅**: 무거운 뷰어(PDF.js/SheetJS/mammoth)를 `React.lazy`로 분리 →
+  메인 번들 gzip **1006KB→650KB**. (PdfViewer/SheetViewer/DocxViewer 별도 청크 + pdf.worker)
+- ✅ 검증: `npm run typecheck`·`npm run build` 통과. 라이브 눈 검증은 `docs` 버킷 생성 +
+  0004 적용 후 사용자 화면 권장(원격 egress 제약).
+- 📌 **배포 셋업 필요**: `0004_files.sql` 실행 + Supabase **`docs`(Private) 버킷 생성**.
+  (docs/OPERATIONS.md 0-B 참고)
+- ⚠️ **SheetJS 보안 한계**: npm `xlsx`는 0.18.5(prototype pollution·ReDoS advisory)만 제공,
+  패치판(≥0.20.x)은 `cdn.sheetjs.com`에서만 배포되는데 **네트워크 정책 차단**. 파일은
+  프로젝트 멤버만 업로드 가능(RLS)해 노출이 제한되지만, 정책 허용 시 CDN 빌드로 교체 권장.
+- 🔜 **2단계(별도 세션)**: 서버 변환 파이프라인(avi→mp4, pptx/doc/hwp→PDF) — 분리.
+- 📌 브랜치 메모: 작업 브랜치 `claude/magical-cray-dh6tb5`(원격 세션 지정)에서 작업·푸시.
+  요청 주제명은 `feature/doc-viewers`.
+
 ## 다음 할 일 (우선순위)
 1. **S4 라이브 눈 검증** — 실 IFC 모델 + 샘플 CSV 임포트 → 순서배정 → 슬라이더/재생 확인.
 2. **S2 라이브 검증** — Vercel env 설정 후 `/admin` 에서 사용자 생성→로그인→프로젝트 배정 확인.
@@ -199,6 +227,10 @@
   `COORDINATE_TO_ORIGIN` 의 첫 요소 회전 오염) 규명·수정. 실제 파일 눈 검증만 잔여.
 
 ## 다음 세션 인수인계 (한 줄)
+> S13 완료: 문서·미디어 뷰어 `/view/:fileId`(`FileViewer`)+`src/lib/files.ts`+
+> `src/components/viewers/*`+마이그레이션 `0004_files.sql`(=`docs` 버킷 생성 필요).
+> 배포 셋업·라이브 검증(OPERATIONS 0-B)과 SheetJS CDN 교체가 잔여. 2단계(서버 변환)는 별도 세션.
+> ---
 > S11 완료: 화이트+네이비 디자인 토큰(`src/index.css`)+Pretendard+다크 토글
 > (`src/lib/theme.ts`,`ThemeToggle`), 설계는 `docs/DESIGN.md`. 새 색은 토큰으로만
 > 추가(light/dark 둘 다).

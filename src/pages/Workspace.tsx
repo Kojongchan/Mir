@@ -16,6 +16,12 @@ import {
   type ModelRecord,
   type Project,
 } from '../lib/api';
+import {
+  listFiles,
+  uploadFile,
+  sizeLabel as fileSizeLabel,
+  type FileRecord,
+} from '../lib/files';
 
 export function Workspace() {
   const { projectId = '' } = useParams();
@@ -30,6 +36,12 @@ export function Workspace() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+
+  // Project documents & media (images, PDFs, video, spreadsheets, …) — opened
+  // in a standalone preview tab at /view/:fileId.
+  const [files, setFiles] = useState<FileRecord[]>([]);
+  const [docUploading, setDocUploading] = useState(false);
+  const docInput = useRef<HTMLInputElement>(null);
 
   // Up-axis correction for the occasional mis-oriented model (e.g. Y-up bridge
   // exports). There is no visible control yet — orient from the console with
@@ -58,10 +70,12 @@ export function Workspace() {
   useEffect(() => {
     getProject(projectId).then(setProject);
     refreshModels();
+    refreshFiles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   const refreshModels = () => listModels(projectId).then(setModels).catch(() => setModels([]));
+  const refreshFiles = () => listFiles(projectId).then(setFiles).catch(() => setFiles([]));
 
   const openModel = async (m: ModelRecord) => {
     if (!viewer) return;
@@ -101,6 +115,27 @@ export function Workspace() {
       if (fileInput.current) fileInput.current.value = '';
     }
   };
+
+  const onUploadDoc = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setDocUploading(true);
+    setStatus(`업로드 중: ${file.name}`);
+    try {
+      await uploadFile(projectId, file);
+      await refreshFiles();
+      setStatus(`업로드 완료: ${file.name}`);
+    } catch (err) {
+      setStatus(`업로드 실패: ${(err as Error).message}`);
+    } finally {
+      setDocUploading(false);
+      if (docInput.current) docInput.current.value = '';
+    }
+  };
+
+  // Open a document/media file in its own preview tab. Routed under /view so a
+  // direct link is shareable; auth/RLS are re-checked there.
+  const openFile = (f: FileRecord) => window.open(`/view/${f.id}`, '_blank', 'noopener');
 
   return (
     <div className="app workspace">
@@ -144,6 +179,34 @@ export function Workspace() {
             </li>
           ))}
           {models.length === 0 && <li className="muted empty">등록된 모델이 없습니다.</li>}
+        </ul>
+
+        <div className="sidebar-head">
+          <h2>문서 · 미디어</h2>
+          <input
+            ref={docInput}
+            type="file"
+            style={{ display: 'none' }}
+            onChange={onUploadDoc}
+          />
+          <button onClick={() => docInput.current?.click()} disabled={docUploading}>
+            {docUploading ? '업로드 중…' : '파일 업로드'}
+          </button>
+        </div>
+        <ul className="model-list">
+          {files.map((f) => (
+            <li key={f.id}>
+              <button
+                className="model-item"
+                onClick={() => openFile(f)}
+                title={`${f.name} — 새 탭에서 미리보기`}
+              >
+                <span className="model-name">{f.name}</span>
+                <span className="muted">{fileSizeLabel(f.size_bytes)}</span>
+              </button>
+            </li>
+          ))}
+          {files.length === 0 && <li className="muted empty">등록된 문서가 없습니다.</li>}
         </ul>
       </aside>
 

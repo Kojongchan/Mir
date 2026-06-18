@@ -5,6 +5,7 @@ import { Login } from './pages/Login';
 import { ProjectSelect } from './pages/ProjectSelect';
 import { Workspace } from './pages/Workspace';
 import { Admin } from './pages/Admin';
+import { FileViewer } from './pages/FileViewer';
 
 function Protected({ children }: { children: ReactElement }) {
   const { session, loading } = useAuth();
@@ -61,6 +62,14 @@ export default function App() {
               <AdminOnly>
                 <Admin />
               </AdminOnly>
+            }
+          />
+          <Route
+            path="/view/:fileId"
+            element={
+              <Protected>
+                <FileViewer />
+              </Protected>
             }
           />
           <Route path="*" element={<Navigate to="/" replace />} />
