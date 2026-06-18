@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 import { isSupabaseConfigured } from '../lib/supabase';
 import { ThemeToggle } from '../components/ThemeToggle';
+import { BrandLogo } from '../components/BrandLogo';
 
 export function Login() {
   const { signIn } = useAuth();
@@ -32,7 +33,7 @@ export function Login() {
         <ThemeToggle />
       </div>
       <form className="auth-card" onSubmit={onSubmit}>
-        <div className="auth-brand">MIR_VDC</div>
+        <div className="auth-brand"><BrandLogo size="lg" /></div>
         <p className="muted auth-sub">Virtual Design &amp; Construction</p>
 
         {!isSupabaseConfigured && (

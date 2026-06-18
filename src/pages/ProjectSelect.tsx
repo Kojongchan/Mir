@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { listProjects, type Project } from '../lib/api';
 import { useAuth } from '../auth/AuthProvider';
 import { ThemeToggle } from '../components/ThemeToggle';
+import { BrandLogo } from '../components/BrandLogo';
 
 export function ProjectSelect() {
   const navigate = useNavigate();
@@ -23,7 +24,7 @@ export function ProjectSelect() {
       <div className="auth-card wide">
         <div className="select-head">
           <div>
-            <div className="auth-brand small">MIR_VDC</div>
+            <div className="auth-brand small"><BrandLogo size="md" /></div>
             <p className="muted">{profile?.full_name ?? profile?.username} 님, 프로젝트를 선택하세요</p>
           </div>
           <div className="select-head-actions">

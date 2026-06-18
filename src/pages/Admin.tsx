@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 import { listProjects, type Project } from '../lib/api';
 import { ThemeToggle } from '../components/ThemeToggle';
+import { BrandLogo } from '../components/BrandLogo';
 import {
   MEMBER_ROLES,
   createProject,
@@ -55,7 +56,7 @@ export function Admin() {
     <div className="admin-screen">
       <header className="admin-top">
         <div>
-          <span className="brand">MIR_VDC</span>
+          <span className="brand"><BrandLogo size="sm" /></span>
           <span className="admin-title">관리자 콘솔</span>
         </div>
         <div className="admin-top-actions">
