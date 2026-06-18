@@ -29,12 +29,15 @@ export function Login() {
 
   return (
     <div className="auth-screen">
-      <div className="auth-toggle">
+      <div className="auth-corner auth-corner-left">
         <ThemeToggle />
+      </div>
+      <div className="auth-corner auth-corner-right">
+        <img className="auth-cobrand" src="/brand/ssyenc-ci.png" alt="쌍용건설" />
       </div>
       <form className="auth-card" onSubmit={onSubmit}>
         <div className="auth-brand"><BrandLogo size="lg" /></div>
-        <p className="muted auth-sub">Virtual Design &amp; Construction</p>
+        <p className="muted auth-sub">쌍용건설 스마트 건설기술 플랫폼에 오신 것을 환영합니다.</p>
 
         {!isSupabaseConfigured && (
           <div className="auth-warn">
@@ -68,6 +71,11 @@ export function Login() {
           {busy ? '로그인 중…' : '로그인'}
         </button>
       </form>
+
+      <footer className="auth-footer">
+        <span>© Copyright Ssangyong E&amp;C. All Rights Reserved</span>
+        <span>Designed by Civil Engineering Technology Team, Smart Construction Part</span>
+      </footer>
     </div>
   );
 }
