@@ -1,12 +1,115 @@
+/* MIR_VDC 디자인 시스템 — 토큰 기반 (라이트 기본 · 네이비 구조색 · 블루 강조)
+   설계 문서: docs/DESIGN.md. 색은 모두 토큰(--*)으로만 참조한다.
+   테마는 <html data-theme="light|dark"> 로 전환(기본 light). */
+
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css');
+
+/* ===================== 디자인 토큰 ===================== */
 :root {
-  --bg: #1e2430;
-  --panel: #2a3340;
+  /* 표면 (라이트 기본) */
+  --bg: #eef1f6;
+  --panel: #ffffff;
+  --panel-2: #f5f7fb;
+  --border: #d9e1ec;
+  --text: #1b2434;
+  --muted: #5e6b80;
+
+  /* 강조 (블루) */
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(37, 99, 235, 0.12);
+
+  /* 구조색 (네이비) — 상단바·상태바 등 크롬 */
+  --chrome: #16243f;
+  --chrome-2: #1d3052;
+  --chrome-text: #eaf0fa;
+  --chrome-muted: #9fb2d0;
+  --chrome-border: #2a3e63;
+
+  /* 의미색 */
+  --danger: #dc2626;
+  --danger-border: #e6b8b8;
+  --danger-soft: rgba(220, 38, 38, 0.10);
+
+  /* 4D 칩(유형/상태) */
+  --chip-construct-bg: rgba(22, 163, 74, 0.14);
+  --chip-construct-fg: #15803d;
+  --chip-demolish-bg: rgba(220, 38, 38, 0.13);
+  --chip-demolish-fg: #b91c1c;
+  --chip-equip-bg: rgba(37, 99, 235, 0.13);
+  --chip-equip-fg: #1d4ed8;
+  --chip-temp-bg: rgba(202, 138, 4, 0.16);
+  --chip-temp-fg: #a16207;
+  --chip-neutral-bg: #e7ecf3;
+  --chip-neutral-fg: var(--muted);
+
+  /* 4D 간트 바 */
+  --bar-construct: #2f9e57;
+  --bar-demolish: #d9534f;
+  --bar-temporary: #d4a017;
+  --bar-future: #c6d0de;
+  --bar-built: #2f9e57;
+
+  /* 디테일 */
+  --hairline: rgba(15, 23, 42, 0.06);
+  --row-hover: rgba(15, 23, 42, 0.04);
+  --glass: rgba(255, 255, 255, 0.88);
+  --radius: 10px;
+  --radius-sm: 6px;
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-md: 0 10px 34px rgba(16, 24, 40, 0.14);
+
+  font-family: 'Pretendard Variable', Pretendard, system-ui, -apple-system,
+    'Segoe UI', Roboto, sans-serif;
+}
+
+/* 다크 테마 — 토큰만 재정의(규칙은 공유) */
+:root[data-theme='dark'] {
+  --bg: #141a24;
+  --panel: #1e2430;
   --panel-2: #232b36;
-  --border: #3a4555;
+  --border: #38424f;
   --text: #e6ebf2;
   --muted: #8b97a8;
-  --accent: #ffaa00;
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --accent: #3b82f6;
+  --accent-hover: #60a5fa;
+  --accent-fg: #0b1220;
+  --accent-soft: rgba(59, 130, 246, 0.18);
+
+  --chrome: #10151d;
+  --chrome-2: #1a2230;
+  --chrome-text: #e6ebf2;
+  --chrome-muted: #8b97a8;
+  --chrome-border: #2b3543;
+
+  --danger: #ff8a8a;
+  --danger-border: #6e3b3b;
+  --danger-soft: rgba(220, 38, 38, 0.18);
+
+  --chip-construct-bg: rgba(34, 197, 94, 0.16);
+  --chip-construct-fg: #9fe0b4;
+  --chip-demolish-bg: rgba(220, 38, 38, 0.18);
+  --chip-demolish-fg: #e0a4a4;
+  --chip-equip-bg: rgba(59, 130, 246, 0.18);
+  --chip-equip-fg: #a4c4e0;
+  --chip-temp-bg: rgba(202, 138, 4, 0.22);
+  --chip-temp-fg: #e6c66b;
+  --chip-neutral-bg: #3a4555;
+  --chip-neutral-fg: var(--muted);
+
+  --bar-construct: #4a7a5a;
+  --bar-demolish: #b05050;
+  --bar-temporary: #b0a050;
+  --bar-future: #3a4555;
+  --bar-built: #4a7a5a;
+
+  --hairline: rgba(255, 255, 255, 0.04);
+  --row-hover: rgba(255, 255, 255, 0.05);
+  --glass: rgba(30, 36, 48, 0.95);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
 
 * {
@@ -20,6 +123,11 @@ body,
   height: 100%;
   background: var(--bg);
   color: var(--text);
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .app {
@@ -60,7 +168,7 @@ body,
 
 .project-title {
   font-size: 14px;
-  color: var(--text);
+  color: var(--chrome-text);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -127,11 +235,22 @@ body,
 
 /* ---- auth / project select ---- */
 .auth-screen {
+  position: relative;
   min-height: 100vh;
   display: grid;
   place-items: center;
   padding: 16px;
+  background: radial-gradient(120% 120% at 50% 0%, #ffffff 0%, var(--bg) 58%);
+}
+
+:root[data-theme='dark'] .auth-screen {
   background: radial-gradient(circle at 50% 30%, #273140, var(--bg));
+}
+
+.auth-toggle {
+  position: absolute;
+  top: 16px;
+  right: 16px;
 }
 
 .auth-card {
@@ -143,7 +262,8 @@ body,
   padding: 28px;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 14px;
+  box-shadow: var(--shadow-md);
 }
 
 .auth-card.wide {
@@ -153,7 +273,7 @@ body,
 .auth-brand {
   font-size: 26px;
   font-weight: 800;
-  letter-spacing: 1px;
+  letter-spacing: 0.5px;
   color: var(--accent);
   text-align: center;
 }
@@ -180,7 +300,7 @@ body,
 .auth-card input {
   background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 9px 10px;
   color: var(--text);
   font-size: 14px;
@@ -189,23 +309,32 @@ body,
 .auth-card input:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .auth-card button[type='submit'] {
   margin-top: 6px;
   padding: 10px;
   font-weight: 600;
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
+.auth-card button[type='submit']:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 .auth-error {
-  color: #ff8a8a;
+  color: var(--danger);
   font-size: 13px;
 }
 
 .auth-warn {
-  background: rgba(255, 170, 0, 0.12);
+  background: var(--accent-soft);
   border: 1px solid var(--accent);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 8px 10px;
   font-size: 12px;
 }
@@ -258,6 +387,11 @@ body,
   text-align: left;
 }
 
+.project-item:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
 .project-name {
   font-size: 15px;
   font-weight: 600;
@@ -273,20 +407,22 @@ body,
   flex-shrink: 0;
 }
 
+/* ---- 상단 크롬(네이비 구조색) ---- */
 .topbar {
   display: flex;
   align-items: center;
   gap: 16px;
   padding: 0 14px;
-  background: var(--panel-2);
-  border-bottom: 1px solid var(--border);
+  background: var(--chrome);
+  color: var(--chrome-text);
+  border-bottom: 1px solid var(--chrome-border);
   overflow: hidden;
 }
 
 .brand {
   font-weight: 700;
   letter-spacing: 0.5px;
-  color: var(--accent);
+  color: var(--chrome-text);
   flex-shrink: 0;
 }
 
@@ -304,19 +440,42 @@ body,
 .toolbar .divider {
   width: 1px;
   height: 22px;
-  background: var(--border);
+  background: var(--chrome-border);
   margin: 0 4px;
+}
+
+/* 크롬 위 버튼 = 고스트(반투명) */
+.topbar button,
+.admin-top button,
+.statusbar button {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--chrome-text);
+  border-color: var(--chrome-border);
+}
+
+.topbar button:hover:not(:disabled),
+.admin-top button:hover:not(:disabled),
+.statusbar button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.13);
+  border-color: var(--accent);
+}
+
+.topbar .muted,
+.admin-top .muted,
+.statusbar .muted {
+  color: var(--chrome-muted);
 }
 
 button {
   background: var(--panel);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 6px 12px;
   font-size: 13px;
   cursor: pointer;
   white-space: nowrap;
+  transition: background-color 0.15s, border-color 0.15s, color 0.15s;
 }
 
 button:hover:not(:disabled) {
@@ -326,6 +485,12 @@ button:hover:not(:disabled) {
 button:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+.theme-toggle {
+  font-size: 15px;
+  line-height: 1;
+  padding: 6px 10px;
 }
 
 .viewport {
@@ -343,9 +508,9 @@ button:disabled {
   justify-content: space-between;
   padding: 0 14px;
   font-size: 12px;
-  background: var(--panel-2);
-  border-top: 1px solid var(--border);
-  color: var(--text);
+  background: var(--chrome);
+  border-top: 1px solid var(--chrome-border);
+  color: var(--chrome-text);
 }
 
 .muted {
@@ -366,8 +531,9 @@ button:disabled {
   gap: 12px;
   padding: 0 18px;
   height: 48px;
-  background: var(--panel-2);
-  border-bottom: 1px solid var(--border);
+  background: var(--chrome);
+  color: var(--chrome-text);
+  border-bottom: 1px solid var(--chrome-border);
 }
 
 .admin-top > div:first-child {
@@ -379,6 +545,7 @@ button:disabled {
 .admin-title {
   margin-left: 12px;
   font-size: 14px;
+  color: var(--chrome-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -410,7 +577,7 @@ button:disabled {
 
 .admin-tabs button {
   border-bottom: 2px solid transparent;
-  border-radius: 6px 6px 0 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
 
 .admin-tabs button.active {
@@ -437,8 +604,9 @@ button:disabled {
 .admin-card {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius);
   padding: 16px;
+  box-shadow: var(--shadow-sm);
 }
 
 .admin-form-row {
@@ -453,7 +621,7 @@ button:disabled {
 .admin-form-row select {
   background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 8px 10px;
   color: var(--text);
   font-size: 14px;
@@ -473,6 +641,7 @@ button:disabled {
 .admin-form-row select:focus {
   outline: none;
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .admin-inline,
@@ -528,19 +697,20 @@ button:disabled {
 .admin-table select {
   background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 4px 8px;
   color: var(--text);
   font-size: 13px;
 }
 
 button.danger {
-  border-color: #6e3b3b;
-  color: #ff8a8a;
+  border-color: var(--danger-border);
+  color: var(--danger);
 }
 
 button.danger:hover:not(:disabled) {
-  border-color: #ff8a8a;
+  border-color: var(--danger);
+  background: var(--danger-soft);
 }
 
 .tag {
@@ -548,7 +718,7 @@ button.danger:hover:not(:disabled) {
   padding: 1px 6px;
   font-size: 10px;
   border-radius: 4px;
-  background: rgba(255, 170, 0, 0.18);
+  background: var(--accent-soft);
   color: var(--accent);
 }
 
@@ -561,6 +731,7 @@ button.danger:hover:not(:disabled) {
   color: var(--accent);
 }
 
+/* ---- 부유 패널(속성) ---- */
 .panel {
   position: absolute;
   top: 60px;
@@ -568,11 +739,12 @@ button.danger:hover:not(:disabled) {
   width: min(300px, calc(100vw - 24px));
   max-height: calc(100vh - 110px);
   overflow: auto;
-  background: rgba(42, 51, 64, 0.95);
+  background: var(--glass);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 12px 14px;
-  backdrop-filter: blur(6px);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(8px);
 }
 
 .panel h2 {
@@ -726,7 +898,7 @@ button.danger:hover:not(:disabled) {
   display: flex;
   align-items: center;
   height: 22px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--hairline);
 }
 
 .tl-row-name {
@@ -779,20 +951,20 @@ button.danger:hover:not(:disabled) {
   font-size: 10px;
   padding: 1px 5px;
   border-radius: 4px;
-  background: var(--panel);
-  color: var(--muted);
+  background: var(--chip-neutral-bg);
+  color: var(--chip-neutral-fg);
 }
 .tl-kind-construct {
-  background: #2d4a36;
-  color: #9fe0b4;
+  background: var(--chip-construct-bg);
+  color: var(--chip-construct-fg);
 }
 .tl-kind-demolish {
-  background: #4a2d2d;
-  color: #e0a4a4;
+  background: var(--chip-demolish-bg);
+  color: var(--chip-demolish-fg);
 }
 .tl-kind-equipment {
-  background: #2d3a4a;
-  color: #a4c4e0;
+  background: var(--chip-equip-bg);
+  color: var(--chip-equip-fg);
 }
 
 .tl-track {
@@ -801,6 +973,7 @@ button.danger:hover:not(:disabled) {
   height: 100%;
 }
 
+/* 간트 바: 유형 색 + 상태 투명도 */
 .tl-bar {
   position: absolute;
   top: 5px;
@@ -809,13 +982,27 @@ button.danger:hover:not(:disabled) {
   min-width: 2px;
 }
 .tl-bar-future {
-  background: #3a4555;
-}
-.tl-bar-active {
-  background: var(--accent);
+  background: var(--bar-future);
 }
 .tl-bar-built {
-  background: #4a7a5a;
+  background: var(--bar-built);
+}
+.tl-bar-construct,
+.tl-bar-other,
+.tl-bar-equipment {
+  background: var(--bar-construct);
+}
+.tl-bar-demolish {
+  background: var(--bar-demolish);
+}
+.tl-bar-temporary {
+  background: var(--bar-temporary);
+}
+.tl-bar-before {
+  opacity: 0.4;
+}
+.tl-bar-active {
+  outline: 1px solid var(--accent);
 }
 
 /* ---- 4D: 표시 설정 패널 ---- */
@@ -878,17 +1065,17 @@ button.danger:hover:not(:disabled) {
   display: flex;
   align-items: stretch;
   height: 22px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid var(--hairline);
 }
 .tl-tbody .tr:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--row-hover);
 }
 .tl-tbody .td {
   flex-shrink: 0;
   padding: 0 8px;
   font-size: 12px;
   line-height: 22px;
-  border-right: 1px solid rgba(255, 255, 255, 0.04);
+  border-right: 1px solid var(--hairline);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -915,42 +1102,16 @@ button.danger:hover:not(:disabled) {
   border-radius: 4px;
 }
 .tl-status-before {
-  background: #3a4555;
-  color: var(--muted);
+  background: var(--chip-neutral-bg);
+  color: var(--chip-neutral-fg);
 }
 .tl-status-active {
-  background: #5a4a1e;
-  color: #ffcf6b;
+  background: var(--chip-temp-bg);
+  color: var(--chip-temp-fg);
 }
 .tl-status-done {
-  background: #2d4a36;
-  color: #9fe0b4;
-}
-
-/* 간트 바: 유형 색 + 상태 투명도 */
-.tl-bar {
-  position: absolute;
-  top: 5px;
-  height: 12px;
-  border-radius: 3px;
-  min-width: 2px;
-}
-.tl-bar-construct,
-.tl-bar-other,
-.tl-bar-equipment {
-  background: #4a7a5a;
-}
-.tl-bar-demolish {
-  background: #b05050;
-}
-.tl-bar-temporary {
-  background: #b0a050;
-}
-.tl-bar-before {
-  opacity: 0.4;
-}
-.tl-bar-active {
-  outline: 1px solid var(--accent);
+  background: var(--chip-construct-bg);
+  color: var(--chip-construct-fg);
 }
 
 /* ---- 모달(열 매핑) ---- */
@@ -966,12 +1127,12 @@ button.danger:hover:not(:disabled) {
 .modal {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius);
   width: min(560px, 94vw);
   max-height: 86vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-md);
 }
 .modal-head {
   padding: 14px 16px;
@@ -995,9 +1156,14 @@ button.danger:hover:not(:disabled) {
 .modal-foot .primary,
 .primary {
   background: var(--accent);
-  color: #1e2430;
+  color: var(--accent-fg);
   border-color: var(--accent);
   font-weight: 600;
+}
+.modal-foot .primary:hover:not(:disabled),
+.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 .map-table {
   width: 100%;
@@ -1026,5 +1192,5 @@ button.danger:hover:not(:disabled) {
   white-space: nowrap;
 }
 .req {
-  color: #ff8c8c;
+  color: var(--danger);
 }

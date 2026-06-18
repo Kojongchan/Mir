@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 import { listProjects, type Project } from '../lib/api';
+import { ThemeToggle } from '../components/ThemeToggle';
 import {
   MEMBER_ROLES,
   createProject,
@@ -59,6 +60,7 @@ export function Admin() {
         </div>
         <div className="admin-top-actions">
           <span className="muted">{profile?.full_name ?? profile?.username}</span>
+          <ThemeToggle />
           <button onClick={() => navigate('/')}>프로젝트로</button>
         </div>
       </header>

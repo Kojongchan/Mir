@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 import { isSupabaseConfigured } from '../lib/supabase';
+import { ThemeToggle } from '../components/ThemeToggle';
 
 export function Login() {
   const { signIn } = useAuth();
@@ -27,6 +28,9 @@ export function Login() {
 
   return (
     <div className="auth-screen">
+      <div className="auth-toggle">
+        <ThemeToggle />
+      </div>
       <form className="auth-card" onSubmit={onSubmit}>
         <div className="auth-brand">MIR_VDC</div>
         <p className="muted auth-sub">Virtual Design &amp; Construction</p>
