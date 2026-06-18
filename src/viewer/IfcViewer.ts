@@ -117,7 +117,7 @@ export class IfcViewer {
   constructor(container: HTMLElement) {
     this.container = container;
 
-    this.scene.background = new THREE.Color(0x1e2430);
+    this.scene.background = new THREE.Color(0xffffff);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(window.devicePixelRatio);
@@ -670,7 +670,8 @@ export class IfcViewer {
     dir.position.set(10, 20, 10);
     this.scene.add(dir);
 
-    const grid = new THREE.GridHelper(100, 100, 0x445566, 0x2a3340);
+    // 흰색 배경에서 보이도록 밝은 회색 그리드(중심선은 약간 진하게).
+    const grid = new THREE.GridHelper(100, 100, 0x9aa5b5, 0xd7dde6);
     this.scene.add(grid);
   }
 

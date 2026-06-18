@@ -20,6 +20,10 @@
   --accent-fg: #ffffff;
   --accent-soft: rgba(37, 99, 235, 0.12);
 
+  /* 브랜드 (로고 색 — 라이트·다크 공통) */
+  --brand-gray: #8a8d8f;
+  --brand-red: #e2231a;
+
   /* 구조색 (네이비) — 상단바·상태바 등 크롬 */
   --chrome: #16243f;
   --chrome-2: #1d3052;
@@ -281,6 +285,62 @@ body {
 .auth-brand.small {
   font-size: 18px;
   text-align: left;
+}
+
+/* ---- 브랜드 로고(SS 마크 + MIR/VDC 워드마크) ---- */
+.brand-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1;
+}
+.brand-mark {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.brand-mark svg {
+  display: block;
+  width: auto;
+}
+.brand-s {
+  font-family: 'Pretendard Variable', Pretendard, system-ui, sans-serif;
+}
+.brand-s-gray {
+  fill: var(--brand-gray);
+}
+.brand-s-red {
+  fill: var(--brand-red);
+}
+.brand-word {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+.brand-mir {
+  color: var(--brand-gray);
+}
+.brand-vdc {
+  color: var(--brand-red);
+}
+.brand-logo-lg .brand-word {
+  font-size: 30px;
+}
+.brand-logo-lg .brand-mark svg {
+  height: 38px;
+}
+.brand-logo-md .brand-word {
+  font-size: 20px;
+}
+.brand-logo-md .brand-mark svg {
+  height: 26px;
+}
+.brand-logo-sm .brand-word {
+  font-size: 16px;
+}
+.brand-logo-sm .brand-mark svg {
+  height: 22px;
 }
 
 .auth-sub {
