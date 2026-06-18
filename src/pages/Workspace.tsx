@@ -5,6 +5,7 @@ import { useStore } from '../store/useStore';
 import { useAuth } from '../auth/AuthProvider';
 import { Toolbar } from '../components/Toolbar';
 import { PropertiesPanel } from '../components/PropertiesPanel';
+import { Timeline } from '../components/Timeline';
 import {
   downloadModelBytes,
   getProject,
@@ -33,8 +34,11 @@ export function Workspace() {
   // window.__mirUpAxis('y'); the choice is remembered per model in localStorage
   // so it survives reloads. (A toolbar toggle can be re-added when needed.)
   const openModelId = useRef<string | null>(null);
+  // DB(models.id) of the currently open model — used by the 4D layer to persist
+  // and resolve task↔element mappings against this model.
+  const [openModelDbId, setOpenModelDbId] = useState<string | null>(null);
 
-  const { status, setStatus, setSelected, setModelCount } = useStore();
+  const { status, setStatus, setSelected, setModelCount, fourd } = useStore();
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -67,6 +71,10 @@ export function Workspace() {
       await viewer.loadIfc(bytes, saved ? { upAxis: saved } : undefined);
       setModelCount(viewer.modelCount);
       openModelId.current = m.id;
+      setOpenModelDbId(m.id);
+      // 새 모델을 열면 기존 4D 매핑(이전 expressID 참조)은 무효 → 초기화
+      viewer.clearConstruction();
+      fourd.setMapping({}, 0, 0);
       setStatus(`불러옴: ${m.name}`);
     } catch (e) {
       setStatus(`불러오기 실패: ${(e as Error).message}`);
@@ -139,6 +147,8 @@ export function Workspace() {
       <div className="viewport" ref={containerRef} />
 
       <PropertiesPanel />
+
+      <Timeline viewer={viewer} projectId={projectId} modelDbId={openModelDbId} />
 
       <footer className="statusbar">
         <span>{status}</span>
