@@ -243,18 +243,51 @@ body {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  padding: 16px;
+  padding: 60px 16px 52px;
   background: radial-gradient(120% 120% at 50% 0%, #ffffff 0%, var(--bg) 58%);
+}
+
+/* 다크 테마에서 회사 CI(어두운 글자)가 묻히지 않도록 흰 칩 위에 */
+:root[data-theme='dark'] .auth-cobrand {
+  background: #fff;
+  padding: 4px 8px;
+  border-radius: 6px;
 }
 
 :root[data-theme='dark'] .auth-screen {
   background: radial-gradient(circle at 50% 30%, #273140, var(--bg));
 }
 
-.auth-toggle {
+.auth-corner {
   position: absolute;
   top: 16px;
+  display: flex;
+  align-items: center;
+}
+.auth-corner-left {
+  left: 16px;
+}
+.auth-corner-right {
   right: 16px;
+}
+.auth-cobrand {
+  height: 30px;
+  width: auto;
+  display: block;
+}
+
+.auth-footer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 16px;
+  padding: 12px 18px;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .auth-card {
@@ -287,29 +320,17 @@ body {
   text-align: left;
 }
 
-/* ---- 브랜드 로고(SS 마크 + MIR/VDC 워드마크) ---- */
+/* ---- 브랜드 로고(SS 마크 이미지 + MIR/SMART 워드마크) ---- */
 .brand-logo {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   line-height: 1;
 }
-.brand-mark {
-  display: inline-flex;
-  flex-shrink: 0;
-}
-.brand-mark svg {
+.brand-mark-img {
   display: block;
   width: auto;
-}
-.brand-s {
-  font-family: 'Pretendard Variable', Pretendard, system-ui, sans-serif;
-}
-.brand-s-gray {
-  fill: var(--brand-gray);
-}
-.brand-s-red {
-  fill: var(--brand-red);
+  flex-shrink: 0;
 }
 .brand-word {
   display: inline-flex;
@@ -321,26 +342,26 @@ body {
 .brand-mir {
   color: var(--brand-gray);
 }
-.brand-vdc {
+.brand-smart {
   color: var(--brand-red);
 }
 .brand-logo-lg .brand-word {
   font-size: 30px;
 }
-.brand-logo-lg .brand-mark svg {
-  height: 38px;
+.brand-logo-lg .brand-mark-img {
+  height: 40px;
 }
 .brand-logo-md .brand-word {
   font-size: 20px;
 }
-.brand-logo-md .brand-mark svg {
-  height: 26px;
+.brand-logo-md .brand-mark-img {
+  height: 28px;
 }
 .brand-logo-sm .brand-word {
   font-size: 16px;
 }
-.brand-logo-sm .brand-mark svg {
-  height: 22px;
+.brand-logo-sm .brand-mark-img {
+  height: 24px;
 }
 
 .auth-sub {

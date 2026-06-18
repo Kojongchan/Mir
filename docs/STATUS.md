@@ -160,6 +160,21 @@
   / VDC 빨강**), 토큰 `--brand-gray`/`--brand-red`. 로그인·프로젝트선택·워크스페이스·
   관리자 4곳 적용. SS 마크는 공식 로고 근사 인라인 SVG(공식 에셋 받으면 교체 가능).
 
+## S12 결과 (branch: claude/youthful-meitner-nu7ojt, 주제: branding-rename)
+- ✅ **제품명 MIR_VDC → MIR SMART** (UI 전반: `BrandLogo` 워드마크 MIR(회색)/SMART(빨강),
+  `index.html` 제목·파비콘, 로그인 부제). 내부 docs 일부 표기는 점진 정리.
+- ✅ **공식 로고 적용**: `public/brand/ss-logo.png`(SS 마크, 인라인 SVG 근사 → 실제
+  이미지로 교체), `public/brand/ssyenc-ci.png`(쌍용건설 CI). `public/samples/` 에서
+  ASCII 경로로 이동.
+- ✅ **로그인(메인 홈) 보강**: 우상단 **쌍용건설 CI**(다크 테마는 흰 칩 위), 좌상단
+  테마 토글, 부제 "쌍용건설 스마트 건설기술 플랫폼에 오신 것을 환영합니다.", 하단
+  푸터(좌: `© Copyright Ssangyong E&C. All Rights Reserved` / 우:
+  `Designed by Civil Engineering Technology Team, Smart Construction Part`).
+- ✅ 검증: `npm run typecheck`·`npm run build` 통과, `dist/brand/*` 포함 확인.
+- 📌 **도메인(코드 밖)**: 현재 `mir-kappa...`(Vercel 자동 서브도메인). `mir_smart`(언더스코어)
+  는 호스트명 규칙상 불가 → `mir-smart.ssyenc.com`(권장, ssyenc.com DNS+Vercel 도메인
+  연결 필요) 또는 별도 루트 `mir-smart-ssyenc.com`(해당 도메인 보유 시). Vercel 대시보드 설정.
+
 ## 다음 할 일 (우선순위)
 1. **S4 라이브 눈 검증** — 실 IFC 모델 + 샘플 CSV 임포트 → 순서배정 → 슬라이더/재생 확인.
 2. **S2 라이브 검증** — Vercel env 설정 후 `/admin` 에서 사용자 생성→로그인→프로젝트 배정 확인.
