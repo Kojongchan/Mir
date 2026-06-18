@@ -238,42 +238,36 @@ body {
 }
 
 /* ---- auth / project select ---- */
+/* 스마트 건설 느낌의 톤다운 배경: 청사진(블루프린트) 그리드 + 은은한 블루 글로우 */
 .auth-screen {
   position: relative;
   min-height: 100vh;
   display: grid;
   place-items: center;
   padding: 60px 16px 52px;
-  background: radial-gradient(120% 120% at 50% 0%, #ffffff 0%, var(--bg) 58%);
-}
-
-/* 다크 테마에서 회사 CI(어두운 글자)가 묻히지 않도록 흰 칩 위에 */
-:root[data-theme='dark'] .auth-cobrand {
-  background: #fff;
-  padding: 4px 8px;
-  border-radius: 6px;
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(120% 80% at 50% -10%, rgba(37, 99, 235, 0.1), transparent 60%),
+    radial-gradient(90% 60% at 100% 110%, rgba(22, 36, 63, 0.08), transparent 55%),
+    linear-gradient(to right, rgba(22, 36, 63, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(22, 36, 63, 0.05) 1px, transparent 1px);
+  background-size: auto, auto, 34px 34px, 34px 34px;
 }
 
 :root[data-theme='dark'] .auth-screen {
-  background: radial-gradient(circle at 50% 30%, #273140, var(--bg));
+  background-color: var(--bg);
+  background-image:
+    radial-gradient(120% 80% at 50% -10%, rgba(59, 130, 246, 0.16), transparent 60%),
+    radial-gradient(90% 60% at 100% 110%, rgba(13, 20, 33, 0.6), transparent 55%),
+    linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: auto, auto, 34px 34px, 34px 34px;
 }
 
-.auth-corner {
+.auth-toggle {
   position: absolute;
   top: 16px;
-  display: flex;
-  align-items: center;
-}
-.auth-corner-left {
-  left: 16px;
-}
-.auth-corner-right {
   right: 16px;
-}
-.auth-cobrand {
-  height: 30px;
-  width: auto;
-  display: block;
 }
 
 .auth-footer {
@@ -284,10 +278,23 @@ body {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
+  align-items: center;
   gap: 6px 16px;
-  padding: 12px 18px;
-  font-size: 11px;
+  padding: 13px 24px;
+  font-size: 12px;
+  letter-spacing: 0.2px;
   color: var(--muted);
+  border-top: 1px solid var(--border);
+  background: var(--glass);
+  backdrop-filter: blur(6px);
+}
+.auth-footer strong {
+  color: var(--text);
+  font-weight: 700;
+}
+.auth-footer .footer-team {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .auth-card {
@@ -366,8 +373,13 @@ body {
 
 .auth-sub {
   text-align: center;
-  font-size: 12px;
-  margin: -6px 0 6px;
+  font-size: 13px;
+  color: var(--muted);
+  margin: -2px 0 8px;
+}
+.auth-sub strong {
+  color: var(--text);
+  font-weight: 700;
 }
 
 .auth-card label {
