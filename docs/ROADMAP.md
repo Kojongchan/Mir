@@ -40,6 +40,8 @@ VR 검토까지. 다중 사용자가 **본인 배정 프로젝트(공구)** 만 
 | S16 | Phase 3 · 장비운용 | `feature/equipment-sim` | Rapier 물리·장비·경로/간섭 (이미지대기) | S4 |
 | S17 | Phase 10 · 네이티브 BIM | `feature/native-bim` | DWG/RVT/NWD 업로드·변환(APS 평가) | S14 |
 | S18 | 성능 최적화 · 코드 스플리팅 | `feature/code-splitting` | 번들 분할(청크 경고). S13 에서 뷰어 lazy 분리로 일부 선반영 | — |
+| S19 | 뷰어 충실도 · 단기(무료 클라) | `feature/viewer-fidelity` | Word `mammoth`→`docx-preview`, 엑셀 서식 개선 (D10) | S13 |
+| S20 | 뷰어 충실도 · 장기(서버 변환) | `feature/doc-convert` | PPT/HWP/구포맷→PDF 헤드리스 변환(LibreOffice/Gotenberg) (D10) | S13 |
 
 추천 순서: **… S4 → (확장) S11✅ → S12✅ → S13✅ → S14 → S15/S16 → S17**
 (확장 단계 S11~S18 의 상세는 `docs/PLANNING.md`. S11·S12·S13 완료.

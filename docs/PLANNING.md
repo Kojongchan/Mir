@@ -57,9 +57,11 @@
 
 ---
 
-## 3. 문서·미디어 뷰어 (새 탭으로 열기) (Phase 8 / S13) 🔄 진행(PR #22)
-> **상태**: 1단계(웹 단독) 구현 PR #22 진행 중 — 라우트 `/view/:fileId`, PDF.js·SheetJS·
+## 3. 문서·미디어 뷰어 (새 탭으로 열기) (Phase 8 / S13) ✅ 1단계 완료(PR #22) · 품질개선 S19/S20
+> **상태**: 1단계(웹 단독) **완료**(PR #22 병합) — 라우트 `/view/:fileId`, PDF.js·SheetJS·
 > mammoth·native img/video, 다운로드 폴백, `0004_files.sql`(`files` 테이블 + `docs` 버킷).
+> **품질 평가(라이브)**: PDF·이미지·동영상은 우수, **Word/Excel 충실도 보통, PPT/HWP 미지원
+> (다운로드)**. → 충실도 개선 결정 **D10**(아래).
 **목표**: 저장소의 파일을 클릭하면 **새 탭/라우트(`/view/:fileId`)** 에서 미리보기.
 
 ### 포맷별 가능여부
@@ -75,12 +77,15 @@
 | PowerPoint pptx | 🟡 | 서버 변환→PDF/이미지 권장 | 클라 렌더러 품질 낮음 |
 | 한글 hwp/hwpx | 🟡 | hwpx는 XML(파싱 쉬움), hwp5는 `hwp.js`(제한) / **서버 변환→PDF 권장** | 한국 현장 필수 포맷 |
 
-### 아키텍처 권장: **하이브리드**
-- **1단계(웹 단독, 서버 0원)**: 이미지·PDF·mp4·xlsx·docx 즉시 지원.
-- **2단계(변환 서비스)**: avi/pptx/doc/hwp는 **헤드리스 변환**으로 PDF/mp4 정규화.
-  - 옵션: (a) LibreOffice headless(self-host, 무료, hwp 지원 제한) ·
-    (b) 외부 API(Aspose/Apryse/CloudConvert, 유료·고충실) ·
-    (c) 한컴 변환(hwp 정확).
+### 충실도 개선 결정 (D10 · 사용자 확정) — "단기 + 장기 둘 다"
+- **단기(S19, 무료 클라 업그레이드, 서버 0원)**: Word `mammoth` → **`docx-preview`**
+  (페이지·스타일 반영으로 워드에 근접). Excel 은 SheetJS 서식 렌더 개선(단, 패치판이
+  `cdn.sheetjs.com` 전용이라 네트워크 정책 허용 시). **PPT/HWP 는 여전히 한계** → 다운로드.
+- **장기(S20, 서버 변환→PDF)**: pptx/doc/hwp/avi 등을 **헤드리스 변환**으로 PDF/mp4 정규화 후
+  PDF.js 로 **일관 고품질** 표시. 변환기: **LibreOffice headless / Gotenberg / unoserver**
+  (무료 SW, 변환 컨테이너 1개 운영). hwp 정확도 필요 시 한컴 변환 보강.
+- **비채택**: MS Office Online / Google Docs **온라인 임베드** — 원본급 품질이지만 **파일이
+  공개 접근 + 외부(MS/Google) 서버로 전송**되어 기밀 도면에 부적합(D10).
 - **공통 폴백**: 미지원/변환 전 파일은 **다운로드 버튼** 제공(절대 막다른 길 X).
 - **보안**: Supabase Storage **서명 URL(짧은 만료)** 로만 접근. 뷰어는 권한(RLS) 확인 후 발급.
 
@@ -204,6 +209,8 @@
 | S16 | 장비 시뮬레이션(Rapier) | `feature/equipment-sim` | S4 | ⏳ 이미지대기 |
 | S17 | 네이티브 BIM 업로드/변환(APS 평가) | `feature/native-bim` | S14 | 🔴 결정대기 |
 | S18 | 성능 최적화·코드 스플리팅 | `feature/code-splitting` | — | S13서 일부 선반영 |
+| S19 | 뷰어 충실도 — 단기(무료 클라) | `feature/viewer-fidelity` | S13 | docx-preview 등 |
+| S20 | 뷰어 충실도 — 장기(서버 변환→PDF) | `feature/doc-convert` | S13 | PPT·HWP 포함 |
 
 **권장 착수 순서**: S11✅ → S12✅ → S13🔄(뷰어) → **S14(CDE 토대)** → (S15/S16 은 입력
 도착 시) → S17(APS 결정 후). 다음은 **S14 — CDE 정보구조 재편 + 파일 저장소**.

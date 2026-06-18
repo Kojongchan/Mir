@@ -230,8 +230,10 @@
 ## 다음 할 일 (우선순위)
 1. **S14 — CDE 토대 + 파일 저장소**(사용자 다음 요청). 좌측 정보구조 재편 + `0005_cde.sql`
    (PR #22 의 `files`·`docs` 버킷 위에 folders/versions/status/activity).
-2. **S13 배포 셋업**(PR #22 병합됨): Supabase `docs`(Private) 버킷 생성 + `0004_files.sql`
-   실행 → 새 탭 뷰어 라이브 검증(OPERATIONS 0-B). SheetJS CDN 교체는 네트워크 정책 허용 시.
+2. **S13 배포 셋업 완료**(사용자) — `docs` 버킷 + `0004_files.sql` 적용 후 **라이브 검증**:
+   이미지·PDF·동영상·xlsx·docx 동작 확인. **품질 평가**: Word/Excel 충실도 보통, PPT/HWP 미지원.
+   → **결정 D10(단기+장기)**. 후속: **S19(docx-preview 등 무료 클라 업그레이드)** /
+   **S20(서버 변환→PDF, PPT·HWP)**.
 3. **사용자 입력 필요**: S15(Navisworks 기능 목록), S16(장비 샘플 이미지), S17(APS 도입·예산 결정).
 4. **S4 라이브 눈 검증** — 실 IFC 모델 + 샘플 CSV 임포트 → 순서배정 → 슬라이더/재생 확인.
 5. (선택) up축 기억을 브라우저 localStorage→DB(models 컬럼)로 승격해 사용자/기기 간 공유.
