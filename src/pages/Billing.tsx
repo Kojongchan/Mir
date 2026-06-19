@@ -4,7 +4,15 @@ import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
 import { MiniChart } from '../components/MiniChart';
 import { formatAmount, listMonthlyRecords, type MonthlyRecord } from '../lib/dashboard';
-import { getContractAmount, saveContractAmount } from '../lib/portal';
+import {
+  createBillingItem,
+  deleteBillingItem,
+  getContractAmount,
+  listBillingItems,
+  saveContractAmount,
+  updateBillingItem,
+  type BillingItem,
+} from '../lib/portal';
 
 /**
  * 기성내역 — billing detail. 도급액 대비 누적 기성/기성률, 월별 기성 추이.
@@ -109,11 +117,149 @@ export function Billing() {
             </table>
           </div>
         ) : (
-          <p className="muted" style={{ marginTop: 10 }}>사업개요 편집에서 월별 기성 금액을 입력하면 표시됩니다.</p>
+          <p className="muted" style={{ marginTop: 10 }}>공정현황 또는 사업개요에서 월별 기성 금액을 입력하면 표시됩니다.</p>
         )}
       </section>
 
+      <BillingItemsSection projectId={projectId} isAdmin={isAdmin} />
+
       {msg && <p className="muted dash-msg">{msg}</p>}
     </div>
+  );
+}
+
+const EMPTY_ITEM = { category: '', contract_amount: 0, prev_amount: 0, current_amount: 0 };
+
+/** 공종별 기성 명세 — 도급액 / 전월 누계 / 당월 → 누계·기성률. */
+function BillingItemsSection({ projectId, isAdmin }: { projectId: string; isAdmin: boolean }) {
+  const [items, setItems] = useState<BillingItem[]>([]);
+  const [form, setForm] = useState<typeof EMPTY_ITEM>(EMPTY_ITEM);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [msg, setMsg] = useState('');
+
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
+
+  const refresh = () => listBillingItems(projectId).then(setItems).catch(() => setItems([]));
+
+  const onSave = async () => {
+    if (!form.category.trim()) {
+      setMsg('공종명을 입력하세요');
+      return;
+    }
+    const payload = {
+      category: form.category.trim(),
+      contract_amount: Number(form.contract_amount) || 0,
+      prev_amount: Number(form.prev_amount) || 0,
+      current_amount: Number(form.current_amount) || 0,
+    };
+    try {
+      if (editId) await updateBillingItem(editId, payload);
+      else await createBillingItem(projectId, payload, items.length);
+      setForm(EMPTY_ITEM);
+      setEditId(null);
+      await refresh();
+      setMsg('저장됨');
+    } catch (e) {
+      setMsg(`저장 실패: ${errMessage(e)}`);
+    }
+  };
+
+  const onEdit = (it: BillingItem) => {
+    setEditId(it.id);
+    setForm({
+      category: it.category,
+      contract_amount: Number(it.contract_amount),
+      prev_amount: Number(it.prev_amount),
+      current_amount: Number(it.current_amount),
+    });
+  };
+
+  const onDelete = async (id: string) => {
+    if (!window.confirm('이 공종 행을 삭제할까요?')) return;
+    await deleteBillingItem(id);
+    if (editId === id) {
+      setEditId(null);
+      setForm(EMPTY_ITEM);
+    }
+    await refresh();
+  };
+
+  const tot = items.reduce(
+    (a, it) => {
+      a.contract += Number(it.contract_amount);
+      a.cum += Number(it.prev_amount) + Number(it.current_amount);
+      a.current += Number(it.current_amount);
+      return a;
+    },
+    { contract: 0, cum: 0, current: 0 },
+  );
+  const totRate = tot.contract > 0 ? (tot.cum / tot.contract) * 100 : 0;
+
+  return (
+    <section className="card" style={{ marginTop: 14 }}>
+      <h3>공종별 기성 명세 <span className="muted">(도급액 · 전월누계 · 당월 → 누계 · 기성률)</span></h3>
+
+      {isAdmin && (
+        <div className="dash-edit-row">
+          <label>공종<input value={form.category} placeholder="예: 토공" onChange={(e) => setForm({ ...form, category: e.target.value })} /></label>
+          <label>도급액<input type="number" value={form.contract_amount} onChange={(e) => setForm({ ...form, contract_amount: Number(e.target.value) })} /></label>
+          <label>전월 누계<input type="number" value={form.prev_amount} onChange={(e) => setForm({ ...form, prev_amount: Number(e.target.value) })} /></label>
+          <label>당월<input type="number" value={form.current_amount} onChange={(e) => setForm({ ...form, current_amount: Number(e.target.value) })} /></label>
+          <button className="primary" onClick={onSave}>{editId ? '수정 저장' : '추가'}</button>
+          {editId && <button onClick={() => { setEditId(null); setForm(EMPTY_ITEM); }}>취소</button>}
+        </div>
+      )}
+
+      {items.length === 0 ? (
+        <p className="muted" style={{ marginTop: 8 }}>등록된 공종별 명세가 없습니다.</p>
+      ) : (
+        <div className="cde-table-wrap" style={{ padding: 0, marginTop: 8 }}>
+          <table className="cde-table">
+            <thead>
+              <tr>
+                <th>공종</th><th className="right">도급액</th><th className="right">전월누계</th>
+                <th className="right">당월</th><th className="right">누계</th><th className="right">기성률</th>
+                {isAdmin && <th />}
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it) => {
+                const cum = Number(it.prev_amount) + Number(it.current_amount);
+                const rate = Number(it.contract_amount) > 0 ? (cum / Number(it.contract_amount)) * 100 : 0;
+                return (
+                  <tr key={it.id}>
+                    <td>{it.category}</td>
+                    <td className="right">{formatAmount(Number(it.contract_amount))}</td>
+                    <td className="right">{formatAmount(Number(it.prev_amount))}</td>
+                    <td className="right">{formatAmount(Number(it.current_amount))}</td>
+                    <td className="right">{formatAmount(cum)}</td>
+                    <td className="right">{rate.toFixed(1)}%</td>
+                    {isAdmin && (
+                      <td className="right nowrap">
+                        <button onClick={() => onEdit(it)}>수정</button>
+                        <button className="danger" onClick={() => onDelete(it.id)}>삭제</button>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+              <tr style={{ fontWeight: 700 }}>
+                <td>합계</td>
+                <td className="right">{formatAmount(tot.contract)}</td>
+                <td className="right">—</td>
+                <td className="right">{formatAmount(tot.current)}</td>
+                <td className="right">{formatAmount(tot.cum)}</td>
+                <td className="right">{totRate.toFixed(1)}%</td>
+                {isAdmin && <td />}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+      {msg && <p className="muted dash-msg">{msg}</p>}
+    </section>
   );
 }

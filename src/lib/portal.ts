@@ -118,3 +118,49 @@ export async function saveContractAmount(projectId: string, amount: number): Pro
     );
   if (error) throw error;
 }
+
+// ---------- 기성 공종별 상세 -----------------------------------------
+
+export interface BillingItem {
+  id: string;
+  project_id: string;
+  category: string;
+  contract_amount: number;
+  prev_amount: number;
+  current_amount: number;
+  sort_order: number;
+}
+
+export async function listBillingItems(projectId: string): Promise<BillingItem[]> {
+  const { data, error } = await supabase
+    .from('billing_items')
+    .select('id, project_id, category, contract_amount, prev_amount, current_amount, sort_order')
+    .eq('project_id', projectId)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return (data ?? []) as BillingItem[];
+}
+
+type BillingInput = Pick<BillingItem, 'category' | 'contract_amount' | 'prev_amount' | 'current_amount'>;
+
+export async function createBillingItem(
+  projectId: string,
+  input: BillingInput,
+  sortOrder: number,
+): Promise<void> {
+  const { error } = await supabase
+    .from('billing_items')
+    .insert({ project_id: projectId, sort_order: sortOrder, ...input });
+  if (error) throw error;
+}
+
+export async function updateBillingItem(id: string, patch: BillingInput): Promise<void> {
+  const { error } = await supabase.from('billing_items').update(patch).eq('id', id);
+  if (error) throw error;
+}
+
+export async function deleteBillingItem(id: string): Promise<void> {
+  const { error } = await supabase.from('billing_items').delete().eq('id', id);
+  if (error) throw error;
+}
