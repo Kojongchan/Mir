@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useAuth } from '../auth/AuthProvider';
 import { MiniChart } from '../components/MiniChart';
 import { countOpenIssues } from '../lib/issues';
 import {
@@ -32,6 +33,8 @@ import {
 export function Dashboard() {
   const { projectId = '' } = useParams();
   const navigate = useNavigate();
+  const { profile } = useAuth();
+  const isAdmin = !!profile?.is_admin;
 
   const [info, setInfo] = useState<ProjectInfo | null>(null);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
@@ -131,9 +134,11 @@ export function Dashboard() {
           <span className="dash-today">Today {new Date().toLocaleDateString('ko-KR', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' })}</span>
           <h1 className="dash-h1">사업개요</h1>
         </div>
-        <button className={edit ? 'primary' : ''} onClick={() => setEdit((e) => !e)}>
-          {edit ? '편집 완료' : '편집'}
-        </button>
+        {isAdmin && (
+          <button className={edit ? 'primary' : ''} onClick={() => setEdit((e) => !e)}>
+            {edit ? '편집 완료' : '편집'}
+          </button>
+        )}
       </div>
 
       {/* ---- 마일스톤 / D-day 띠 ---- */}

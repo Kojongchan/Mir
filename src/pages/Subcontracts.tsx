@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { useAuth } from '../auth/AuthProvider';
 import {
   SUB_STATUS_LABEL,
   createSubcontract,
@@ -15,6 +16,8 @@ const STATUSES: SubStatus[] = ['active', 'done', 'terminated'];
 /** 하도급내역 — 협력사 계약/지급 현황. */
 export function Subcontracts() {
   const { projectId = '' } = useParams();
+  const { profile } = useAuth();
+  const isAdmin = !!profile?.is_admin;
   const [rows, setRows] = useState<Subcontract[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [msg, setMsg] = useState('');
@@ -75,7 +78,7 @@ export function Subcontracts() {
     <div className="dash">
       <div className="dash-head">
         <h1 className="dash-h1">하도급내역</h1>
-        <button className="primary" onClick={() => setShowForm((s) => !s)}>{showForm ? '취소' : '＋ 협력사 등록'}</button>
+        {isAdmin && <button className="primary" onClick={() => setShowForm((s) => !s)}>{showForm ? '취소' : '＋ 협력사 등록'}</button>}
       </div>
 
       <section className="dash-grid">
@@ -129,7 +132,7 @@ export function Subcontracts() {
                     <td className="right">{rate.toFixed(0)}%</td>
                     <td className="nowrap muted">{r.start_date ?? '—'}~{r.end_date ?? ''}</td>
                     <td><span className={`issue-badge issue-${r.status === 'active' ? 'in_progress' : r.status === 'done' ? 'resolved' : 'closed'}`}>{SUB_STATUS_LABEL[r.status]}</span></td>
-                    <td className="right"><button className="danger" onClick={() => onDelete(r.id)}>삭제</button></td>
+                    <td className="right">{isAdmin && <button className="danger" onClick={() => onDelete(r.id)}>삭제</button>}</td>
                   </tr>
                 );
               })}

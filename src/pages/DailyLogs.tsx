@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { useAuth } from '../auth/AuthProvider';
 import {
   addDailyLog,
   deleteDailyLog,
@@ -12,6 +13,8 @@ import {
 /** 공사일보 — daily site log CRUD. Powers the dashboard 인력/장비/일지 figures. */
 export function DailyLogs() {
   const { projectId = '' } = useParams();
+  const { profile } = useAuth();
+  const isAdmin = !!profile?.is_admin;
   const [logs, setLogs] = useState<DailyLog[]>([]);
   const [msg, setMsg] = useState('');
   const [form, setForm] = useState({
@@ -58,6 +61,8 @@ export function DailyLogs() {
         <h1 className="dash-h1">공사일보</h1>
       </div>
 
+      {!isAdmin && <p className="muted dash-msg">읽기 전용입니다. 입력·수정은 관리자만 가능합니다.</p>}
+      {isAdmin && (
       <section className="card dash-edit">
         <h3>일보 등록</h3>
         <div className="dash-edit-row">
@@ -71,6 +76,7 @@ export function DailyLogs() {
           <button className="primary" onClick={onAdd}>등록</button>
         </div>
       </section>
+      )}
 
       <section className="card">
         <div className="cde-table-wrap" style={{ padding: 0 }}>
@@ -93,7 +99,7 @@ export function DailyLogs() {
                   <td className="right">{l.equipment}</td>
                   <td>{l.weather || '—'}</td>
                   <td>{l.content || '—'}</td>
-                  <td className="right"><button className="danger" onClick={() => onDelete(l.id)}>삭제</button></td>
+                  <td className="right">{isAdmin && <button className="danger" onClick={() => onDelete(l.id)}>삭제</button>}</td>
                 </tr>
               ))}
               {logs.length === 0 && (

@@ -67,8 +67,10 @@
   2. `supabase/migrations/0007_issues.sql` — issues + issue_comments(협업·이슈).
   3. `supabase/migrations/0008_portal_extra.sql` — posts(게시판) · subcontracts(하도급) ·
      project_info.contract_amount(도급액).
-  - **새 Storage 버킷·외부 의존 없음.** RLS는 기존 멤버십(`is_member`/`is_admin`) 재사용,
-    프로젝트 멤버면 읽기+편집 가능(데이터는 앱에서 직접 입력).
+  4. `supabase/migrations/0009_admin_writes.sql` — **쓰기는 관리자(admin)만**(D11). 포털·CDE·
+     업로드의 insert/update/delete 를 `is_admin()` 으로 제한. 멤버는 전 모듈 **읽기 전용**.
+  - **새 Storage 버킷·외부 의존 없음.** RLS는 기존 멤버십(`is_member`/`is_admin`) 재사용.
+    데이터 입력·수정은 **관리자 계정**으로 진행(비-admin 에는 편집 UI가 숨겨짐).
 - **동작**: 프로젝트 진입 첫 화면 = **사업개요 대시보드**. 좌측 모듈 메뉴 —
   사업개요 / 공정현황 / 공사일보 / 협업·이슈 / 모델뷰어(3D) / 자료 관리 / 구성원(admin).
   - **사업개요**: 우상단 `편집`으로 착공·준공일·전체 진행률·마일스톤·월별 실적 입력.

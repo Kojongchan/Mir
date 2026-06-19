@@ -202,12 +202,12 @@ export function DocumentManager() {
         <aside className="cde-side">
           <div className="sidebar-head">
             <h2>폴더</h2>
-            <button onClick={onNewFolder}>＋ 폴더</button>
+            {isAdmin && <button onClick={onNewFolder}>＋ 폴더</button>}
           </div>
           <div className="cde-tree-wrap">
             <FolderTree folders={folders} selectedId={selectedId} onSelect={setSelectedId} />
           </div>
-          {selectedFolder && (
+          {isAdmin && selectedFolder && (
             <div className="cde-side-actions">
               <button onClick={onRenameFolder}>이름 변경</button>
               <button className="danger" onClick={onDeleteFolder}>폴더 삭제</button>
@@ -230,9 +230,11 @@ export function DocumentManager() {
             <button onClick={() => setShowActivity(true)}>활동 로그</button>
             <input ref={newFileInput} type="file" style={{ display: 'none' }} onChange={onUploadNew} />
             <input ref={versionInput} type="file" style={{ display: 'none' }} onChange={onUploadVersion} />
-            <button className="primary" onClick={() => newFileInput.current?.click()} disabled={busy}>
-              {busy ? '처리 중…' : '문서 업로드'}
-            </button>
+            {isAdmin && (
+              <button className="primary" onClick={() => newFileInput.current?.click()} disabled={busy}>
+                {busy ? '처리 중…' : '문서 업로드'}
+              </button>
+            )}
           </div>
 
           <div className="cde-table-wrap">
@@ -257,24 +259,28 @@ export function DocumentManager() {
                     <td>
                       <div className="cde-status-cell">
                         <StatusBadge status={f.status} />
-                        <select
-                          value={f.status}
-                          onChange={(e) => onChangeStatus(f, e.target.value as FileStatus)}
-                          aria-label="상태 변경"
-                        >
-                          {FILE_STATUSES.map((s) => (
-                            <option key={s} value={s}>{STATUS_LABEL[s]}</option>
-                          ))}
-                        </select>
+                        {isAdmin && (
+                          <select
+                            value={f.status}
+                            onChange={(e) => onChangeStatus(f, e.target.value as FileStatus)}
+                            aria-label="상태 변경"
+                          >
+                            {FILE_STATUSES.map((s) => (
+                              <option key={s} value={s}>{STATUS_LABEL[s]}</option>
+                            ))}
+                          </select>
+                        )}
                       </div>
                     </td>
                     <td className="right nowrap">{sizeLabel(f.size_bytes)}</td>
                     <td className="nowrap">{new Date(f.created_at).toLocaleDateString('ko-KR')}</td>
                     <td className="right nowrap">
                       <button onClick={() => setHistoryFor(f)}>이력</button>
-                      <button onClick={() => triggerNewVersion(f)} disabled={busy}>새 버전</button>
                       {isAdmin && (
-                        <button className="danger" onClick={() => onDeleteFile(f)}>삭제</button>
+                        <>
+                          <button onClick={() => triggerNewVersion(f)} disabled={busy}>새 버전</button>
+                          <button className="danger" onClick={() => onDeleteFile(f)}>삭제</button>
+                        </>
                       )}
                     </td>
                   </tr>

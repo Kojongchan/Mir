@@ -26,7 +26,8 @@ import { uploadNewFile } from '../lib/cde';
 export function Workspace() {
   const { projectId = '' } = useParams();
   const navigate = useNavigate();
-  const { signOut } = useAuth();
+  const { signOut, profile } = useAuth();
+  const isAdmin = !!profile?.is_admin;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [viewer, setViewer] = useState<IfcViewer | null>(null);
@@ -163,9 +164,11 @@ export function Workspace() {
             style={{ display: 'none' }}
             onChange={onUpload}
           />
-          <button onClick={() => fileInput.current?.click()} disabled={uploading}>
-            {uploading ? '업로드 중…' : 'IFC 업로드'}
-          </button>
+          {isAdmin && (
+            <button onClick={() => fileInput.current?.click()} disabled={uploading}>
+              {uploading ? '업로드 중…' : 'IFC 업로드'}
+            </button>
+          )}
         </div>
         <ul className="model-list">
           {models.map((m) => (
@@ -193,9 +196,11 @@ export function Workspace() {
             style={{ display: 'none' }}
             onChange={onUploadDoc}
           />
-          <button onClick={() => docInput.current?.click()} disabled={docUploading}>
-            {docUploading ? '업로드 중…' : '파일 업로드'}
-          </button>
+          {isAdmin && (
+            <button onClick={() => docInput.current?.click()} disabled={docUploading}>
+              {docUploading ? '업로드 중…' : '파일 업로드'}
+            </button>
+          )}
         </div>
         <ul className="model-list">
           {files.map((f) => (
