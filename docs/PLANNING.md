@@ -244,3 +244,43 @@
 - **활동/감사 통합 뷰**: CDE activity_log + 이슈/일보 변경을 프로젝트 타임라인으로.
 - **모바일 현장 모드**: 공사일보·사진 첨부·이슈 등록을 모바일 우선 화면으로.
 - (기존) S15 Navisworks(측정·단면·뷰포인트) · S16 장비 시뮬(Rapier) · S17 네이티브 BIM(APS).
+
+---
+
+## 10. 충돌검사 (Phase 4 / S32) ← 다음 스텝(사용자 선택)
+**목표**: 로드된 IFC 요소 사이의 **간섭(clash)** 을 검출해 목록·뷰어로 검토하고, 간섭을
+**이슈로 전환**(S30 워크플로우 연결)한다. Navisworks Clash Detective 의 웹 버전.
+
+### 가능성 (확인 완료)
+- `IfcViewer.elementMeshes: Map<expressID, THREE.Mesh[]>` 로 **요소별 지오메트리 접근 가능**.
+- 네비게이트: 기존 `focusElement`(S29) 재사용 → 간섭 객체로 카메라 이동·하이라이트.
+- 엔진: **`three-mesh-bvh`**(D13) 추가 — AABB 광역 → BVH 메시-메시 협역.
+
+### 검사 방식
+1. **대상 집합(Set A vs Set B)** 선택: (a) 두 모델(예: 구조 vs 설비), (b) 카테고리/공종,
+   (c) 현재 선택 그룹. MVP 는 **두 모델 또는 두 카테고리** 부터.
+2. **광역단계(broad)**: 각 요소 월드 AABB 로 후보쌍만 추림(전수 비교 회피).
+3. **협역단계(narrow)**: 후보쌍을 `three-mesh-bvh` `intersectsGeometry`/shapecast 로 정밀 교차.
+   대형 모델은 **Web Worker + 청크**로 끊어 UI 프리징 방지(진행률 표시).
+4. **간섭 종류**: **Hard(하드, 겹침)** 우선. 이후 **Clearance(이격, 허용거리 내 근접)**·
+   **Duplicate(중복)**. 허용오차(tolerance) 슬라이더.
+
+### 결과 / UX
+- **결과 패널**: 간섭 목록(요소A↔요소B, 간섭 지점, 관통깊이/거리), 그룹핑, **상태**
+  (신규/활성/검토됨/해결/승인 — Navisworks 유사), 행 클릭 → **양쪽 객체 포커스**(focusElement
+  확장: 2개 동시 하이라이트 + 카메라 fit). 간섭 지점 마커.
+- **간섭 → 이슈**: 행에서 `이슈 생성` → S30 이슈(담당자·마감·알림)로 전환, 0012(객체 핀)로
+  해당 객체 연결.
+- **리포트**: 표 내보내기(CSV) + (후속) 스냅샷.
+
+### 데이터 (선택 — 영속화)
+- `0015_clash.sql`: `clash_tests`(project_id, name, set_a, set_b, tolerance, type, created_by)
+  + `clashes`(test_id, model_a, express_a, model_b, express_b, point xyz, distance, status, issue_id?).
+  RLS 쓰기 admin(D11), 읽기 멤버. setup_all.sql 갱신.
+
+### 범위 (S32 MVP)
+1. 두 집합 선택 + 허용오차로 **Hard clash 실행**(BVH, Worker 진행률).
+2. 결과 패널 + 양쪽 객체 포커스 + 간섭 지점 마커.
+3. **간섭 → 이슈 생성**(S30 연결).
+4. (가능하면) 결과 DB 저장/불러오기(0015) + CSV.
+- **다음(후속)**: Clearance/Duplicate, 규칙 세트 저장, 정기검사, GUID 기준 비교.

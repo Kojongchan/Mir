@@ -17,6 +17,7 @@
 
 | D11 | **포털/CDE 쓰기는 관리자(admin)만, 멤버는 읽기 전용** (`0009_admin_writes.sql` + UI 가드). 모델·문서 업로드, 대시보드/공정/일보/이슈/기성/하도급/게시판 입력·수정·삭제 전부 admin | 사용자 결정 "모든 건 admin 계정이 진행". RLS로 강제 + 비-admin 에는 편집 UI 숨김. 특정 모듈을 멤버 협업으로 풀려면 해당 테이블 정책만 `is_member` 로 완화 |
 | D12 | **CDE 문서 삭제는 D11 예외 — 업로더 본인 + 관리자** (`files`·`storage.objects` 삭제 정책을 `uploaded_by = auth.uid() or is_admin()` 로 완화). **S31** 에서 적용 | 사용자 결정: 본인이 올린 문서는 본인이 지울 수 있어야 함. 발행(Published) 상태 가드는 후속 검토 |
+| D13 | **충돌검사 엔진 = `three-mesh-bvh`** (AABB 광역단계 → BVH 메시-메시 협역단계). web-ifc `elementMeshes`(expressID별 지오메트리) 위에서 동작. **S32**(Phase 4) | 브라우저에서 정밀 간섭검출의 표준. expressID 단위(D2)라 결과를 4D/이슈와 바로 연결. 대형 모델은 광역 AABB 로 후보만 추려 협역 BVH 비용 절감 |
 
 ## 우선순위 (사용자 확정)
 뷰어 → 4D → **장비운용(강점)** → 충돌검사 → VR. 포맷은 **IFC**.
