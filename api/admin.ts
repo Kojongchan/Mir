@@ -17,6 +17,14 @@
 // =====================================================================
 import { createClient } from '@supabase/supabase-js';
 
+// IMPORTANT: this handler uses the Web `Request`/`Response` signature
+// (`new Response(...)`, `req.json()`). On Vercel that signature is only
+// served correctly by the **Edge runtime**; under the default Node.js
+// runtime the returned Response is ignored and the request hangs forever
+// (the browser sees the action stuck — e.g. "생성 중…" never finishing).
+// Declaring the edge runtime is what actually sends the response.
+export const config = { runtime: 'edge' };
+
 const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 

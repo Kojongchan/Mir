@@ -109,11 +109,27 @@ async function adminFn<T = unknown>(action: string, payload: Record<string, unkn
   const token = data.session?.access_token;
   if (!token) throw new Error('로그인이 필요합니다.');
 
-  const res = await fetch('/api/admin', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: JSON.stringify({ action, ...payload }),
-  });
+  // Guard against a hung request: if the serverless function never responds
+  // (mis-deployed, wrong runtime, etc.) the UI would otherwise sit on
+  // "생성 중…" forever. Abort after 20s and surface an actionable message.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20_000);
+  let res: Response;
+  try {
+    res = await fetch('/api/admin', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ action, ...payload }),
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if ((e as Error)?.name === 'AbortError') {
+      throw new Error('서버 응답이 없습니다(시간 초과). 배포 환경의 서버 함수(/api/admin)와 환경변수(SUPABASE_URL · SUPABASE_SERVICE_ROLE_KEY)를 확인하세요.');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 
   let out: { error?: string } & Record<string, unknown> = {};
   try {
