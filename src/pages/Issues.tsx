@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
 import {
   ISSUE_PRIORITIES,
@@ -69,7 +70,7 @@ export function Issues() {
       await refresh();
       setMsg('이슈 등록됨');
     } catch (e) {
-      setMsg(`등록 실패: ${(e as Error).message}`);
+      setMsg(`등록 실패: ${errMessage(e)}`);
     }
   };
 

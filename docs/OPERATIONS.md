@@ -43,6 +43,15 @@
   CDN 빌드로 교체 권장. (`src/components/viewers/SheetViewer.tsx` 주석 참고)
 - 🔜 **2단계(별도 세션)**: 서버 변환 파이프라인(avi→mp4, pptx/doc/hwp→PDF 등).
 
+## 0-SETUP. 한 번에 셋업 (권장) ⭐
+저장이 안 되고 **`Could not find the table … schema cache`** 오류가 나면, 아직 DB
+마이그레이션이 적용되지 않은 것입니다(코드 버그 아님). Supabase 대시보드 →
+**SQL Editor** 에서 **`supabase/setup_all.sql`** 전체를 복사해 붙여넣고 **Run** 하세요.
+0005~0009 를 순서대로 한 번에 적용하고, 마지막에 스키마 캐시까지 새로고침합니다.
+모두 멱등(재실행 안전)이며 새 Storage 버킷은 필요 없습니다.
+- 이미 일부를 실행했는데도 오류가 남으면: SQL 에디터에서 `notify pgrst, 'reload schema';`
+  실행(또는 대시보드 Settings → API → Reload schema).
+
 ## 0-C. CDE 자료 관리 (S14, Phase 7)
 - **사전 1회 셋업**: `supabase/migrations/0005_cde.sql` 실행 → `folders` ·
   `file_versions` · `activity_log` 테이블 + `files` 에 `folder_id` · `status`

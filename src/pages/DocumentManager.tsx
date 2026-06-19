@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
 import { FolderTree } from '../components/cde/FolderTree';
 import { StatusBadge } from '../components/cde/StatusBadge';
@@ -80,7 +81,7 @@ export function DocumentManager() {
       await refreshFolders();
       setStatus(`폴더 생성: ${name.trim()}`);
     } catch (e) {
-      setStatus(`폴더 생성 실패: ${(e as Error).message}`);
+      setStatus(`폴더 생성 실패: ${errMessage(e)}`);
     }
   };
 
@@ -92,7 +93,7 @@ export function DocumentManager() {
       await renameFolder(selectedFolder, name);
       await refreshFolders();
     } catch (e) {
-      setStatus(`이름 변경 실패: ${(e as Error).message}`);
+      setStatus(`이름 변경 실패: ${errMessage(e)}`);
     }
   };
 
@@ -109,7 +110,7 @@ export function DocumentManager() {
       setSelectedId(parent);
       await refreshFolders();
     } catch (e) {
-      setStatus(`폴더 삭제 실패: ${(e as Error).message}`);
+      setStatus(`폴더 삭제 실패: ${errMessage(e)}`);
     }
   };
 
@@ -124,7 +125,7 @@ export function DocumentManager() {
       await refreshFiles();
       setStatus(`업로드 완료: ${file.name}`);
     } catch (err) {
-      setStatus(`업로드 실패: ${(err as Error).message}`);
+      setStatus(`업로드 실패: ${errMessage(err)}`);
     } finally {
       setBusy(false);
       if (newFileInput.current) newFileInput.current.value = '';
@@ -147,7 +148,7 @@ export function DocumentManager() {
       await refreshFiles();
       setStatus(`새 버전 등록: ${target.name}`);
     } catch (err) {
-      setStatus(`버전 등록 실패: ${(err as Error).message}`);
+      setStatus(`버전 등록 실패: ${errMessage(err)}`);
     } finally {
       setBusy(false);
       versionTarget.current = null;
@@ -160,7 +161,7 @@ export function DocumentManager() {
       await setFileStatus(f, next);
       await refreshFiles();
     } catch (e) {
-      setStatus(`상태 변경 실패: ${(e as Error).message}`);
+      setStatus(`상태 변경 실패: ${errMessage(e)}`);
     }
   };
 
@@ -171,7 +172,7 @@ export function DocumentManager() {
       await refreshFiles();
       setStatus(`삭제 완료: ${f.name}`);
     } catch (e) {
-      setStatus(`삭제 실패: ${(e as Error).message}`);
+      setStatus(`삭제 실패: ${errMessage(e)}`);
     }
   };
 
