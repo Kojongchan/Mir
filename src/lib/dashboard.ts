@@ -97,6 +97,15 @@ export async function deleteMilestone(id: string): Promise<void> {
   if (error) throw error;
 }
 
+/** Persist a new ordering — sort_order becomes the array index. */
+export async function reorderMilestones(orderedIds: string[]): Promise<void> {
+  await Promise.all(
+    orderedIds.map((id, i) =>
+      supabase.from('project_milestones').update({ sort_order: i }).eq('id', id),
+    ),
+  );
+}
+
 // ---------- daily_logs ----------------------------------------------
 
 export async function listDailyLogs(projectId: string, limit = 60): Promise<DailyLog[]> {

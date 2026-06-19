@@ -16,6 +16,7 @@ import {
   listDailyLogs,
   listMilestones,
   listMonthlyRecords,
+  reorderMilestones,
   saveMonthlyRecord,
   saveProjectInfo,
   todayISO,
@@ -104,6 +105,23 @@ export function Dashboard() {
     }
   };
 
+  // 마일스톤 드래그 정렬
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+  const onDropMilestone = async (toIdx: number) => {
+    const from = dragIdx;
+    setDragIdx(null);
+    if (from === null || from === toIdx) return;
+    const next = [...milestones];
+    const [moved] = next.splice(from, 1);
+    next.splice(toIdx, 0, moved);
+    setMilestones(next);
+    try {
+      await reorderMilestones(next.map((m) => m.id));
+    } catch (e) {
+      setMsg(`정렬 저장 실패: ${errMessage(e)}`);
+    }
+  };
+
   const onAddRecord = async () => {
     if (!/^\d{4}-\d{2}$/.test(rec.ym)) {
       setMsg('월은 YYYY-MM 형식으로 입력하세요');
@@ -186,6 +204,33 @@ export function Dashboard() {
             <input type="date" value={mDate} onChange={(e) => setMDate(e.target.value)} />
             <button onClick={onAddMilestone}>추가</button>
           </div>
+          {milestones.length > 0 && (
+            <div className="ms-reorder">
+              <span className="muted" style={{ fontSize: 12 }}>드래그로 순서 변경 · ×로 삭제:</span>
+              <ul className="ms-reorder-list">
+                {milestones.map((m, i) => (
+                  <li
+                    key={m.id}
+                    draggable
+                    onDragStart={() => setDragIdx(i)}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={() => onDropMilestone(i)}
+                    className={`ms-reorder-item${dragIdx === i ? ' dragging' : ''}`}
+                  >
+                    <span className="ms-grip">⠿</span>
+                    <span className="ms-name">{m.name}</span>
+                    <span className="muted">{formatDate(m.target_date)}</span>
+                    <button
+                      className="ms-del danger"
+                      onClick={() => deleteMilestone(m.id).then(() => listMilestones(projectId).then(setMilestones))}
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </section>
       )}
 
