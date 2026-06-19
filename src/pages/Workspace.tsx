@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { errMessage } from '../lib/errors';
 import { IfcViewer, type UpAxis } from '../viewer/IfcViewer';
 import { useStore } from '../store/useStore';
 import { useAuth } from '../auth/AuthProvider';
@@ -81,7 +82,7 @@ export function Workspace() {
       fourd.setMapping({}, 0, 0);
       setStatus(`불러옴: ${m.name}`);
     } catch (e) {
-      setStatus(`불러오기 실패: ${(e as Error).message}`);
+      setStatus(`불러오기 실패: ${errMessage(e)}`);
     } finally {
       setBusyId(null);
     }
@@ -97,7 +98,7 @@ export function Workspace() {
       await refreshModels();
       setStatus(`업로드 완료: ${file.name}`);
     } catch (err) {
-      setStatus(`업로드 실패: ${(err as Error).message}`);
+      setStatus(`업로드 실패: ${errMessage(err)}`);
     } finally {
       setUploading(false);
       if (fileInput.current) fileInput.current.value = '';
@@ -114,7 +115,7 @@ export function Workspace() {
       await refreshFiles();
       setStatus(`업로드 완료: ${file.name}`);
     } catch (err) {
-      setStatus(`업로드 실패: ${(err as Error).message}`);
+      setStatus(`업로드 실패: ${errMessage(err)}`);
     } finally {
       setDocUploading(false);
       if (docInput.current) docInput.current.value = '';

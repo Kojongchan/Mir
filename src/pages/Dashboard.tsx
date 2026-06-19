@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
 import { MiniChart } from '../components/MiniChart';
 import { countOpenIssues } from '../lib/issues';
@@ -87,7 +88,7 @@ export function Dashboard() {
       await refreshAll();
       setMsg('사업 개요 저장됨');
     } catch (e) {
-      setMsg(`저장 실패: ${(e as Error).message}`);
+      setMsg(`저장 실패: ${errMessage(e)}`);
     }
   };
 
@@ -99,7 +100,7 @@ export function Dashboard() {
       setMDate('');
       setMilestones(await listMilestones(projectId));
     } catch (e) {
-      setMsg(`마일스톤 추가 실패: ${(e as Error).message}`);
+      setMsg(`마일스톤 추가 실패: ${errMessage(e)}`);
     }
   };
 
@@ -117,7 +118,7 @@ export function Dashboard() {
       setMonthly(await listMonthlyRecords(projectId));
       setMsg(`${rec.ym} 실적 저장됨`);
     } catch (e) {
-      setMsg(`실적 저장 실패: ${(e as Error).message}`);
+      setMsg(`실적 저장 실패: ${errMessage(e)}`);
     }
   };
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
 import { MiniChart } from '../components/MiniChart';
 import { formatAmount, listMonthlyRecords, type MonthlyRecord } from '../lib/dashboard';
@@ -37,7 +38,7 @@ export function Billing() {
       setContract(amount);
       setMsg('도급액 저장됨');
     } catch (e) {
-      setMsg(`저장 실패: ${(e as Error).message}`);
+      setMsg(`저장 실패: ${errMessage(e)}`);
     }
   };
 
