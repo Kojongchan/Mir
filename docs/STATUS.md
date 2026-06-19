@@ -2,11 +2,36 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-19 · **S31 문서 삭제 권한 완화(D12) 완료**(업로더 본인+관리자).
-CDE + 사업관리 포털 + 권한(admin) + 첨부 + 이슈↔3D 핀 + 이슈 워크플로우 + 문서삭제 완화까지 완료.
-배포 SQL=`supabase/setup_all.sql`(0003~0014).
-**다음 스텝(사용자 확정)=S32 충돌검사(Phase 4)** — IFC 간섭검출(`three-mesh-bvh`, D13)·결과패널·
-간섭→이슈(S30 연결). 상세 기획 PLANNING §10. (S30 이슈워크플로우·S31 삭제권한은 ✅ 완료·검증)
+**마지막 업데이트**: 2026-06-19 · **S32 충돌검사(Phase 4) 완료**(`three-mesh-bvh`, D13).
+CDE + 사업관리 포털 + 권한(admin) + 첨부 + 이슈↔3D 핀 + 이슈 워크플로우 + 문서삭제 완화 + **충돌검사**까지 완료.
+배포 SQL=`supabase/setup_all.sql`(0003~0015).
+**다음 스텝 후보**=PLANNING §9 백로그(Clearance 확장·규칙세트·공정표 RLS admin화·2D 도면 핀 등)
+또는 S15(Navisworks)·S16(장비)·S17(APS). (S30·S31·S32 ✅ 완료)
+
+## S32 결과 (branch: feature/clash-detection) — Phase 4 충돌검사 (Clash Detection)
+- ✅ **엔진(`three-mesh-bvh`, D13)**: `package.json` 에 `three-mesh-bvh@^0.7.8` 추가. `IfcViewer`
+  확장 — `getElementMeta`(요소별 이름+IFC 카테고리, 캐시), `getLoadedModels`(집합 선택용),
+  `buildClashGeom`(요소의 **월드좌표 병합 지오메트리 + MeshBVH**), `showClash`(양쪽 객체 A=빨강
+  /B=파랑 하이라이트 + 간섭점 구체 마커 + 카메라 fit), `clearClashView`/`isolateClashPair`.
+- ✅ **검출(`src/lib/clash.ts`)**: 광역단계(월드 AABB 교차로 후보쌍 추림, tolerance 부풀림) →
+  협역단계(`bvh.intersectsGeometry` 정밀 교차). **메인스레드 청크 + `await yieldToUi()`** 로
+  진행률 보고·UI 프리징 방지(Web Worker 안전 폴백). 자기자신·중복쌍(A↔B/B↔A) 1회. Hard(겹침)
+  + Clearance(근접) 유형. 간섭점=겹침박스 중심, 관통깊이=겹침박스 최소변(근사). CSV 내보내기.
+- ✅ **결과 패널(`src/components/ClashPanel.tsx`)**: 4D 뷰어 우측 드로어(툴바 `🔍 충돌검사` 토글).
+  대상 A/B 선택(전체·모델별·카테고리별 + 요소수) + 유형 + 허용오차 → **검사 실행**(진행바·중단).
+  결과 표(요소A↔B·관통깊이·상태[신규/검토중/해결/승인]) — 행 클릭 시 양쪽 하이라이트+마커+fit,
+  `격리`(간섭 객체만 보기)/`전체 보기`. 요약 칩(총/미해결/처리).
+- ✅ **간섭 → 이슈**: 행 `이슈` 버튼 → **확인 모달**(제목·우선순위·담당자·마감) → S30 `createIssue`
+  (`createIssue` 가 issueId 반환하도록 확장) + 0012 객체 핀(model_id+express_id=A요소)으로 연결,
+  생성 후 상태 `검토중`. DB 백업본이면 `linkClashIssue`/`setClashStatus` 로 영속화.
+- ✅ **영속화(`0015_clash.sql` + `src/lib/clashApi.ts`)**: `clash_tests`(이름·집합 라벨·유형·허용오차)
+  + `clashes`(요소 A/B·간섭점·관통깊이·상태·issue_id). RLS 읽기=멤버, 쓰기=admin(D11). 결과 저장/
+  불러오기(런타임 modelID ↔ DB 모델 uuid 역매핑) + CSV. `setup_all.sql` 0003~0015 로 확장.
+- ✅ 검증: `typecheck`·`build` 통과(메인 번들 689KB gzip). 색은 `index.css` 토큰만(3D 머티리얼은
+  엔진 관례상 hex). 📌 배포: `0015_clash.sql` 실행(또는 setup_all 재실행). 라이브 눈검증은 IFC 2개
+  로드 후 사용자 화면 권장(원격 egress 제약).
+- 📌 후속(MVP 범위 밖): Duplicate 유형, 규칙세트 저장/무시규칙, GUID 기준 비교, 관측점 썸네일,
+  Web Worker 분리(현재 메인스레드 청크로 충분), 정밀 관통깊이(현재 AABB 근사).
 
 ## S31 결과 (branch: feature/doc-delete-owner) — 문서 삭제 권한 완화(D12)
 - ✅ **`0014_doc_delete_owner.sql`**(추가형·멱등): D11(쓰기=admin)의 예외로 CDE 문서 **삭제**를
@@ -437,7 +462,12 @@ CDE + 사업관리 포털 + 권한(admin) + 첨부 + 이슈↔3D 핀 + 이슈 �
   `COORDINATE_TO_ORIGIN` 의 첫 요소 회전 오염) 규명·수정. 실제 파일 눈 검증만 잔여.
 
 ## 다음 세션 인수인계 (한 줄)
-> **S31 완료**: CDE 문서 삭제를 업로더 본인+관리자로 완화(D12, `0014_doc_delete_owner.sql`).
+> **S32 완료**: Phase 4 충돌검사 — `three-mesh-bvh`(D13) 엔진(IfcViewer.buildClashGeom/showClash) +
+> `src/lib/clash.ts`(광역 AABB→협역 BVH, 진행률 청크) + `ClashPanel`(4D 뷰어 우측 드로어, 대상 A/B·
+> 허용오차·결과표·격리·CSV) + 간섭→이슈 모달(S30·0012 핀) + `0015_clash.sql`(clash_tests/clashes,
+> RLS 읽기멤버/쓰기admin). 배포=setup_all.sql(0003~0015). **다음**=PLANNING §9 백로그 또는 S15/S16/S17.
+>
+> **(이전) S31 완료**: CDE 문서 삭제를 업로더 본인+관리자로 완화(D12, `0014_doc_delete_owner.sql`).
 > files·docs 버킷 삭제 정책 + `owns_doc_object` 헬퍼, `deleteCdeFile` 순서 교체(스토리지 선삭제),
 > 삭제 버튼 본인 노출. 배포=setup_all.sql(0003~0014). **다음**=PLANNING §9 백로그 선택.
 >

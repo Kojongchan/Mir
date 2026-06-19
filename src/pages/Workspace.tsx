@@ -8,6 +8,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { Toolbar } from '../components/Toolbar';
 import { PropertiesPanel } from '../components/PropertiesPanel';
 import { Timeline } from '../components/Timeline';
+import { ClashPanel } from '../components/ClashPanel';
 import {
   downloadModelBytes,
   listModels,
@@ -25,7 +26,7 @@ import { uploadNewFile } from '../lib/cde';
  * 모델뷰어 모듈 — 포털 셸 안에서 렌더된다(좌측 모듈 레일은 셸이 유지). 모듈
  * 레일 옆에 모델/문서 하위 트리를 두고, 우측 메인에 3D 뷰포트·4D 타임라인을 둔다.
  */
-export function Workspace() {
+export function Workspace({ initialClash = false }: { initialClash?: boolean } = {}) {
   const { projectId = '' } = useParams();
   const { profile } = useAuth();
   const isAdmin = !!profile?.is_admin;
@@ -45,6 +46,10 @@ export function Workspace() {
   const openModelId = useRef<string | null>(null);
   const [openModelDbId, setOpenModelDbId] = useState<string | null>(null);
   const autoOpenedRef = useRef(false); // 마지막 공정용 모델 자동 복원 1회
+
+  // 런타임 modelID → DB 모델 uuid (충돌검사의 이슈 핀·결과 저장 매핑용).
+  const [modelIdMap, setModelIdMap] = useState<Map<number, string>>(new Map());
+  const [showClash, setShowClash] = useState(initialClash);
 
   const { status, setStatus, setSelected, setModelCount, fourd, selected } = useStore();
 
@@ -111,8 +116,12 @@ export function Workspace() {
     try {
       const bytes = await downloadModelBytes(m.storage_path);
       const saved = loadUpAxisPref(m.id);
-      await viewer.loadIfc(bytes, saved ? { upAxis: saved } : undefined);
+      await viewer.loadIfc(bytes, { label: m.name, ...(saved ? { upAxis: saved } : {}) });
       setModelCount(viewer.modelCount);
+      if (viewer.primaryModelID != null) {
+        const rid = viewer.primaryModelID;
+        setModelIdMap((prev) => new Map(prev).set(rid, m.id));
+      }
       openModelId.current = m.id;
       setOpenModelDbId(m.id);
       // 공정관리 재진입 시 자동 복원할 "공정용 모델"을 기억한다.
@@ -232,12 +241,27 @@ export function Workspace() {
           {isAdmin && selected && openModelDbId && (
             <button onClick={onCreateIssueFromSelection}>＋ 선택 객체로 이슈</button>
           )}
+          <button
+            className={showClash ? 'is-active' : undefined}
+            onClick={() => setShowClash((v) => !v)}
+            title="충돌검사(간섭 검출)"
+          >
+            🔍 충돌검사
+          </button>
           <div className="spacer" />
           <span className="muted">{status}</span>
           <span className="muted">· 모델 {viewer?.modelCount ?? 0}개</span>
         </div>
         <div className="viewport" ref={containerRef} />
         <PropertiesPanel />
+        {showClash && (
+          <ClashPanel
+            viewer={viewer}
+            projectId={projectId}
+            modelIdMap={modelIdMap}
+            onClose={() => setShowClash(false)}
+          />
+        )}
         <Timeline viewer={viewer} projectId={projectId} modelDbId={openModelDbId} />
       </div>
     </div>

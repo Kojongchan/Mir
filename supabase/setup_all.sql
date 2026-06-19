@@ -1,5 +1,5 @@
 -- =====================================================================
--- MIR SMART — 통합 셋업 SQL (0003~0014 한 번에 실행)
+-- MIR SMART — 통합 셋업 SQL (0003~0015 한 번에 실행)
 -- Supabase 대시보드 → SQL Editor 에 '전체 복사 → 붙여넣기 → Run'.
 -- 모두 멱등(재실행 안전). docs 버킷은 미리 Private 으로 생성되어 있어야 함.
 -- =====================================================================
@@ -852,5 +852,96 @@ create policy storage_docs_delete on storage.objects
     bucket_id = 'docs'
     and (public.is_admin() or public.owns_doc_object(name))
   );
+
+notify pgrst, 'reload schema';
+
+-- ===================== 0015_clash.sql =====================
+
+-- ---------- 간섭 테스트(설정 + 실행 1회) ----------------------------
+create table if not exists public.clash_tests (
+  id          uuid primary key default gen_random_uuid(),
+  project_id  uuid not null references public.projects (id) on delete cascade,
+  name        text not null,
+  -- 대상 집합 라벨(예: '모델: 구조', '카테고리: IFCWALL', '전체'). 표시용.
+  set_a       text,
+  set_b       text,
+  -- 'hard' | 'clearance'
+  type        text not null default 'hard',
+  tolerance   numeric not null default 0,
+  created_by  uuid references auth.users (id) on delete set null,
+  created_at  timestamptz not null default now()
+);
+create index if not exists clash_tests_project_idx on public.clash_tests (project_id, created_at desc);
+
+-- ---------- 개별 간섭 ------------------------------------------------
+create table if not exists public.clashes (
+  id          uuid primary key default gen_random_uuid(),
+  test_id     uuid not null references public.clash_tests (id) on delete cascade,
+  -- 요소 A: 어느 DB 모델(있으면)·런타임 expressID·표시 이름/카테고리.
+  model_a     uuid references public.models (id) on delete set null,
+  express_a   integer,
+  name_a      text,
+  category_a  text,
+  -- 요소 B.
+  model_b     uuid references public.models (id) on delete set null,
+  express_b   integer,
+  name_b      text,
+  category_b  text,
+  -- 간섭 지점(월드 좌표) + 근사 관통깊이/이격(m).
+  point_x     double precision,
+  point_y     double precision,
+  point_z     double precision,
+  depth       double precision,
+  -- 'new' | 'reviewing' | 'resolved' | 'approved'
+  status      text not null default 'new',
+  -- 간섭 → 이슈 전환 시 연결(0007 issues).
+  issue_id    uuid references public.issues (id) on delete set null,
+  created_at  timestamptz not null default now()
+);
+create index if not exists clashes_test_idx on public.clashes (test_id);
+
+-- ---------- row level security --------------------------------------
+alter table public.clash_tests enable row level security;
+alter table public.clashes enable row level security;
+
+-- clash_tests: 멤버 읽기, admin 쓰기(D11).
+drop policy if exists clash_tests_select on public.clash_tests;
+create policy clash_tests_select on public.clash_tests
+  for select using (public.is_admin() or public.is_member(project_id));
+
+drop policy if exists clash_tests_insert on public.clash_tests;
+create policy clash_tests_insert on public.clash_tests
+  for insert with check (public.is_admin());
+
+drop policy if exists clash_tests_update on public.clash_tests;
+create policy clash_tests_update on public.clash_tests
+  for update using (public.is_admin());
+
+drop policy if exists clash_tests_delete on public.clash_tests;
+create policy clash_tests_delete on public.clash_tests
+  for delete using (public.is_admin());
+
+-- clashes: 멤버 읽기, admin 쓰기. 멤버십은 부모 테스트의 project 로 판정.
+drop policy if exists clashes_select on public.clashes;
+create policy clashes_select on public.clashes
+  for select using (
+    exists (
+      select 1 from public.clash_tests t
+      where t.id = clashes.test_id
+        and (public.is_admin() or public.is_member(t.project_id))
+    )
+  );
+
+drop policy if exists clashes_insert on public.clashes;
+create policy clashes_insert on public.clashes
+  for insert with check (public.is_admin());
+
+drop policy if exists clashes_update on public.clashes;
+create policy clashes_update on public.clashes
+  for update using (public.is_admin());
+
+drop policy if exists clashes_delete on public.clashes;
+create policy clashes_delete on public.clashes
+  for delete using (public.is_admin());
 
 notify pgrst, 'reload schema';
