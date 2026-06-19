@@ -17,11 +17,12 @@ PR #24·#26 main 병합. **다음=배포(0005~0009) 라이브 검증 · 잔여 �
 - ✅ **(5)** 기성 공종별 상세: `0011_billing_items.sql`(billing_items: 공종·도급액·전월누계·당월,
   RLS 멤버읽기/admin쓰기) + portal.ts CRUD + 기성내역 페이지 **공종별 명세 표**(누계·기성률·합계,
   관리자 추가/수정/삭제). setup_all.sql 0011 포함 재생성.
-- ✅ **(3)** 공정관리(4D) 상태 유지: **공정용 모델 자동 복원**(마지막 연 모델을 localStorage
-  `mir.4d.model.<projectId>` 기억 → 재진입 시 자동 오픈) + **일정/매핑 자동 복원**(모델 열리면
-  저장된 최신 일정을 1회 자동 load → 메뉴 갔다와도 매핑 유지). 공정표는 CSV 임포트+매핑 후
-  **저장** 1회 하면 이후 자동 복원(이력=재업로드 후 다시 저장). 타임라이너는 기본 펼침 유지.
-  - 한계: 진짜 무클릭 auto-save 는 미적용(saveSchedule 이 append 형) → 변경 시 **저장** 1회 필요.
+- ✅ **(3) 재수정 — 진짜 무클릭 영속화**: 사용자 지적("자동으로 열리며 매핑이 사라짐") 반영.
+  원인=auto-open 시 매핑 리셋 + 런타임 modelID 변경. 해결: 공정표/매핑을 **사용자 편집 즉시
+  활성 슬롯에 자동 저장**(`scheduleApi.saveActiveSchedule`, 프로젝트당 1슬롯 교체, persistActive),
+  모델이 열릴 때마다 **DB에서 다시 해석해 자동 복원**(`loadActiveSchedule`, autoRestore). 수동 저장
+  불필요. 삭제 후 재업로드 전까지 유지. **0003(공정표) 마이그레이션 필요** → setup_all.sql 을
+  0003~0011 로 확장. 저장은 관리자만(persistActive isAdmin 가드), 0003 RLS=admin/member.
 
 ## S26 결과 (branch: claude/busy-lovelace-cj8adq) — 첨부파일(사진/문서) + 뷰어 리사이즈
 > 사용자 DB 셋업(setup_all.sql) 성공 확인 후 P6 착수. 첫 항목: 공사일보·게시판·이슈 첨부.
