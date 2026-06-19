@@ -257,7 +257,11 @@ export function Timeline({ viewer, projectId, modelDbId }: Props) {
   const autoRestore = async () => {
     try {
       const ls = await loadActiveSchedule(projectId);
-      if (!ls || ls.tasks.length === 0) return;
+      if (!ls || ls.tasks.length === 0) {
+        // 이 프로젝트엔 저장된 공정표가 없음 → 다른 프로젝트의 잔여 상태를 비운다.
+        fourd.clearSchedule();
+        return;
+      }
       const starts = ls.tasks.map((t) => t.start);
       const ends = ls.tasks.map((t) => t.end);
       fourd.loadSchedule({
@@ -282,6 +286,15 @@ export function Timeline({ viewer, projectId, modelDbId }: Props) {
       /* 마이그레이션 미적용/권한 — 조용히 무시 */
     }
   };
+
+  // 프로젝트가 바뀌면 전역 4D store 에 남은 이전 프로젝트의 공정표/매핑을 비우고,
+  // 활성 슬롯 복원이 새 프로젝트 기준으로 다시 일어나도록 한다(store 는 전역이라 필요).
+  useEffect(() => {
+    autoRestoredRef.current = null;
+    fourd.clearSchedule();
+    void autoRestore();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId]);
 
   // 모델이 (자동/수동) 열릴 때마다 활성 슬롯을 1회 복원한다. 모델 재오픈 시 런타임
   // modelID 가 바뀌고 openModel 이 매핑을 비우므로, DB(model_id+expressID)에서 다시
