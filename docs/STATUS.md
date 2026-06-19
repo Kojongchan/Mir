@@ -2,11 +2,30 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-19 · **S32 충돌검사(Phase 4) 완료**(`three-mesh-bvh`, D13).
-CDE + 사업관리 포털 + 권한(admin) + 첨부 + 이슈↔3D 핀 + 이슈 워크플로우 + 문서삭제 완화 + **충돌검사**까지 완료.
-배포 SQL=`supabase/setup_all.sql`(0003~0015).
-**다음 스텝 후보**=PLANNING §9 백로그(Clearance 확장·규칙세트·공정표 RLS admin화·2D 도면 핀 등)
-또는 S15(Navisworks)·S16(장비)·S17(APS). (S30·S31·S32 ✅ 완료)
+**마지막 업데이트**: 2026-06-19 · **S33 3D 모듈 용도 분리 완료**(통합모델/4D/간섭체크, D14).
+**S32 충돌검사(Phase 4) 완료**(`three-mesh-bvh`, D13). CDE + 포털 + 권한(admin) + 첨부 +
+이슈↔3D 핀 + 이슈 워크플로우 + 문서삭제 완화 + 충돌검사 + **모듈 분리**까지 완료.
+배포 SQL=`supabase/setup_all.sql`(0003~0016).
+**다음 스텝 후보**=PLANNING §9 백로그 또는 S15(Navisworks)·S16(장비)·S17(APS). (S30~S33 ✅ 완료)
+
+## S33 결과 (branch: claude/stoic-pasteur-8wir5q-mods) — 3D 모듈 용도 분리 (D14)
+> 사용자 피드백: "간섭체크 3D 뷰가 4D 와 같이 묶여 있으면 안 된다 — 4D 는 공정표 매핑으로
+> 날짜별 객체 표시가 달라져 간섭검토를 함께 보기 어렵다." → 3D 모듈을 셋으로 분리.
+- ✅ **`0016_model_purpose.sql`**(추가형·멱등): `models.purpose`(integrated/4d/clash, 기본
+  integrated, 체크제약·인덱스). 기존 모델은 통합모델로 백필. setup_all.sql 0003~0016 로 확장.
+- ✅ **데이터층 `lib/api.ts`**: `ModelPurpose` 타입, `listModels(projectId, purpose?)`·`uploadModel
+  (…, purpose)`·`getModel(id)` 에 purpose 반영. **0016 미적용 폴백** — purpose 컬럼 없으면
+  레거시 조회/등록으로 자동 강등(통합모델은 그대로 동작, 4d/clash 빈 목록).
+- ✅ **`Workspace` 를 `mode` 프롭으로 일반화**(integrated/4d/clash): 각 모듈이 **자기 용도의
+  모델만** 목록·업로드. integrated=이슈 생성 + **이슈 핀 표시/숨김 토글**(IfcViewer
+  `setIssuePins`/`setIssuePinsVisible`/`clearIssuePins`, 상태색 미해결=빨강/완료=초록),
+  4d=하단 4D 타임라인, clash=우측 충돌검사 패널. 마지막 본 모델 자동복원 키를 모드별로 분리.
+- ✅ **라우팅/네비**: `/project/:id/model`(통합모델 3D) · `/viewer`(공정관리 4D) · `/clash`(간섭체크).
+  좌측 메뉴 = 사업개요·공정현황·**통합모델(3D)🧊·공정관리(4D)🏗·간섭체크🔍**·공사일보…. 대시보드
+  3D 카드·이슈 '위치 보기' → `/model`(getModel 폴백으로 용도 무관하게 대상 모델 오픈).
+- ✅ 검증: `typecheck`·`build` 통과. 📌 배포: `0016_model_purpose.sql` 실행(또는 setup_all 재실행).
+- 📌 메모: 분리 후 4D/간섭은 통합모델과 **별도 업로드** 필요(사용자 컨셉). 기존 4D 저장 일정은
+  옛 integrated 모델 id 참조 → 4D 용 모델 재업로드 전까지 목록 비어 보임(의도된 동작).
 
 ## S32 결과 (branch: feature/clash-detection) — Phase 4 충돌검사 (Clash Detection)
 - ✅ **엔진(`three-mesh-bvh`, D13)**: `package.json` 에 `three-mesh-bvh@^0.7.8` 추가. `IfcViewer`
@@ -462,7 +481,12 @@ CDE + 사업관리 포털 + 권한(admin) + 첨부 + 이슈↔3D 핀 + 이슈 �
   `COORDINATE_TO_ORIGIN` 의 첫 요소 회전 오염) 규명·수정. 실제 파일 눈 검증만 잔여.
 
 ## 다음 세션 인수인계 (한 줄)
-> **S32 완료**: Phase 4 충돌검사 — `three-mesh-bvh`(D13) 엔진(IfcViewer.buildClashGeom/showClash) +
+> **S33 완료**: 3D 모듈을 **통합모델(3D)/공정관리(4D)/간섭체크** 로 분리(D14, `models.purpose`,
+> `0016_model_purpose.sql`). `Workspace` 가 `mode` 프롭으로 일반화 — 각 모듈이 자기 용도 모델만
+> 보고 업로드. 통합모델=이슈 핀 토글, 4D=타임라인, 간섭=충돌검사 패널. 라우트 `/model`·`/viewer`·
+> `/clash`. 배포=setup_all.sql(0003~0016). **다음**=PLANNING §9 백로그 또는 S15/S16/S17.
+>
+> **(이전) S32 완료**: Phase 4 충돌검사 — `three-mesh-bvh`(D13) 엔진(IfcViewer.buildClashGeom/showClash) +
 > `src/lib/clash.ts`(광역 AABB→협역 BVH, 진행률 청크) + `ClashPanel`(4D 뷰어 우측 드로어, 대상 A/B·
 > 허용오차·결과표·격리·CSV) + 간섭→이슈 모달(S30·0012 핀) + `0015_clash.sql`(clash_tests/clashes,
 > RLS 읽기멤버/쓰기admin). 배포=setup_all.sql(0003~0015). **다음**=PLANNING §9 백로그 또는 S15/S16/S17.

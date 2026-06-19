@@ -752,6 +752,62 @@ export class IfcViewer {
     for (const mesh of this.allMeshes()) mesh.visible = keep.has(mesh);
   }
 
+  // --- issue pins (통합모델 3D) -----------------------------------------
+
+  private issuePinGroup: THREE.Group | null = null;
+
+  /**
+   * Drop a marker on each issue-linked element so the integrated 3D model shows
+   * where issues live. Color encodes status (open=red / closed=green). Toggle
+   * with setIssuePinsVisible(). Elements not found are skipped.
+   */
+  setIssuePins(pins: { modelID: number; expressID: number; color?: number }[]) {
+    this.clearIssuePins();
+    if (pins.length === 0) return;
+
+    const sceneBox = new THREE.Box3();
+    for (const model of this.models) sceneBox.expandByObject(model.group);
+    const maxDim = sceneBox.isEmpty() ? 10 : sceneBox.getSize(new THREE.Vector3()).length();
+    const r = Math.max(maxDim * 0.008, 0.2);
+
+    const group = new THREE.Group();
+    const box = new THREE.Box3();
+    for (const p of pins) {
+      box.makeEmpty();
+      for (const mesh of this.meshesFor(p.modelID, p.expressID)) box.expandByObject(mesh);
+      if (box.isEmpty()) continue;
+      const marker = new THREE.Mesh(
+        new THREE.SphereGeometry(r, 12, 12),
+        new THREE.MeshBasicMaterial({
+          color: p.color ?? 0xdc2626,
+          depthTest: false,
+          transparent: true,
+          opacity: 0.95,
+        }),
+      );
+      marker.position.copy(box.getCenter(new THREE.Vector3()));
+      marker.renderOrder = 998;
+      group.add(marker);
+    }
+    this.issuePinGroup = group;
+    this.scene.add(group);
+  }
+
+  setIssuePinsVisible(visible: boolean) {
+    if (this.issuePinGroup) this.issuePinGroup.visible = visible;
+  }
+
+  clearIssuePins() {
+    if (!this.issuePinGroup) return;
+    this.scene.remove(this.issuePinGroup);
+    this.issuePinGroup.traverse((o) => {
+      const m = o as THREE.Mesh;
+      m.geometry?.dispose?.();
+      (m.material as THREE.Material)?.dispose?.();
+    });
+    this.issuePinGroup = null;
+  }
+
   /**
    * Apply per-element appearance states for a point in time, using `opts` for
    * per-kind active colors / opacity / ghost mode. Elements not in `states` are

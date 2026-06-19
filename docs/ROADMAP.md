@@ -56,6 +56,7 @@ VR 검토까지. 다중 사용자가 **본인 배정 프로젝트(공구)** 만 
 | S30 | 이슈 워크플로우 ✅ | `feature/issue-workflow` | 상태 전이·담당자 배정·마감임박·인앱 알림(0013) | S22 |
 | S31 | 문서 삭제 권한 완화(D12) ✅ | `feature/doc-delete-owner` | files/storage 삭제 정책을 업로더 본인+관리자로(0014) | S14 |
 | S32 | Phase 4 · 충돌검사 ✅ | `feature/clash-detection` | IFC 간섭검출(three-mesh-bvh, D13)·결과패널·간섭→이슈(0015) | 뷰어·S30 |
+| S33 | 3D 모듈 용도 분리 ✅ | (stoic-pasteur-mods) | 통합모델(3D)/공정관리(4D)/간섭체크 모델 세트 분리(models.purpose, 0016, D14) + 통합모델 이슈 핀 | S32 |
 
 추천 순서: **… S14✅ → S21~S29(포털·CDE·협업) ✅ → 다음 S30(이슈 워크플로우) → S31(삭제권한) → S15/S16 → S17**
 > **세션 묶음 메모**: S14(CDE)에서 시작한 작업 브랜치(`claude/busy-lovelace-cj8adq`)가

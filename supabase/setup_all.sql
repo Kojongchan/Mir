@@ -1,5 +1,5 @@
 -- =====================================================================
--- MIR SMART — 통합 셋업 SQL (0003~0015 한 번에 실행)
+-- MIR SMART — 통합 셋업 SQL (0003~0016 한 번에 실행)
 -- Supabase 대시보드 → SQL Editor 에 '전체 복사 → 붙여넣기 → Run'.
 -- 모두 멱등(재실행 안전). docs 버킷은 미리 Private 으로 생성되어 있어야 함.
 -- =====================================================================
@@ -943,5 +943,20 @@ create policy clashes_update on public.clashes
 drop policy if exists clashes_delete on public.clashes;
 create policy clashes_delete on public.clashes
   for delete using (public.is_admin());
+
+notify pgrst, 'reload schema';
+
+-- ===================== 0016_model_purpose.sql =====================
+
+alter table public.models
+  add column if not exists purpose text not null default 'integrated';
+
+alter table public.models drop constraint if exists models_purpose_check;
+alter table public.models
+  add constraint models_purpose_check
+  check (purpose in ('integrated', '4d', 'clash'));
+
+create index if not exists models_project_purpose_idx
+  on public.models (project_id, purpose);
 
 notify pgrst, 'reload schema';

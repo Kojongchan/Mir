@@ -332,7 +332,7 @@ function IssueDetail({
         <p style={{ margin: '0 0 10px' }}>
           <button
             onClick={() =>
-              navigate(`/project/${issue.project_id}/viewer`, {
+              navigate(`/project/${issue.project_id}/model`, {
                 state: { focus: { modelDbId: issue.model_id, expressID: issue.express_id } },
               })
             }

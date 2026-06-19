@@ -269,10 +269,10 @@ export function Dashboard() {
           </p>
         </div>
 
-        <button className="card dash-stat dash-link-card" onClick={() => navigate(`/project/${projectId}/viewer`)}>
-          <h3>모델뷰어 (3D)</h3>
+        <button className="card dash-stat dash-link-card" onClick={() => navigate(`/project/${projectId}/model`)}>
+          <h3>통합모델 (3D)</h3>
           <div className="dash-stat-big">🧊</div>
-          <p className="muted">3D 실측 공사현황 확인 →</p>
+          <p className="muted">3D 통합모델 · 이슈 확인 →</p>
         </button>
 
         <div className="card dash-stat">

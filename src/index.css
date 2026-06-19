@@ -2963,3 +2963,12 @@ button.danger:hover:not(:disabled) {
   flex-direction: column;
   gap: 10px;
 }
+
+/* 3D 뷰어 모듈 제목(통합모델/공정관리/간섭체크 구분 표시) */
+.viewer-mode-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
