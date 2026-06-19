@@ -5,7 +5,7 @@
 **마지막 업데이트**: 2026-06-19 · S21~S24(포털·권한) + **S25(셸 통합 레이아웃: 모듈 레일 유지 + 2차 트리)** 완료.
 PR #24·#26 main 병합. **다음=배포(0005~0009) 라이브 검증 · 잔여 폴리시**.
 
-## S28 결과 (branch: claude/busy-lovelace-cj8adq) — 마일스톤 정렬 + 이슈↔3D 객체 핀
+## S29 결과 (branch: claude/busy-lovelace-cj8adq) — 마일스톤 정렬 + 이슈↔3D 객체 핀
 - ✅ **마일스톤 드래그 정렬**: `reorderMilestones`(sort_order=인덱스), 사업개요 편집에 드래그
   리스트(+삭제). 마이그레이션 불필요.
 - ✅ **이슈 ↔ 3D 객체 연결**: `0012_issue_location.sql`(issues 에 model_id·express_id 추가).
@@ -15,6 +15,16 @@ PR #24·#26 main 병합. **다음=배포(0005~0009) 라이브 검증 · 잔여 �
 - ✅ 검증: `typecheck`·`build` 통과. setup_all.sql 0003~0012 로 확장.
 - 📌 배포: `0012_issue_location.sql` 실행(또는 setup_all 재실행).
 - 🔜 남은 후보: 권한 세분화 잔여(0003 공정표 RLS admin-only), 도면(2D) 핀, 이슈 알림.
+
+## S28 결과 (branch: fix/admin-user-create-hang) — 사용자 생성/아이디·비번 변경 무한대기 버그픽스
+- 🐛 **증상**: 관리자 콘솔 사용자 탭에서 사용자 추가가 "생성 중…"에서 멈춤(아이디/비번 변경도 동일).
+- ✅ **원인**: `api/admin.ts`가 Web `Request`/`Response` 시그니처인데 Vercel **기본 Node 런타임**에서는
+  반환한 `Response`가 무시되어 응답이 영영 안 감 → 클라이언트 무한 대기. (S2 때 라이브 미검증 경로.)
+- ✅ **수정**: `api/admin.ts`에 `export const config = { runtime: 'edge' };` 추가 → Edge 런타임에서
+  Web 시그니처가 정상 응답. 부수적으로 `src/lib/admin.ts` `adminFn`에 20초 AbortController 타임아웃 추가
+  (행 대신 "서버 응답 없음(시간초과)" 안내). `typecheck`·`build` 통과.
+- 📌 **배포 후 확인 필요**: Vercel env `SUPABASE_URL`·`SUPABASE_SERVICE_ROLE_KEY`(서버 전용, VITE_ 금지)
+  설정되어 있어야 함. 재배포 후 사용자 추가/아이디·비번 변경 동작.
 
 ## S27 결과 (branch: claude/busy-lovelace-cj8adq) — 사용자 피드백 1·2·4 반영
 - ✅ **(1)** 좌측 메뉴 `모델뷰어 (3D)` → **`공정관리 (4D)`** 로 변경(공정현황 바로 아래로 이동).
