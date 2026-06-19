@@ -7,28 +7,37 @@ import {
   ISSUE_STATUSES,
   PRIORITY_LABEL,
   STATUS_LABEL,
+  DUE_LABEL,
   addComment,
+  assignIssue,
   createIssue,
   deleteIssue,
+  dueDeltaLabel,
+  dueState,
   listComments,
+  listEvents,
   listIssues,
   setIssueStatus,
   type Issue,
   type IssueComment,
+  type IssueEvent,
   type IssuePriority,
   type IssueStatus,
 } from '../lib/issues';
+import { listProjectMembers, type ProjectMember } from '../lib/members';
 import { formatDate } from '../lib/dashboard';
 import { Attachments } from '../components/Attachments';
 
-/** 협업 · 이슈/지적 관리 — RFI·지적사항·검토의견 트래커. */
+/** 협업 · 이슈/지적 관리 — 상태 워크플로우·담당자·마감 추적 트래커. */
 export function Issues() {
   const { projectId = '' } = useParams();
-  const { profile } = useAuth();
+  const { profile, session } = useAuth();
   const isAdmin = !!profile?.is_admin;
+  const myId = session?.user.id ?? null;
   const authorName = profile?.full_name ?? profile?.username ?? null;
 
   const [issues, setIssues] = useState<Issue[]>([]);
+  const [members, setMembers] = useState<ProjectMember[]>([]);
   const [filter, setFilter] = useState<IssueStatus | 'all'>('all');
   const [msg, setMsg] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
@@ -38,12 +47,13 @@ export function Issues() {
     title: string;
     description: string;
     priority: IssuePriority;
-    assignee_name: string;
+    assignee_id: string;
     due_date: string;
-  }>({ title: '', description: '', priority: 'normal', assignee_name: '', due_date: '' });
+  }>({ title: '', description: '', priority: 'normal', assignee_id: '', due_date: '' });
 
   useEffect(() => {
     refresh();
+    if (isAdmin) listProjectMembers(projectId).then(setMembers).catch(() => setMembers([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
@@ -55,18 +65,20 @@ export function Issues() {
       return;
     }
     try {
+      const member = members.find((m) => m.id === form.assignee_id);
       await createIssue(
         projectId,
         {
           title: form.title.trim(),
           description: form.description,
           priority: form.priority,
-          assignee_name: form.assignee_name,
+          assignee_id: form.assignee_id || null,
+          assignee_name: member?.name,
           due_date: form.due_date || null,
         },
         authorName,
       );
-      setForm({ title: '', description: '', priority: 'normal', assignee_name: '', due_date: '' });
+      setForm({ title: '', description: '', priority: 'normal', assignee_id: '', due_date: '' });
       setShowForm(false);
       await refresh();
       setMsg('이슈 등록됨');
@@ -75,9 +87,23 @@ export function Issues() {
     }
   };
 
-  const onStatus = async (id: string, status: IssueStatus) => {
-    await setIssueStatus(id, status);
-    await refresh();
+  const onStatus = async (issue: Issue, status: IssueStatus) => {
+    try {
+      await setIssueStatus(issue, status, authorName);
+      await refresh();
+    } catch (e) {
+      setMsg(`상태 변경 실패: ${errMessage(e)}`);
+    }
+  };
+
+  const onAssign = async (issue: Issue, assigneeId: string) => {
+    const member = members.find((m) => m.id === assigneeId);
+    try {
+      await assignIssue(issue, assigneeId || null, member?.name ?? null, authorName);
+      await refresh();
+    } catch (e) {
+      setMsg(`담당자 배정 실패: ${errMessage(e)}`);
+    }
   };
 
   const onDelete = async (id: string) => {
@@ -110,8 +136,13 @@ export function Issues() {
                 {ISSUE_PRIORITIES.map((p) => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
               </select>
             </label>
-            <label>담당자<input value={form.assignee_name} placeholder="이름" onChange={(e) => setForm({ ...form, assignee_name: e.target.value })} /></label>
-            <label>기한<input type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} /></label>
+            <label>담당자
+              <select value={form.assignee_id} onChange={(e) => setForm({ ...form, assignee_id: e.target.value })}>
+                <option value="">미지정</option>
+                {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+            </label>
+            <label>마감일<input type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} /></label>
           </div>
           <div className="dash-edit-row">
             <label className="grow">내용<input value={form.description} placeholder="상세 내용" onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
@@ -138,7 +169,7 @@ export function Issues() {
                 <th>상태</th>
                 <th>우선순위</th>
                 <th>담당자</th>
-                <th>기한</th>
+                <th>마감일</th>
                 <th />
               </tr>
             </thead>
@@ -149,9 +180,12 @@ export function Issues() {
                   issue={it}
                   open={openId === it.id}
                   isAdmin={isAdmin}
+                  myId={myId}
+                  members={members}
                   authorName={authorName}
                   onToggle={() => setOpenId(openId === it.id ? null : it.id)}
                   onStatus={onStatus}
+                  onAssign={onAssign}
                   onDelete={onDelete}
                 />
               ))}
@@ -168,23 +202,45 @@ export function Issues() {
   );
 }
 
+/** 마감일 셀 — 임박/지연 뱃지 포함. */
+function DueCell({ issue }: { issue: Issue }) {
+  if (!issue.due_date) return <span className="muted">—</span>;
+  const state = dueState(issue.due_date, issue.status);
+  return (
+    <span className="nowrap">
+      {formatDate(issue.due_date)}
+      {(state === 'overdue' || state === 'soon') && (
+        <span className={`due-badge due-${state}`}>{DUE_LABEL[state]} {dueDeltaLabel(issue.due_date)}</span>
+      )}
+    </span>
+  );
+}
+
 function IssueRow({
   issue,
   open,
   isAdmin,
+  myId,
+  members,
   authorName,
   onToggle,
   onStatus,
+  onAssign,
   onDelete,
 }: {
   issue: Issue;
   open: boolean;
   isAdmin: boolean;
+  myId: string | null;
+  members: ProjectMember[];
   authorName: string | null;
   onToggle: () => void;
-  onStatus: (id: string, s: IssueStatus) => void;
+  onStatus: (issue: Issue, s: IssueStatus) => void;
+  onAssign: (issue: Issue, assigneeId: string) => void;
   onDelete: (id: string) => void;
 }) {
+  // 담당자 본인도 자기 이슈의 상태를 변경할 수 있다(S30 결정).
+  const canStatus = isAdmin || (!!myId && issue.assignee_id === myId);
   return (
     <>
       <tr>
@@ -194,24 +250,28 @@ function IssueRow({
         <td><span className={`issue-badge issue-${issue.status}`}>{STATUS_LABEL[issue.status]}</span></td>
         <td><span className={`issue-prio issue-prio-${issue.priority}`}>{PRIORITY_LABEL[issue.priority]}</span></td>
         <td className="nowrap">{issue.assignee_name || '—'}</td>
-        <td className="nowrap">{issue.due_date ? formatDate(issue.due_date) : '—'}</td>
+        <td><DueCell issue={issue} /></td>
         <td className="right nowrap">
-          {isAdmin ? (
-            <>
-              <select value={issue.status} onChange={(e) => onStatus(issue.id, e.target.value as IssueStatus)} aria-label="상태 변경">
-                {ISSUE_STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
-              </select>
-              <button className="danger" onClick={() => onDelete(issue.id)}>삭제</button>
-            </>
+          {canStatus ? (
+            <select value={issue.status} onChange={(e) => onStatus(issue, e.target.value as IssueStatus)} aria-label="상태 변경">
+              {ISSUE_STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+            </select>
           ) : (
             <span className="muted">—</span>
           )}
+          {isAdmin && <button className="danger" onClick={() => onDelete(issue.id)}>삭제</button>}
         </td>
       </tr>
       {open && (
         <tr className="issue-detail-row">
           <td colSpan={6}>
-            <IssueDetail issue={issue} isAdmin={isAdmin} authorName={authorName} />
+            <IssueDetail
+              issue={issue}
+              isAdmin={isAdmin}
+              members={members}
+              authorName={authorName}
+              onAssign={onAssign}
+            />
           </td>
         </tr>
       )}
@@ -219,19 +279,33 @@ function IssueRow({
   );
 }
 
-function IssueDetail({ issue, isAdmin, authorName }: { issue: Issue; isAdmin: boolean; authorName: string | null }) {
+function IssueDetail({
+  issue,
+  isAdmin,
+  members,
+  authorName,
+  onAssign,
+}: {
+  issue: Issue;
+  isAdmin: boolean;
+  members: ProjectMember[];
+  authorName: string | null;
+  onAssign: (issue: Issue, assigneeId: string) => void;
+}) {
   const navigate = useNavigate();
   const [comments, setComments] = useState<IssueComment[]>([]);
+  const [events, setEvents] = useState<IssueEvent[]>([]);
   const [body, setBody] = useState('');
   const hasLocation = !!issue.model_id && issue.express_id != null;
 
   useEffect(() => {
     listComments(issue.id).then(setComments).catch(() => setComments([]));
-  }, [issue.id]);
+    listEvents(issue.id).then(setEvents).catch(() => setEvents([]));
+  }, [issue.id, issue.status, issue.assignee_id]);
 
   const onAdd = async () => {
     if (!body.trim()) return;
-    await addComment(issue.id, body.trim(), authorName);
+    await addComment(issue, body.trim(), authorName);
     setBody('');
     setComments(await listComments(issue.id));
   };
@@ -242,6 +316,18 @@ function IssueDetail({ issue, isAdmin, authorName }: { issue: Issue; isAdmin: bo
       <p className="muted issue-meta">
         등록 {issue.created_by_name || '—'} · {formatDate(issue.created_at.slice(0, 10))}
       </p>
+
+      {isAdmin && (
+        <div className="issue-assign-row">
+          <label>담당자 배정
+            <select value={issue.assignee_id ?? ''} onChange={(e) => onAssign(issue, e.target.value)}>
+              <option value="">미지정</option>
+              {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+          </label>
+        </div>
+      )}
+
       {hasLocation && (
         <p style={{ margin: '0 0 10px' }}>
           <button
@@ -255,6 +341,20 @@ function IssueDetail({ issue, isAdmin, authorName }: { issue: Issue; isAdmin: bo
           </button>
         </p>
       )}
+
+      {events.length > 0 && (
+        <div className="issue-history">
+          <h4 className="issue-section-h">변경 이력</h4>
+          {events.map((ev) => (
+            <div className="issue-event" key={ev.id}>
+              <span className="issue-event-when">{new Date(ev.created_at).toLocaleString('ko-KR')}</span>
+              <span className="issue-event-text">{eventText(ev)}</span>
+              <span className="muted">{ev.actor_name || '—'}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       <Attachments
         projectId={issue.project_id}
         targetType="issue"
@@ -262,7 +362,9 @@ function IssueDetail({ issue, isAdmin, authorName }: { issue: Issue; isAdmin: bo
         isAdmin={isAdmin}
         label="첨부 문서·사진"
       />
+
       <div className="issue-comments">
+        <h4 className="issue-section-h">코멘트</h4>
         {comments.map((c) => (
           <div className="issue-comment" key={c.id}>
             <span className="issue-comment-author">{c.author_name || '익명'}</span>
@@ -280,4 +382,10 @@ function IssueDetail({ issue, isAdmin, authorName }: { issue: Issue; isAdmin: bo
       )}
     </div>
   );
+}
+
+function eventText(ev: IssueEvent): string {
+  if (ev.kind === 'created') return `이슈 생성 — ${ev.to_value ?? ''}`;
+  if (ev.kind === 'status') return `상태 ${ev.from_value} → ${ev.to_value}`;
+  return `담당자 ${ev.from_value} → ${ev.to_value}`;
 }
