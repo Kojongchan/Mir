@@ -4,6 +4,7 @@ import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
 import { createPost, deletePost, listPosts, type Post } from '../lib/portal';
 import { formatDate } from '../lib/dashboard';
+import { Attachments } from '../components/Attachments';
 
 /** 게시판 / 공지 — 프로젝트 공지·알림 글. */
 export function Board() {
@@ -83,6 +84,7 @@ export function Board() {
             {open === p.id && (
               <div className="board-body">
                 {p.body ? <p>{p.body}</p> : <p className="muted">(내용 없음)</p>}
+                <Attachments projectId={projectId} targetType="post" targetId={p.id} isAdmin={isAdmin} label="첨부" />
                 {isAdmin && <button className="danger" onClick={() => onDelete(p.id)}>삭제</button>}
               </div>
             )}

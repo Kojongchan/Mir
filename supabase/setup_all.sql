@@ -1,5 +1,5 @@
 -- =====================================================================
--- MIR SMART — 통합 셋업 SQL (0005~0009 한 번에 실행)
+-- MIR SMART — 통합 셋업 SQL (0005~0010 한 번에 실행)
 -- Supabase 대시보드 → SQL Editor 에 '전체 복사 → 붙여넣기 → Run'.
 -- 모두 멱등(재실행 안전). 새 Storage 버킷 불필요(docs/models 재사용).
 -- 마지막 줄에서 PostgREST 스키마 캐시를 강제로 새로고침합니다.
@@ -476,6 +476,46 @@ create policy storage_models_write on storage.objects
 
 -- 비고: activity_log insert 는 멤버 허용 그대로 둔다(관리자 행위만 기록되며
 -- 감사 로그가 끊기지 않도록). SELECT 정책은 전 테이블 변경 없음.
+
+-- ===================== 0010_attachments.sql =====================
+-- =====================================================================
+-- MIR SMART — 범용 첨부파일 (사진/문서) : 공사일보·게시판·이슈에 연결
+-- 하나의 attachments 테이블로 여러 엔티티(daily_log/post/issue)에 파일을 붙인다.
+-- 바이너리는 기존 `docs` 버킷에 '<project_id>/attach/<id>.<ext>' 로 저장 →
+-- 0004/0009 의 docs 정책(읽기=멤버, 쓰기=관리자)이 그대로 적용된다.
+-- Additive — 0001..0009 변경 없음. 쓰기는 관리자만(D11), 읽기는 멤버.
+-- =====================================================================
+
+create table if not exists public.attachments (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects on delete cascade,
+  target_type text not null check (target_type in ('daily_log', 'post', 'issue')),
+  target_id uuid not null,
+  name text not null,
+  storage_path text not null,           -- '<project_id>/attach/<id>.<ext>'
+  mime_type text,
+  size_bytes bigint,
+  created_by uuid references auth.users,
+  created_at timestamptz not null default now()
+);
+create index if not exists attachments_target_idx
+  on public.attachments (target_type, target_id);
+create index if not exists attachments_project_idx on public.attachments (project_id);
+
+alter table public.attachments enable row level security;
+
+-- read: project members; write: admins (D11)
+drop policy if exists attachments_select on public.attachments;
+create policy attachments_select on public.attachments
+  for select using (public.is_admin() or public.is_member(project_id));
+
+drop policy if exists attachments_insert on public.attachments;
+create policy attachments_insert on public.attachments
+  for insert with check (public.is_admin());
+
+drop policy if exists attachments_delete on public.attachments;
+create policy attachments_delete on public.attachments
+  for delete using (public.is_admin());
 
 -- 스키마 캐시 새로고침 (이게 없으면 'schema cache' 오류가 남을 수 있음)
 notify pgrst, 'reload schema';

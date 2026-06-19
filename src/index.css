@@ -1891,6 +1891,74 @@ button.danger:hover:not(:disabled) {
   padding-bottom: 24px;
 }
 
+/* ---- 첨부파일(사진/문서) 스트립 ---- */
+.attach {
+  margin: 8px 0;
+}
+.attach-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.attach-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.attach-head button {
+  padding: 3px 10px;
+  font-size: 12px;
+}
+.attach-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.attach-item {
+  position: relative;
+}
+.attach-thumb {
+  width: 84px;
+  height: 84px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  display: block;
+}
+.attach-file {
+  display: inline-flex;
+  align-items: center;
+  max-width: 160px;
+  height: 84px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.attach-item a {
+  text-decoration: none;
+}
+.attach-del {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  line-height: 18px;
+  border-radius: 50%;
+  background: var(--danger);
+  color: #fff;
+  border: none;
+  font-size: 13px;
+  cursor: pointer;
+}
+
 /* ---- 좌측 모듈 레일 ---- */
 .portal-nav {
   display: flex;
