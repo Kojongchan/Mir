@@ -81,6 +81,13 @@ export async function deleteFile(file: FileRecord): Promise<void> {
   await supabase.storage.from(BUCKET).remove([file.storage_path]);
 }
 
+/** Download raw bytes of a stored doc-bucket object (RLS-checked). */
+export async function downloadFileBytes(storagePath: string): Promise<Uint8Array> {
+  const { data, error } = await supabase.storage.from(BUCKET).download(storagePath);
+  if (error) throw error;
+  return new Uint8Array(await data.arrayBuffer());
+}
+
 /**
  * Mint a short-lived signed URL for the stored object. Supabase authorises
  * this against the bucket's SELECT policy, so a non-member cannot get one.
