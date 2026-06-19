@@ -43,6 +43,7 @@ export function Workspace() {
 
   const openModelId = useRef<string | null>(null);
   const [openModelDbId, setOpenModelDbId] = useState<string | null>(null);
+  const autoOpenedRef = useRef(false); // 마지막 공정용 모델 자동 복원 1회
 
   const { status, setStatus, setSelected, setModelCount, fourd } = useStore();
 
@@ -67,6 +68,18 @@ export function Workspace() {
   const refreshModels = () => listModels(projectId).then(setModels).catch(() => setModels([]));
   const refreshFiles = () => listFiles(projectId).then(setFiles).catch(() => setFiles([]));
 
+  // 공정관리(4D) 재진입 시 마지막으로 보던 공정용 모델을 자동으로 다시 연다.
+  useEffect(() => {
+    if (autoOpenedRef.current || !viewer || models.length === 0) return;
+    const savedId = localStorage.getItem(ACTIVE_MODEL_KEY(projectId));
+    const m = savedId ? models.find((x) => x.id === savedId) : null;
+    if (m) {
+      autoOpenedRef.current = true;
+      openModel(m);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewer, models, projectId]);
+
   const openModel = async (m: ModelRecord) => {
     if (!viewer) return;
     setBusyId(m.id);
@@ -78,6 +91,8 @@ export function Workspace() {
       setModelCount(viewer.modelCount);
       openModelId.current = m.id;
       setOpenModelDbId(m.id);
+      // 공정관리 재진입 시 자동 복원할 "공정용 모델"을 기억한다.
+      localStorage.setItem(ACTIVE_MODEL_KEY(projectId), m.id);
       viewer.clearConstruction();
       fourd.setMapping({}, 0, 0);
       setStatus(`불러옴: ${m.name}`);
@@ -185,6 +200,7 @@ export function Workspace() {
   );
 }
 
+const ACTIVE_MODEL_KEY = (projectId: string) => `mir.4d.model.${projectId}`;
 const UP_AXIS_KEY = (modelId: string) => `mir.upaxis.${modelId}`;
 
 function loadUpAxisPref(modelId: string): UpAxis | null {
