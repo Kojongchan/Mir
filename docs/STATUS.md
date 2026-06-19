@@ -5,6 +5,18 @@
 **마지막 업데이트**: 2026-06-19 · S21~S24(포털·권한) + **S25(셸 통합 레이아웃: 모듈 레일 유지 + 2차 트리)** 완료.
 PR #24·#26 main 병합. **다음=배포(0005~0009) 라이브 검증 · 잔여 폴리시**.
 
+## S26 결과 (branch: claude/busy-lovelace-cj8adq) — 첨부파일(사진/문서) + 뷰어 리사이즈
+> 사용자 DB 셋업(setup_all.sql) 성공 확인 후 P6 착수. 첫 항목: 공사일보·게시판·이슈 첨부.
+- ✅ DB 셋업 안내 개선: `supabase/setup_all.sql`(0005~0010 원클릭+스키마 reload), `src/lib/errors.ts`
+  (테이블 없음/스키마 캐시 오류 → "DB 설정 필요" 한국어 안내) 적용. OPERATIONS 0-SETUP.
+- ✅ 뷰어 `ResizeObserver`: 셸 임베드 후 타임라인 펼침/모듈 전환에 캔버스 자동 맞춤.
+- ✅ **범용 첨부 `0010_attachments.sql`**: attachments(target_type daily_log/post/issue) → docs 버킷
+  `<project>/attach/<id>.<ext>`. RLS 읽기=멤버, 쓰기=관리자(D11). `src/lib/attachments.ts` +
+  재사용 컴포넌트 `src/components/Attachments.tsx`(이미지 썸네일·파일 칩·admin 업로드/삭제).
+- ✅ 연동: **공사일보**(행 펼침 '현장 사진'), **게시판**(글 펼침 첨부), **이슈**(상세 '첨부 문서·사진').
+- ✅ 검증: `typecheck`·`build` 통과. 📌 배포: `0010_attachments.sql` 실행(또는 setup_all 재실행).
+- 📌 다음: 기성 공종별 상세 / 마일스톤 드래그 정렬 / 이슈↔모델 객체 연결.
+
 ## S25 결과 (branch: claude/busy-lovelace-cj8adq) — 모듈 레이아웃 통합(셸 안으로)
 > 사용자 요청: 모델뷰어·자료관리·구성원도 **좌측 모듈 레일은 유지**하고 우측만 교체. 모델뷰어·
 > 자료관리처럼 자체 하위 트리가 있으면 레일 옆에 **두 번째 트리** 컬럼(메인이 작아져도 보기 편하게).

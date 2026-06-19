@@ -19,6 +19,7 @@ import {
   type IssueStatus,
 } from '../lib/issues';
 import { formatDate } from '../lib/dashboard';
+import { Attachments } from '../components/Attachments';
 
 /** 협업 · 이슈/지적 관리 — RFI·지적사항·검토의견 트래커. */
 export function Issues() {
@@ -239,6 +240,13 @@ function IssueDetail({ issue, isAdmin, authorName }: { issue: Issue; isAdmin: bo
       <p className="muted issue-meta">
         등록 {issue.created_by_name || '—'} · {formatDate(issue.created_at.slice(0, 10))}
       </p>
+      <Attachments
+        projectId={issue.project_id}
+        targetType="issue"
+        targetId={issue.id}
+        isAdmin={isAdmin}
+        label="첨부 문서·사진"
+      />
       <div className="issue-comments">
         {comments.map((c) => (
           <div className="issue-comment" key={c.id}>

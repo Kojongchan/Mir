@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
@@ -10,6 +10,7 @@ import {
   todayISO,
   type DailyLog,
 } from '../lib/dashboard';
+import { Attachments } from '../components/Attachments';
 
 /** 공사일보 — daily site log CRUD. Powers the dashboard 인력/장비/일지 figures. */
 export function DailyLogs() {
@@ -17,6 +18,7 @@ export function DailyLogs() {
   const { profile } = useAuth();
   const isAdmin = !!profile?.is_admin;
   const [logs, setLogs] = useState<DailyLog[]>([]);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [msg, setMsg] = useState('');
   const [form, setForm] = useState({
     log_date: todayISO(),
@@ -94,14 +96,28 @@ export function DailyLogs() {
             </thead>
             <tbody>
               {logs.map((l) => (
-                <tr key={l.id}>
-                  <td className="nowrap">{formatDate(l.log_date)}</td>
-                  <td className="right">{l.manpower}</td>
-                  <td className="right">{l.equipment}</td>
-                  <td>{l.weather || '—'}</td>
-                  <td>{l.content || '—'}</td>
-                  <td className="right">{isAdmin && <button className="danger" onClick={() => onDelete(l.id)}>삭제</button>}</td>
-                </tr>
+                <Fragment key={l.id}>
+                  <tr>
+                    <td className="nowrap">{formatDate(l.log_date)}</td>
+                    <td className="right">{l.manpower}</td>
+                    <td className="right">{l.equipment}</td>
+                    <td>{l.weather || '—'}</td>
+                    <td>{l.content || '—'}</td>
+                    <td className="right nowrap">
+                      <button onClick={() => setOpenId(openId === l.id ? null : l.id)}>
+                        {openId === l.id ? '사진 ▾' : '사진 ▸'}
+                      </button>
+                      {isAdmin && <button className="danger" onClick={() => onDelete(l.id)}>삭제</button>}
+                    </td>
+                  </tr>
+                  {openId === l.id && (
+                    <tr className="issue-detail-row">
+                      <td colSpan={6}>
+                        <Attachments projectId={projectId} targetType="daily_log" targetId={l.id} isAdmin={isAdmin} label="현장 사진" />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
               {logs.length === 0 && (
                 <tr><td colSpan={6} className="muted empty">등록된 일보가 없습니다.</td></tr>
