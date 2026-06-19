@@ -18,10 +18,10 @@ import {
 } from '../lib/api';
 import {
   listFiles,
-  uploadFile,
   sizeLabel as fileSizeLabel,
   type FileRecord,
 } from '../lib/files';
+import { uploadNewFile } from '../lib/cde';
 
 export function Workspace() {
   const { projectId = '' } = useParams();
@@ -122,7 +122,9 @@ export function Workspace() {
     setDocUploading(true);
     setStatus(`업로드 중: ${file.name}`);
     try {
-      await uploadFile(projectId, file);
+      // Route through the CDE layer so every upload gets a version 1 + activity
+      // entry; lands in the project root (unfiled), organisable in 자료 관리.
+      await uploadNewFile(projectId, null, file);
       await refreshFiles();
       setStatus(`업로드 완료: ${file.name}`);
     } catch (err) {
@@ -145,6 +147,8 @@ export function Workspace() {
         <Toolbar viewer={viewer} />
         <div className="spacer" />
         <ThemeToggle />
+        <button onClick={() => navigate(`/project/${projectId}`)}>사업개요</button>
+        <button onClick={() => navigate(`/project/${projectId}/docs`)}>자료 관리</button>
         <button onClick={() => navigate('/')}>프로젝트 변경</button>
         <button onClick={signOut}>로그아웃</button>
       </header>

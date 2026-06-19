@@ -94,7 +94,12 @@
 
 ---
 
-## 4. CDE — 공통정보관리환경 + 좌측 정보구조 재편 (Phase 7 / S14) ← 다음
+## 4. CDE — 공통정보관리환경 + 좌측 정보구조 재편 (Phase 7 / S14) ✅ MVP 완료
+> **상태**: MVP 완료 — `0005_cde.sql`(folders/file_versions/activity_log + files
+> 컬럼) · `src/lib/cde.ts` · `/project/:id/docs`(`DocumentManager`) · `components/cde/*`.
+> 폴더트리 CRUD · 다중 버전 업로드/이력 · 상태 뱃지(WIP→Shared→Published→Archived) ·
+> 활동 로그. 워크스페이스 상단 `자료 관리` 진입. 후속(체크인/락·승인 워크플로우·
+> transmittal·태그/검색·폴더 이동 UI)은 별도 세션. 배포 셋업은 OPERATIONS 0-C.
 **CDE(Common Data Environment, ISO 19650)**: 프로젝트 정보를 한곳에서 **버전·상태·이력**과
 함께 관리하는 단일 출처. 현재의 "모델 목록"을 **문서/데이터 관리 체계**로 확장한다.
 
@@ -204,13 +209,16 @@
 | S11 | UI/디자인 시스템 리뉴얼(화이트+네이비) | `feature/ui-refresh` | — | ✅ 완료 |
 | S12 | 브랜딩(MIR SMART·쌍용 CI·로그인 홈) | (branding-rename) | S11 | ✅ 완료 |
 | S13 | 문서·미디어 뷰어(새 탭) | `feature/doc-viewers` | S12 | 🔄 진행(PR #22) |
-| S14 | CDE 정보구조 재편 + 파일 저장소 MVP | `feature/cde-foundation` | S13 | ← **다음** |
+| S14 | CDE 정보구조 재편 + 파일 저장소 MVP | `feature/cde-foundation` | S13 | ✅ 완료 |
 | S15 | Navisworks 기능군 | `feature/nw-features` | 뷰어 | ⏳ 입력대기 |
 | S16 | 장비 시뮬레이션(Rapier) | `feature/equipment-sim` | S4 | ⏳ 이미지대기 |
 | S17 | 네이티브 BIM 업로드/변환(APS 평가) | `feature/native-bim` | S14 | 🔴 결정대기 |
 | S18 | 성능 최적화·코드 스플리팅 | `feature/code-splitting` | — | S13서 일부 선반영 |
 | S19 | 뷰어 충실도 — 단기(무료 클라) | `feature/viewer-fidelity` | S13 | docx-preview 등 |
 | S20 | 뷰어 충실도 — 장기(서버 변환→PDF) | `feature/doc-convert` | S13 | PPT·HWP 포함 |
+| S21 | 사업관리 포털 — 사업개요 대시보드 + 모듈 메뉴 | `feature/pmis-portal` | S14 | ✅ 완료 (PROJECT WORKS형) |
+| S22 | 포털 모듈 — 공정현황 + 협업/이슈 | `feature/portal-modules` | S21 | ✅ 완료 |
+| S23 | 포털 모듈 — 기성·하도급·게시판 | `feature/portal-modules` | S22 | ✅ 완료 (포털 메뉴 1차 전부). 남은: P6 폴리시 |
 
-**권장 착수 순서**: S11✅ → S12✅ → S13🔄(뷰어) → **S14(CDE 토대)** → (S15/S16 은 입력
-도착 시) → S17(APS 결정 후). 다음은 **S14 — CDE 정보구조 재편 + 파일 저장소**.
+**권장 착수 순서**: S11✅ → S12✅ → S13✅(뷰어) → **S14✅(CDE 토대)** → (S15/S16 은 입력
+도착 시) → S17(APS 결정 후). 다음은 **S14 라이브 검증** + S15/S16(입력 대기) / CDE 후속.

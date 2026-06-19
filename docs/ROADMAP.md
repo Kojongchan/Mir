@@ -14,7 +14,9 @@ VR 검토까지. 다중 사용자가 **본인 배정 프로젝트(공구)** 만 
 | 4 | 충돌 검사 (간섭 검출·리포트) | ⏳ |
 | 5 | VR (WebXR) | ⏳ |
 | 6 | UI/UX 리뉴얼 (화이트+네이비 디자인 시스템) | ✅ 완료 (S11·S12) |
-| 7 | CDE 공통정보관리환경 (파일 저장소·버전/이력·정보구조 재편) | 🧭 기획 (S14) |
+| 7 | CDE 공통정보관리환경 (파일 저장소·버전/이력·정보구조 재편) | ✅ MVP 완료 (S14) |
+| 11 | 사업관리 포털 (사업개요 대시보드 + 좌측 모듈 메뉴, PMIS형) | ✅ MVP 완료 (S21) |
+| 12 | 포털 모듈 (공정현황·협업/이슈·기성내역·하도급·게시판) | ✅ 1차 완료 (S22·S23) |
 | 8 | 문서·미디어 통합 뷰어 (`/view/:fileId`, 이미지·PDF·동영상·xlsx·docx) | ✅ 1단계 완료 (S13, 웹 단독) · 2단계(서버 변환) ⏳ |
 | 9 | Navisworks 기능군 (측정·단면·마크업·뷰포인트 등) | 🧭 기획 (S15, 입력대기) |
 | 10 | 네이티브 BIM 업로드 (DWG/RVT/NWD — 변환/APS) | 🧭 기획 (S17, 결정대기) |
@@ -35,13 +37,16 @@ VR 검토까지. 다중 사용자가 **본인 배정 프로젝트(공구)** 만 
 | S11 | Phase 6 · UI 리뉴얼 ✅ | `feature/ui-refresh` | 화이트+네이비 디자인 토큰·리스킨·다크토글 | — |
 | S12 | 브랜딩(MIR SMART) ✅ | (branding-rename) | 제품명/로고/쌍용 CI/로그인 홈 | S11 |
 | S13 | Phase 8 · 문서/미디어 뷰어 ✅ | `feature/doc-viewers` | 새 탭 뷰어(이미지·PDF·동영상·xlsx·docx) 1단계 완료(PR #22) | S12 |
-| S14 | Phase 7 · CDE 토대 | `feature/cde-foundation` | 좌측 정보구조 재편 + 파일 저장소(폴더·버전·상태·이력) | S13 |
+| S14 | Phase 7 · CDE 토대 ✅ | `feature/cde-foundation` | 자료 관리(`/docs`): 폴더트리·다중 버전·상태(WIP/Shared/Published/Archived)·활동로그 (MVP 완료) | S13 |
 | S15 | Phase 9 · Navisworks 기능군 | `feature/nw-features` | 측정·단면·마크업·뷰포인트 (입력대기) | 뷰어 |
 | S16 | Phase 3 · 장비운용 | `feature/equipment-sim` | Rapier 물리·장비·경로/간섭 (이미지대기) | S4 |
 | S17 | Phase 10 · 네이티브 BIM | `feature/native-bim` | DWG/RVT/NWD 업로드·변환(APS 평가) | S14 |
 | S18 | 성능 최적화 · 코드 스플리팅 | `feature/code-splitting` | 번들 분할(청크 경고). S13 에서 뷰어 lazy 분리로 일부 선반영 | — |
 | S19 | 뷰어 충실도 · 단기(무료 클라) | `feature/viewer-fidelity` | Word `mammoth`→`docx-preview`, 엑셀 서식 개선 (D10) | S13 |
 | S20 | 뷰어 충실도 · 장기(서버 변환) | `feature/doc-convert` | PPT/HWP/구포맷→PDF 헤드리스 변환(LibreOffice/Gotenberg) (D10) | S13 |
+| S21 | 사업관리 포털 · 사업개요 대시보드 ✅ | `feature/pmis-portal` | 좌측 모듈 메뉴 + 대시보드(마일스톤 D-day·진행률·공사일지/기성 차트·인력/장비) + 공사일보. 데이터 앱 내 입력(0006) | S14 |
+| S22 | 포털 모듈 · 공정현황 + 협업/이슈 ✅ | `feature/portal-modules` | 공정현황(마일스톤 타임라인·S-curve·4D 링크) + 이슈/지적 트래커(0007) | S21 |
+| S23 | 포털 모듈 · 기성·하도급·게시판 ✅ | `feature/portal-modules` | 기성내역(도급액·기성률) + 하도급내역 + 게시판(0008). 포털 메뉴 1차 완성 | S22 |
 
 추천 순서: **… S4 → (확장) S11✅ → S12✅ → S13✅ → S14 → S15/S16 → S17**
 (확장 단계 S11~S18 의 상세는 `docs/PLANNING.md`. S11·S12·S13 완료.
