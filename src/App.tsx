@@ -75,9 +75,11 @@ export default function App() {
             <Route path="board" element={<Board />} />
             {/* Modules with their own sub-tree — rendered inside the shell so the
                 left module rail stays put and only the right side changes. */}
-            <Route path="viewer" element={<Workspace />} />
-            {/* 검토·간섭 = 같은 3D 워크스페이스를 충돌검사 패널이 열린 채로 진입 */}
-            <Route path="clash" element={<Workspace initialClash />} />
+            {/* 통합모델(3D) · 공정관리(4D) · 간섭체크 — 각 모듈이 자기 용도의
+                모델 세트만 보도록 mode 로 구분(S33). 'viewer' 는 4D 하위호환 별칭. */}
+            <Route path="model" element={<Workspace mode="integrated" />} />
+            <Route path="viewer" element={<Workspace mode="4d" />} />
+            <Route path="clash" element={<Workspace mode="clash" />} />
             <Route path="docs" element={<DocumentManager />} />
             <Route path="members" element={<AdminOnly><Admin embedded /></AdminOnly>} />
           </Route>
