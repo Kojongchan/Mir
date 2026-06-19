@@ -26,7 +26,7 @@ import { uploadNewFile } from '../lib/cde';
  * 모델뷰어 모듈 — 포털 셸 안에서 렌더된다(좌측 모듈 레일은 셸이 유지). 모듈
  * 레일 옆에 모델/문서 하위 트리를 두고, 우측 메인에 3D 뷰포트·4D 타임라인을 둔다.
  */
-export function Workspace() {
+export function Workspace({ initialClash = false }: { initialClash?: boolean } = {}) {
   const { projectId = '' } = useParams();
   const { profile } = useAuth();
   const isAdmin = !!profile?.is_admin;
@@ -49,7 +49,7 @@ export function Workspace() {
 
   // 런타임 modelID → DB 모델 uuid (충돌검사의 이슈 핀·결과 저장 매핑용).
   const [modelIdMap, setModelIdMap] = useState<Map<number, string>>(new Map());
-  const [showClash, setShowClash] = useState(false);
+  const [showClash, setShowClash] = useState(initialClash);
 
   const { status, setStatus, setSelected, setModelCount, fourd, selected } = useStore();
 

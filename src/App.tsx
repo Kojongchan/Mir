@@ -76,6 +76,8 @@ export default function App() {
             {/* Modules with their own sub-tree — rendered inside the shell so the
                 left module rail stays put and only the right side changes. */}
             <Route path="viewer" element={<Workspace />} />
+            {/* 검토·간섭 = 같은 3D 워크스페이스를 충돌검사 패널이 열린 채로 진입 */}
+            <Route path="clash" element={<Workspace initialClash />} />
             <Route path="docs" element={<DocumentManager />} />
             <Route path="members" element={<AdminOnly><Admin embedded /></AdminOnly>} />
           </Route>
