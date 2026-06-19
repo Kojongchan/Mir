@@ -231,6 +231,17 @@ export function Timeline({ viewer, projectId, modelDbId }: Props) {
     }
   };
 
+  // 공정관리 재진입 시: 공정용 모델이 자동으로 열리고(workspace) 저장된 일정이 있으면
+  // 가장 최근 일정+매핑을 한 번 자동 복원한다 → 메뉴를 갔다와도 매핑 상태 유지.
+  const autoLoadedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!modelDbId || hasSchedule || !savedId) return;
+    if (autoLoadedRef.current === modelDbId) return;
+    autoLoadedRef.current = modelDbId;
+    void onLoad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelDbId, hasSchedule, savedId]);
+
   const onDelete = async () => {
     if (!savedId) return;
     const meta = saved.find((s) => s.id === savedId);

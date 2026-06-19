@@ -1886,6 +1886,27 @@ button.danger:hover:not(:disabled) {
   min-height: 0;
 }
 
+/* 자료관리 안에서 IFC 인라인 뷰어 */
+.inline-viewer {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.inline-viewer .viewport {
+  flex: 1;
+  min-height: 0;
+}
+.cde-view-name {
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 관리자 콘솔을 셸 안에 임베드할 때 */
 .admin-embed {
   padding-bottom: 24px;

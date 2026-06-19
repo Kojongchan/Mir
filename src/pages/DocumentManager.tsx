@@ -6,6 +6,8 @@ import { FolderTree } from '../components/cde/FolderTree';
 import { StatusBadge } from '../components/cde/StatusBadge';
 import { VersionHistory } from '../components/cde/VersionHistory';
 import { ActivityLog } from '../components/cde/ActivityLog';
+import { IfcModelViewer } from '../components/IfcModelViewer';
+import { extensionOf } from '../lib/files';
 import {
   FILE_STATUSES,
   STATUS_LABEL,
@@ -41,6 +43,7 @@ export function DocumentManager() {
 
   const [historyFor, setHistoryFor] = useState<CdeFile | null>(null);
   const [showActivity, setShowActivity] = useState(false);
+  const [viewingFile, setViewingFile] = useState<CdeFile | null>(null); // .ifc opened inline
 
   const newFileInput = useRef<HTMLInputElement>(null);
   const versionInput = useRef<HTMLInputElement>(null);
@@ -52,6 +55,7 @@ export function DocumentManager() {
   }, [projectId]);
 
   useEffect(() => {
+    setViewingFile(null);
     refreshFiles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, selectedId]);
@@ -176,7 +180,12 @@ export function DocumentManager() {
     }
   };
 
-  const openFile = (f: CdeFile) => window.open(`/view/${f.id}`, '_blank', 'noopener');
+  // IFC models open inline (right pane → 3D viewer with a back button); other
+  // files preview in a standalone tab as before.
+  const openFile = (f: CdeFile) => {
+    if (extensionOf(f.name) === 'ifc') setViewingFile(f);
+    else window.open(`/view/${f.id}`, '_blank', 'noopener');
+  };
 
   return (
     <div className="mod-fill cde-embed">
@@ -197,6 +206,16 @@ export function DocumentManager() {
         </aside>
 
         <section className="cde-content">
+          {viewingFile ? (
+            <>
+              <div className="cde-toolbar">
+                <button onClick={() => setViewingFile(null)}>← 목록</button>
+                <span className="cde-view-name">🧊 {viewingFile.name}</span>
+              </div>
+              <IfcModelViewer bucket="docs" path={viewingFile.storage_path} />
+            </>
+          ) : (
+          <>
           <div className="cde-toolbar">
             <nav className="cde-breadcrumb">
               <button className="cde-crumb" onClick={() => setSelectedId(null)}>전체</button>
@@ -276,6 +295,8 @@ export function DocumentManager() {
           </div>
 
           <div className="cde-statusline muted">{status}</div>
+          </>
+          )}
         </section>
 
       {historyFor && <VersionHistory file={historyFor} onClose={() => setHistoryFor(null)} />}
