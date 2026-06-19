@@ -1,5 +1,5 @@
 -- =====================================================================
--- MIR SMART — 통합 셋업 SQL (0003~0013 한 번에 실행)
+-- MIR SMART — 통합 셋업 SQL (0003~0014 한 번에 실행)
 -- Supabase 대시보드 → SQL Editor 에 '전체 복사 → 붙여넣기 → Run'.
 -- 모두 멱등(재실행 안전). docs 버킷은 미리 Private 으로 생성되어 있어야 함.
 -- =====================================================================
@@ -816,5 +816,41 @@ create policy notifications_update on public.notifications
 drop policy if exists notifications_delete on public.notifications;
 create policy notifications_delete on public.notifications
   for delete using (user_id = auth.uid() or public.is_admin());
+
+-- ===================== 0014_doc_delete_owner.sql =====================
+-- =====================================================================
+-- S31 / D12: CDE 문서 삭제 권한 완화 (업로더 본인 + 관리자).
+-- D11(쓰기=admin)의 예외. files / docs 버킷 삭제 정책을
+--   uploaded_by = auth.uid() OR is_admin() 로 완화.
+-- Additive · 멱등 — 0001..0013 구조 변경 없음(정책만 교체/추가).
+-- =====================================================================
+
+drop policy if exists files_delete on public.files;
+create policy files_delete on public.files
+  for delete using (uploaded_by = auth.uid() or public.is_admin());
+
+create or replace function public.owns_doc_object(obj_name text)
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1
+    from public.files f
+    where f.uploaded_by = auth.uid()
+      and (
+        f.storage_path = obj_name
+        or exists (
+          select 1 from public.file_versions v
+          where v.file_id = f.id and v.storage_path = obj_name
+        )
+      )
+  );
+$$;
+
+drop policy if exists storage_docs_delete on storage.objects;
+create policy storage_docs_delete on storage.objects
+  for delete using (
+    bucket_id = 'docs'
+    and (public.is_admin() or public.owns_doc_object(name))
+  );
 
 notify pgrst, 'reload schema';
