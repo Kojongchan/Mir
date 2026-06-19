@@ -35,7 +35,7 @@ VR 검토까지. 다중 사용자가 **본인 배정 프로젝트(공구)** 만 
 | S11 | Phase 6 · UI 리뉴얼 ✅ | `feature/ui-refresh` | 화이트+네이비 디자인 토큰·리스킨·다크토글 | — |
 | S12 | 브랜딩(MIR SMART) ✅ | (branding-rename) | 제품명/로고/쌍용 CI/로그인 홈 | S11 |
 | S13 | Phase 8 · 문서/미디어 뷰어 ✅ | `feature/doc-viewers` | 새 탭 뷰어(이미지·PDF·동영상·xlsx·docx) 1단계 완료(PR #22) | S12 |
-| S14 | Phase 7 · CDE 토대 | `feature/cde-foundation` | 좌측 정보구조 재편 + 파일 저장소(폴더·버전·상태·이력) | S13 |
+| S14 | Phase 7 · CDE 토대 | `feature/cde-foundation` | 좌측 정보구조 재편 + 파일 저장소(폴더·버전·상태·이력·**삭제**) | S13 |
 | S15 | Phase 9 · Navisworks 기능군 | `feature/nw-features` | 측정·단면·마크업·뷰포인트 (입력대기) | 뷰어 |
 | S16 | Phase 3 · 장비운용 | `feature/equipment-sim` | Rapier 물리·장비·경로/간섭 (이미지대기) | S4 |
 | S17 | Phase 10 · 네이티브 BIM | `feature/native-bim` | DWG/RVT/NWD 업로드·변환(APS 평가) | S14 |

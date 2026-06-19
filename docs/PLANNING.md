@@ -130,8 +130,21 @@
 - RLS는 기존 `is_member`/`is_admin` 패턴 재사용. 추가형 마이그레이션(`0005_cde.sql`+).
 
 ### CDE 기능 단계
-- **MVP(S14)**: 폴더트리 CRUD · 업로드(다중 버전) · 버전 이력 보기 · 상태 뱃지 · 활동로그.
+- **MVP(S14)**: 폴더트리 CRUD · 업로드(다중 버전) · 버전 이력 보기 · 상태 뱃지 · 활동로그
+  · **파일 삭제**(아래 결정).
 - **다음**: 체크인/체크아웃(락), 승인 워크플로우, 자료전송(transmittal), 검색/필터·태그.
+
+### 파일 삭제 (사용자 확정) — 현재 누락 → S14 에서 보완
+> **배경**: S13(PR #22)은 `deleteFile()` 함수만 있고 **UI 버튼 없음**, RLS 도 미비
+> (`files_delete` = 관리자만, **`storage.objects` 에 `docs` 삭제 정책 자체가 없음** → 실제
+> 파일이 안 지워지고 orphan). S14 에서 제대로 보완한다.
+- **권한(확정)**: **업로더 본인 + 관리자**.
+- **DB(`0005_cde.sql`)**:
+  - `files_delete` 정책을 `using (uploaded_by = auth.uid() or public.is_admin())` 로 교체.
+  - `storage.objects` 에 `docs` **삭제 정책 신설**:
+    `for delete using (bucket_id='docs' and (public.is_admin() or exists(select 1 from public.files f where f.storage_path = storage.objects.name and f.uploaded_by = auth.uid())))`.
+- **UI**: 문서 목록 각 항목에 **삭제 버튼 + 확인창**. 삭제 시 DB행 + 스토리지 오브젝트
+  (+해당 file_versions 정리) 함께 제거하고 `activity_log` 기록.
 
 ---
 
