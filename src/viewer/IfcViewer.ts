@@ -387,6 +387,17 @@ export class IfcViewer {
     };
   }
 
+  /** Programmatically select an element: highlight it, fit the camera, and
+   *  fire onSelect so the properties panel updates. Used to jump to an issue's
+   *  pinned object. Returns false if the element isn't found in a loaded model. */
+  focusElement(modelID: number, expressID: number): boolean {
+    if (this.meshesFor(modelID, expressID).length === 0) return false;
+    this.highlight(modelID, expressID);
+    this.fitToSelection({ modelID, expressID });
+    this.onSelect(this.getProperties(modelID, expressID));
+    return true;
+  }
+
   private highlight(modelID: number, expressID: number) {
     this.clearHighlight();
     const meshes = this.meshesFor(modelID, expressID);

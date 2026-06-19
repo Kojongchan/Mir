@@ -5,6 +5,17 @@
 **마지막 업데이트**: 2026-06-19 · S21~S24(포털·권한) + **S25(셸 통합 레이아웃: 모듈 레일 유지 + 2차 트리)** 완료.
 PR #24·#26 main 병합. **다음=배포(0005~0009) 라이브 검증 · 잔여 폴리시**.
 
+## S28 결과 (branch: claude/busy-lovelace-cj8adq) — 마일스톤 정렬 + 이슈↔3D 객체 핀
+- ✅ **마일스톤 드래그 정렬**: `reorderMilestones`(sort_order=인덱스), 사업개요 편집에 드래그
+  리스트(+삭제). 마이그레이션 불필요.
+- ✅ **이슈 ↔ 3D 객체 연결**: `0012_issue_location.sql`(issues 에 model_id·express_id 추가).
+  공정관리(4D) 뷰어 상단 **`＋ 선택 객체로 이슈`**(관리자, 객체 선택 시) → 그 객체에 연결된
+  이슈 생성. 협업·이슈 상세의 **`📍 위치 보기`** → 공정관리로 이동해 대상 모델 열고
+  `IfcViewer.focusElement`(하이라이트+카메라 fit+속성패널). 라우터 state(focus)로 핸드오프.
+- ✅ 검증: `typecheck`·`build` 통과. setup_all.sql 0003~0012 로 확장.
+- 📌 배포: `0012_issue_location.sql` 실행(또는 setup_all 재실행).
+- 🔜 남은 후보: 권한 세분화 잔여(0003 공정표 RLS admin-only), 도면(2D) 핀, 이슈 알림.
+
 ## S27 결과 (branch: claude/busy-lovelace-cj8adq) — 사용자 피드백 1·2·4 반영
 - ✅ **(1)** 좌측 메뉴 `모델뷰어 (3D)` → **`공정관리 (4D)`** 로 변경(공정현황 바로 아래로 이동).
   라우트 `/viewer` 유지 — Workspace(3D+4D 타임라인)가 공정관리(4D) 모듈.
