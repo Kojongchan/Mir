@@ -8,6 +8,7 @@ import { formatDate } from '../lib/dashboard';
 export function Board() {
   const { projectId = '' } = useParams();
   const { profile } = useAuth();
+  const isAdmin = !!profile?.is_admin;
   const authorName = profile?.full_name ?? profile?.username ?? null;
 
   const [posts, setPosts] = useState<Post[]>([]);
@@ -49,7 +50,7 @@ export function Board() {
     <div className="dash">
       <div className="dash-head">
         <h1 className="dash-h1">게시판 · 공지</h1>
-        <button className="primary" onClick={() => setShowForm((s) => !s)}>{showForm ? '취소' : '＋ 글쓰기'}</button>
+        {isAdmin && <button className="primary" onClick={() => setShowForm((s) => !s)}>{showForm ? '취소' : '＋ 글쓰기'}</button>}
       </div>
 
       {showForm && (
@@ -81,7 +82,7 @@ export function Board() {
             {open === p.id && (
               <div className="board-body">
                 {p.body ? <p>{p.body}</p> : <p className="muted">(내용 없음)</p>}
-                <button className="danger" onClick={() => onDelete(p.id)}>삭제</button>
+                {isAdmin && <button className="danger" onClick={() => onDelete(p.id)}>삭제</button>}
               </div>
             )}
           </article>

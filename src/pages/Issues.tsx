@@ -23,6 +23,7 @@ import { formatDate } from '../lib/dashboard';
 export function Issues() {
   const { projectId = '' } = useParams();
   const { profile } = useAuth();
+  const isAdmin = !!profile?.is_admin;
   const authorName = profile?.full_name ?? profile?.username ?? null;
 
   const [issues, setIssues] = useState<Issue[]>([]);
@@ -90,9 +91,11 @@ export function Issues() {
     <div className="dash">
       <div className="dash-head">
         <h1 className="dash-h1">협업 · 이슈</h1>
-        <button className="primary" onClick={() => setShowForm((s) => !s)}>
-          {showForm ? '취소' : '＋ 이슈 등록'}
-        </button>
+        {isAdmin && (
+          <button className="primary" onClick={() => setShowForm((s) => !s)}>
+            {showForm ? '취소' : '＋ 이슈 등록'}
+          </button>
+        )}
       </div>
 
       {showForm && (
@@ -143,6 +146,7 @@ export function Issues() {
                   key={it.id}
                   issue={it}
                   open={openId === it.id}
+                  isAdmin={isAdmin}
                   authorName={authorName}
                   onToggle={() => setOpenId(openId === it.id ? null : it.id)}
                   onStatus={onStatus}
@@ -165,6 +169,7 @@ export function Issues() {
 function IssueRow({
   issue,
   open,
+  isAdmin,
   authorName,
   onToggle,
   onStatus,
@@ -172,6 +177,7 @@ function IssueRow({
 }: {
   issue: Issue;
   open: boolean;
+  isAdmin: boolean;
   authorName: string | null;
   onToggle: () => void;
   onStatus: (id: string, s: IssueStatus) => void;
@@ -188,16 +194,22 @@ function IssueRow({
         <td className="nowrap">{issue.assignee_name || '—'}</td>
         <td className="nowrap">{issue.due_date ? formatDate(issue.due_date) : '—'}</td>
         <td className="right nowrap">
-          <select value={issue.status} onChange={(e) => onStatus(issue.id, e.target.value as IssueStatus)} aria-label="상태 변경">
-            {ISSUE_STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
-          </select>
-          <button className="danger" onClick={() => onDelete(issue.id)}>삭제</button>
+          {isAdmin ? (
+            <>
+              <select value={issue.status} onChange={(e) => onStatus(issue.id, e.target.value as IssueStatus)} aria-label="상태 변경">
+                {ISSUE_STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+              </select>
+              <button className="danger" onClick={() => onDelete(issue.id)}>삭제</button>
+            </>
+          ) : (
+            <span className="muted">—</span>
+          )}
         </td>
       </tr>
       {open && (
         <tr className="issue-detail-row">
           <td colSpan={6}>
-            <IssueDetail issue={issue} authorName={authorName} />
+            <IssueDetail issue={issue} isAdmin={isAdmin} authorName={authorName} />
           </td>
         </tr>
       )}
@@ -205,7 +217,7 @@ function IssueRow({
   );
 }
 
-function IssueDetail({ issue, authorName }: { issue: Issue; authorName: string | null }) {
+function IssueDetail({ issue, isAdmin, authorName }: { issue: Issue; isAdmin: boolean; authorName: string | null }) {
   const [comments, setComments] = useState<IssueComment[]>([]);
   const [body, setBody] = useState('');
 
@@ -236,10 +248,12 @@ function IssueDetail({ issue, authorName }: { issue: Issue; authorName: string |
         ))}
         {comments.length === 0 && <p className="muted">코멘트가 없습니다.</p>}
       </div>
-      <div className="issue-comment-add">
-        <input value={body} placeholder="코멘트 입력" onChange={(e) => setBody(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && onAdd()} />
-        <button onClick={onAdd}>등록</button>
-      </div>
+      {isAdmin && (
+        <div className="issue-comment-add">
+          <input value={body} placeholder="코멘트 입력" onChange={(e) => setBody(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && onAdd()} />
+          <button onClick={onAdd}>등록</button>
+        </div>
+      )}
     </div>
   );
 }

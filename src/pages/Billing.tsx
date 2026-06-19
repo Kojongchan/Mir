@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { useAuth } from '../auth/AuthProvider';
 import { MiniChart } from '../components/MiniChart';
 import { formatAmount, listMonthlyRecords, type MonthlyRecord } from '../lib/dashboard';
 import { getContractAmount, saveContractAmount } from '../lib/portal';
@@ -12,6 +13,8 @@ import { getContractAmount, saveContractAmount } from '../lib/portal';
 export function Billing() {
   const { projectId = '' } = useParams();
   const navigate = useNavigate();
+  const { profile } = useAuth();
+  const isAdmin = !!profile?.is_admin;
   const [monthly, setMonthly] = useState<MonthlyRecord[]>([]);
   const [contract, setContract] = useState(0);
   const [draft, setDraft] = useState('0');
@@ -57,10 +60,12 @@ export function Billing() {
         <div className="card dash-stat">
           <h3>도급액</h3>
           <div className="dash-stat-big" style={{ fontSize: 30 }}>{formatAmount(contract)}<small>원</small></div>
-          <div className="dash-edit-row" style={{ marginTop: 8 }}>
-            <input type="number" value={draft} onChange={(e) => setDraft(e.target.value)} />
-            <button onClick={onSaveContract}>저장</button>
-          </div>
+          {isAdmin && (
+            <div className="dash-edit-row" style={{ marginTop: 8 }}>
+              <input type="number" value={draft} onChange={(e) => setDraft(e.target.value)} />
+              <button onClick={onSaveContract}>저장</button>
+            </div>
+          )}
         </div>
         <div className="card dash-stat">
           <h3>누적 기성</h3>
