@@ -65,6 +65,8 @@
   1. `supabase/migrations/0006_dashboard.sql` — project_info(착공/준공/진행률) ·
      project_milestones · daily_logs(공사일보) · monthly_records(월별 계획/실적/기성).
   2. `supabase/migrations/0007_issues.sql` — issues + issue_comments(협업·이슈).
+  3. `supabase/migrations/0008_portal_extra.sql` — posts(게시판) · subcontracts(하도급) ·
+     project_info.contract_amount(도급액).
   - **새 Storage 버킷·외부 의존 없음.** RLS는 기존 멤버십(`is_member`/`is_admin`) 재사용,
     프로젝트 멤버면 읽기+편집 가능(데이터는 앱에서 직접 입력).
 - **동작**: 프로젝트 진입 첫 화면 = **사업개요 대시보드**. 좌측 모듈 메뉴 —
@@ -73,6 +75,9 @@
   - **공사일보**: 일자별 투입 인력·장비·날씨·내용 등록(대시보드 인력/장비/일지 차트에 반영).
   - **공정현황**: 마일스톤 타임라인 + 계획/실적 S-curve + 4D 시뮬 바로가기.
   - **협업·이슈**: 지적/RFI 등록·상태(미해결/진행중/해결/종료)·우선순위·담당자·코멘트.
+  - **기성내역**: 도급액 입력 → 누적 기성·기성률·잔여, 월별 기성 추이(금액은 사업개요 월별 입력).
+  - **하도급내역**: 협력사 계약/기지급/지급률·상태 등록, 합계 요약.
+  - **게시판**: 공지 작성·상단 고정·삭제.
 
 ---
 

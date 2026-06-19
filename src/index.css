@@ -2304,3 +2304,54 @@ button.danger:hover:not(:disabled) {
   margin-right: 4px;
   vertical-align: middle;
 }
+
+/* ---- 게시판 ---- */
+.board-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.board-item {
+  padding: 0;
+}
+.board-item.is-pinned {
+  border-color: var(--accent);
+}
+.board-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+}
+.board-title {
+  font-weight: 600;
+  font-size: 14px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-pin {
+  margin-right: 6px;
+}
+.board-meta {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.board-body {
+  padding: 0 16px 14px;
+  border-top: 1px solid var(--border);
+}
+.board-body p {
+  white-space: pre-wrap;
+  font-size: 13px;
+  margin: 12px 0;
+}
+.dash-check {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 6px !important;
+  color: var(--text) !important;
+}
