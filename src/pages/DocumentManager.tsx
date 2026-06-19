@@ -34,6 +34,8 @@ export function DocumentManager() {
   const { projectId = '' } = useParams();
   const { profile } = useAuth();
   const isAdmin = !!profile?.is_admin;
+  // D12: 문서 삭제는 D11(admin) 예외 — 업로더 본인도 가능. profile.id 는 auth uid.
+  const canDelete = (f: CdeFile) => isAdmin || (!!f.uploaded_by && f.uploaded_by === profile?.id);
 
   const [folders, setFolders] = useState<Folder[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null); // null = root/unfiled
@@ -277,10 +279,10 @@ export function DocumentManager() {
                     <td className="right nowrap">
                       <button onClick={() => setHistoryFor(f)}>이력</button>
                       {isAdmin && (
-                        <>
-                          <button onClick={() => triggerNewVersion(f)} disabled={busy}>새 버전</button>
-                          <button className="danger" onClick={() => onDeleteFile(f)}>삭제</button>
-                        </>
+                        <button onClick={() => triggerNewVersion(f)} disabled={busy}>새 버전</button>
+                      )}
+                      {canDelete(f) && (
+                        <button className="danger" onClick={() => onDeleteFile(f)}>삭제</button>
                       )}
                     </td>
                   </tr>

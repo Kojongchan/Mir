@@ -42,6 +42,7 @@ export interface CdeFile {
   size_bytes: number | null;
   status: FileStatus;
   current_version_id: string | null;
+  uploaded_by: string | null;
   created_at: string;
 }
 
@@ -68,7 +69,7 @@ export interface ActivityEntry {
 }
 
 const FILE_COLS =
-  'id, project_id, folder_id, name, storage_path, mime_type, size_bytes, status, current_version_id, created_at';
+  'id, project_id, folder_id, name, storage_path, mime_type, size_bytes, status, current_version_id, uploaded_by, created_at';
 
 // --------------------------------------------------------------------------
 // Folders
@@ -309,15 +310,22 @@ export async function moveFile(target: CdeFile, folderId: string | null): Promis
   await logActivity(target.project_id, 'file.move', 'file', target.id, { name: target.name });
 }
 
-/** Delete a file, all its version objects and the record (admin-only by RLS). */
+/**
+ * Delete a file, all its version objects and the record.
+ * Allowed for the uploader (uploaded_by) or an admin (D12 — RLS on `files`
+ * and the docs bucket). Storage objects are removed FIRST, while the
+ * `files`/`file_versions` rows still exist: the docs delete policy authorises
+ * each object by joining its name back to those rows (owner or admin), so
+ * deleting the DB row first would orphan the binaries for a non-admin owner.
+ */
 export async function deleteCdeFile(target: CdeFile): Promise<void> {
   const versions = await listVersions(target.id);
   const paths = versions.map((v) => v.storage_path);
   if (!paths.includes(target.storage_path)) paths.push(target.storage_path);
 
+  if (paths.length) await supabase.storage.from(BUCKET).remove(paths);
   const { error } = await supabase.from('files').delete().eq('id', target.id);
   if (error) throw error;
-  if (paths.length) await supabase.storage.from(BUCKET).remove(paths);
   await logActivity(target.project_id, 'file.delete', 'file', target.id, { name: target.name });
 }
 

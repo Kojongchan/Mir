@@ -2,10 +2,27 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-19 · **S30 이슈 워크플로우 완료**(상태 전이·담당자·마감임박·인앱 알림).
-CDE + 사업관리 포털 + 권한(admin) + 첨부 + 이슈↔3D 핀 + 이슈 워크플로우까지 완료.
-배포 SQL=`supabase/setup_all.sql`(0003~0013).
-**다음 스텝**=S31 문서 삭제 권한 완화(D12: 업로더 본인+관리자). 그 외 백로그는 PLANNING §9.
+**마지막 업데이트**: 2026-06-19 · **S31 문서 삭제 권한 완화(D12) 완료**(업로더 본인+관리자).
+CDE + 사업관리 포털 + 권한(admin) + 첨부 + 이슈↔3D 핀 + 이슈 워크플로우 + 문서삭제 완화까지 완료.
+배포 SQL=`supabase/setup_all.sql`(0003~0014).
+**다음 스텝**=백로그에서 선택(PLANNING §9): 공정표 RLS admin화 · 2D 도면 이슈 핀 · 모바일 현장 모드 등.
+
+## S31 결과 (branch: feature/doc-delete-owner) — 문서 삭제 권한 완화(D12)
+- ✅ **`0014_doc_delete_owner.sql`**(추가형·멱등): D11(쓰기=admin)의 예외로 CDE 문서 **삭제**를
+  업로더 본인+관리자로 완화. `files` 삭제 정책 → `using (uploaded_by = auth.uid() or is_admin())`.
+  storage.objects(docs) **삭제 정책 신설** — SECURITY DEFINER 헬퍼 `owns_doc_object(name)`
+  (오브젝트 name 을 `files.storage_path`/`file_versions.storage_path` 와 조인해 업로더 판정)
+  + `using (is_admin() or owns_doc_object(name))`. 기존엔 docs 삭제 정책이 없어 오브젝트가
+  고아로 남던 잠재 결함도 함께 해소.
+- ✅ **데이터층 `lib/cde.ts`**: `CdeFile`/`FILE_COLS` 에 `uploaded_by` 추가. `deleteCdeFile` 가
+  **DB 행 삭제 전 스토리지 오브젝트를 먼저 remove** 하도록 순서 교체(삭제 정책이 살아있는
+  files/file_versions 행으로 소유자 판정 → 본인 삭제 시 고아 방지).
+- ✅ **UI `DocumentManager`**: 삭제 버튼을 `canDelete(f)=isAdmin || f.uploaded_by===profile.id`
+  로 업로더 본인에게도 노출(기존 확인창 유지). 새 버전/상태/폴더는 D11 그대로 admin.
+  삭제 시 활동로그(`file.delete`)는 기존대로 기록.
+- ✅ 검증: `typecheck`·`build` 통과. setup_all.sql 0003~0014 로 확장.
+- 📌 배포: `0014_doc_delete_owner.sql` 실행(또는 setup_all 재실행).
+- 📌 후속(D12 메모): 발행(Published) 상태 문서 삭제 가드는 후속 검토.
 
 ## S30 결과 (branch: claude/gifted-cray-kvipv9) — 이슈 워크플로우(상태·담당자·마감·알림)
 - ✅ **`0013_issue_workflow.sql`**: issues 에 `assignee_id`(사용자 FK) 추가, 상태에 `on_hold`(보류)
@@ -419,6 +436,10 @@ CDE + 사업관리 포털 + 권한(admin) + 첨부 + 이슈↔3D 핀 + 이슈 �
   `COORDINATE_TO_ORIGIN` 의 첫 요소 회전 오염) 규명·수정. 실제 파일 눈 검증만 잔여.
 
 ## 다음 세션 인수인계 (한 줄)
+> **S31 완료**: CDE 문서 삭제를 업로더 본인+관리자로 완화(D12, `0014_doc_delete_owner.sql`).
+> files·docs 버킷 삭제 정책 + `owns_doc_object` 헬퍼, `deleteCdeFile` 순서 교체(스토리지 선삭제),
+> 삭제 버튼 본인 노출. 배포=setup_all.sql(0003~0014). **다음**=PLANNING §9 백로그 선택.
+>
 > **S14(CDE)에서 시작한 브랜치(`claude/busy-lovelace-cj8adq`)가 PMIS 포털 전반으로 확장돼 1차 마무리.**
 > 완료: CDE(폴더·버전·상태·활동·인라인 3D뷰어) + 포털(사업개요 대시보드·공정현황·공정관리4D[무클릭
 > 영속화]·공사일보·협업이슈[3D객체 핀]·기성[공종별]·하도급·게시판·자료관리·구성원) + 권한 admin(D11)
