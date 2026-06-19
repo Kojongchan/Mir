@@ -108,7 +108,7 @@ export async function createIssue(
     express_id?: number | null;
   },
   authorName: string | null,
-): Promise<void> {
+): Promise<string> {
   const { data: userData } = await supabase.auth.getUser();
   const { data, error } = await supabase
     .from('issues')
@@ -142,6 +142,7 @@ export async function createIssue(
       actorName: authorName,
     });
   }
+  return issueId;
 }
 
 /** 상태 전이 + 이력 기록 + 담당자/작성자 알림. */

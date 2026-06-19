@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { MeshBVH } from 'three-mesh-bvh';
 import {
   IfcAPI,
   IFCGEOMETRICREPRESENTATIONCONTEXT,
@@ -23,6 +24,8 @@ interface LoadedModel {
   elementMeshes: Map<number, THREE.Mesh[]>;
   /** model-space up axis used to orient the group into Three.js' Y-up world */
   upAxis: UpAxis;
+  /** human-readable label (the source file name) for the clash set picker */
+  label: string;
 }
 
 export type UpAxis = 'x' | 'y' | 'z';
@@ -32,6 +35,36 @@ export interface ElementInfo {
   modelID: number;
   expressID: number;
   name: string;
+}
+
+/** Element descriptor with IFC category (type), used by the clash layer to
+ *  pick "set A vs set B" by model or by category. */
+export interface ElementMeta {
+  modelID: number;
+  expressID: number;
+  name: string;
+  /** IFC type name, e.g. "IFCWALL" / "IFCBEAM" (from the type code). */
+  category: string;
+}
+
+/** A loaded model summary for the clash set picker. */
+export interface ModelSummary {
+  modelID: number;
+  label: string;
+  count: number;
+}
+
+/** World-space geometry + BVH for one element, used in clash narrow phase. */
+export interface ClashGeom {
+  geometry: THREE.BufferGeometry;
+  box: THREE.Box3;
+  bvh: MeshBVH;
+}
+
+/** A reference to one side of a clash. */
+export interface ClashElementRef {
+  modelID: number;
+  expressID: number;
 }
 
 /**
@@ -109,6 +142,12 @@ export class IfcViewer {
   private ghostMaterial: THREE.Material | null = null;
   /** expressID name cache per model, populated on first catalog request */
   private nameCache = new Map<number, Map<number, string>>();
+  /** expressID -> IFC category(type) cache per model, for the clash picker */
+  private categoryCache = new Map<number, Map<number, string>>();
+
+  /** materials swapped in to highlight a clash pair, kept so we can restore */
+  private clashHighlighted: { mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] }[] = [];
+  private clashMarker: THREE.Object3D | null = null;
 
   private onSelect: SelectCallback = () => {};
   private initialized = false;
@@ -173,7 +212,7 @@ export class IfcViewer {
 
   // --- IFC loading -------------------------------------------------------
 
-  async loadIfc(data: Uint8Array, opts?: { upAxis?: UpAxis }): Promise<LoadedModel> {
+  async loadIfc(data: Uint8Array, opts?: { upAxis?: UpAxis; label?: string }): Promise<LoadedModel> {
     await this.init();
 
     // We deliberately do NOT use web-ifc's COORDINATE_TO_ORIGIN. Its
@@ -241,7 +280,8 @@ export class IfcViewer {
 
     this.scene.add(group);
 
-    const model: LoadedModel = { modelID, group, elementMeshes, upAxis };
+    const label = opts?.label ?? `모델 ${this.models.length + 1}`;
+    const model: LoadedModel = { modelID, group, elementMeshes, upAxis, label };
     this.models.push(model);
 
     this.orientGroup(group, upAxis);
@@ -518,6 +558,198 @@ export class IfcViewer {
     } catch {
       return '';
     }
+  }
+
+  // --- clash detection support ------------------------------------------
+
+  /** Loaded models with element counts, for the clash "set A vs set B" picker. */
+  getLoadedModels(): ModelSummary[] {
+    return this.models.map((m) => ({
+      modelID: m.modelID,
+      label: m.label,
+      count: m.elementMeshes.size,
+    }));
+  }
+
+  /**
+   * Every loaded element with its IFC Name and category(type). The clash layer
+   * filters this list to build set A and set B (by model or by category).
+   * Categories are read once per model and cached.
+   */
+  getElementMeta(): ElementMeta[] {
+    const out: ElementMeta[] = [];
+    for (const model of this.models) {
+      let names = this.nameCache.get(model.modelID);
+      if (!names) {
+        names = new Map<number, string>();
+        for (const expressID of model.elementMeshes.keys()) {
+          names.set(expressID, this.readName(model.modelID, expressID));
+        }
+        this.nameCache.set(model.modelID, names);
+      }
+      let cats = this.categoryCache.get(model.modelID);
+      if (!cats) {
+        cats = new Map<number, string>();
+        for (const expressID of model.elementMeshes.keys()) {
+          cats.set(expressID, this.readCategory(model.modelID, expressID));
+        }
+        this.categoryCache.set(model.modelID, cats);
+      }
+      for (const expressID of model.elementMeshes.keys()) {
+        out.push({
+          modelID: model.modelID,
+          expressID,
+          name: names.get(expressID) ?? '',
+          category: cats.get(expressID) ?? 'UNKNOWN',
+        });
+      }
+    }
+    return out;
+  }
+
+  private readCategory(modelID: number, expressID: number): string {
+    try {
+      const typeCode = this.ifcAPI.GetLineType(modelID, expressID);
+      return this.ifcAPI.GetNameFromTypeCode(typeCode) ?? 'UNKNOWN';
+    } catch {
+      return 'UNKNOWN';
+    }
+  }
+
+  /**
+   * Build a world-space merged geometry + BVH for one element, used by the
+   * clash narrow phase (`bvh.intersectsGeometry`). Returns null if the element
+   * has no drawable geometry. Caller is responsible for disposing the geometry.
+   */
+  buildClashGeom(modelID: number, expressID: number): ClashGeom | null {
+    const meshes = this.meshesFor(modelID, expressID);
+    if (meshes.length === 0) return null;
+
+    const parts: { pos: Float32Array; idx: Uint32Array }[] = [];
+    let totalVerts = 0;
+    let totalIdx = 0;
+    const v = new THREE.Vector3();
+
+    for (const mesh of meshes) {
+      mesh.updateWorldMatrix(true, false);
+      const geom = mesh.geometry as THREE.BufferGeometry;
+      const posAttr = geom.getAttribute('position') as THREE.BufferAttribute | undefined;
+      if (!posAttr) continue;
+
+      const pos = new Float32Array(posAttr.count * 3);
+      for (let i = 0; i < posAttr.count; i++) {
+        v.fromBufferAttribute(posAttr, i).applyMatrix4(mesh.matrixWorld);
+        pos[i * 3] = v.x;
+        pos[i * 3 + 1] = v.y;
+        pos[i * 3 + 2] = v.z;
+      }
+
+      const index = geom.getIndex();
+      let idx: Uint32Array;
+      if (index) {
+        idx = new Uint32Array(index.count);
+        for (let i = 0; i < index.count; i++) idx[i] = index.getX(i);
+      } else {
+        idx = new Uint32Array(posAttr.count);
+        for (let i = 0; i < posAttr.count; i++) idx[i] = i;
+      }
+
+      parts.push({ pos, idx });
+      totalVerts += posAttr.count;
+      totalIdx += idx.length;
+    }
+    if (parts.length === 0) return null;
+
+    const positions = new Float32Array(totalVerts * 3);
+    const indices = new Uint32Array(totalIdx);
+    let vOff = 0;
+    let iOff = 0;
+    for (const p of parts) {
+      positions.set(p.pos, vOff * 3);
+      const base = vOff;
+      for (let i = 0; i < p.idx.length; i++) indices[iOff + i] = p.idx[i] + base;
+      vOff += p.pos.length / 3;
+      iOff += p.idx.length;
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+    const bvh = new MeshBVH(geometry);
+    // three-mesh-bvh reads `geometry.boundsTree` to accelerate the *other* side
+    // of intersectsGeometry; attach it so both directions are fast.
+    (geometry as unknown as { boundsTree: MeshBVH }).boundsTree = bvh;
+    const box = new THREE.Box3().setFromBufferAttribute(
+      geometry.getAttribute('position') as THREE.BufferAttribute,
+    );
+    return { geometry, box, bvh };
+  }
+
+  /**
+   * Highlight both elements of a clash (A red, B blue), drop a marker at the
+   * interference point, and fit the camera to the pair. Restores on the next
+   * call or clearClashView().
+   */
+  showClash(a: ClashElementRef, b: ClashElementRef, point: { x: number; y: number; z: number } | null) {
+    this.clearClashView();
+    this.clearHighlight();
+
+    const matA = new THREE.MeshLambertMaterial({ color: 0xff3b30, side: THREE.DoubleSide });
+    const matB = new THREE.MeshLambertMaterial({ color: 0x2f7bff, side: THREE.DoubleSide });
+    for (const mesh of this.meshesFor(a.modelID, a.expressID)) {
+      this.clashHighlighted.push({ mesh, material: mesh.material });
+      mesh.material = matA;
+      mesh.visible = true;
+    }
+    for (const mesh of this.meshesFor(b.modelID, b.expressID)) {
+      this.clashHighlighted.push({ mesh, material: mesh.material });
+      mesh.material = matB;
+      mesh.visible = true;
+    }
+
+    const box = new THREE.Box3();
+    for (const mesh of this.meshesFor(a.modelID, a.expressID)) box.expandByObject(mesh);
+    for (const mesh of this.meshesFor(b.modelID, b.expressID)) box.expandByObject(mesh);
+    if (!box.isEmpty()) {
+      const maxDim = box.getSize(new THREE.Vector3()).length() || 1;
+      if (point) {
+        const r = Math.max(maxDim * 0.02, 0.05);
+        const marker = new THREE.Mesh(
+          new THREE.SphereGeometry(r, 16, 16),
+          new THREE.MeshBasicMaterial({ color: 0xff00ff, depthTest: false, transparent: true, opacity: 0.9 }),
+        );
+        marker.position.set(point.x, point.y, point.z);
+        marker.renderOrder = 999;
+        this.clashMarker = marker;
+        this.scene.add(marker);
+      }
+      this.frameBox(box);
+    }
+  }
+
+  /** Restore the meshes touched by showClash() and remove the marker. */
+  clearClashView() {
+    for (const { mesh, material } of this.clashHighlighted) {
+      (mesh.material as THREE.Material).dispose?.();
+      mesh.material = material;
+    }
+    this.clashHighlighted = [];
+    if (this.clashMarker) {
+      this.scene.remove(this.clashMarker);
+      const m = this.clashMarker as THREE.Mesh;
+      m.geometry?.dispose?.();
+      (m.material as THREE.Material)?.dispose?.();
+      this.clashMarker = null;
+    }
+  }
+
+  /** Hide everything except the two clash elements (Navisworks "기타 항목 숨기기"). */
+  isolateClashPair(a: ClashElementRef, b: ClashElementRef) {
+    const keep = new Set([
+      ...this.meshesFor(a.modelID, a.expressID),
+      ...this.meshesFor(b.modelID, b.expressID),
+    ]);
+    for (const mesh of this.allMeshes()) mesh.visible = keep.has(mesh);
   }
 
   /**

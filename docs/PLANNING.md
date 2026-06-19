@@ -247,7 +247,13 @@
 
 ---
 
-## 10. 충돌검사 (Phase 4 / S32) ← 다음 스텝(사용자 선택)
+## 10. 충돌검사 (Phase 4 / S32) ✅ MVP 완료
+> **상태**: MVP 완료(branch `feature/clash-detection`) — `three-mesh-bvh`(D13) 엔진 +
+> `src/lib/clash.ts`(광역 AABB → 협역 BVH, 진행률 청크) + `ClashPanel`(4D 뷰어 우측 드로어:
+> 대상 A/B[전체·모델·카테고리]·유형[Hard/Clearance]·허용오차·결과표[상태]·격리·CSV) +
+> 간섭→이슈 모달(S30 `createIssue` + 0012 객체 핀) + `0015_clash.sql`(clash_tests/clashes,
+> RLS 읽기멤버/쓰기admin) 결과 저장/불러오기. 배포=`setup_all.sql`(0003~0015).
+> 후속: Duplicate 유형·규칙세트·GUID 비교·관측점·Web Worker 분리·정밀 관통깊이.
 **목표**: 로드된 IFC 요소 사이의 **간섭(clash)** 을 검출해 목록·뷰어로 검토하고, 간섭을
 **이슈로 전환**(S30 워크플로우 연결)한다. Navisworks Clash Detective 의 웹 버전.
 

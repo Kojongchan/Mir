@@ -2715,3 +2715,251 @@ button.danger:hover:not(:disabled) {
   gap: 6px !important;
   color: var(--text) !important;
 }
+
+/* =====================================================================
+   충돌검사(Clash Detection) 패널 — Phase 4 / S32. 색은 토큰만 사용.
+   ===================================================================== */
+.clash-panel {
+  position: absolute;
+  top: 60px;
+  left: 12px;
+  width: min(360px, calc(100vw - 24px));
+  max-height: calc(100% - 80px);
+  display: flex;
+  flex-direction: column;
+  background: var(--glass);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(8px);
+  z-index: 6;
+  overflow: hidden;
+}
+.clash-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.clash-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.clash-x {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+}
+.clash-x:hover {
+  color: var(--text);
+}
+.clash-setup {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.clash-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 0;
+  flex: 1;
+}
+.clash-field > span {
+  font-weight: 600;
+}
+.clash-field select,
+.clash-field input {
+  font-size: 13px;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  min-width: 0;
+}
+.clash-row2 {
+  display: flex;
+  gap: 8px;
+}
+.clash-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.clash-progress {
+  position: relative;
+  height: 16px;
+  background: var(--panel-2);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+}
+.clash-progress-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  opacity: 0.35;
+  transition: width 0.2s ease;
+}
+.clash-progress .muted {
+  position: relative;
+  font-size: 11px;
+  padding-left: 8px;
+}
+.clash-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.clash-summary .spacer {
+  flex: 1;
+}
+.clash-chip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--chip-neutral-bg);
+  color: var(--chip-neutral-fg);
+}
+.clash-chip-open {
+  background: var(--chip-demolish-bg);
+  color: var(--chip-demolish-fg);
+}
+.clash-chip-closed {
+  background: var(--chip-construct-bg);
+  color: var(--chip-construct-fg);
+}
+.clash-check {
+  font-size: 12px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.clash-loadbar {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.clash-loadbar select {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+}
+.clash-results {
+  flex: 1;
+  overflow: auto;
+  min-height: 80px;
+}
+.clash-empty {
+  padding: 16px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.clash-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.clash-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--panel-2);
+  color: var(--muted);
+  text-align: left;
+  font-weight: 600;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  z-index: 1;
+}
+.clash-table tbody tr {
+  cursor: pointer;
+  border-bottom: 1px solid var(--hairline);
+}
+.clash-table tbody tr:hover {
+  background: var(--row-hover);
+}
+.clash-table tbody tr.is-active {
+  background: var(--accent-soft);
+}
+.clash-table td {
+  padding: 5px 8px;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clash-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.clash-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+.clash-dot-a {
+  background: var(--bar-demolish);
+}
+.clash-dot-b {
+  background: var(--accent);
+}
+.clash-status {
+  font-size: 11px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+}
+.clash-status-new {
+  color: var(--chip-demolish-fg);
+}
+.clash-status-reviewing {
+  color: var(--chip-temp-fg);
+}
+.clash-status-resolved,
+.clash-status-approved {
+  color: var(--chip-construct-fg);
+}
+.clash-mini {
+  font-size: 11px;
+  padding: 2px 6px;
+}
+.clash-status-bar {
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clash-issue-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
