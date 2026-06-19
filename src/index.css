@@ -2249,6 +2249,52 @@ button.danger:hover:not(:disabled) {
   font-size: 13px;
 }
 
+/* 마일스톤 드래그 정렬 리스트 */
+.ms-reorder {
+  margin-top: 8px;
+}
+.ms-reorder-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 480px;
+}
+.ms-reorder-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: grab;
+  font-size: 13px;
+}
+.ms-reorder-item.dragging {
+  opacity: 0.5;
+  border-color: var(--accent);
+}
+.ms-grip {
+  color: var(--muted);
+  cursor: grab;
+}
+.ms-name {
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ms-del {
+  padding: 0 8px;
+  line-height: 20px;
+  font-size: 13px;
+}
+
 @media (max-width: 720px) {
   .portal-body {
     grid-template-columns: 64px 1fr;

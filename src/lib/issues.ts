@@ -32,6 +32,8 @@ export interface Issue {
   priority: IssuePriority;
   assignee_name: string | null;
   due_date: string | null;
+  model_id: string | null;
+  express_id: number | null;
   created_by_name: string | null;
   created_at: string;
   updated_at: string;
@@ -46,7 +48,7 @@ export interface IssueComment {
 }
 
 const COLS =
-  'id, project_id, title, description, status, priority, assignee_name, due_date, created_by_name, created_at, updated_at';
+  'id, project_id, title, description, status, priority, assignee_name, due_date, model_id, express_id, created_by_name, created_at, updated_at';
 
 export async function listIssues(projectId: string): Promise<Issue[]> {
   const { data, error } = await supabase
@@ -77,6 +79,8 @@ export async function createIssue(
     priority: IssuePriority;
     assignee_name?: string;
     due_date?: string | null;
+    model_id?: string | null;
+    express_id?: number | null;
   },
   authorName: string | null,
 ): Promise<void> {
@@ -88,6 +92,8 @@ export async function createIssue(
     priority: input.priority,
     assignee_name: input.assignee_name || null,
     due_date: input.due_date || null,
+    model_id: input.model_id ?? null,
+    express_id: input.express_id ?? null,
     created_by: userData.user?.id ?? null,
     created_by_name: authorName,
   });

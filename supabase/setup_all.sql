@@ -1,8 +1,7 @@
 -- =====================================================================
--- MIR SMART — 통합 셋업 SQL (0003~0011 한 번에 실행)
+-- MIR SMART — 통합 셋업 SQL (0003~0012 한 번에 실행)
 -- Supabase 대시보드 → SQL Editor 에 '전체 복사 → 붙여넣기 → Run'.
 -- 모두 멱등(재실행 안전). docs 버킷은 미리 Private 으로 생성되어 있어야 함.
--- 0003(공정표)·0004(문서)도 포함 — 4D 매핑 영속화에 0003 이 필요합니다.
 -- =====================================================================
 
 -- ===================== 0003_schedule.sql =====================
@@ -731,5 +730,18 @@ create policy billing_items_update on public.billing_items
 drop policy if exists billing_items_delete on public.billing_items;
 create policy billing_items_delete on public.billing_items
   for delete using (public.is_admin());
+
+-- ===================== 0012_issue_location.sql =====================
+-- =====================================================================
+-- MIR SMART — 이슈에 3D 모델 객체 위치 연결 (issue ↔ model element)
+-- 3D 뷰어에서 선택한 객체로 이슈를 만들고, 이슈에서 '위치 보기'로 그 객체에
+-- 카메라를 맞춰 돌아올 수 있게 한다. (카메라 상태는 저장하지 않고 객체에 fit)
+-- Additive — 0001..0011 변경 없음. issues 의 기존 RLS 정책이 새 컬럼도 커버한다.
+-- =====================================================================
+
+alter table public.issues
+  add column if not exists model_id uuid references public.models on delete set null;
+alter table public.issues
+  add column if not exists express_id bigint;
 
 notify pgrst, 'reload schema';

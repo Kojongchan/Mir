@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
 import {
@@ -220,8 +220,10 @@ function IssueRow({
 }
 
 function IssueDetail({ issue, isAdmin, authorName }: { issue: Issue; isAdmin: boolean; authorName: string | null }) {
+  const navigate = useNavigate();
   const [comments, setComments] = useState<IssueComment[]>([]);
   const [body, setBody] = useState('');
+  const hasLocation = !!issue.model_id && issue.express_id != null;
 
   useEffect(() => {
     listComments(issue.id).then(setComments).catch(() => setComments([]));
@@ -240,6 +242,19 @@ function IssueDetail({ issue, isAdmin, authorName }: { issue: Issue; isAdmin: bo
       <p className="muted issue-meta">
         등록 {issue.created_by_name || '—'} · {formatDate(issue.created_at.slice(0, 10))}
       </p>
+      {hasLocation && (
+        <p style={{ margin: '0 0 10px' }}>
+          <button
+            onClick={() =>
+              navigate(`/project/${issue.project_id}/viewer`, {
+                state: { focus: { modelDbId: issue.model_id, expressID: issue.express_id } },
+              })
+            }
+          >
+            📍 위치 보기 (3D 객체 #{issue.express_id})
+          </button>
+        </p>
+      )}
       <Attachments
         projectId={issue.project_id}
         targetType="issue"

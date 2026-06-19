@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useLocation, useParams } from 'react-router-dom';
 import { errMessage } from '../lib/errors';
+import { createIssue } from '../lib/issues';
 import { IfcViewer, type UpAxis } from '../viewer/IfcViewer';
 import { useStore } from '../store/useStore';
 import { useAuth } from '../auth/AuthProvider';
@@ -45,7 +46,13 @@ export function Workspace() {
   const [openModelDbId, setOpenModelDbId] = useState<string | null>(null);
   const autoOpenedRef = useRef(false); // 마지막 공정용 모델 자동 복원 1회
 
-  const { status, setStatus, setSelected, setModelCount, fourd } = useStore();
+  const { status, setStatus, setSelected, setModelCount, fourd, selected } = useStore();
+
+  // 이슈 '위치 보기'로 진입하면 location.state.focus 로 대상 객체가 전달된다.
+  const location = useLocation();
+  const focus =
+    (location.state as { focus?: { modelDbId: string; expressID: number } } | null)?.focus ?? null;
+  const focusHandledRef = useRef(false);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -69,8 +76,9 @@ export function Workspace() {
   const refreshFiles = () => listFiles(projectId).then(setFiles).catch(() => setFiles([]));
 
   // 공정관리(4D) 재진입 시 마지막으로 보던 공정용 모델을 자동으로 다시 연다.
+  // (이슈 '위치 보기'로 들어온 경우엔 focus 효과가 대상 모델을 연다.)
   useEffect(() => {
-    if (autoOpenedRef.current || !viewer || models.length === 0) return;
+    if (autoOpenedRef.current || focus || !viewer || models.length === 0) return;
     const savedId = localStorage.getItem(ACTIVE_MODEL_KEY(projectId));
     const m = savedId ? models.find((x) => x.id === savedId) : null;
     if (m) {
@@ -78,7 +86,23 @@ export function Workspace() {
       openModel(m);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewer, models, projectId]);
+  }, [viewer, models, projectId, focus]);
+
+  // 이슈에 연결된 객체로 카메라 이동: 대상 모델을 열고 객체를 선택·맞춤.
+  useEffect(() => {
+    if (!focus || focusHandledRef.current || !viewer || models.length === 0) return;
+    const m = models.find((x) => x.id === focus.modelDbId);
+    if (!m) return;
+    focusHandledRef.current = true;
+    (async () => {
+      await openModel(m);
+      if (viewer.primaryModelID != null) {
+        const ok = viewer.focusElement(viewer.primaryModelID, focus.expressID);
+        if (!ok) setStatus('연결된 객체를 찾지 못했습니다(모델이 변경되었을 수 있음).');
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewer, models, focus]);
 
   const openModel = async (m: ModelRecord) => {
     if (!viewer) return;
@@ -139,6 +163,23 @@ export function Workspace() {
 
   const openFile = (f: FileRecord) => window.open(`/view/${f.id}`, '_blank', 'noopener');
 
+  // 선택한 3D 객체에 연결된 이슈 생성(관리자).
+  const onCreateIssueFromSelection = async () => {
+    if (!selected || !openModelDbId) return;
+    const title = window.prompt(`선택 객체(#${selected.expressID})에 연결할 이슈 제목`);
+    if (!title?.trim()) return;
+    try {
+      await createIssue(
+        projectId,
+        { title: title.trim(), priority: 'normal', model_id: openModelDbId, express_id: selected.expressID },
+        profile?.full_name ?? profile?.username ?? null,
+      );
+      setStatus(`이슈 생성됨 (객체 #${selected.expressID}) — 협업·이슈에서 확인`);
+    } catch (e) {
+      setStatus(`이슈 생성 실패: ${errMessage(e)}`);
+    }
+  };
+
   return (
     <div className="mod-fill viewer-fill">
       <aside className="mod-subtree">
@@ -188,6 +229,9 @@ export function Workspace() {
       <div className="mod-main viewer-main">
         <div className="viewer-bar">
           <Toolbar viewer={viewer} />
+          {isAdmin && selected && openModelDbId && (
+            <button onClick={onCreateIssueFromSelection}>＋ 선택 객체로 이슈</button>
+          )}
           <div className="spacer" />
           <span className="muted">{status}</span>
           <span className="muted">· 모델 {viewer?.modelCount ?? 0}개</span>
