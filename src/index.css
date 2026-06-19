@@ -2436,6 +2436,173 @@ button.danger:hover:not(:disabled) {
   color: var(--text);
   font-size: 13px;
 }
+.issue-on_hold {
+  background: var(--chip-neutral-bg);
+  color: var(--chip-temp-fg);
+}
+
+/* ---- 마감 임박/지연 뱃지 ---- */
+.due-badge {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.due-soon {
+  background: var(--chip-temp-bg);
+  color: var(--chip-temp-fg);
+}
+.due-overdue {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* ---- 이슈 담당자 배정 / 변경 이력 ---- */
+.issue-assign-row {
+  margin: 0 0 10px;
+}
+.issue-assign-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.issue-assign-row select {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  color: var(--text);
+  font-size: 13px;
+}
+.issue-section-h {
+  margin: 4px 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.issue-history {
+  margin: 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.issue-event {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12px;
+  padding: 4px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.issue-event-when {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 11px;
+  min-width: 130px;
+}
+.issue-event-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- 알림 종 (상단바) ---- */
+.notif {
+  position: relative;
+  flex-shrink: 0;
+}
+.notif-bell {
+  position: relative;
+  padding: 6px 9px;
+  font-size: 15px;
+  line-height: 1;
+}
+.notif-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+.notif-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 320px;
+  max-width: 90vw;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2, 0 8px 28px rgba(0, 0, 0, 0.18));
+  z-index: 50;
+  overflow: hidden;
+}
+.notif-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  font-weight: 600;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.notif-allread {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+.notif-list {
+  max-height: 360px;
+  overflow-y: auto;
+}
+.notif-empty {
+  padding: 18px 12px;
+  text-align: center;
+  font-size: 13px;
+}
+.notif-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+}
+.notif-item:hover {
+  background: var(--panel-2);
+}
+.notif-item.is-unread {
+  background: var(--accent-soft);
+}
+.notif-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.notif-body {
+  font-size: 12px;
+  color: var(--text);
+}
+.notif-when {
+  font-size: 11px;
+}
 
 /* ---- 공정현황 타임라인 ---- */
 .sched-timeline {

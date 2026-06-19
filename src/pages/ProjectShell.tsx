@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { BrandLogo } from '../components/BrandLogo';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { ProjectNav } from '../components/ProjectNav';
+import { NotificationBell } from '../components/NotificationBell';
 import { getProject, type Project } from '../lib/api';
 
 /**
@@ -28,6 +29,7 @@ export function ProjectShell() {
         <span className="project-title">{project?.name ?? '…'}</span>
         {project?.code && <span className="project-code">{project.code}</span>}
         <div className="spacer" />
+        <NotificationBell />
         <ThemeToggle />
         <button onClick={() => navigate('/')}>프로젝트 변경</button>
         <button onClick={signOut}>로그아웃</button>

@@ -2,11 +2,25 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-19 · **S14(CDE)~S29(PMIS 포털) 1차 마무리**. CDE + 사업관리 포털
-(대시보드·공정현황·공정관리4D·공사일보·협업이슈·기성·하도급·게시판·자료관리·구성원) + 권한(admin) +
-첨부 + 이슈↔3D 핀까지 완료, main 병합. 배포 SQL=`supabase/setup_all.sql`(0003~0012).
-**다음 스텝(사용자 확정)=S30 이슈 워크플로우**(상태 전이·담당자·마감임박·알림). 이어서 **S31
-문서 삭제 권한 완화(D12: 업로더 본인+관리자)**. 그 외 백로그는 PLANNING §9.
+**마지막 업데이트**: 2026-06-19 · **S30 이슈 워크플로우 완료**(상태 전이·담당자·마감임박·인앱 알림).
+CDE + 사업관리 포털 + 권한(admin) + 첨부 + 이슈↔3D 핀 + 이슈 워크플로우까지 완료.
+배포 SQL=`supabase/setup_all.sql`(0003~0013).
+**다음 스텝**=S31 문서 삭제 권한 완화(D12: 업로더 본인+관리자). 그 외 백로그는 PLANNING §9.
+
+## S30 결과 (branch: claude/gifted-cray-kvipv9) — 이슈 워크플로우(상태·담당자·마감·알림)
+- ✅ **`0013_issue_workflow.sql`**: issues 에 `assignee_id`(사용자 FK) 추가, 상태에 `on_hold`(보류)
+  추가(신규 open→진행 in_progress→완료 resolved/종료 closed/보류 on_hold). 신규 테이블
+  `issue_events`(상태 전이·배정 변경 이력), `notifications`(인앱 알림). RLS: issues UPDATE 를
+  **관리자 + 담당자 본인**으로 확장(D11 예외, 사용자 결정 — 담당자는 자기 이슈 상태 변경 가능).
+- ✅ **데이터층**: `lib/issues.ts` 확장(STATUS_LABEL 신규/진행/완료/종료/보류, `assignIssue`,
+  `setIssueStatus`(이력+알림), `listEvents`, `dueState`/`dueDeltaLabel` 마감 임박/지연 계산).
+  신규 `lib/notifications.ts`(list/countUnread/markRead/notify), `lib/members.ts`(담당자 후보).
+- ✅ **UI**: 협업·이슈 화면에 담당자 드롭다운·마감일·상태 select(관리자 또는 담당자 본인)·
+  마감 임박/지연 뱃지(D-표기)·변경 이력 타임라인. 상단바 **🔔 알림 종**(NotificationBell:
+  미읽음 배지·드롭다운·모두읽음·클릭 시 이슈 이동).
+- ✅ 검증: `typecheck`·`build` 통과. setup_all.sql 0003~0013 로 확장.
+- 📌 배포: `0013_issue_workflow.sql` 실행(또는 setup_all 재실행).
+- ⚠️ 참고: 컬럼 단위 RLS 제한 불가 → 담당자는 행 단위로 update 권한이지만 UI 는 상태 select 만 노출.
 
 ## S29 결과 (branch: claude/busy-lovelace-cj8adq) — 마일스톤 정렬 + 이슈↔3D 객체 핀
 - ✅ **마일스톤 드래그 정렬**: `reorderMilestones`(sort_order=인덱스), 사업개요 편집에 드래그

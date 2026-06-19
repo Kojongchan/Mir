@@ -1,5 +1,5 @@
 -- =====================================================================
--- MIR SMART — 통합 셋업 SQL (0003~0012 한 번에 실행)
+-- MIR SMART — 통합 셋업 SQL (0003~0013 한 번에 실행)
 -- Supabase 대시보드 → SQL Editor 에 '전체 복사 → 붙여넣기 → Run'.
 -- 모두 멱등(재실행 안전). docs 버킷은 미리 Private 으로 생성되어 있어야 함.
 -- =====================================================================
@@ -743,5 +743,78 @@ alter table public.issues
   add column if not exists model_id uuid references public.models on delete set null;
 alter table public.issues
   add column if not exists express_id bigint;
+
+-- ===================== 0013_issue_workflow.sql =====================
+-- =====================================================================
+-- 이슈 워크플로우(S30): 담당자 FK + 보류 상태 + 변경 이력 + 인앱 알림.
+-- 쓰기는 D11(admin) 유지 + 예외 = 담당자 본인 자기 이슈 상태 변경 허용.
+-- Additive · 멱등 — 0001..0012 구조 변경 없음(컬럼/제약/정책/신규 테이블).
+-- =====================================================================
+
+alter table public.issues
+  add column if not exists assignee_id uuid references auth.users on delete set null;
+
+alter table public.issues drop constraint if exists issues_status_check;
+alter table public.issues
+  add constraint issues_status_check
+  check (status in ('open', 'in_progress', 'resolved', 'closed', 'on_hold'));
+
+create index if not exists issues_assignee_idx on public.issues (assignee_id);
+
+create table if not exists public.issue_events (
+  id uuid primary key default gen_random_uuid(),
+  issue_id uuid not null references public.issues on delete cascade,
+  project_id uuid not null references public.projects on delete cascade,
+  kind text not null check (kind in ('created', 'status', 'assign')),
+  from_value text,
+  to_value text,
+  actor uuid references auth.users,
+  actor_name text,
+  created_at timestamptz not null default now()
+);
+create index if not exists issue_events_issue_idx on public.issue_events (issue_id, created_at);
+
+create table if not exists public.notifications (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references public.projects on delete cascade,
+  user_id uuid not null references auth.users on delete cascade,
+  type text not null,
+  title text not null,
+  body text,
+  issue_id uuid references public.issues on delete cascade,
+  actor_name text,
+  is_read boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create index if not exists notifications_user_idx
+  on public.notifications (user_id, is_read, created_at desc);
+
+alter table public.issue_events enable row level security;
+alter table public.notifications enable row level security;
+
+-- issues UPDATE: 관리자 전체 + 담당자 본인. 0009(admin-only)을 교체.
+drop policy if exists issues_update on public.issues;
+create policy issues_update on public.issues
+  for update using (public.is_admin() or assignee_id = auth.uid());
+
+drop policy if exists issue_events_select on public.issue_events;
+create policy issue_events_select on public.issue_events
+  for select using (public.is_admin() or public.is_member(project_id));
+drop policy if exists issue_events_insert on public.issue_events;
+create policy issue_events_insert on public.issue_events
+  for insert with check (public.is_admin() or public.is_member(project_id));
+
+drop policy if exists notifications_select on public.notifications;
+create policy notifications_select on public.notifications
+  for select using (user_id = auth.uid() or public.is_admin());
+drop policy if exists notifications_insert on public.notifications;
+create policy notifications_insert on public.notifications
+  for insert with check (public.is_admin() or public.is_member(project_id));
+drop policy if exists notifications_update on public.notifications;
+create policy notifications_update on public.notifications
+  for update using (user_id = auth.uid());
+drop policy if exists notifications_delete on public.notifications;
+create policy notifications_delete on public.notifications
+  for delete using (user_id = auth.uid() or public.is_admin());
 
 notify pgrst, 'reload schema';
