@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { MiniChart } from '../components/MiniChart';
+import { countOpenIssues } from '../lib/issues';
 import {
   addMilestone,
   daysSince,
@@ -36,6 +37,7 @@ export function Dashboard() {
   const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [logs, setLogs] = useState<DailyLog[]>([]);
   const [monthly, setMonthly] = useState<MonthlyRecord[]>([]);
+  const [openIssues, setOpenIssues] = useState(0);
   const [edit, setEdit] = useState(false);
   const [msg, setMsg] = useState('');
 
@@ -62,6 +64,7 @@ export function Dashboard() {
     setMilestones(m);
     setLogs(l);
     setMonthly(r);
+    countOpenIssues(projectId).then(setOpenIssues).catch(() => setOpenIssues(0));
     setDraft({
       start_date: i?.start_date ?? '',
       end_date: i?.end_date ?? '',
@@ -232,6 +235,12 @@ export function Dashboard() {
           <div className="dash-stat-big">{latest?.equipment ?? 0}<small>대</small></div>
           <p className="muted">{latest ? formatDate(latest.log_date) + ' 기준' : '일보 없음'}</p>
         </div>
+
+        <button className="card dash-stat dash-link-card" onClick={() => navigate(`/project/${projectId}/issues`)}>
+          <h3>미해결 이슈</h3>
+          <div className="dash-stat-big">{openIssues}<small>건</small></div>
+          <p className="muted">협업 · 이슈 관리 →</p>
+        </button>
       </section>
 
       {/* ---- 월별 실적 편집 표 ---- */}

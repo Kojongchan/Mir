@@ -17,7 +17,9 @@ export function ProjectNav() {
 
   const items: Item[] = [
     { to: base, icon: '📊', label: '사업개요', end: true },
+    { to: `${base}/schedule`, icon: '📅', label: '공정현황' },
     { to: `${base}/logs`, icon: '📝', label: '공사일보' },
+    { to: `${base}/issues`, icon: '💬', label: '협업 · 이슈' },
     { to: `${base}/viewer`, icon: '🧊', label: '모델뷰어 (3D)' },
     { to: `${base}/docs`, icon: '🗂', label: '자료 관리' },
     { to: '/admin', icon: '👥', label: '구성원·권한', adminOnly: true },

@@ -6,7 +6,9 @@ import { ProjectSelect } from './pages/ProjectSelect';
 import { Workspace } from './pages/Workspace';
 import { ProjectShell } from './pages/ProjectShell';
 import { Dashboard } from './pages/Dashboard';
+import { Schedule } from './pages/Schedule';
 import { DailyLogs } from './pages/DailyLogs';
+import { Issues } from './pages/Issues';
 import { DocumentManager } from './pages/DocumentManager';
 import { Admin } from './pages/Admin';
 import { FileViewer } from './pages/FileViewer';
@@ -62,7 +64,9 @@ export default function App() {
             }
           >
             <Route index element={<Dashboard />} />
+            <Route path="schedule" element={<Schedule />} />
             <Route path="logs" element={<DailyLogs />} />
+            <Route path="issues" element={<Issues />} />
           </Route>
           {/* Full-screen tool modules reached from the rail */}
           <Route

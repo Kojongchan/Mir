@@ -2113,3 +2113,194 @@ button.danger:hover:not(:disabled) {
     justify-content: center;
   }
 }
+
+/* ---- 협업 · 이슈 ---- */
+.issue-filters {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+}
+.issue-filters button {
+  font-size: 12px;
+  padding: 5px 12px;
+}
+.issue-filters button.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
+.issue-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+.issue-open {
+  background: var(--chip-temp-bg);
+  color: var(--chip-temp-fg);
+}
+.issue-in_progress {
+  background: var(--chip-equip-bg);
+  color: var(--chip-equip-fg);
+}
+.issue-resolved {
+  background: var(--chip-construct-bg);
+  color: var(--chip-construct-fg);
+}
+.issue-closed {
+  background: var(--chip-neutral-bg);
+  color: var(--chip-neutral-fg);
+}
+
+.issue-prio {
+  font-size: 12px;
+  font-weight: 600;
+}
+.issue-prio-low {
+  color: var(--muted);
+}
+.issue-prio-normal {
+  color: var(--text);
+}
+.issue-prio-high {
+  color: var(--chip-temp-fg);
+}
+.issue-prio-urgent {
+  color: var(--danger);
+}
+
+.issue-detail-row td {
+  background: var(--panel-2);
+}
+.issue-detail {
+  padding: 6px 4px 10px;
+}
+.issue-desc {
+  margin: 0 0 8px;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+.issue-meta {
+  font-size: 12px;
+  margin: 0 0 10px;
+}
+.issue-comments {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.issue-comment {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  padding: 5px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.issue-comment-author {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.issue-comment-body {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+.issue-comment-when {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+.issue-comment-add {
+  display: flex;
+  gap: 8px;
+}
+.issue-comment-add input {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  color: var(--text);
+  font-size: 13px;
+}
+.issue-comment-add input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.dash-edit-row select {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+/* ---- 공정현황 타임라인 ---- */
+.sched-timeline {
+  padding: 30px 12px 64px;
+}
+.sched-track {
+  position: relative;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+}
+.sched-today {
+  position: absolute;
+  top: -8px;
+  bottom: -8px;
+  width: 2px;
+  background: var(--danger);
+  transform: translateX(-1px);
+}
+.sched-marker {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+.sched-dot {
+  display: block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--panel);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.sched-marker-label {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+}
+.sched-marker:nth-child(even) .sched-marker-label {
+  top: auto;
+  bottom: 16px;
+}
+.sched-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  margin-top: 8px;
+}
+.legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
