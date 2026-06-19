@@ -162,3 +162,52 @@ export async function deleteSchedule(scheduleId: string): Promise<void> {
   const { error } = await supabase.from('schedules').delete().eq('id', scheduleId);
   if (error) throw error;
 }
+
+// ---------------------------------------------------------------------
+// 활성 일정(자동 저장/복원) — 프로젝트당 1개 슬롯.
+// 공정관리(4D)에서 모델+공정표+매핑을 한 번 구성하면 수동 저장 없이도 이 슬롯에
+// 자동 저장되고, 재진입 시 자동 복원된다. 예약 이름으로 named 저장과 구분한다.
+// ---------------------------------------------------------------------
+
+export const ACTIVE_SCHEDULE_NAME = '__4D_ACTIVE__';
+
+/** 현재 일정+매핑을 프로젝트의 활성 슬롯에 저장(기존 활성 슬롯은 교체). */
+export async function saveActiveSchedule(params: {
+  projectId: string;
+  modelDbId: string | null;
+  source: ScheduleSource;
+  tasks: ScheduleTask[];
+  mapping: TaskMapping;
+}): Promise<void> {
+  // 기존 활성 슬롯 제거(연쇄로 작업/요소 삭제) 후 새로 저장.
+  await supabase
+    .from('schedules')
+    .delete()
+    .eq('project_id', params.projectId)
+    .eq('name', ACTIVE_SCHEDULE_NAME);
+  await saveSchedule({ ...params, name: ACTIVE_SCHEDULE_NAME });
+}
+
+/** 프로젝트의 활성 슬롯을 불러온다(없으면 null). */
+export async function loadActiveSchedule(projectId: string): Promise<LoadedSchedule | null> {
+  const { data, error } = await supabase
+    .from('schedules')
+    .select('id')
+    .eq('project_id', projectId)
+    .eq('name', ACTIVE_SCHEDULE_NAME)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  const id = data?.[0]?.id as string | undefined;
+  if (!id) return null;
+  return loadSchedule(id);
+}
+
+/** 활성 슬롯 비우기(모델 삭제/초기화 시). */
+export async function clearActiveSchedule(projectId: string): Promise<void> {
+  await supabase
+    .from('schedules')
+    .delete()
+    .eq('project_id', projectId)
+    .eq('name', ACTIVE_SCHEDULE_NAME);
+}

@@ -8,6 +8,7 @@ import {
   TASK_KIND_LABEL,
   DAY,
   type ScheduleTask,
+  type ScheduleSource,
   type CsvDoc,
   type ColumnMap,
 } from '../lib/schedule';
@@ -24,8 +25,12 @@ import {
   saveSchedule,
   loadSchedule,
   deleteSchedule,
+  saveActiveSchedule,
+  loadActiveSchedule,
+  ACTIVE_SCHEDULE_NAME,
   type SavedScheduleMeta,
 } from '../lib/scheduleApi';
+import { useAuth } from '../auth/AuthProvider';
 import { ColumnMapModal } from './ColumnMapModal';
 
 interface Props {
@@ -43,6 +48,7 @@ export function Timeline({ viewer, projectId, modelDbId }: Props) {
   const fourd = useStore((s) => s.fourd);
   const setStatus = useStore((s) => s.setStatus);
   const selected = useStore((s) => s.selected);
+  const isAdmin = !!useAuth().profile?.is_admin;
   const {
     enabled,
     tasks,
@@ -64,6 +70,13 @@ export function Timeline({ viewer, projectId, modelDbId }: Props) {
   const [detailed, setDetailed] = useState(false);
   const [pendingCsv, setPendingCsv] = useState<CsvDoc | null>(null);
   const hasSchedule = tasks.length > 0;
+
+  // 활성 슬롯에 즉시 저장(관리자, 모델 오픈 상태). 사용자 편집 직후 명시적으로 호출해
+  // 프로그램적 복원(autoRestore)과의 경합을 피한다. fire-and-forget.
+  const persistActive = (t: ScheduleTask[], m: TaskMapping, src: ScheduleSource = source ?? 'generic') => {
+    if (!isAdmin || !projectId || !modelDbId || t.length === 0) return;
+    void saveActiveSchedule({ projectId, modelDbId, source: src, tasks: t, mapping: m }).catch(() => {});
+  };
 
   // --- CSV 임포트(열 매핑 모달) ---
   const onPickFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -97,6 +110,7 @@ export function Timeline({ viewer, projectId, modelDbId }: Props) {
       start: parsed.start,
       end: parsed.end,
     });
+    persistActive(parsed.tasks, {}, parsed.source);
     setStatus(
       `공정표 로드: ${parsed.tasks.length}개 작업 (${parsed.source})` +
         (parsed.warnings.length ? ` · ${parsed.warnings.join(' ')}` : ''),
@@ -117,10 +131,12 @@ export function Timeline({ viewer, projectId, modelDbId }: Props) {
       result = mapSequential(tasks, catalog);
       const seq = mappingStats(result);
       fourd.setMapping(result, seq.tasks, seq.elements);
+      persistActive(tasks, result);
       setStatus(`이름 매핑이 적어 순서 기반으로 자동 배정: ${seq.tasks}작업 · ${seq.elements}객체`);
       return;
     }
     fourd.setMapping(result, stats.tasks, stats.elements);
+    persistActive(tasks, result);
     setStatus(`${mode === 'name' ? '이름' : '순서'} 매핑: ${stats.tasks}작업 · ${stats.elements}객체`);
   };
 
@@ -138,6 +154,7 @@ export function Timeline({ viewer, projectId, modelDbId }: Props) {
     const next: TaskMapping = { ...mapping, [taskId]: [...existing, selectedRef] };
     const stats = mappingStats(next);
     fourd.setMapping(next, stats.tasks, stats.elements);
+    persistActive(tasks, next);
     setStatus(`객체 #${selectedRef.expressID} → 작업에 매핑(총 ${stats.elements}개)`);
   };
 
@@ -147,6 +164,7 @@ export function Timeline({ viewer, projectId, modelDbId }: Props) {
     delete next[taskId];
     const stats = mappingStats(next);
     fourd.setMapping(next, stats.tasks, stats.elements);
+    persistActive(tasks, next);
     setStatus('작업의 매핑을 비웠습니다.');
   };
 
@@ -158,7 +176,7 @@ export function Timeline({ viewer, projectId, modelDbId }: Props) {
   const refreshSaved = async () => {
     if (!projectId) return;
     try {
-      const list = await listSchedules(projectId);
+      const list = (await listSchedules(projectId)).filter((s) => s.name !== ACTIVE_SCHEDULE_NAME);
       setSaved(list);
       if (list.length && !list.some((s) => s.id === savedId)) setSavedId(list[0].id);
     } catch {
@@ -231,16 +249,50 @@ export function Timeline({ viewer, projectId, modelDbId }: Props) {
     }
   };
 
-  // 공정관리 재진입 시: 공정용 모델이 자동으로 열리고(workspace) 저장된 일정이 있으면
-  // 가장 최근 일정+매핑을 한 번 자동 복원한다 → 메뉴를 갔다와도 매핑 상태 유지.
-  const autoLoadedRef = useRef<string | null>(null);
+  // --- 활성 일정 자동 복원 (수동 저장 없이 유지) ---
+  // 저장은 persistActive 로 사용자 편집 시 즉시 이뤄지고, 여기서는 모델이 열릴 때
+  // DB 활성 슬롯을 불러와 런타임 modelID 로 매핑을 다시 해석한다.
+  const autoRestoredRef = useRef<string | null>(null);
+
+  const autoRestore = async () => {
+    try {
+      const ls = await loadActiveSchedule(projectId);
+      if (!ls || ls.tasks.length === 0) return;
+      const starts = ls.tasks.map((t) => t.start);
+      const ends = ls.tasks.map((t) => t.end);
+      fourd.loadSchedule({
+        tasks: ls.tasks,
+        source: ls.meta.source,
+        start: Math.min(...starts),
+        end: Math.max(...ends),
+      });
+      const runtime = viewer?.primaryModelID ?? null;
+      const nextMapping: TaskMapping = {};
+      for (const [taskId, els] of Object.entries(ls.elements)) {
+        for (const el of els) {
+          if (runtime != null && el.modelDbId === modelDbId) {
+            (nextMapping[taskId] ??= []).push({ modelID: runtime, expressID: el.expressID });
+          }
+        }
+      }
+      const stats = mappingStats(nextMapping);
+      fourd.setMapping(nextMapping, stats.tasks, stats.elements);
+      setStatus(`공정표 자동 복원: ${ls.tasks.length}작업 · 매핑 ${stats.elements}객체`);
+    } catch {
+      /* 마이그레이션 미적용/권한 — 조용히 무시 */
+    }
+  };
+
+  // 모델이 (자동/수동) 열릴 때마다 활성 슬롯을 1회 복원한다. 모델 재오픈 시 런타임
+  // modelID 가 바뀌고 openModel 이 매핑을 비우므로, DB(model_id+expressID)에서 다시
+  // 해석해 매핑을 되살린다 → 수동 저장/재매핑 없이 유지.
   useEffect(() => {
-    if (!modelDbId || hasSchedule || !savedId) return;
-    if (autoLoadedRef.current === modelDbId) return;
-    autoLoadedRef.current = modelDbId;
-    void onLoad();
+    if (!modelDbId) return;
+    if (autoRestoredRef.current === modelDbId) return;
+    autoRestoredRef.current = modelDbId;
+    void autoRestore();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelDbId, hasSchedule, savedId]);
+  }, [modelDbId]);
 
   const onDelete = async () => {
     if (!savedId) return;
