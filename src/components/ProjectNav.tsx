@@ -25,7 +25,7 @@ export function ProjectNav() {
     { to: `${base}/board`, icon: '📢', label: '게시판' },
     { to: `${base}/viewer`, icon: '🧊', label: '모델뷰어 (3D)' },
     { to: `${base}/docs`, icon: '🗂', label: '자료 관리' },
-    { to: '/admin', icon: '👥', label: '구성원·권한', adminOnly: true },
+    { to: `${base}/members`, icon: '👥', label: '구성원·권한', adminOnly: true },
   ];
 
   return (
