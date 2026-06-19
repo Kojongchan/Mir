@@ -1,13 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
-import { BrandLogo } from '../components/BrandLogo';
-import { ThemeToggle } from '../components/ThemeToggle';
 import { FolderTree } from '../components/cde/FolderTree';
 import { StatusBadge } from '../components/cde/StatusBadge';
 import { VersionHistory } from '../components/cde/VersionHistory';
 import { ActivityLog } from '../components/cde/ActivityLog';
-import { getProject, type Project } from '../lib/api';
 import {
   FILE_STATUSES,
   STATUS_LABEL,
@@ -27,18 +24,14 @@ import {
 } from '../lib/cde';
 
 /**
- * CDE document manager (Phase 7 / S14): a folder tree + versioned file store
- * with ISO 19650 status and an activity trail. A dedicated module reachable
- * from the workspace ("자료 관리"). The 3D viewer / 4D timeline stay in the
- * workspace; this screen owns documents & media.
+ * 자료 관리(CDE) 모듈 — 포털 셸 안에서 렌더(좌측 모듈 레일은 셸이 유지). 모듈
+ * 레일 옆 폴더 트리(두 번째 트리) + 우측 문서 목록. ISO 19650 상태·버전·활동 이력.
  */
 export function DocumentManager() {
   const { projectId = '' } = useParams();
-  const navigate = useNavigate();
-  const { profile, signOut } = useAuth();
+  const { profile } = useAuth();
   const isAdmin = !!profile?.is_admin;
 
-  const [project, setProject] = useState<Project | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null); // null = root/unfiled
   const [files, setFiles] = useState<CdeFile[]>([]);
@@ -53,7 +46,6 @@ export function DocumentManager() {
   const versionTarget = useRef<CdeFile | null>(null);
 
   useEffect(() => {
-    getProject(projectId).then(setProject);
     refreshFolders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
@@ -186,19 +178,7 @@ export function DocumentManager() {
   const openFile = (f: CdeFile) => window.open(`/view/${f.id}`, '_blank', 'noopener');
 
   return (
-    <div className="cde-page">
-      <header className="topbar">
-        <span className="brand"><BrandLogo size="sm" /></span>
-        <span className="project-title">{project?.name ?? '…'} · 자료 관리</span>
-        <div className="spacer" />
-        <ThemeToggle />
-        <button onClick={() => navigate(`/project/${projectId}`)}>사업개요</button>
-        <button onClick={() => navigate(`/project/${projectId}/viewer`)}>3D 뷰어</button>
-        <button onClick={() => navigate('/')}>프로젝트 변경</button>
-        <button onClick={signOut}>로그아웃</button>
-      </header>
-
-      <div className="cde-main">
+    <div className="mod-fill cde-embed">
         <aside className="cde-side">
           <div className="sidebar-head">
             <h2>폴더</h2>
@@ -296,7 +276,6 @@ export function DocumentManager() {
 
           <div className="cde-statusline muted">{status}</div>
         </section>
-      </div>
 
       {historyFor && <VersionHistory file={historyFor} onClose={() => setHistoryFor(null)} />}
       {showActivity && <ActivityLog projectId={projectId} onClose={() => setShowActivity(false)} />}

@@ -73,24 +73,12 @@ export default function App() {
             <Route path="billing" element={<Billing />} />
             <Route path="subcontracts" element={<Subcontracts />} />
             <Route path="board" element={<Board />} />
+            {/* Modules with their own sub-tree — rendered inside the shell so the
+                left module rail stays put and only the right side changes. */}
+            <Route path="viewer" element={<Workspace />} />
+            <Route path="docs" element={<DocumentManager />} />
+            <Route path="members" element={<AdminOnly><Admin embedded /></AdminOnly>} />
           </Route>
-          {/* Full-screen tool modules reached from the rail */}
-          <Route
-            path="/project/:projectId/viewer"
-            element={
-              <Protected>
-                <Workspace />
-              </Protected>
-            }
-          />
-          <Route
-            path="/project/:projectId/docs"
-            element={
-              <Protected>
-                <DocumentManager />
-              </Protected>
-            }
-          />
           <Route
             path="/admin"
             element={

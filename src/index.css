@@ -1829,8 +1829,66 @@ button.danger:hover:not(:disabled) {
   min-height: 0;
 }
 .portal-main {
+  position: relative;
+  min-height: 0;
   overflow: auto;
   background: var(--bg);
+}
+
+/* 모듈 화면: 좌측 모듈 레일(셸)은 유지, 우측만 교체. 모델뷰어·자료관리처럼
+   자체 하위 트리가 있는 모듈은 레일 옆에 두 번째 트리 컬럼을 둔다. */
+.mod-fill {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+}
+.viewer-fill {
+  display: flex;
+}
+.cde-embed {
+  display: grid;
+  grid-template-columns: 248px 1fr;
+}
+.mod-subtree {
+  width: 232px;
+  flex-shrink: 0;
+  background: var(--panel-2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.mod-main {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  flex-shrink: 0;
+}
+.viewer-bar .muted {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.viewer-main .viewport {
+  flex: 1;
+  min-height: 0;
+}
+
+/* 관리자 콘솔을 셸 안에 임베드할 때 */
+.admin-embed {
+  padding-bottom: 24px;
 }
 
 /* ---- 좌측 모듈 레일 ---- */

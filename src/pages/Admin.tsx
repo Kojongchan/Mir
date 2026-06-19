@@ -25,7 +25,7 @@ import {
 
 type Tab = 'projects' | 'users' | 'members';
 
-export function Admin() {
+export function Admin({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate();
   const { profile } = useAuth();
   const [tab, setTab] = useState<Tab>('projects');
@@ -52,20 +52,8 @@ export function Admin() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return (
-    <div className="admin-screen">
-      <header className="admin-top">
-        <div>
-          <span className="brand"><BrandLogo size="sm" /></span>
-          <span className="admin-title">관리자 콘솔</span>
-        </div>
-        <div className="admin-top-actions">
-          <span className="muted">{profile?.full_name ?? profile?.username}</span>
-          <ThemeToggle />
-          <button onClick={() => navigate('/')}>프로젝트로</button>
-        </div>
-      </header>
-
+  const body = (
+    <>
       <nav className="admin-tabs">
         <button className={tab === 'projects' ? 'active' : ''} onClick={() => setTab('projects')}>
           프로젝트
@@ -103,6 +91,25 @@ export function Admin() {
           <MembersTab projects={projects} users={users} flash={flash} fail={fail} />
         )}
       </main>
+    </>
+  );
+
+  if (embedded) return <div className="admin-embed">{body}</div>;
+
+  return (
+    <div className="admin-screen">
+      <header className="admin-top">
+        <div>
+          <span className="brand"><BrandLogo size="sm" /></span>
+          <span className="admin-title">관리자 콘솔</span>
+        </div>
+        <div className="admin-top-actions">
+          <span className="muted">{profile?.full_name ?? profile?.username}</span>
+          <ThemeToggle />
+          <button onClick={() => navigate('/')}>프로젝트로</button>
+        </div>
+      </header>
+      {body}
     </div>
   );
 }

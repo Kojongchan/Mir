@@ -1,20 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { IfcViewer, type UpAxis } from '../viewer/IfcViewer';
 import { useStore } from '../store/useStore';
 import { useAuth } from '../auth/AuthProvider';
 import { Toolbar } from '../components/Toolbar';
 import { PropertiesPanel } from '../components/PropertiesPanel';
 import { Timeline } from '../components/Timeline';
-import { ThemeToggle } from '../components/ThemeToggle';
-import { BrandLogo } from '../components/BrandLogo';
 import {
   downloadModelBytes,
-  getProject,
   listModels,
   uploadModel,
   type ModelRecord,
-  type Project,
 } from '../lib/api';
 import {
   listFiles,
@@ -23,34 +19,28 @@ import {
 } from '../lib/files';
 import { uploadNewFile } from '../lib/cde';
 
+/**
+ * 모델뷰어 모듈 — 포털 셸 안에서 렌더된다(좌측 모듈 레일은 셸이 유지). 모듈
+ * 레일 옆에 모델/문서 하위 트리를 두고, 우측 메인에 3D 뷰포트·4D 타임라인을 둔다.
+ */
 export function Workspace() {
   const { projectId = '' } = useParams();
-  const navigate = useNavigate();
-  const { signOut, profile } = useAuth();
+  const { profile } = useAuth();
   const isAdmin = !!profile?.is_admin;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [viewer, setViewer] = useState<IfcViewer | null>(null);
 
-  const [project, setProject] = useState<Project | null>(null);
   const [models, setModels] = useState<ModelRecord[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  // Project documents & media (images, PDFs, video, spreadsheets, …) — opened
-  // in a standalone preview tab at /view/:fileId.
   const [files, setFiles] = useState<FileRecord[]>([]);
   const [docUploading, setDocUploading] = useState(false);
   const docInput = useRef<HTMLInputElement>(null);
 
-  // Up-axis correction for the occasional mis-oriented model (e.g. Y-up bridge
-  // exports). There is no visible control yet — orient from the console with
-  // window.__mirUpAxis('y'); the choice is remembered per model in localStorage
-  // so it survives reloads. (A toolbar toggle can be re-added when needed.)
   const openModelId = useRef<string | null>(null);
-  // DB(models.id) of the currently open model — used by the 4D layer to persist
-  // and resolve task↔element mappings against this model.
   const [openModelDbId, setOpenModelDbId] = useState<string | null>(null);
 
   const { status, setStatus, setSelected, setModelCount, fourd } = useStore();
@@ -59,7 +49,6 @@ export function Workspace() {
     if (!containerRef.current) return;
     const v = new IfcViewer(containerRef.current);
     v.setOnSelect(setSelected);
-    // Console override that also remembers the choice for the open model.
     (window as unknown as { __mirUpAxis?: (a: UpAxis) => void }).__mirUpAxis = (a) => {
       v.setUpAxis(a);
       if (openModelId.current) saveUpAxisPref(openModelId.current, a);
@@ -69,7 +58,6 @@ export function Workspace() {
   }, [setSelected]);
 
   useEffect(() => {
-    getProject(projectId).then(setProject);
     refreshModels();
     refreshFiles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -89,7 +77,6 @@ export function Workspace() {
       setModelCount(viewer.modelCount);
       openModelId.current = m.id;
       setOpenModelDbId(m.id);
-      // 새 모델을 열면 기존 4D 매핑(이전 expressID 참조)은 무효 → 초기화
       viewer.clearConstruction();
       fourd.setMapping({}, 0, 0);
       setStatus(`불러옴: ${m.name}`);
@@ -123,8 +110,6 @@ export function Workspace() {
     setDocUploading(true);
     setStatus(`업로드 중: ${file.name}`);
     try {
-      // Route through the CDE layer so every upload gets a version 1 + activity
-      // entry; lands in the project root (unfiled), organisable in 자료 관리.
       await uploadNewFile(projectId, null, file);
       await refreshFiles();
       setStatus(`업로드 완료: ${file.name}`);
@@ -136,34 +121,14 @@ export function Workspace() {
     }
   };
 
-  // Open a document/media file in its own preview tab. Routed under /view so a
-  // direct link is shareable; auth/RLS are re-checked there.
   const openFile = (f: FileRecord) => window.open(`/view/${f.id}`, '_blank', 'noopener');
 
   return (
-    <div className="app workspace">
-      <header className="topbar">
-        <span className="brand"><BrandLogo size="sm" /></span>
-        <span className="project-title">{project?.name ?? '…'}</span>
-        <Toolbar viewer={viewer} />
-        <div className="spacer" />
-        <ThemeToggle />
-        <button onClick={() => navigate(`/project/${projectId}`)}>사업개요</button>
-        <button onClick={() => navigate(`/project/${projectId}/docs`)}>자료 관리</button>
-        <button onClick={() => navigate('/')}>프로젝트 변경</button>
-        <button onClick={signOut}>로그아웃</button>
-      </header>
-
-      <aside className="sidebar">
+    <div className="mod-fill viewer-fill">
+      <aside className="mod-subtree">
         <div className="sidebar-head">
           <h2>모델</h2>
-          <input
-            ref={fileInput}
-            type="file"
-            accept=".ifc"
-            style={{ display: 'none' }}
-            onChange={onUpload}
-          />
+          <input ref={fileInput} type="file" accept=".ifc" style={{ display: 'none' }} onChange={onUpload} />
           {isAdmin && (
             <button onClick={() => fileInput.current?.click()} disabled={uploading}>
               {uploading ? '업로드 중…' : 'IFC 업로드'}
@@ -173,15 +138,9 @@ export function Workspace() {
         <ul className="model-list">
           {models.map((m) => (
             <li key={m.id}>
-              <button
-                className="model-item"
-                onClick={() => openModel(m)}
-                disabled={busyId === m.id}
-              >
+              <button className="model-item" onClick={() => openModel(m)} disabled={busyId === m.id}>
                 <span className="model-name">{m.name}</span>
-                <span className="muted">
-                  {busyId === m.id ? '로딩…' : sizeLabel(m.size_bytes)}
-                </span>
+                <span className="muted">{busyId === m.id ? '로딩…' : sizeLabel(m.size_bytes)}</span>
               </button>
             </li>
           ))}
@@ -190,12 +149,7 @@ export function Workspace() {
 
         <div className="sidebar-head">
           <h2>문서 · 미디어</h2>
-          <input
-            ref={docInput}
-            type="file"
-            style={{ display: 'none' }}
-            onChange={onUploadDoc}
-          />
+          <input ref={docInput} type="file" style={{ display: 'none' }} onChange={onUploadDoc} />
           {isAdmin && (
             <button onClick={() => docInput.current?.click()} disabled={docUploading}>
               {docUploading ? '업로드 중…' : '파일 업로드'}
@@ -205,11 +159,7 @@ export function Workspace() {
         <ul className="model-list">
           {files.map((f) => (
             <li key={f.id}>
-              <button
-                className="model-item"
-                onClick={() => openFile(f)}
-                title={`${f.name} — 새 탭에서 미리보기`}
-              >
+              <button className="model-item" onClick={() => openFile(f)} title={`${f.name} — 새 탭에서 미리보기`}>
                 <span className="model-name">{f.name}</span>
                 <span className="muted">{fileSizeLabel(f.size_bytes)}</span>
               </button>
@@ -219,16 +169,17 @@ export function Workspace() {
         </ul>
       </aside>
 
-      <div className="viewport" ref={containerRef} />
-
-      <PropertiesPanel />
-
-      <Timeline viewer={viewer} projectId={projectId} modelDbId={openModelDbId} />
-
-      <footer className="statusbar">
-        <span>{status}</span>
-        <span className="muted">모델 {viewer?.modelCount ?? 0}개</span>
-      </footer>
+      <div className="mod-main viewer-main">
+        <div className="viewer-bar">
+          <Toolbar viewer={viewer} />
+          <div className="spacer" />
+          <span className="muted">{status}</span>
+          <span className="muted">· 모델 {viewer?.modelCount ?? 0}개</span>
+        </div>
+        <div className="viewport" ref={containerRef} />
+        <PropertiesPanel />
+        <Timeline viewer={viewer} projectId={projectId} modelDbId={openModelDbId} />
+      </div>
     </div>
   );
 }
