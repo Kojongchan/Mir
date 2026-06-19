@@ -113,6 +113,7 @@ export class IfcViewer {
   private onSelect: SelectCallback = () => {};
   private initialized = false;
   private disposed = false;
+  private resizeObserver?: ResizeObserver;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -139,6 +140,13 @@ export class IfcViewer {
 
     this.renderer.domElement.addEventListener('click', this.handleClick);
     window.addEventListener('resize', this.handleResize);
+    // Container can resize without a window resize (e.g. the 4D timeline panel
+    // expanding/collapsing, or switching modules in the portal shell) — keep the
+    // canvas matched to its box.
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.handleResize());
+      this.resizeObserver.observe(container);
+    }
 
     this.animate();
   }
@@ -667,6 +675,7 @@ export class IfcViewer {
   private handleResize = () => {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
+    if (w === 0 || h === 0) return; // hidden/collapsed — skip to avoid NaN aspect
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
@@ -681,6 +690,7 @@ export class IfcViewer {
 
   dispose() {
     this.disposed = true;
+    this.resizeObserver?.disconnect();
     window.removeEventListener('resize', this.handleResize);
     this.renderer.domElement.removeEventListener('click', this.handleClick);
     this.renderer.dispose();
