@@ -173,6 +173,18 @@ export class IfcViewer {
   private clashGhostMaterial: THREE.Material | null = null;
 
   private onSelect: SelectCallback = () => {};
+  /** active camera fly-through tween (Animator / viewpoint walkthrough) */
+  private cameraTween: {
+    fromPos: THREE.Vector3;
+    toPos: THREE.Vector3;
+    fromTgt: THREE.Vector3;
+    toTgt: THREE.Vector3;
+    fov0: number;
+    fov1: number;
+    start: number;
+    dur: number;
+    onDone?: () => void;
+  } | null = null;
   /** fired when an issue pin is clicked (issueId + screen coords) */
   private onIssuePin: (issueId: string, clientX: number, clientY: number) => void = () => {};
   private initialized = false;
@@ -633,6 +645,43 @@ export class IfcViewer {
     if (typeof s.far === 'number') this.camera.far = s.far;
     this.camera.updateProjectionMatrix();
     this.controls.update();
+  }
+
+  /**
+   * Smoothly fly the camera to a saved camera state over `durationMs`
+   * (eased), used by the viewpoint walkthrough / Animator. `onDone` fires once
+   * the destination is reached (or immediately if there's nothing to animate).
+   * Controls input is suspended during the flight and restored on completion.
+   */
+  tweenCameraTo(s: CameraState, durationMs = 1400, onDone?: () => void) {
+    if (!s || !s.position || !s.target) {
+      onDone?.();
+      return;
+    }
+    if (s.up) this.camera.up.set(s.up[0], s.up[1], s.up[2]);
+    // Widen near/far up front so nothing clips mid-flight.
+    if (typeof s.near === 'number') this.camera.near = Math.min(this.camera.near, s.near);
+    if (typeof s.far === 'number') this.camera.far = Math.max(this.camera.far, s.far);
+    this.camera.updateProjectionMatrix();
+    this.cameraTween = {
+      fromPos: this.camera.position.clone(),
+      toPos: new THREE.Vector3(s.position[0], s.position[1], s.position[2]),
+      fromTgt: this.controls.target.clone(),
+      toTgt: new THREE.Vector3(s.target[0], s.target[1], s.target[2]),
+      fov0: this.camera.fov,
+      fov1: typeof s.fov === 'number' ? s.fov : this.camera.fov,
+      start: performance.now(),
+      dur: Math.max(1, durationMs),
+      onDone,
+    };
+    this.controls.enabled = false;
+  }
+
+  /** Abort an in-progress camera flight and hand control back to the user. */
+  cancelCameraTween() {
+    if (!this.cameraTween) return;
+    this.cameraTween = null;
+    this.controls.enabled = true;
   }
 
   /**
@@ -1302,8 +1351,29 @@ export class IfcViewer {
   private animate = () => {
     if (this.disposed) return;
     requestAnimationFrame(this.animate);
+    this.stepCameraTween();
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
+  };
+
+  /** Advance the camera fly-through one frame (smoothstep easing). */
+  private stepCameraTween() {
+    const tw = this.cameraTween;
+    if (!tw) return;
+    const t = Math.min(1, (performance.now() - tw.start) / tw.dur);
+    const e = t * t * (3 - 2 * t); // smoothstep
+    this.camera.position.lerpVectors(tw.fromPos, tw.toPos, e);
+    this.controls.target.lerpVectors(tw.fromTgt, tw.toTgt, e);
+    if (tw.fov0 !== tw.fov1) {
+      this.camera.fov = tw.fov0 + (tw.fov1 - tw.fov0) * e;
+      this.camera.updateProjectionMatrix();
+    }
+    if (t >= 1) {
+      const done = tw.onDone;
+      this.cameraTween = null;
+      this.controls.enabled = true;
+      done?.();
+    }
   };
 
   dispose() {

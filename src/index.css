@@ -3349,3 +3349,13 @@ button.danger:hover:not(:disabled) {
   font-size: 12px;
   padding: 3px 8px;
 }
+
+/* 마크업 선택 표시(점선 박스) + 패널 힌트 (S39) */
+.markup-sel {
+  stroke: var(--accent);
+  stroke-width: 3;
+  stroke-dasharray: 10 6;
+}
+.vp-hint {
+  font-size: 11px;
+}
