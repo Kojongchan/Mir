@@ -21,6 +21,7 @@ export function ProjectNav() {
     { to: `${base}/model`, icon: '🧊', label: '통합모델 (3D)' },
     { to: `${base}/viewer`, icon: '🏗', label: '공정관리 (4D)' },
     { to: `${base}/clash`, icon: '🔍', label: '간섭체크' },
+    { to: `${base}/drawings`, icon: '📐', label: '도면 (2D)' },
     { to: `${base}/logs`, icon: '📝', label: '공사일보' },
     { to: `${base}/issues`, icon: '💬', label: '협업 · 이슈' },
     { to: `${base}/billing`, icon: '💰', label: '기성내역' },
