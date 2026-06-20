@@ -2,11 +2,24 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-20 · **S40 간섭 결과 그룹화·정렬·상태필터·상태승계 완료**(branch
-`feature/clash-grouping`). 간섭 결과를 카테고리쌍/요소A/상태로 묶고 깊이·상태로 정렬, 상태칩 필터,
-재검사 시 상태 승계(Navisworks rerun). 마이그레이션 없음(순수 프론트). typecheck·build 통과.
-**S38 간섭 보고서는 사용자 요청으로 보류**(Word 양식 도착 시 재개). **장비 시뮬(S16)은 기획안 최후로 연기**.
-백로그(§9): 2D 도면 핀 · 모바일 현장 모드 · S15 물량/속성색칠 · (대기) S17 APS.
+**마지막 업데이트**: 2026-06-20 · **S41 2D 도면(PDF/DXF) + 이슈 핀 완료**(branch `feature/drawings-2d`).
+현장 도면 업로드·열람(PDF=pdf.js, DXF=자체 렌더)·줌/팬 + 도면 위 이슈 핀(정규화 좌표)↔이슈 연계.
+마이그레이션 `0018_drawings.sql`(추가형·멱등) + setup_all.sql 갱신. typecheck·build 통과.
+**DWG 직접열기는 변환 필요 → S17(APS)로 분리**(D: A안). **S38 간섭 보고서 보류**(Word 양식 대기).
+**장비 시뮬(S16)은 최후 연기**. 백로그(§9): 모바일 현장 모드 · S15 물량/속성색칠 · (대기) S17 APS.
+
+## S41 결과 (branch: feature/drawings-2d) — 2D 도면(PDF/DXF) + 이슈 핀
+> 현장 2D 도면 열람 + 도면 위 이슈 핀. DWG는 변환(APS/ODA) 필요 → S17 분리(A안). dxf-parser 추가.
+- ✅ **`0018_drawings.sql`**: `drawings`(name·kind(pdf/dxf)·storage_path·page_count) +
+  `drawing_pins`(drawing_id·page·x·y 정규화0..1·label·issue_id). RLS 읽기=멤버, 쓰기=admin(D11).
+  바이너리는 'docs' 버킷 `<pid>/drawings/<id>.<ext>`(0004 storage 정책 재사용). setup_all.sql 0003~0018.
+- ✅ **`lib/drawings.ts`**: 타입 + 업로드/CRUD(도면·핀) + 서명URL. `lib/dxfRender.ts`: 경량 DXF→2D
+  캔버스(LINE/POLYLINE/ARC/CIRCLE/ELLIPSE/TEXT, y-up→y-down). INSERT/SPLINE은 MVP 미지원(안내).
+- ✅ **`DrawingSheet`**: PDF(pdf.js)·DXF 캔버스 렌더 + 휠 줌/드래그 팬(캔버스+핀 레이어 CSS 변환) +
+  PDF 페이지 네비. 핀 추가(admin)·라벨·**이슈 생성/연결·이슈로 이동**·삭제. 핀은 줌 역보정으로 크기 유지.
+- ✅ **`pages/Drawings.tsx`** + 라우트 `/project/:id/drawings` + 좌측 네비 "📐 도면 (2D)". 목록·업로드·삭제.
+- ✅ 검증: `typecheck`·`build` 통과. 라이브 눈검증(실제 PDF/DXF 업로드·핀)은 사용자 화면 권장(원격 egress).
+- 📌 후속(범위 밖): DXF INSERT/블록 전개·SPLINE · 핀 멤버 작성 권한 · 도면↔3D 위치 양방향 · DWG(S17 APS).
 
 ## S40 결과 (branch: feature/clash-grouping) — 간섭 결과 그룹화·정렬·필터·상태승계
 > Navisworks식 간섭 결과 정리. 마이그레이션 없음(클라이언트 전용). typecheck·build 통과.
