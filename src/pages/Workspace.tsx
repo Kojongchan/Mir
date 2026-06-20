@@ -93,6 +93,7 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   const [markupTool, setMarkupTool] = useState<MarkupTool>('arrow');
   const [markupColor, setMarkupColor] = useState<RedlineColor>('red');
   const [markupShapes, setMarkupShapes] = useState<MarkupShape[]>([]);
+  const [markupSel, setMarkupSel] = useState<number | null>(null);
 
   // 통합모델: 모델/카테고리별 표시 토글(보고 싶은 것만 선택).
   const [meta, setMeta] = useState<ElementMeta[]>([]);
@@ -285,6 +286,40 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   useEffect(() => {
     if (markupOn && measureOn) setMeasureOn(false);
   }, [markupOn, measureOn]);
+
+  // 마크업을 끄면 선택 해제. 도형이 줄면(뷰포인트 재호출 등) 잘못된 선택 정리.
+  useEffect(() => {
+    if (!markupOn) setMarkupSel(null);
+  }, [markupOn]);
+  useEffect(() => {
+    if (markupSel != null && markupSel >= markupShapes.length) setMarkupSel(null);
+  }, [markupSel, markupShapes]);
+
+  const deleteSelectedMarkup = () => {
+    if (markupSel == null) return;
+    setMarkupShapes((s) => s.filter((_, i) => i !== markupSel));
+    setMarkupSel(null);
+  };
+
+  // Delete/Backspace 로 선택 도형 삭제(마크업 그리기 중에만).
+  useEffect(() => {
+    if (!markupOn) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && markupSel != null) {
+        e.preventDefault();
+        deleteSelectedMarkup();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [markupOn, markupSel]);
+
+  // 뷰포인트 재호출 등으로 마크업을 통째로 교체할 때 선택도 초기화.
+  const replaceMarkup = (shapes: MarkupShape[]) => {
+    setMarkupShapes(shapes);
+    setMarkupSel(null);
+  };
 
   // 이슈 → 뷰포인트 딥링크로 진입하면 뷰포인트 패널을 연다.
   useEffect(() => {
@@ -555,6 +590,7 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
           {markupOn && (
             <span className="markup-ctrls">
               <select value={markupTool} onChange={(e) => setMarkupTool(e.target.value as MarkupTool)} title="도구">
+                <option value="select">선택/이동</option>
                 <option value="arrow">화살표</option>
                 <option value="line">선</option>
                 <option value="rect">사각형</option>
@@ -570,7 +606,12 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
                   />
                 ))}
               </span>
-              <button onClick={() => setMarkupShapes([])} disabled={markupShapes.length === 0} title="마크업 지우기">
+              {markupSel != null && (
+                <button className="danger" onClick={deleteSelectedMarkup} title="선택 도형 삭제 (Del)">
+                  선택 삭제
+                </button>
+              )}
+              <button onClick={() => replaceMarkup([])} disabled={markupShapes.length === 0} title="마크업 전체 지우기">
                 지우기
               </button>
             </span>
@@ -589,6 +630,8 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
             active={markupOn}
             tool={markupTool}
             color={markupColor}
+            selected={markupSel}
+            onSelect={setMarkupSel}
           />
         </div>
         <PropertiesPanel />
@@ -650,7 +693,7 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
             getDisplayState={getDisplayState}
             applyDisplayState={applyDisplayState}
             markup={markupShapes}
-            setMarkup={setMarkupShapes}
+            setMarkup={replaceMarkup}
             autoOpenId={openViewpoint}
             onClose={() => setShowViewpoints(false)}
           />

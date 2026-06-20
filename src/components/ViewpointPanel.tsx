@@ -55,7 +55,18 @@ export function ViewpointPanel({
   const [list, setList] = useState<Viewpoint[]>([]);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const playRef = useRef(false);
   const autoDoneRef = useRef(false);
+
+  // 언마운트/닫힘 시 진행 중인 워크스루를 멈춘다.
+  useEffect(() => {
+    return () => {
+      playRef.current = false;
+      viewer?.cancelCameraTween();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -141,10 +152,42 @@ export function ViewpointPanel({
 
   const recall = (vp: Viewpoint) => {
     if (!viewer) return;
+    if (playRef.current) stopWalkthrough();
     viewer.applyCameraState(vp.camera);
     if (vp.display) applyDisplayState(vp.display);
     setMarkup(vp.markup ?? []);
     setStatus(`재호출: ${vp.name}`);
+  };
+
+  // 카메라 애니메이션(Animator) — 저장 뷰포인트를 순서대로 부드럽게 날아다닌다.
+  // 목록은 최신순이라 워크스루는 시간순(역순)으로 재생한다.
+  const playWalkthrough = async () => {
+    if (!viewer || list.length === 0 || playing) return;
+    const seq = [...list].reverse();
+    playRef.current = true;
+    setPlaying(true);
+    try {
+      for (let i = 0; i < seq.length; i++) {
+        if (!playRef.current) break;
+        const vp = seq[i];
+        if (vp.display) applyDisplayState(vp.display);
+        setMarkup(vp.markup ?? []);
+        setStatus(`워크스루 ${i + 1}/${seq.length}: ${vp.name}`);
+        await new Promise<void>((res) => viewer.tweenCameraTo(vp.camera, 1800, res));
+        if (!playRef.current) break;
+        await sleep(1300); // 각 지점에서 잠시 머무름
+      }
+    } finally {
+      playRef.current = false;
+      setPlaying(false);
+      if (status.startsWith('워크스루')) setStatus('워크스루 종료');
+    }
+  };
+
+  const stopWalkthrough = () => {
+    playRef.current = false;
+    viewer?.cancelCameraTween();
+    setPlaying(false);
   };
 
   const onDelete = async (vp: Viewpoint) => {
@@ -204,13 +247,22 @@ export function ViewpointPanel({
 
       <div className="clash-scroll">
         <div className="vp-toolbar">
-          {isAdmin ? (
-            <button className="primary" onClick={onSave} disabled={busy || !viewer}>
+          {isAdmin && (
+            <button className="primary" onClick={onSave} disabled={busy || playing || !viewer}>
               ＋ 현재 뷰 저장
             </button>
-          ) : (
-            <span className="muted">멤버는 저장된 뷰를 재호출할 수 있습니다.</span>
           )}
+          {list.length > 0 &&
+            (playing ? (
+              <button onClick={stopWalkthrough} title="워크스루 정지">
+                ■ 정지
+              </button>
+            ) : (
+              <button onClick={playWalkthrough} disabled={!viewer} title="저장 뷰포인트를 순서대로 재생">
+                ▶ 워크스루
+              </button>
+            ))}
+          {!isAdmin && <span className="muted vp-hint">멤버는 재호출·워크스루만 가능</span>}
         </div>
 
         <div className="vp-list">
@@ -259,4 +311,8 @@ export function ViewpointPanel({
       <div className="clash-resize" onMouseDown={startDrag('resize')} title="크기 조절" />
     </div>
   );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((res) => setTimeout(res, ms));
 }

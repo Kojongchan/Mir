@@ -2,12 +2,28 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-20 · **S37 저장 뷰포인트 + 마크업(redline) 완료**(branch
-`claude/viewpoints-markup-8bu09a`). 카메라·표시상태·2D 주석을 이름 붙여 저장·재호출·공유 +
-뷰포인트↔이슈 양방향 연계. 배포 SQL=`supabase/setup_all.sql`(0003~0017). typecheck·build 통과.
+**마지막 업데이트**: 2026-06-20 · **S39 마크업 개별 편집 + 카메라 애니메이션(Animator) 완료**(branch
+`feature/markup-edit-animator`, S37 후속). 마크업 도형 선택/이동/삭제 + 저장 뷰포인트 순차 재생
+(워크스루). 마이그레이션 없음(순수 프론트). typecheck·build 통과. 배포 SQL 불변(0003~0017).
 **다음 스텝=S38 간섭 보고서**(사용자 Word 양식 채우기, `docxtemplater`/D15 — 양식 도착 시).
-**장비 시뮬(S16)은 기획안 최후로 연기**(D15 우선순위). 그 외 백로그(§9): 마크업 도형 개별 편집·
-카메라 애니메이션 · 간섭 그룹화/필터 · 2D 도면 핀 · 모바일 현장 모드 · (대기) S17 APS.
+**장비 시뮬(S16)은 기획안 최후로 연기**. 그 외 백로그(§9): 간섭 그룹화/필터 · 2D 도면 핀 ·
+모바일 현장 모드 · S15 물량/속성색칠 · (대기) S17 APS.
+
+## S39 결과 (branch: feature/markup-edit-animator) — 마크업 개별 편집 + 카메라 애니메이션
+> S37 후속(사용자 선택). 마이그레이션 없음(순수 프론트엔드). typecheck·build 통과.
+- ✅ **마크업 도형 개별 편집(`MarkupOverlay`)**: `선택/이동` 도구 추가 — 클릭 히트테스트(선/화살표=
+  선분거리, 사각형=테두리, 텍스트=앵커)로 도형 선택(점선 바운딩박스), 드래그로 이동, `선택 삭제`
+  버튼 + `Delete`/`Backspace` 키로 삭제. 기존 `지우기`(전체)는 유지.
+- ✅ **카메라 애니메이션(Animator/워크스루)**: `IfcViewer.tweenCameraTo`(position·target·fov
+  smoothstep 보간, near/far 사전확장으로 클리핑 방지)·`cancelCameraTween` + animate 루프
+  `stepCameraTween`. `ViewpointPanel` 에 `▶ 워크스루`/`■ 정지` — 저장 뷰포인트를 **시간순**으로
+  부드럽게 날아다니며 각 지점에서 표시상태·마크업 적용 후 잠시 머무름. 멤버도 재생 가능.
+- ✅ **Workspace 연동**: 마크업 선택 상태(markupSel) 관리(끄면/도형 감소 시 자동 해제), 뷰포인트
+  재호출이 진행 중 워크스루를 멈추도록 정리. 패널 언마운트 시 tween 중단.
+- ✅ 검증: `typecheck`·`build` 통과(메인 gzip 700KB). 색은 `index.css` 토큰만(`--redline-*`·`--accent`).
+  라이브 눈검증(드래그 이동·워크스루 비행)은 IFC 로드 후 사용자 화면 권장(원격 egress 제약).
+- 📌 후속(범위 밖): 마크업 끝점 핸들 리사이즈 · 다중 선택 · 워크스루 속도/머무름 시간 UI ·
+  뷰포인트 순서 변경(드래그) · 워크스루 중 녹화(영상 내보내기).
 
 ## S37 결과 (branch: claude/viewpoints-markup-8bu09a) — 저장 뷰포인트 + 마크업(redline)
 > Navisworks 잔여 협업 핵심. 카메라 뷰 저장·공유 + 화면 2D 주석. 마이그레이션 `0017_viewpoints.sql`
