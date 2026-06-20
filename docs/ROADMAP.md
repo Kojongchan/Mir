@@ -10,8 +10,8 @@ VR 검토까지. 다중 사용자가 **본인 배정 프로젝트(공구)** 만 
 | 0 | 인증 + 프로젝트별 접근권한 + 데이터 저장 | ✅ 코드 완료 (Supabase 연결 대기) |
 | 1 | 3D IFC 뷰어 (탐색·선택·속성·표시제어) | ✅ 완료 |
 | 2 | 4D 시공 시뮬레이션 (일정↔객체, 타임슬라이더) | ✅ 1차 완료 (S4) |
-| 3 | 장비운용 시뮬레이션 (Rapier 물리, 강점) | ⏳ (S16) |
-| 4 | 충돌 검사 (간섭 검출·리포트) | ✅ MVP 완료 (S32) |
+| 3 | 장비운용 시뮬레이션 (Rapier 물리, 강점) | ⏸ 기획안 최후로 연기 (S16, 사용자 결정) |
+| 4 | 충돌 검사 (간섭 검출·리포트) | ✅ MVP 완료 (S32) · 보고서 S38(Word 양식) |
 | 5 | VR (WebXR) | ⏳ |
 | 6 | UI/UX 리뉴얼 (화이트+네이비 디자인 시스템) | ✅ 완료 (S11·S12) |
 | 7 | CDE 공통정보관리환경 (파일 저장소·버전/이력·정보구조 재편) | ✅ MVP 완료 (S14) |
@@ -39,7 +39,7 @@ VR 검토까지. 다중 사용자가 **본인 배정 프로젝트(공구)** 만 
 | S13 | Phase 8 · 문서/미디어 뷰어 ✅ | `feature/doc-viewers` | 새 탭 뷰어(이미지·PDF·동영상·xlsx·docx) 1단계 완료(PR #22) | S12 |
 | S14 | Phase 7 · CDE 토대 ✅ | `feature/cde-foundation` | 자료 관리(`/docs`): 폴더트리·다중 버전·상태(WIP/Shared/Published/Archived)·활동로그 (MVP 완료) | S13 |
 | S15 | Phase 9 · Navisworks 기능군 | `feature/nw-features` | 측정·단면·마크업·뷰포인트 (입력대기) | 뷰어 |
-| S16 | Phase 3 · 장비운용 | `feature/equipment-sim` | Rapier 물리·장비·경로/간섭 (이미지대기) | S4 |
+| S16 | Phase 3 · 장비운용 ⏸ 최후로 연기 | `feature/equipment-sim` | Rapier 물리·장비·경로/간섭 (이미지대기, 사용자 결정으로 맨 마지막) | S4 |
 | S17 | Phase 10 · 네이티브 BIM | `feature/native-bim` | DWG/RVT/NWD 업로드·변환(APS 평가) | S14 |
 | S18 | 성능 최적화 · 코드 스플리팅 | `feature/code-splitting` | 번들 분할(청크 경고). S13 에서 뷰어 lazy 분리로 일부 선반영 | — |
 | S19 | 뷰어 충실도 · 단기(무료 클라) | `feature/viewer-fidelity` | Word `mammoth`→`docx-preview`, 엑셀 서식 개선 (D10) | S13 |
@@ -60,8 +60,10 @@ VR 검토까지. 다중 사용자가 **본인 배정 프로젝트(공구)** 만 
 | S34 | 3D 모델 풀 공유 ✅ (S33 보정) | (share-model-pool) | 통합모델 업로드 1회 → 4D·간섭체크에도 같은 모델 표시(모듈 분리는 런타임/화면으로 유지) | S33 |
 | S35 | 모듈 자동로드 + 간섭체크 UX 7건 ✅ | (clash-ux) | 진입 시 모델 자동로드·시뮬 격리·A초록/B빨강+ghost+줌·결과 창화·이슈 스냅샷 첨부·대상 2단계 선택 | S32 |
 | S36 | 버그픽스 + 뷰어 리뷰도구 3종 ✅ | (clash-fix·pin-popup·visibility·measure-section) | 4D↔간섭 누수 픽스 + 이슈핀 클릭 팝업 + 모델/카테고리 표시 토글 + 📏측정·✂단면 | S32·S33 |
+| S37 | 저장 뷰포인트 + 마크업(redline) ← **다음** | `feature/viewpoints-markup` | 카메라 뷰 저장·공유 + 화면 주석(Navisworks 잔여) | 뷰어 |
+| S38 | 간섭 보고서 — 사용자 Word 양식(D15) | `feature/clash-report` | docxtemplater 로 .docx 양식 채우기(표 반복·요약·스냅샷) | S32 (양식 대기) |
 
-추천 순서: **… S30~S33(이슈WF·삭제·충돌·모듈분리) ✅ → S34~S36(공유·UX·리뷰도구) ✅ → 다음 후보는 PLANNING §9**
+추천 순서: **… S34~S36 ✅ → 다음 S37(뷰포인트/마크업) → S38(간섭 보고서, 양식 도착 시) → 백로그(§9) → S15·S17 → S16 장비(최후)**
 > **세션 묶음 메모**: S14(CDE)에서 시작한 작업 브랜치(`claude/busy-lovelace-cj8adq`)가
 > PMIS 포털 전반(S21~S29)으로 확장됨. CDE/포털 1차 마무리. 다음 후보는 PLANNING 백로그 참조.
 > **세션번호 메모**: main 이 S12 를 브랜딩으로 선점 → 초기 기획의 S12(CDE)는 **S14** 로 이동.
