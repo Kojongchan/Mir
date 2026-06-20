@@ -44,20 +44,23 @@ export async function listSchedules(projectId: string): Promise<SavedScheduleMet
  */
 export async function saveSchedule(params: {
   projectId: string;
-  modelDbId: string | null;
+  /** 런타임 modelID → DB 모델 uuid. 매핑된 각 요소의 소속 모델을 정확히 저장한다. */
+  modelIdMap: Map<number, string>;
   name: string;
   source: ScheduleSource;
   tasks: ScheduleTask[];
   mapping: TaskMapping;
 }): Promise<string> {
-  const { projectId, modelDbId, name, source, tasks, mapping } = params;
+  const { projectId, modelIdMap, name, source, tasks, mapping } = params;
   const scheduleId = crypto.randomUUID();
   const { data: userData } = await supabase.auth.getUser();
+  // 대표 모델(메타용) — 매핑에 등장하는 첫 DB 모델 id(없으면 null).
+  const anyModelDbId = [...modelIdMap.values()][0] ?? null;
 
   const { error: sErr } = await supabase.from('schedules').insert({
     id: scheduleId,
     project_id: projectId,
-    model_id: modelDbId,
+    model_id: anyModelDbId,
     name,
     source,
     created_by: userData.user?.id ?? null,
@@ -88,12 +91,14 @@ export async function saveSchedule(params: {
     }
   }
 
-  if (modelDbId) {
+  if (modelIdMap.size) {
     const elemRows: { task_id: string; model_id: string; express_id: number }[] = [];
     for (const [clientTaskId, refs] of Object.entries(mapping)) {
       const taskDbId = dbId.get(clientTaskId);
       if (!taskDbId) continue;
       for (const ref of refs) {
+        const modelDbId = modelIdMap.get(ref.modelID);
+        if (!modelDbId) continue; // 알 수 없는 런타임 모델은 건너뜀
         elemRows.push({ task_id: taskDbId, model_id: modelDbId, express_id: ref.expressID });
       }
     }
@@ -174,7 +179,7 @@ export const ACTIVE_SCHEDULE_NAME = '__4D_ACTIVE__';
 /** 현재 일정+매핑을 프로젝트의 활성 슬롯에 저장(기존 활성 슬롯은 교체). */
 export async function saveActiveSchedule(params: {
   projectId: string;
-  modelDbId: string | null;
+  modelIdMap: Map<number, string>;
   source: ScheduleSource;
   tasks: ScheduleTask[];
   mapping: TaskMapping;

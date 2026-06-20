@@ -145,9 +145,11 @@ export class IfcViewer {
   /** expressID -> IFC category(type) cache per model, for the clash picker */
   private categoryCache = new Map<number, Map<number, string>>();
 
-  /** materials swapped in to highlight a clash pair, kept so we can restore */
+  /** materials swapped in to highlight a clash pair (A green / B red) */
   private clashHighlighted: { mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] }[] = [];
-  private clashMarker: THREE.Object3D | null = null;
+  /** other meshes dimmed (ghosted) while reviewing a clash, kept to restore */
+  private clashDimmed: { mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] }[] = [];
+  private clashGhostMaterial: THREE.Material | null = null;
 
   private onSelect: SelectCallback = () => {};
   private initialized = false;
@@ -159,7 +161,7 @@ export class IfcViewer {
 
     this.scene.background = new THREE.Color(0xffffff);
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setSize(container.clientWidth, container.clientHeight);
     container.appendChild(this.renderer.domElement);
@@ -333,6 +335,12 @@ export class IfcViewer {
     } catch (err) {
       console.warn('[IFC-georef] diagnostic read failed', err);
     }
+  }
+
+  /** Frame the camera on one loaded model (used by the integrated model list). */
+  fitModel(modelID: number) {
+    const model = this.models.find((m) => m.modelID === modelID);
+    if (model) this.fitToObject(model.group);
   }
 
   /** Re-orient every loaded model to the given up axis and refit the camera. */
@@ -686,61 +694,107 @@ export class IfcViewer {
   }
 
   /**
-   * Highlight both elements of a clash (A red, B blue), drop a marker at the
-   * interference point, and fit the camera to the pair. Restores on the next
-   * call or clearClashView().
+   * Review a clash: dim every other element to a faint ghost, paint element A
+   * green and element B red, and fit the camera tightly to the pair (zoom in).
+   * Restores on the next call or clearClashView().
    */
-  showClash(a: ClashElementRef, b: ClashElementRef, point: { x: number; y: number; z: number } | null) {
+  showClash(a: ClashElementRef, b: ClashElementRef) {
     this.clearClashView();
     this.clearHighlight();
 
-    const matA = new THREE.MeshLambertMaterial({ color: 0xff3b30, side: THREE.DoubleSide });
-    const matB = new THREE.MeshLambertMaterial({ color: 0x2f7bff, side: THREE.DoubleSide });
-    for (const mesh of this.meshesFor(a.modelID, a.expressID)) {
+    const aMeshes = new Set(this.meshesFor(a.modelID, a.expressID));
+    const bMeshes = new Set(this.meshesFor(b.modelID, b.expressID));
+    const ghost = this.getClashGhostMaterial();
+
+    // Dim all other currently-visible meshes (Navisworks "기타 항목 흐리게").
+    for (const mesh of this.allMeshes()) {
+      if (aMeshes.has(mesh) || bMeshes.has(mesh) || !mesh.visible) continue;
+      this.clashDimmed.push({ mesh, material: mesh.material });
+      mesh.material = ghost;
+    }
+
+    const matA = new THREE.MeshLambertMaterial({ color: 0x16a34a, side: THREE.DoubleSide }); // green
+    const matB = new THREE.MeshLambertMaterial({ color: 0xdc2626, side: THREE.DoubleSide }); // red
+    for (const mesh of aMeshes) {
       this.clashHighlighted.push({ mesh, material: mesh.material });
       mesh.material = matA;
       mesh.visible = true;
     }
-    for (const mesh of this.meshesFor(b.modelID, b.expressID)) {
+    for (const mesh of bMeshes) {
       this.clashHighlighted.push({ mesh, material: mesh.material });
       mesh.material = matB;
       mesh.visible = true;
     }
 
-    const box = new THREE.Box3();
-    for (const mesh of this.meshesFor(a.modelID, a.expressID)) box.expandByObject(mesh);
-    for (const mesh of this.meshesFor(b.modelID, b.expressID)) box.expandByObject(mesh);
-    if (!box.isEmpty()) {
-      const maxDim = box.getSize(new THREE.Vector3()).length() || 1;
-      if (point) {
-        const r = Math.max(maxDim * 0.02, 0.05);
-        const marker = new THREE.Mesh(
-          new THREE.SphereGeometry(r, 16, 16),
-          new THREE.MeshBasicMaterial({ color: 0xff00ff, depthTest: false, transparent: true, opacity: 0.9 }),
-        );
-        marker.position.set(point.x, point.y, point.z);
-        marker.renderOrder = 999;
-        this.clashMarker = marker;
-        this.scene.add(marker);
-      }
-      this.frameBox(box);
-    }
+    const box = this.pairBox(a, b);
+    if (!box.isEmpty()) this.frameBox(box, 1.1);
   }
 
-  /** Restore the meshes touched by showClash() and remove the marker. */
+  /** Restore the meshes touched by showClash() (highlight + dimmed others). */
   clearClashView() {
     for (const { mesh, material } of this.clashHighlighted) {
       (mesh.material as THREE.Material).dispose?.();
       mesh.material = material;
     }
     this.clashHighlighted = [];
-    if (this.clashMarker) {
-      this.scene.remove(this.clashMarker);
-      const m = this.clashMarker as THREE.Mesh;
-      m.geometry?.dispose?.();
-      (m.material as THREE.Material)?.dispose?.();
-      this.clashMarker = null;
+    for (const { mesh, material } of this.clashDimmed) mesh.material = material;
+    this.clashDimmed = [];
+  }
+
+  private getClashGhostMaterial(): THREE.Material {
+    if (!this.clashGhostMaterial) {
+      this.clashGhostMaterial = new THREE.MeshLambertMaterial({
+        color: 0xb8c2d0,
+        transparent: true,
+        opacity: 0.12,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
     }
+    return this.clashGhostMaterial;
+  }
+
+  private pairBox(a: ClashElementRef, b: ClashElementRef): THREE.Box3 {
+    const box = new THREE.Box3();
+    for (const mesh of this.meshesFor(a.modelID, a.expressID)) box.expandByObject(mesh);
+    for (const mesh of this.meshesFor(b.modelID, b.expressID)) box.expandByObject(mesh);
+    return box;
+  }
+
+  /**
+   * Capture `count` PNG snapshots of the current clash from evenly-spaced
+   * orbit angles (the pair must already be highlighted via showClash). Returns
+   * data URLs. Restores the camera afterwards.
+   */
+  captureClashViews(a: ClashElementRef, b: ClashElementRef, count = 4): string[] {
+    const box = this.pairBox(a, b);
+    if (box.isEmpty()) return [];
+    const center = box.getCenter(new THREE.Vector3());
+    const radius = box.getSize(new THREE.Vector3()).length() / 2 || 1;
+    const dist = radius * 3;
+
+    const savedPos = this.camera.position.clone();
+    const savedTarget = this.controls.target.clone();
+
+    const shots: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const ang = (i / count) * Math.PI * 2;
+      this.camera.position.set(
+        center.x + Math.cos(ang) * dist,
+        center.y + radius * 1.5 + dist * 0.35,
+        center.z + Math.sin(ang) * dist,
+      );
+      this.camera.lookAt(center);
+      this.camera.updateMatrixWorld(true);
+      this.renderer.render(this.scene, this.camera);
+      shots.push(this.renderer.domElement.toDataURL('image/png'));
+    }
+
+    this.camera.position.copy(savedPos);
+    this.controls.target.copy(savedTarget);
+    this.camera.lookAt(savedTarget);
+    this.controls.update();
+    return shots;
   }
 
   /** Hide everything except the two clash elements (Navisworks "기타 항목 숨기기"). */
@@ -945,11 +999,11 @@ export class IfcViewer {
     this.frameBox(box);
   }
 
-  private frameBox(box: THREE.Box3) {
+  private frameBox(box: THREE.Box3, factor = 1.8) {
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z) || 1;
-    const distance = maxDim * 1.8;
+    const distance = maxDim * factor;
 
     this.controls.target.copy(center);
     this.camera.position.set(center.x + distance, center.y + distance * 0.8, center.z + distance);
