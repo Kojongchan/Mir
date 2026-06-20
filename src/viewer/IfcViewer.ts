@@ -145,6 +145,17 @@ export class IfcViewer {
   /** expressID -> IFC category(type) cache per model, for the clash picker */
   private categoryCache = new Map<number, Map<number, string>>();
 
+  // --- 측정 / 단면(클리핑) ----------------------------------------------
+  private measureMode = false;
+  private measurePts: THREE.Vector3[] = [];
+  private readonly measureGroup = new THREE.Group();
+  private onMeasure: (text: string | null) => void = () => {};
+  private readonly sectionPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+  private sectionEnabled = false;
+  private sectionAxis: 'x' | 'y' | 'z' = 'y';
+  private sectionOffset = 0.5;
+  private sectionFlip = false;
+
   /** materials swapped in to highlight a clash pair (A green / B red) */
   private clashHighlighted: { mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] }[] = [];
   /** other meshes dimmed (ghosted) while reviewing a clash, kept to restore */
@@ -164,6 +175,7 @@ export class IfcViewer {
     this.scene.background = new THREE.Color(0xffffff);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    this.renderer.localClippingEnabled = true;
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setSize(container.clientWidth, container.clientHeight);
     container.appendChild(this.renderer.domElement);
@@ -179,6 +191,7 @@ export class IfcViewer {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
 
+    this.scene.add(this.measureGroup);
     this.setupSceneHelpers();
 
     this.renderer.domElement.addEventListener('click', this.handleClick);
@@ -412,6 +425,12 @@ export class IfcViewer {
   // --- selection ---------------------------------------------------------
 
   private handleClick = (event: MouseEvent) => {
+    // 측정 모드: 표면 점을 찍어 두 점 사이 거리를 잰다.
+    if (this.measureMode) {
+      const p = this.pickPoint(event.clientX, event.clientY);
+      if (p) this.addMeasurePoint(p);
+      return;
+    }
     // 이슈 핀을 먼저 픽 — 핀을 클릭하면 객체 선택 대신 핀 콜백을 쏜다.
     const pin = this.pickIssuePin(event.clientX, event.clientY);
     if (pin) {
@@ -845,6 +864,143 @@ export class IfcViewer {
     for (const mesh of this.allMeshes()) mesh.visible = keep.has(mesh);
   }
 
+  // --- 측정(거리) -------------------------------------------------------
+
+  setOnMeasure(cb: (text: string | null) => void) {
+    this.onMeasure = cb;
+  }
+
+  setMeasureMode(on: boolean) {
+    this.measureMode = on;
+    this.measurePts = [];
+    this.renderer.domElement.style.cursor = on ? 'crosshair' : '';
+    if (!on) this.onMeasure(null);
+  }
+
+  /** Raycast against visible meshes and return the world-space hit point. */
+  private pickPoint(clientX: number, clientY: number): THREE.Vector3 | null {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const hits = this.raycaster.intersectObjects(this.allMeshes().filter((m) => m.visible), false);
+    return hits[0]?.point.clone() ?? null;
+  }
+
+  private addMeasurePoint(p: THREE.Vector3) {
+    this.measurePts.push(p);
+    const dot = new THREE.Mesh(
+      new THREE.SphereGeometry(this.measureDotRadius(), 12, 12),
+      new THREE.MeshBasicMaterial({ color: 0x2563eb, depthTest: false }),
+    );
+    dot.position.copy(p);
+    dot.renderOrder = 1000;
+    this.measureGroup.add(dot);
+
+    if (this.measurePts.length === 2) {
+      const [a, b] = this.measurePts;
+      const dist = a.distanceTo(b);
+      const geom = new THREE.BufferGeometry().setFromPoints([a, b]);
+      const line = new THREE.Line(
+        geom,
+        new THREE.LineBasicMaterial({ color: 0x2563eb, depthTest: false }),
+      );
+      line.renderOrder = 1000;
+      this.measureGroup.add(line);
+      this.measureGroup.add(this.makeLabel(`${dist.toFixed(3)} m`, a.clone().lerp(b, 0.5)));
+      this.onMeasure(`거리: ${dist.toFixed(3)} m`);
+      this.measurePts = [];
+    } else {
+      this.onMeasure('두 번째 점을 클릭하세요…');
+    }
+  }
+
+  private measureDotRadius(): number {
+    const box = new THREE.Box3();
+    for (const m of this.models) box.expandByObject(m.group);
+    const d = box.isEmpty() ? 10 : box.getSize(new THREE.Vector3()).length();
+    return Math.max(d * 0.004, 0.08);
+  }
+
+  /** A camera-facing text sprite (canvas texture) used for measurement labels. */
+  private makeLabel(text: string, pos: THREE.Vector3): THREE.Sprite {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = 'rgba(37, 99, 235, 0.92)';
+    roundRect(ctx, 4, 4, 248, 56, 12);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 30px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, 128, 34);
+    const tex = new THREE.CanvasTexture(canvas);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
+    sprite.position.copy(pos);
+    const s = this.measureDotRadius() * 18;
+    sprite.scale.set(s * 2, s * 0.5, 1);
+    sprite.renderOrder = 1001;
+    return sprite;
+  }
+
+  clearMeasurements() {
+    for (const child of [...this.measureGroup.children]) {
+      this.measureGroup.remove(child);
+      const o = child as THREE.Mesh & { material?: THREE.Material; geometry?: THREE.BufferGeometry };
+      o.geometry?.dispose?.();
+      const mat = o.material as (THREE.Material & { map?: THREE.Texture }) | undefined;
+      mat?.map?.dispose?.();
+      mat?.dispose?.();
+    }
+    this.measurePts = [];
+    this.onMeasure(null);
+  }
+
+  // --- 단면(클리핑 평면) ------------------------------------------------
+
+  setSection(opts: { enabled?: boolean; axis?: 'x' | 'y' | 'z'; offset?: number; flip?: boolean }) {
+    if (opts.enabled !== undefined) this.sectionEnabled = opts.enabled;
+    if (opts.axis !== undefined) this.sectionAxis = opts.axis;
+    if (opts.offset !== undefined) this.sectionOffset = opts.offset;
+    if (opts.flip !== undefined) this.sectionFlip = opts.flip;
+    this.applySection();
+  }
+
+  private applySection() {
+    if (!this.sectionEnabled) {
+      this.renderer.clippingPlanes = [];
+      return;
+    }
+    const box = new THREE.Box3();
+    for (const m of this.models) box.expandByObject(m.group);
+    if (box.isEmpty()) {
+      this.renderer.clippingPlanes = [];
+      return;
+    }
+    const min = box.min;
+    const max = box.max;
+    const sign = this.sectionFlip ? -1 : 1;
+    const normal = new THREE.Vector3(
+      this.sectionAxis === 'x' ? sign : 0,
+      this.sectionAxis === 'y' ? sign : 0,
+      this.sectionAxis === 'z' ? sign : 0,
+    );
+    const lo = this.sectionAxis === 'x' ? min.x : this.sectionAxis === 'y' ? min.y : min.z;
+    const hi = this.sectionAxis === 'x' ? max.x : this.sectionAxis === 'y' ? max.y : max.z;
+    const coord = lo + (hi - lo) * this.sectionOffset;
+    const point = new THREE.Vector3(
+      this.sectionAxis === 'x' ? coord : 0,
+      this.sectionAxis === 'y' ? coord : 0,
+      this.sectionAxis === 'z' ? coord : 0,
+    );
+    this.sectionPlane.setFromNormalAndCoplanarPoint(normal, point);
+    this.renderer.clippingPlanes = [this.sectionPlane];
+  }
+
   // --- issue pins (통합모델 3D) -----------------------------------------
 
   private issuePinGroup: THREE.Group | null = null;
@@ -1089,4 +1245,15 @@ export class IfcViewer {
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
+}
+
+/** Draw a rounded-rectangle path (fallback for label backgrounds). */
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
