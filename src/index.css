@@ -3147,3 +3147,32 @@ button.danger:hover:not(:disabled) {
 .issue-status-closed {
   background: var(--bar-construct);
 }
+
+/* 통합모델 모델/카테고리 표시 토글 행 */
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 8px;
+}
+.model-row .model-item {
+  flex: 1;
+  min-width: 0;
+}
+.model-check {
+  flex-shrink: 0;
+  margin-left: 8px;
+  cursor: pointer;
+}
+.cat-list .cat-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cat-clear {
+  font-size: 11px;
+  color: var(--accent);
+}
