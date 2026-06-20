@@ -24,27 +24,26 @@ import {
 } from '../lib/files';
 import { uploadNewFile } from '../lib/cde';
 
-/** 3D 뷰어 모듈의 용도. 각 모듈은 자기 용도의 모델 세트만 본다(S33). */
+/**
+ * 3D 뷰어 모듈의 용도(S33→S34). 모델 목록은 **셋이 공유**한다(통합모델에 올린
+ * 모델이 4D·간섭체크에도 그대로 보임). 모듈 분리는 화면/런타임 상태로 이뤄진다:
+ * 각 모듈은 자기 IfcViewer 인스턴스를 가지므로 4D 공정 매핑이 간섭체크를 방해하지
+ * 않는다. `mode` 는 4D 타임라인·간섭패널·이슈핀 표시 여부와 라벨만 좌우한다.
+ */
 export type ViewerMode = ModelPurpose;
 
-const MODE_TEXT: Record<ViewerMode, { title: string; modelHead: string; upload: string; empty: string }> = {
+const MODE_TEXT: Record<ViewerMode, { title: string; empty: string }> = {
   integrated: {
     title: '통합모델 (3D)',
-    modelHead: '통합모델',
-    upload: 'IFC 업로드',
-    empty: '등록된 통합모델이 없습니다.',
+    empty: '등록된 모델이 없습니다. IFC를 업로드하세요.',
   },
   '4d': {
     title: '공정관리 (4D)',
-    modelHead: '4D 모델',
-    upload: '4D IFC 업로드',
-    empty: '4D용 모델이 없습니다. (통합모델과 별도로 업로드)',
+    empty: '모델이 없습니다. 통합모델(3D)에서 IFC를 업로드하면 여기에도 표시됩니다.',
   },
   clash: {
     title: '간섭체크',
-    modelHead: '간섭 모델',
-    upload: '간섭 IFC 업로드',
-    empty: '간섭체크용 모델이 없습니다. (통합모델과 별도로 업로드)',
+    empty: '모델이 없습니다. 통합모델(3D)에서 IFC를 업로드하면 여기에도 표시됩니다.',
   },
 };
 
@@ -113,8 +112,9 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, mode]);
 
+  // 모델 풀은 모듈 공유 — 통합모델에 올린 모델이 4D·간섭체크에도 보인다.
   const refreshModels = () =>
-    listModels(projectId, mode).then(setModels).catch(() => setModels([]));
+    listModels(projectId).then(setModels).catch(() => setModels([]));
   const refreshFiles = () => listFiles(projectId).then(setFiles).catch(() => setFiles([]));
 
   // 재진입 시 마지막으로 보던 모델을 자동으로 다시 연다(모드별 기억).
@@ -202,7 +202,7 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
     setUploading(true);
     setStatus(`업로드 중: ${file.name}`);
     try {
-      await uploadModel(projectId, file, mode);
+      await uploadModel(projectId, file); // 공유 풀(기본 integrated)
       await refreshModels();
       setStatus(`업로드 완료: ${file.name}`);
     } catch (err) {
@@ -259,11 +259,11 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
     <div className="mod-fill viewer-fill">
       <aside className="mod-subtree">
         <div className="sidebar-head">
-          <h2>{text.modelHead}</h2>
+          <h2>모델</h2>
           <input ref={fileInput} type="file" accept=".ifc" style={{ display: 'none' }} onChange={onUpload} />
           {isAdmin && (
             <button onClick={() => fileInput.current?.click()} disabled={uploading}>
-              {uploading ? '업로드 중…' : text.upload}
+              {uploading ? '업로드 중…' : 'IFC 업로드'}
             </button>
           )}
         </div>
