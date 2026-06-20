@@ -4,12 +4,18 @@ import {
   runClashDetection,
   clashesToCsv,
   downloadCsv,
+  groupClashes,
+  inheritStatuses,
   CLASH_STATUSES,
   CLASH_STATUS_LABEL,
   OPEN_CLASH_STATUSES,
+  GROUP_BY_LABEL,
+  SORT_BY_LABEL,
   type ClashRow,
   type ClashStatus,
   type ClashType,
+  type ClashGroupBy,
+  type ClashSortBy,
 } from '../lib/clash';
 import {
   listClashTests,
@@ -99,6 +105,12 @@ export function ClashPanel({ viewer, projectId, modelIdMap, onClose }: Props) {
   const [dbBacked, setDbBacked] = useState(false);
   const [status, setStatus] = useState('');
 
+  // 결과 보기: 묶음·정렬·상태필터·접힘(클라이언트 전용).
+  const [groupBy, setGroupBy] = useState<ClashGroupBy>('none');
+  const [sortBy, setSortBy] = useState<ClashSortBy>('index');
+  const [statusFilter, setStatusFilter] = useState<Set<ClashStatus>>(new Set(CLASH_STATUSES));
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
   const [tests, setTests] = useState<ClashTestMeta[]>([]);
   const [selTest, setSelTest] = useState('');
 
@@ -163,6 +175,38 @@ export function ClashPanel({ viewer, projectId, modelIdMap, onClose }: Props) {
     return { total, open, closed: total - open };
   }, [rows]);
 
+  // 상태별 카운트(필터 칩 라벨), 상태필터 통과 행, 묶음/정렬 결과, 전역 번호.
+  const statusCounts = useMemo(() => {
+    const c: Record<ClashStatus, number> = { new: 0, reviewing: 0, resolved: 0, approved: 0 };
+    for (const r of rows) c[r.status]++;
+    return c;
+  }, [rows]);
+
+  const visibleRows = useMemo(() => rows.filter((r) => statusFilter.has(r.status)), [rows, statusFilter]);
+  const groups = useMemo(() => groupClashes(visibleRows, groupBy, sortBy), [visibleRows, groupBy, sortBy]);
+  const rowNumber = useMemo(() => {
+    const m = new Map<string, number>();
+    let n = 0;
+    for (const g of groups) for (const r of g.rows) m.set(r.id, ++n);
+    return m;
+  }, [groups]);
+
+  const toggleStatusFilter = (s: ClashStatus) =>
+    setStatusFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s);
+      else next.add(s);
+      return next;
+    });
+
+  const toggleGroup = (key: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
   const run = async () => {
     if (!viewer || meta.length === 0) {
       setStatus('먼저 모델을 여세요(대상 갱신 후 검사).');
@@ -188,9 +232,16 @@ export function ClashPanel({ viewer, projectId, modelIdMap, onClose }: Props) {
         onProgress: (ratio, phase) => setProgress({ ratio, phase }),
         shouldCancel: () => cancelRef.current,
       });
-      setRows(hits.map((h) => ({ ...h, status: 'new' as ClashStatus, issueId: null })));
+      // 직전 결과가 있으면 같은 요소쌍의 상태/이슈연결을 승계(Navisworks rerun).
+      const prev = rows;
+      const next = inheritStatuses(hits, prev);
+      setRows(next);
+      const carried = prev.length > 0 ? next.filter((r) => r.status !== 'new').length : 0;
       setStatus(
-        cancelRef.current ? '검사 취소됨' : `검사 완료: 간섭 ${hits.length}건 (A ${itemsA.length} × B ${itemsB.length})`,
+        cancelRef.current
+          ? '검사 취소됨'
+          : `검사 완료: 간섭 ${hits.length}건 (A ${itemsA.length} × B ${itemsB.length})` +
+              (carried > 0 ? ` · 상태 승계 ${carried}건` : ''),
       );
     } catch (e) {
       setStatus(`검사 실패: ${(e as Error).message}`);
@@ -343,6 +394,70 @@ export function ClashPanel({ viewer, projectId, modelIdMap, onClose }: Props) {
     }
   };
 
+  const renderRow = (r: ClashRow) => (
+    <tr key={r.id} className={r.id === activeId ? 'is-active' : undefined} onClick={() => focusRow(r)}>
+      <td className="num">{rowNumber.get(r.id)}</td>
+      <td title={`${r.a.category} #${r.a.expressID}`}>
+        <span className="clash-dot clash-dot-a" />
+        {r.a.name || `#${r.a.expressID}`}
+      </td>
+      <td title={`${r.b.category} #${r.b.expressID}`}>
+        <span className="clash-dot clash-dot-b" />
+        {r.b.name || `#${r.b.expressID}`}
+      </td>
+      <td className="num">{r.depth.toFixed(2)}</td>
+      <td onClick={(e) => e.stopPropagation()}>
+        <select
+          className={`clash-status clash-status-${r.status}`}
+          value={r.status}
+          onChange={(e) => changeStatus(r, e.target.value as ClashStatus)}
+          disabled={dbBacked && !isAdmin}
+        >
+          {CLASH_STATUSES.map((s) => (
+            <option key={s} value={s}>
+              {CLASH_STATUS_LABEL[s]}
+            </option>
+          ))}
+        </select>
+      </td>
+      <td onClick={(e) => e.stopPropagation()}>
+        {isAdmin &&
+          (r.issueId ? (
+            <span className="muted" title="이슈 생성됨">
+              ✓이슈
+            </span>
+          ) : (
+            <button
+              className="clash-mini"
+              onClick={() => {
+                focusRow(r);
+                setIssueFor(r);
+              }}
+              title="간섭을 이슈로"
+            >
+              이슈
+            </button>
+          ))}
+      </td>
+    </tr>
+  );
+
+  const renderTable = (rs: ClashRow[]) => (
+    <table className="clash-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>요소 A</th>
+          <th>요소 B</th>
+          <th>깊이</th>
+          <th>상태</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>{rs.map(renderRow)}</tbody>
+    </table>
+  );
+
   return (
     <div className="clash-win" style={{ left: win.x, top: win.y, width: win.w, height: win.h }}>
       <div className="clash-head" onMouseDown={startDrag('move')}>
@@ -476,67 +591,68 @@ export function ClashPanel({ viewer, projectId, modelIdMap, onClose }: Props) {
               간섭부로 줌인됩니다.
             </p>
           ) : (
-            <table className="clash-table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>요소 A</th>
-                  <th>요소 B</th>
-                  <th>깊이</th>
-                  <th>상태</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={r.id} className={r.id === activeId ? 'is-active' : undefined} onClick={() => focusRow(r)}>
-                    <td className="num">{i + 1}</td>
-                    <td title={`${r.a.category} #${r.a.expressID}`}>
-                      <span className="clash-dot clash-dot-a" />
-                      {r.a.name || `#${r.a.expressID}`}
-                    </td>
-                    <td title={`${r.b.category} #${r.b.expressID}`}>
-                      <span className="clash-dot clash-dot-b" />
-                      {r.b.name || `#${r.b.expressID}`}
-                    </td>
-                    <td className="num">{r.depth.toFixed(2)}</td>
-                    <td onClick={(e) => e.stopPropagation()}>
-                      <select
-                        className={`clash-status clash-status-${r.status}`}
-                        value={r.status}
-                        onChange={(e) => changeStatus(r, e.target.value as ClashStatus)}
-                        disabled={dbBacked && !isAdmin}
-                      >
-                        {CLASH_STATUSES.map((s) => (
-                          <option key={s} value={s}>
-                            {CLASH_STATUS_LABEL[s]}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td onClick={(e) => e.stopPropagation()}>
-                      {isAdmin &&
-                        (r.issueId ? (
-                          <span className="muted" title="이슈 생성됨">
-                            ✓이슈
-                          </span>
-                        ) : (
-                          <button
-                            className="clash-mini"
-                            onClick={() => {
-                              focusRow(r);
-                              setIssueFor(r);
-                            }}
-                            title="간섭을 이슈로"
-                          >
-                            이슈
-                          </button>
-                        ))}
-                    </td>
-                  </tr>
+            <>
+              <div className="clash-grouptools">
+                <label className="clash-field clash-field-inline">
+                  <span>묶음</span>
+                  <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as ClashGroupBy)}>
+                    {(['none', 'catpair', 'elementA', 'status'] as ClashGroupBy[]).map((g) => (
+                      <option key={g} value={g}>
+                        {GROUP_BY_LABEL[g]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="clash-field clash-field-inline">
+                  <span>정렬</span>
+                  <select value={sortBy} onChange={(e) => setSortBy(e.target.value as ClashSortBy)}>
+                    {(['index', 'depthDesc', 'depthAsc', 'status'] as ClashSortBy[]).map((s) => (
+                      <option key={s} value={s}>
+                        {SORT_BY_LABEL[s]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="clash-filterchips" title="상태로 필터(클릭하여 토글)">
+                {CLASH_STATUSES.map((s) => (
+                  <button
+                    key={s}
+                    className={`clash-fchip clash-status-${s}${statusFilter.has(s) ? ' is-on' : ''}`}
+                    onClick={() => toggleStatusFilter(s)}
+                  >
+                    {CLASH_STATUS_LABEL[s]} {statusCounts[s]}
+                  </button>
                 ))}
-              </tbody>
-            </table>
+              </div>
+
+              {visibleRows.length === 0 ? (
+                <p className="muted clash-empty">필터에 맞는 간섭이 없습니다.</p>
+              ) : groupBy === 'none' ? (
+                renderTable(groups[0]?.rows ?? [])
+              ) : (
+                groups.map((g) => {
+                  const isCollapsed = collapsed.has(g.key);
+                  return (
+                    <div key={g.key} className="clash-group">
+                      <button
+                        className="clash-group-head"
+                        onClick={() => toggleGroup(g.key)}
+                        title={isCollapsed ? '펼치기' : '접기'}
+                      >
+                        <span className="clash-group-caret">{isCollapsed ? '▶' : '▼'}</span>
+                        <span className="clash-group-label">{g.label}</span>
+                        <span className="clash-group-counts muted">
+                          {g.open > 0 && <b className="clash-open-n">미해결 {g.open}</b>} 총 {g.rows.length}
+                        </span>
+                      </button>
+                      {!isCollapsed && renderTable(g.rows)}
+                    </div>
+                  );
+                })
+              )}
+            </>
           )}
         </div>
 

@@ -174,12 +174,128 @@ function makeHit(a: ElementMeta, b: ElementMeta, point: THREE.Vector3, depth: nu
   };
 }
 
-// ---------- CSV 내보내기 --------------------------------------------
+// ---------- 그룹화 · 정렬 · 상태 승계 (S40, Navisworks식) ------------
 
 export interface ClashRow extends ClashHit {
   status: ClashStatus;
   issueId?: string | null;
+  /** 그룹/정렬용 원래 검출 순서(런타임 전용, 영속화 X). */
+  _idx?: number;
 }
+
+/** 결과 묶음 기준. */
+export type ClashGroupBy = 'none' | 'catpair' | 'elementA' | 'status';
+/** 결과 정렬 기준. */
+export type ClashSortBy = 'index' | 'depthDesc' | 'depthAsc' | 'status';
+
+export const GROUP_BY_LABEL: Record<ClashGroupBy, string> = {
+  none: '그룹 없음',
+  catpair: '카테고리 쌍',
+  elementA: '요소 A',
+  status: '상태',
+};
+
+export const SORT_BY_LABEL: Record<ClashSortBy, string> = {
+  index: '검출 순서',
+  depthDesc: '관통깊이 ↓',
+  depthAsc: '관통깊이 ↑',
+  status: '상태',
+};
+
+export interface ClashGroup {
+  key: string;
+  label: string;
+  rows: ClashRow[];
+  /** 그룹 내 미해결(new/reviewing) 건수. */
+  open: number;
+}
+
+const elemKey = (m: ElementMeta) => `${m.modelID}:${m.expressID}`;
+
+/** 요소쌍 식별 키(A↔B 순서 무관). 상태 승계 매칭·중복 판단에 사용. */
+export function pairKeyOf(r: { a: ElementMeta; b: ElementMeta }): string {
+  const ka = elemKey(r.a);
+  const kb = elemKey(r.b);
+  return ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+}
+
+function rowComparator(sortBy: ClashSortBy): (a: ClashRow, b: ClashRow) => number {
+  switch (sortBy) {
+    case 'depthDesc':
+      return (a, b) => b.depth - a.depth;
+    case 'depthAsc':
+      return (a, b) => a.depth - b.depth;
+    case 'status':
+      return (a, b) =>
+        CLASH_STATUSES.indexOf(a.status) - CLASH_STATUSES.indexOf(b.status) ||
+        (a._idx ?? 0) - (b._idx ?? 0);
+    default:
+      return (a, b) => (a._idx ?? 0) - (b._idx ?? 0);
+  }
+}
+
+/**
+ * 간섭 결과를 그룹 기준으로 묶고 각 그룹 내부를 정렬해 반환. 그룹은 미해결 수가
+ * 많은 순(상태 그룹은 상태 순서)으로 정렬한다. `_idx` 로 원래 검출 순서를 유지한다.
+ */
+export function groupClashes(
+  rows: ClashRow[],
+  groupBy: ClashGroupBy,
+  sortBy: ClashSortBy,
+): ClashGroup[] {
+  const indexed: ClashRow[] = rows.map((r, i) => ({ ...r, _idx: i }));
+  const keyOf = (r: ClashRow): { key: string; label: string } => {
+    switch (groupBy) {
+      case 'catpair': {
+        const [x, y] = [r.a.category, r.b.category].sort();
+        return { key: `${x}|${y}`, label: `${x} ↔ ${y}` };
+      }
+      case 'elementA':
+        return { key: elemKey(r.a), label: r.a.name || `${r.a.category} #${r.a.expressID}` };
+      case 'status':
+        return { key: r.status, label: CLASH_STATUS_LABEL[r.status] };
+      default:
+        return { key: 'all', label: '전체' };
+    }
+  };
+
+  const map = new Map<string, ClashGroup>();
+  const cmp = rowComparator(sortBy);
+  for (const r of indexed) {
+    const { key, label } = keyOf(r);
+    let g = map.get(key);
+    if (!g) {
+      g = { key, label, rows: [], open: 0 };
+      map.set(key, g);
+    }
+    g.rows.push(r);
+    if (OPEN_CLASH_STATUSES.includes(r.status)) g.open++;
+  }
+  const groups = [...map.values()];
+  for (const g of groups) g.rows.sort(cmp);
+  if (groupBy === 'status') {
+    groups.sort((a, b) => CLASH_STATUSES.indexOf(a.key as ClashStatus) - CLASH_STATUSES.indexOf(b.key as ClashStatus));
+  } else if (groupBy !== 'none') {
+    groups.sort((a, b) => b.open - a.open || b.rows.length - a.rows.length);
+  }
+  return groups;
+}
+
+/**
+ * 재검사 시 직전 결과의 상태/이슈연결을 같은 요소쌍에 승계한다(Navisworks rerun).
+ * 새로 검출된 쌍은 'new', 사라진 쌍은 자연 탈락. 검토중/해결/승인 상태를 보존한다.
+ */
+export function inheritStatuses(fresh: ClashHit[], prev: ClashRow[]): ClashRow[] {
+  const prevMap = new Map(prev.map((p) => [pairKeyOf(p), p]));
+  return fresh.map((h) => {
+    const p = prevMap.get(pairKeyOf(h));
+    return p
+      ? ({ ...h, status: p.status, issueId: p.issueId ?? null } satisfies ClashRow)
+      : ({ ...h, status: 'new' as ClashStatus, issueId: null } satisfies ClashRow);
+  });
+}
+
+// ---------- CSV 내보내기 --------------------------------------------
 
 function csvCell(s: string | number | null | undefined): string {
   const v = s == null ? '' : String(s);

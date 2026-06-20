@@ -3068,6 +3068,80 @@ button.danger:hover:not(:disabled) {
   font-size: 11px;
   padding: 2px 6px;
 }
+
+/* 결과 묶음/정렬/필터 도구 (S40) */
+.clash-grouptools {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 6px 2px 4px;
+}
+.clash-field-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+.clash-field-inline > span {
+  white-space: nowrap;
+}
+.clash-filterchips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 0 2px 8px;
+}
+.clash-fchip {
+  font-size: 11px;
+  padding: 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  cursor: pointer;
+  opacity: 0.5;
+}
+.clash-fchip.is-on {
+  opacity: 1;
+  border-color: currentColor;
+  background: color-mix(in srgb, currentColor 14%, var(--panel));
+  font-weight: 600;
+}
+/* 그룹 섹션 */
+.clash-group {
+  margin-bottom: 8px;
+}
+.clash-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  background: var(--panel-2, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+}
+.clash-group-caret {
+  font-size: 9px;
+  opacity: 0.7;
+}
+.clash-group-label {
+  font-weight: 600;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clash-group-counts {
+  font-size: 11px;
+  white-space: nowrap;
+}
+.clash-open-n {
+  color: var(--chip-demolish-fg);
+  margin-right: 6px;
+}
 .clash-status-bar {
   padding: 6px 12px;
   border-top: 1px solid var(--border);
