@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
 import {
@@ -51,11 +51,19 @@ export function Issues() {
     due_date: string;
   }>({ title: '', description: '', priority: 'normal', assignee_id: '', due_date: '' });
 
+  // 통합모델 이슈 핀 '이슈로 이동' 으로 들어오면 해당 이슈를 펼친다.
+  const location = useLocation();
+  const focusIssueId = (location.state as { focusIssueId?: string } | null)?.focusIssueId ?? null;
+
   useEffect(() => {
     refresh();
     if (isAdmin) listProjectMembers(projectId).then(setMembers).catch(() => setMembers([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  useEffect(() => {
+    if (focusIssueId) setOpenId(focusIssueId);
+  }, [focusIssueId]);
 
   const refresh = () => listIssues(projectId).then(setIssues).catch(() => setIssues([]));
 

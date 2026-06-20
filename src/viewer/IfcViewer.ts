@@ -152,6 +152,8 @@ export class IfcViewer {
   private clashGhostMaterial: THREE.Material | null = null;
 
   private onSelect: SelectCallback = () => {};
+  /** fired when an issue pin is clicked (issueId + screen coords) */
+  private onIssuePin: (issueId: string, clientX: number, clientY: number) => void = () => {};
   private initialized = false;
   private disposed = false;
   private resizeObserver?: ResizeObserver;
@@ -194,6 +196,10 @@ export class IfcViewer {
 
   setOnSelect(cb: SelectCallback) {
     this.onSelect = cb;
+  }
+
+  setOnIssuePin(cb: (issueId: string, clientX: number, clientY: number) => void) {
+    this.onIssuePin = cb;
   }
 
   async init() {
@@ -406,6 +412,12 @@ export class IfcViewer {
   // --- selection ---------------------------------------------------------
 
   private handleClick = (event: MouseEvent) => {
+    // 이슈 핀을 먼저 픽 — 핀을 클릭하면 객체 선택 대신 핀 콜백을 쏜다.
+    const pin = this.pickIssuePin(event.clientX, event.clientY);
+    if (pin) {
+      this.onIssuePin(pin, event.clientX, event.clientY);
+      return;
+    }
     const hit = this.pick(event.clientX, event.clientY);
     if (!hit) {
       this.clearHighlight();
@@ -415,6 +427,19 @@ export class IfcViewer {
     this.highlight(hit.modelID, hit.expressID);
     this.onSelect(this.getProperties(hit.modelID, hit.expressID));
   };
+
+  private pickIssuePin(clientX: number, clientY: number): string | null {
+    if (!this.issuePinGroup || !this.issuePinGroup.visible) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const hits = this.raycaster.intersectObjects(this.issuePinGroup.children, false);
+    const id = hits[0]?.object.userData.issueId;
+    return typeof id === 'string' ? id : null;
+  }
 
   private pick(clientX: number, clientY: number): { modelID: number; expressID: number } | null {
     const rect = this.renderer.domElement.getBoundingClientRect();
@@ -815,14 +840,14 @@ export class IfcViewer {
    * where issues live. Color encodes status (open=red / closed=green). Toggle
    * with setIssuePinsVisible(). Elements not found are skipped.
    */
-  setIssuePins(pins: { modelID: number; expressID: number; color?: number }[]) {
+  setIssuePins(pins: { modelID: number; expressID: number; color?: number; issueId?: string }[]) {
     this.clearIssuePins();
     if (pins.length === 0) return;
 
     const sceneBox = new THREE.Box3();
     for (const model of this.models) sceneBox.expandByObject(model.group);
     const maxDim = sceneBox.isEmpty() ? 10 : sceneBox.getSize(new THREE.Vector3()).length();
-    const r = Math.max(maxDim * 0.008, 0.2);
+    const r = Math.max(maxDim * 0.01, 0.25);
 
     const group = new THREE.Group();
     const box = new THREE.Box3();
@@ -831,7 +856,7 @@ export class IfcViewer {
       for (const mesh of this.meshesFor(p.modelID, p.expressID)) box.expandByObject(mesh);
       if (box.isEmpty()) continue;
       const marker = new THREE.Mesh(
-        new THREE.SphereGeometry(r, 12, 12),
+        new THREE.SphereGeometry(r, 14, 14),
         new THREE.MeshBasicMaterial({
           color: p.color ?? 0xdc2626,
           depthTest: false,
@@ -841,6 +866,7 @@ export class IfcViewer {
       );
       marker.position.copy(box.getCenter(new THREE.Vector3()));
       marker.renderOrder = 998;
+      marker.userData.issueId = p.issueId;
       group.add(marker);
     }
     this.issuePinGroup = group;
