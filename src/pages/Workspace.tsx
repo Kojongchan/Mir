@@ -76,6 +76,14 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   const [pinPopup, setPinPopup] = useState<{ issue: Issue; x: number; y: number } | null>(null);
   const navigate = useNavigate();
 
+  // 측정 / 단면(클리핑) — 범용 리뷰 도구.
+  const [measureOn, setMeasureOn] = useState(false);
+  const [measureMsg, setMeasureMsg] = useState<string | null>(null);
+  const [sectionOn, setSectionOn] = useState(false);
+  const [sectionAxis, setSectionAxis] = useState<'x' | 'y' | 'z'>('y');
+  const [sectionOffset, setSectionOffset] = useState(0.5);
+  const [sectionFlip, setSectionFlip] = useState(false);
+
   // 통합모델: 모델/카테고리별 표시 토글(보고 싶은 것만 선택).
   const [meta, setMeta] = useState<ElementMeta[]>([]);
   const [hiddenModels, setHiddenModels] = useState<Set<string>>(new Set());
@@ -231,6 +239,19 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
       return true;
     });
   }, [viewer, mode, hiddenModels, hiddenCats, modelIdMap, catByKey]);
+
+  // 측정 모드 토글 + 메시지 콜백.
+  useEffect(() => {
+    if (!viewer) return;
+    viewer.setOnMeasure(setMeasureMsg);
+    viewer.setMeasureMode(measureOn);
+  }, [viewer, measureOn]);
+
+  // 단면(클리핑) 적용.
+  useEffect(() => {
+    if (!viewer) return;
+    viewer.setSection({ enabled: sectionOn, axis: sectionAxis, offset: sectionOffset, flip: sectionFlip });
+  }, [viewer, sectionOn, sectionAxis, sectionOffset, sectionFlip]);
 
   const toggleModel = (dbId: string) =>
     setHiddenModels((s) => {
@@ -428,7 +449,51 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
               🔍 간섭체크 결과
             </button>
           )}
+
+          <span className="tl-divider" />
+          <button
+            className={measureOn ? 'is-active' : undefined}
+            onClick={() => setMeasureOn((v) => !v)}
+            title="두 점을 클릭해 거리 측정"
+          >
+            📏 측정
+          </button>
+          {measureOn && (
+            <button onClick={() => viewer?.clearMeasurements()} title="측정 지우기">
+              지우기
+            </button>
+          )}
+          <button
+            className={sectionOn ? 'is-active' : undefined}
+            onClick={() => setSectionOn((v) => !v)}
+            title="단면(클리핑 평면)"
+          >
+            ✂ 단면
+          </button>
+          {sectionOn && (
+            <span className="section-ctrls">
+              <select value={sectionAxis} onChange={(e) => setSectionAxis(e.target.value as 'x' | 'y' | 'z')}>
+                <option value="x">X</option>
+                <option value="y">Y</option>
+                <option value="z">Z</option>
+              </select>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={sectionOffset}
+                onChange={(e) => setSectionOffset(Number(e.target.value))}
+                title="단면 위치"
+              />
+              <button onClick={() => setSectionFlip((v) => !v)} title="단면 방향 뒤집기">
+                ⇄
+              </button>
+            </span>
+          )}
+
           <div className="spacer" />
+          {measureMsg && <span className="muted measure-msg">{measureMsg}</span>}
           <span className="muted">{status}</span>
           <span className="muted">· 모델 {viewer?.modelCount ?? 0}개</span>
         </div>

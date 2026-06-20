@@ -3176,3 +3176,24 @@ button.danger:hover:not(:disabled) {
   font-size: 11px;
   color: var(--accent);
 }
+
+/* 측정 / 단면 컨트롤 */
+.section-ctrls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.section-ctrls input[type='range'] {
+  width: 110px;
+}
+.section-ctrls select {
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+}
+.measure-msg {
+  color: var(--accent);
+  font-weight: 600;
+}
