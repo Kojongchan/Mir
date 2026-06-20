@@ -36,7 +36,8 @@ import { ColumnMapModal } from './ColumnMapModal';
 interface Props {
   viewer: IfcViewer | null;
   projectId: string;
-  modelDbId: string | null;
+  /** 런타임 modelID → DB 모델 uuid (여러 모델을 동시에 로드 — 매핑 영속화·복원용). */
+  modelIdMap: Map<number, string>;
 }
 
 /**
@@ -44,7 +45,15 @@ interface Props {
  * 타임슬라이더로 현재 시점을 옮기면 그 시점의 시공 상태(시공/철거/임시)를 유형별
  * 색상·반투명으로 뷰어에 반영한다. 작업 테이블(헤더/열)과 간트를 함께 표시.
  */
-export function Timeline({ viewer, projectId, modelDbId }: Props) {
+export function Timeline({ viewer, projectId, modelIdMap }: Props) {
+  // DB 모델 uuid → 런타임 modelID (불러온 매핑을 현재 세션 모델로 재해석).
+  const dbToRuntime = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const [rid, db] of modelIdMap.entries()) m.set(db, rid);
+    return m;
+  }, [modelIdMap]);
+  // 모든 모델이 로드됐는지 판별하는 키(자동복원 트리거).
+  const loadedKey = useMemo(() => [...modelIdMap.values()].sort().join('|'), [modelIdMap]);
   const fourd = useStore((s) => s.fourd);
   const setStatus = useStore((s) => s.setStatus);
   const selected = useStore((s) => s.selected);
@@ -74,8 +83,8 @@ export function Timeline({ viewer, projectId, modelDbId }: Props) {
   // 활성 슬롯에 즉시 저장(관리자, 모델 오픈 상태). 사용자 편집 직후 명시적으로 호출해
   // 프로그램적 복원(autoRestore)과의 경합을 피한다. fire-and-forget.
   const persistActive = (t: ScheduleTask[], m: TaskMapping, src: ScheduleSource = source ?? 'generic') => {
-    if (!isAdmin || !projectId || !modelDbId || t.length === 0) return;
-    void saveActiveSchedule({ projectId, modelDbId, source: src, tasks: t, mapping: m }).catch(() => {});
+    if (!isAdmin || !projectId || modelIdMap.size === 0 || t.length === 0) return;
+    void saveActiveSchedule({ projectId, modelIdMap, source: src, tasks: t, mapping: m }).catch(() => {});
   };
 
   // --- CSV 임포트(열 매핑 모달) ---
@@ -195,8 +204,8 @@ export function Timeline({ viewer, projectId, modelDbId }: Props) {
     if (!name) return;
     setDbBusy(true);
     try {
-      await saveSchedule({ projectId, modelDbId, name, source: source ?? 'generic', tasks, mapping });
-      setStatus(`일정 저장 완료: ${name}${modelDbId ? '' : ' (모델 매핑 제외 — 모델 미오픈)'}`);
+      await saveSchedule({ projectId, modelIdMap, name, source: source ?? 'generic', tasks, mapping });
+      setStatus(`일정 저장 완료: ${name}${modelIdMap.size ? '' : ' (모델 매핑 제외 — 모델 미오픈)'}`);
       await refreshSaved();
     } catch (e) {
       setStatus(`일정 저장 실패: ${(e as Error).message}`);
@@ -222,13 +231,13 @@ export function Timeline({ viewer, projectId, modelDbId }: Props) {
         start: Math.min(...starts),
         end: Math.max(...ends),
       });
-      const runtime = viewer?.primaryModelID ?? null;
       const nextMapping: TaskMapping = {};
       let resolved = 0;
       let unresolved = 0;
       for (const [taskId, els] of Object.entries(ls.elements)) {
         for (const el of els) {
-          if (runtime != null && el.modelDbId === modelDbId) {
+          const runtime = dbToRuntime.get(el.modelDbId);
+          if (runtime != null) {
             (nextMapping[taskId] ??= []).push({ modelID: runtime, expressID: el.expressID });
             resolved++;
           } else {
@@ -270,11 +279,11 @@ export function Timeline({ viewer, projectId, modelDbId }: Props) {
         start: Math.min(...starts),
         end: Math.max(...ends),
       });
-      const runtime = viewer?.primaryModelID ?? null;
       const nextMapping: TaskMapping = {};
       for (const [taskId, els] of Object.entries(ls.elements)) {
         for (const el of els) {
-          if (runtime != null && el.modelDbId === modelDbId) {
+          const runtime = dbToRuntime.get(el.modelDbId);
+          if (runtime != null) {
             (nextMapping[taskId] ??= []).push({ modelID: runtime, expressID: el.expressID });
           }
         }
@@ -296,16 +305,15 @@ export function Timeline({ viewer, projectId, modelDbId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
-  // 모델이 (자동/수동) 열릴 때마다 활성 슬롯을 1회 복원한다. 모델 재오픈 시 런타임
-  // modelID 가 바뀌고 openModel 이 매핑을 비우므로, DB(model_id+expressID)에서 다시
-  // 해석해 매핑을 되살린다 → 수동 저장/재매핑 없이 유지.
+  // 모델이 모두 로드되면(모드별 일괄 로드) 활성 슬롯을 1회 복원한다. 런타임 modelID 는
+  // 로드 때마다 달라지므로 DB(model_id+expressID)에서 다시 해석해 매핑을 되살린다.
   useEffect(() => {
-    if (!modelDbId) return;
-    if (autoRestoredRef.current === modelDbId) return;
-    autoRestoredRef.current = modelDbId;
+    if (!loadedKey) return;
+    if (autoRestoredRef.current === loadedKey) return;
+    autoRestoredRef.current = loadedKey;
     void autoRestore();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelDbId]);
+  }, [loadedKey]);
 
   const onDelete = async () => {
     if (!savedId) return;
