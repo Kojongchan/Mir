@@ -547,6 +547,20 @@ export class IfcViewer {
     for (const mesh of this.allMeshes()) mesh.visible = true;
   }
 
+  /**
+   * Apply a visibility predicate across every element (used by the integrated
+   * model's per-model / per-category show-hide filters). `pred` decides whether
+   * an element is shown.
+   */
+  applyVisibility(pred: (modelID: number, expressID: number) => boolean) {
+    for (const model of this.models) {
+      for (const [expressID, meshes] of model.elementMeshes) {
+        const v = pred(model.modelID, expressID);
+        for (const mesh of meshes) mesh.visible = v;
+      }
+    }
+  }
+
   fitToSelection(selection: { modelID: number; expressID: number } | null) {
     if (!selection) {
       if (this.models.length) this.fitToObject(this.models[0].group);

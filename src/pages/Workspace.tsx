@@ -10,7 +10,7 @@ import {
   dueDeltaLabel,
   type Issue,
 } from '../lib/issues';
-import { IfcViewer, type UpAxis } from '../viewer/IfcViewer';
+import { IfcViewer, type ElementMeta, type UpAxis } from '../viewer/IfcViewer';
 import { useStore } from '../store/useStore';
 import { useAuth } from '../auth/AuthProvider';
 import { Toolbar } from '../components/Toolbar';
@@ -75,6 +75,12 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   const [showPins, setShowPins] = useState(true);
   const [pinPopup, setPinPopup] = useState<{ issue: Issue; x: number; y: number } | null>(null);
   const navigate = useNavigate();
+
+  // 통합모델: 모델/카테고리별 표시 토글(보고 싶은 것만 선택).
+  const [meta, setMeta] = useState<ElementMeta[]>([]);
+  const [hiddenModels, setHiddenModels] = useState<Set<string>>(new Set());
+  const [hiddenCats, setHiddenCats] = useState<Set<string>>(new Set());
+  const [showCats, setShowCats] = useState(false);
 
   const { status, setStatus, setSelected, setModelCount, selected } = useStore();
 
@@ -194,6 +200,51 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
     });
   }, [viewer, issues]);
 
+  // 통합모델: 모델이 로드되면 요소 메타(카테고리)를 읽어 표시 토글에 쓴다.
+  useEffect(() => {
+    if (viewer && mode === 'integrated') setMeta(viewer.getElementMeta());
+  }, [viewer, mode, modelIdMap]);
+
+  const catByKey = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const e of meta) m.set(`${e.modelID}:${e.expressID}`, e.category);
+    return m;
+  }, [meta]);
+  const categories = useMemo(() => {
+    const c = new Map<string, number>();
+    for (const e of meta) c.set(e.category, (c.get(e.category) ?? 0) + 1);
+    return [...c.entries()].sort((a, b) => b[1] - a[1]);
+  }, [meta]);
+
+  // 표시 토글 적용(모델 OR 카테고리 숨김이면 비표시).
+  useEffect(() => {
+    if (!viewer || mode !== 'integrated') return;
+    if (hiddenModels.size === 0 && hiddenCats.size === 0) {
+      viewer.showAll();
+      return;
+    }
+    viewer.applyVisibility((mid, eid) => {
+      const db = modelIdMap.get(mid);
+      if (db && hiddenModels.has(db)) return false;
+      const cat = catByKey.get(`${mid}:${eid}`);
+      if (cat && hiddenCats.has(cat)) return false;
+      return true;
+    });
+  }, [viewer, mode, hiddenModels, hiddenCats, modelIdMap, catByKey]);
+
+  const toggleModel = (dbId: string) =>
+    setHiddenModels((s) => {
+      const n = new Set(s);
+      n.has(dbId) ? n.delete(dbId) : n.add(dbId);
+      return n;
+    });
+  const toggleCat = (cat: string) =>
+    setHiddenCats((s) => {
+      const n = new Set(s);
+      n.has(cat) ? n.delete(cat) : n.add(cat);
+      return n;
+    });
+
   const onUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -277,7 +328,14 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
           </div>
           <ul className="model-list">
             {models.map((m) => (
-              <li key={m.id}>
+              <li key={m.id} className="model-row">
+                <input
+                  type="checkbox"
+                  className="model-check"
+                  checked={!hiddenModels.has(m.id)}
+                  onChange={() => toggleModel(m.id)}
+                  title="표시/숨김"
+                />
                 <button className="model-item" onClick={() => frameModel(m)} title={`${m.name} — 카메라 맞춤`}>
                   <span className="model-name">{m.name}</span>
                   <span className="muted">{sizeLabel(m.size_bytes)}</span>
@@ -286,6 +344,43 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
             ))}
             {models.length === 0 && <li className="muted empty">등록된 모델이 없습니다. IFC를 업로드하세요.</li>}
           </ul>
+
+          {categories.length > 0 && (
+            <>
+              <div className="sidebar-head">
+                <h2>카테고리</h2>
+                <button onClick={() => setShowCats((v) => !v)} title="카테고리 표시 토글">
+                  {showCats ? '접기' : `펼치기 (${categories.length})`}
+                </button>
+              </div>
+              {showCats && (
+                <ul className="model-list cat-list">
+                  {hiddenCats.size > 0 && (
+                    <li>
+                      <button className="model-item cat-clear" onClick={() => setHiddenCats(new Set())}>
+                        전체 표시로 초기화
+                      </button>
+                    </li>
+                  )}
+                  {categories.map(([c, n]) => (
+                    <li key={c} className="model-row">
+                      <input
+                        type="checkbox"
+                        className="model-check"
+                        checked={!hiddenCats.has(c)}
+                        onChange={() => toggleCat(c)}
+                        title="표시/숨김"
+                      />
+                      <span className="cat-name" title={c}>
+                        {c}
+                      </span>
+                      <span className="muted">{n}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
 
           <div className="sidebar-head">
             <h2>문서 · 미디어</h2>
