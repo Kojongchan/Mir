@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { errMessage } from '../lib/errors';
-import { createIssue, listIssues, OPEN_STATUSES, type Issue } from '../lib/issues';
+import {
+  createIssue,
+  listIssues,
+  OPEN_STATUSES,
+  PRIORITY_LABEL,
+  STATUS_LABEL,
+  dueDeltaLabel,
+  type Issue,
+} from '../lib/issues';
 import { IfcViewer, type UpAxis } from '../viewer/IfcViewer';
 import { useStore } from '../store/useStore';
 import { useAuth } from '../auth/AuthProvider';
@@ -62,9 +70,11 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
 
   const [showClash, setShowClash] = useState(mode === 'clash');
 
-  // 통합모델: 이슈 핀(객체에 연결된 이슈 마커) 표시/숨김.
+  // 통합모델: 이슈 핀(객체에 연결된 이슈 마커) 표시/숨김 + 핀 클릭 팝업.
   const [issues, setIssues] = useState<Issue[]>([]);
   const [showPins, setShowPins] = useState(true);
+  const [pinPopup, setPinPopup] = useState<{ issue: Issue; x: number; y: number } | null>(null);
+  const navigate = useNavigate();
 
   const { status, setStatus, setSelected, setModelCount, selected } = useStore();
 
@@ -169,10 +179,20 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
         modelID: dbToRuntime.get(i.model_id as string) as number,
         expressID: i.express_id as number,
         color: OPEN_STATUSES.includes(i.status) ? 0xdc2626 : 0x16a34a,
+        issueId: i.id,
       }));
     viewer.setIssuePins(pins);
     viewer.setIssuePinsVisible(showPins);
   }, [viewer, mode, issues, modelIdMap, showPins]);
+
+  // 핀 클릭 → 이슈 상세 미니 팝업.
+  useEffect(() => {
+    if (!viewer) return;
+    viewer.setOnIssuePin((id, x, y) => {
+      const issue = issues.find((i) => i.id === id);
+      if (issue) setPinPopup({ issue, x, y });
+    });
+  }, [viewer, issues]);
 
   const onUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -319,6 +339,51 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
         </div>
         <div className="viewport" ref={containerRef} />
         <PropertiesPanel />
+        {pinPopup && (
+          <div
+            className="pin-popup"
+            style={{ left: pinPopup.x + 12, top: pinPopup.y + 12 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="pin-popup-head">
+              <span className={`issue-status-dot issue-status-${pinPopup.issue.status}`} />
+              <strong>{pinPopup.issue.title}</strong>
+              <button className="clash-x" onClick={() => setPinPopup(null)} title="닫기">
+                ✕
+              </button>
+            </div>
+            <div className="pin-popup-meta muted">
+              {STATUS_LABEL[pinPopup.issue.status]} · {PRIORITY_LABEL[pinPopup.issue.priority]}
+              {pinPopup.issue.assignee_name ? ` · 담당 ${pinPopup.issue.assignee_name}` : ''}
+              {pinPopup.issue.due_date ? ` · 마감 ${pinPopup.issue.due_date} (${dueDeltaLabel(pinPopup.issue.due_date)})` : ''}
+            </div>
+            {pinPopup.issue.description && (
+              <p className="pin-popup-desc">{pinPopup.issue.description}</p>
+            )}
+            <div className="pin-popup-foot">
+              <button
+                onClick={() => {
+                  const exp = pinPopup.issue.express_id;
+                  const dbId = pinPopup.issue.model_id;
+                  let rid: number | null = null;
+                  for (const [r, db] of modelIdMap.entries()) if (db === dbId) rid = r;
+                  if (rid != null && exp != null) viewer?.focusElement(rid, exp);
+                }}
+                title="객체로 카메라 이동"
+              >
+                객체 보기
+              </button>
+              <button
+                className="primary"
+                onClick={() =>
+                  navigate(`/project/${projectId}/issues`, { state: { focusIssueId: pinPopup.issue.id } })
+                }
+              >
+                이슈로 이동
+              </button>
+            </div>
+          </div>
+        )}
         {mode === 'clash' && showClash && (
           <ClashPanel viewer={viewer} projectId={projectId} modelIdMap={modelIdMap} onClose={() => setShowClash(false)} />
         )}

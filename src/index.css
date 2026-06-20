@@ -3083,3 +3083,67 @@ button.danger:hover:not(:disabled) {
   white-space: nowrap;
   flex-shrink: 0;
 }
+
+/* 통합모델 이슈 핀 클릭 팝업 */
+.pin-popup {
+  position: fixed;
+  z-index: 30;
+  width: 280px;
+  max-width: calc(100vw - 24px);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  padding: 10px 12px;
+}
+.pin-popup-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pin-popup-head strong {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pin-popup-meta {
+  font-size: 11px;
+  margin-top: 4px;
+}
+.pin-popup-desc {
+  font-size: 12px;
+  margin: 8px 0 0;
+  max-height: 88px;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--text);
+}
+.pin-popup-foot {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+.issue-status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: var(--muted);
+}
+.issue-status-open {
+  background: var(--danger);
+}
+.issue-status-in_progress {
+  background: var(--bar-temporary);
+}
+.issue-status-on_hold {
+  background: var(--muted);
+}
+.issue-status-resolved,
+.issue-status-closed {
+  background: var(--bar-construct);
+}
