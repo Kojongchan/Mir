@@ -960,3 +960,43 @@ create index if not exists models_project_purpose_idx
   on public.models (project_id, purpose);
 
 notify pgrst, 'reload schema';
+
+-- ===================== 0017_viewpoints.sql =====================
+
+create table if not exists public.viewpoints (
+  id          uuid primary key default gen_random_uuid(),
+  project_id  uuid not null references public.projects (id) on delete cascade,
+  model_id    uuid references public.models (id) on delete set null,
+  name        text not null,
+  camera      jsonb not null default '{}'::jsonb,
+  display     jsonb not null default '{}'::jsonb,
+  markup      jsonb not null default '[]'::jsonb,
+  thumbnail   text,
+  created_by  uuid references auth.users (id) on delete set null,
+  created_at  timestamptz not null default now()
+);
+create index if not exists viewpoints_project_idx
+  on public.viewpoints (project_id, created_at desc);
+
+alter table public.issues
+  add column if not exists viewpoint_id uuid references public.viewpoints (id) on delete set null;
+
+alter table public.viewpoints enable row level security;
+
+drop policy if exists viewpoints_select on public.viewpoints;
+create policy viewpoints_select on public.viewpoints
+  for select using (public.is_admin() or public.is_member(project_id));
+
+drop policy if exists viewpoints_insert on public.viewpoints;
+create policy viewpoints_insert on public.viewpoints
+  for insert with check (public.is_admin());
+
+drop policy if exists viewpoints_update on public.viewpoints;
+create policy viewpoints_update on public.viewpoints
+  for update using (public.is_admin());
+
+drop policy if exists viewpoints_delete on public.viewpoints;
+create policy viewpoints_delete on public.viewpoints
+  for delete using (public.is_admin());
+
+notify pgrst, 'reload schema';

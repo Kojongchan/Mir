@@ -147,13 +147,14 @@
 - **Clash Detective**(간섭 검출) → ✅ **S32 완료**(Phase 4, three-mesh-bvh). UX 보강 S35.
 - **TimeLiner**(4D) → ✅ S4 에서 구현.
 - **Measure / Sectioning**(측정·단면) → ✅ **S36 완료**(📏 거리 측정 + ✂ 클리핑 단면).
-- **Redline / Markup / Comments**(지적·코멘트) → 이슈 모듈과 연계(이슈 핀/팝업 S33·S36). 🔄 마크업(redline) 미구현.
-- **Saved Viewpoints / Animator**(저장 뷰·카메라 애니메이션) → 협업 핵심(🟢). ⏳ 미구현.
+- **Redline / Markup / Comments**(지적·코멘트) → 이슈 모듈과 연계(이슈 핀/팝업 S33·S36). ✅ **S37 마크업(redline) 완료**(2D 주석 오버레이→뷰포인트 저장·이슈 첨부).
+- **Saved Viewpoints / Animator**(저장 뷰·카메라 애니메이션) → 협업 핵심(🟢). ✅ **S37 저장 뷰포인트 완료**(카메라·표시상태·마크업 저장/재호출/공유). Animator(카메라 애니메이션)는 후속.
 - **Quantification**(물량 산출) → 요소 속성 집계. ⏳ 미구현.
 - **Appearance Profiler**(속성기반 색칠) → web-ifc 속성으로 가능(🟢). ⏳ 미구현.
 - **Switchback / Federation**(원본 연동·모델 통합) → Phase 10(네이티브 업로드)과 연결.
 
-> **남은 Navisworks 후보(S15)**: 마크업(redline)·저장 뷰포인트·물량 산출·속성기반 색칠.
+> **남은 Navisworks 후보(S15)**: 물량 산출(Quantification)·속성기반 색칠(Appearance Profiler).
+> (마크업·저장 뷰포인트는 **S37 완료**, 측정·단면은 S36 완료.)
 
 ---
 
@@ -230,11 +231,12 @@
 | S32 | 충돌검사(Phase 4) | `feature/clash-detection` | 뷰어·S30 | ✅ 완료 |
 | S33·34 | 3D 모듈 분리 + 모델 풀 공유 | (mods·share-pool) | S32 | ✅ 완료 |
 | S35·36 | 간섭 UX + 리뷰도구(측정·단면·핀팝업·표시토글) | (clash-ux·…) | S32 | ✅ 완료 |
-| **S37** | **저장 뷰포인트 + 마크업(redline)** | `feature/viewpoints-markup` | 뷰어 | ← **다음** |
+| **S37** | **저장 뷰포인트 + 마크업(redline)** ✅ | (viewpoints-markup) | 뷰어 | ✅ 완료 (0017) |
 | **S38** | **간섭 보고서 — 사용자 Word 양식(docxtemplater, D15)** | `feature/clash-report` | S32 | ⏳ 양식 대기 |
 
-**권장 착수 순서**: …S32~S36✅ → **다음 S37(뷰포인트/마크업)** → S38(간섭 보고서, 양식 도착 시)
-→ 백로그(§9: 간섭 그룹화/필터·2D 도면 핀·모바일) → S15(Navisworks 잔여)·S17(APS) → **S16 장비(최후)**.
+**권장 착수 순서**: …S32~S37✅ → **다음 S38(간섭 보고서, 양식 도착 시)**
+→ 백로그(§9: 마크업 도형 개별 편집·카메라 애니메이션·간섭 그룹화/필터·2D 도면 핀·모바일)
+→ S15(Navisworks 잔여=물량·속성색칠)·S17(APS) → **S16 장비(최후)**.
 
 ---
 
@@ -243,7 +245,8 @@
 > · 간섭 UX(S35) · 측정/단면·이슈핀 팝업·표시 토글(S36). 아래는 **남은 후보**:
 - **간섭검사 고도화**: 결과 **그룹화·정렬·필터**(Navisworks식, 상태 승계) · **간섭 보고서**(HTML/PDF)
   · 정기검사/규칙 세트 저장 · Clearance/Duplicate 확장.
-- **저장 뷰포인트 / 마크업(redline)**: 카메라 뷰 저장·공유 + 화면 주석(Navisworks 남은 기능 = S15).
+- ✅ **저장 뷰포인트 / 마크업(redline)** — **S37 완료**(0017). 후속: 마크업 도형 개별 선택/이동/삭제,
+  카메라 애니메이션(Animator), 뷰포인트 폴더/순서, 표시상태 복원을 4D/간섭 모드까지 확장.
 - **권한 일관성**: 0003(공정표) RLS 를 admin 전용으로 정리(현재 admin/member, D11 일관성). 마이그레이션 1개.
 - **도면(2D/PDF) 이슈 핀**: 3D 객체 핀(S29)에 이어 2D 도면 좌표에 이슈 마커.
 - **공정 고도화**: 공정표 이력관리(버전별 비교), GUID 기반 정밀 매핑.

@@ -46,6 +46,7 @@ export interface Issue {
   due_date: string | null;
   model_id: string | null;
   express_id: number | null;
+  viewpoint_id: string | null;
   created_by: string | null;
   created_by_name: string | null;
   created_at: string;
@@ -72,7 +73,7 @@ export interface IssueEvent {
 }
 
 const COLS =
-  'id, project_id, title, description, status, priority, assignee_id, assignee_name, due_date, model_id, express_id, created_by, created_by_name, created_at, updated_at';
+  'id, project_id, title, description, status, priority, assignee_id, assignee_name, due_date, model_id, express_id, viewpoint_id, created_by, created_by_name, created_at, updated_at';
 
 export async function listIssues(projectId: string): Promise<Issue[]> {
   const { data, error } = await supabase
@@ -106,27 +107,27 @@ export async function createIssue(
     due_date?: string | null;
     model_id?: string | null;
     express_id?: number | null;
+    viewpoint_id?: string | null;
   },
   authorName: string | null,
 ): Promise<string> {
   const { data: userData } = await supabase.auth.getUser();
-  const { data, error } = await supabase
-    .from('issues')
-    .insert({
-      project_id: projectId,
-      title: input.title,
-      description: input.description ?? null,
-      priority: input.priority,
-      assignee_id: input.assignee_id ?? null,
-      assignee_name: input.assignee_name || null,
-      due_date: input.due_date || null,
-      model_id: input.model_id ?? null,
-      express_id: input.express_id ?? null,
-      created_by: userData.user?.id ?? null,
-      created_by_name: authorName,
-    })
-    .select('id')
-    .single();
+  const payload: Record<string, unknown> = {
+    project_id: projectId,
+    title: input.title,
+    description: input.description ?? null,
+    priority: input.priority,
+    assignee_id: input.assignee_id ?? null,
+    assignee_name: input.assignee_name || null,
+    due_date: input.due_date || null,
+    model_id: input.model_id ?? null,
+    express_id: input.express_id ?? null,
+    created_by: userData.user?.id ?? null,
+    created_by_name: authorName,
+  };
+  // viewpoint_id 는 0017 에서 추가된 컬럼 — 값이 있을 때만 포함(미적용 폴백).
+  if (input.viewpoint_id) payload.viewpoint_id = input.viewpoint_id;
+  const { data, error } = await supabase.from('issues').insert(payload).select('id').single();
   if (error) throw error;
 
   const issueId = data.id as string;

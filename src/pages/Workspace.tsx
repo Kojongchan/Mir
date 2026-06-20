@@ -17,6 +17,9 @@ import { Toolbar } from '../components/Toolbar';
 import { PropertiesPanel } from '../components/PropertiesPanel';
 import { Timeline } from '../components/Timeline';
 import { ClashPanel } from '../components/ClashPanel';
+import { ViewpointPanel } from '../components/ViewpointPanel';
+import { MarkupOverlay, type MarkupTool } from '../components/MarkupOverlay';
+import { REDLINE_COLORS, type DisplayState, type MarkupShape, type RedlineColor } from '../lib/viewpoints';
 import {
   downloadModelBytes,
   listModels,
@@ -84,6 +87,13 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   const [sectionOffset, setSectionOffset] = useState(0.5);
   const [sectionFlip, setSectionFlip] = useState(false);
 
+  // 저장 뷰포인트 + 마크업(redline).
+  const [showViewpoints, setShowViewpoints] = useState(false);
+  const [markupOn, setMarkupOn] = useState(false);
+  const [markupTool, setMarkupTool] = useState<MarkupTool>('arrow');
+  const [markupColor, setMarkupColor] = useState<RedlineColor>('red');
+  const [markupShapes, setMarkupShapes] = useState<MarkupShape[]>([]);
+
   // 통합모델: 모델/카테고리별 표시 토글(보고 싶은 것만 선택).
   const [meta, setMeta] = useState<ElementMeta[]>([]);
   const [hiddenModels, setHiddenModels] = useState<Set<string>>(new Set());
@@ -94,8 +104,13 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
 
   // 이슈 '위치 보기'로 진입하면 location.state.focus 로 대상 객체가 전달된다.
   const location = useLocation();
-  const focus =
-    (location.state as { focus?: { modelDbId: string; expressID: number } } | null)?.focus ?? null;
+  const locState =
+    (location.state as {
+      focus?: { modelDbId: string; expressID: number };
+      openViewpoint?: string;
+    } | null) ?? null;
+  const focus = locState?.focus ?? null;
+  const openViewpoint = locState?.openViewpoint ?? null;
   const focusHandledRef = useRef(false);
 
   useEffect(() => {
@@ -265,6 +280,36 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
       n.has(cat) ? n.delete(cat) : n.add(cat);
       return n;
     });
+
+  // 마크업 그리기를 켜면 측정 모드와 충돌하지 않게 측정을 끈다(둘 다 클릭을 가로챔).
+  useEffect(() => {
+    if (markupOn && measureOn) setMeasureOn(false);
+  }, [markupOn, measureOn]);
+
+  // 이슈 → 뷰포인트 딥링크로 진입하면 뷰포인트 패널을 연다.
+  useEffect(() => {
+    if (openViewpoint) setShowViewpoints(true);
+  }, [openViewpoint]);
+
+  // 뷰포인트 저장/복원용 표시상태(모델/카테고리 숨김 + 단면).
+  const getDisplayState = (): DisplayState => ({
+    hiddenModels: [...hiddenModels],
+    hiddenCats: [...hiddenCats],
+    section: { enabled: sectionOn, axis: sectionAxis, offset: sectionOffset, flip: sectionFlip },
+  });
+  const applyDisplayState = (d: DisplayState) => {
+    setHiddenModels(new Set(d.hiddenModels ?? []));
+    setHiddenCats(new Set(d.hiddenCats ?? []));
+    if (d.section) {
+      setSectionOn(d.section.enabled);
+      setSectionAxis(d.section.axis);
+      setSectionOffset(d.section.offset);
+      setSectionFlip(d.section.flip);
+    }
+  };
+
+  // 뷰포인트 저장 컨텍스트: 단일 모델 프로젝트면 그 모델, 다중이면 장면 전체(null).
+  const modelDbId = modelIdMap.size === 1 ? [...modelIdMap.values()][0] : null;
 
   const onUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -492,12 +537,60 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
             </span>
           )}
 
+          <span className="tl-divider" />
+          <button
+            className={showViewpoints ? 'is-active' : undefined}
+            onClick={() => setShowViewpoints((v) => !v)}
+            title="저장 뷰포인트 패널"
+          >
+            📌 뷰포인트
+          </button>
+          <button
+            className={markupOn ? 'is-active' : undefined}
+            onClick={() => setMarkupOn((v) => !v)}
+            title="2D 마크업(redline) 그리기"
+          >
+            ✎ 마크업
+          </button>
+          {markupOn && (
+            <span className="markup-ctrls">
+              <select value={markupTool} onChange={(e) => setMarkupTool(e.target.value as MarkupTool)} title="도구">
+                <option value="arrow">화살표</option>
+                <option value="line">선</option>
+                <option value="rect">사각형</option>
+                <option value="text">텍스트</option>
+              </select>
+              <span className="markup-swatches">
+                {REDLINE_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    className={`markup-swatch markup-swatch-${c}${markupColor === c ? ' is-on' : ''}`}
+                    onClick={() => setMarkupColor(c)}
+                    title={c}
+                  />
+                ))}
+              </span>
+              <button onClick={() => setMarkupShapes([])} disabled={markupShapes.length === 0} title="마크업 지우기">
+                지우기
+              </button>
+            </span>
+          )}
+
           <div className="spacer" />
           {measureMsg && <span className="muted measure-msg">{measureMsg}</span>}
           <span className="muted">{status}</span>
           <span className="muted">· 모델 {viewer?.modelCount ?? 0}개</span>
         </div>
-        <div className="viewport" ref={containerRef} />
+        <div className="viewport-wrap">
+          <div className="viewport" ref={containerRef} />
+          <MarkupOverlay
+            shapes={markupShapes}
+            onChange={setMarkupShapes}
+            active={markupOn}
+            tool={markupTool}
+            color={markupColor}
+          />
+        </div>
         <PropertiesPanel />
         {pinPopup && (
           <div
@@ -546,6 +639,21 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
         )}
         {mode === 'clash' && showClash && (
           <ClashPanel viewer={viewer} projectId={projectId} modelIdMap={modelIdMap} onClose={() => setShowClash(false)} />
+        )}
+        {showViewpoints && (
+          <ViewpointPanel
+            viewer={viewer}
+            projectId={projectId}
+            modelDbId={modelDbId}
+            isAdmin={isAdmin}
+            authorName={profile?.full_name ?? profile?.username ?? null}
+            getDisplayState={getDisplayState}
+            applyDisplayState={applyDisplayState}
+            markup={markupShapes}
+            setMarkup={setMarkupShapes}
+            autoOpenId={openViewpoint}
+            onClose={() => setShowViewpoints(false)}
+          />
         )}
         {mode === '4d' && <Timeline viewer={viewer} projectId={projectId} modelIdMap={modelIdMap} />}
       </div>
