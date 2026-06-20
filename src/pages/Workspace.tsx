@@ -94,6 +94,17 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   const refreshModels = () => listModels(projectId).then(setModels).catch(() => setModels([]));
   const refreshFiles = () => listFiles(projectId).then(setFiles).catch(() => setFiles([]));
 
+  // 모드 전환 시 4D 시공 시뮬 상태가 다른 모듈로 새지 않게 정리한다. 라우터가 세 모듈을
+  // 같은 Workspace 컴포넌트(=같은 IfcViewer 인스턴스)로 렌더하므로, mode 가 바뀌어도
+  // 뷰어가 재생성되지 않는다 → 4D 가 아니면 시공 오버라이드를 풀고 전체 표시로 되돌린다.
+  useEffect(() => {
+    if (!viewer) return;
+    if (mode !== '4d') {
+      viewer.clearConstruction();
+      viewer.showAll();
+    }
+  }, [viewer, mode]);
+
   // 진입 시 프로젝트의 모든 모델을 자동 로드(클릭 불필요). 통합모델에 업로드만 하면
   // 세 모듈 모두에서 자동으로 보인다.
   useEffect(() => {
