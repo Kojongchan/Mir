@@ -336,17 +336,30 @@ function IssueDetail({
         </div>
       )}
 
-      {hasLocation && (
-        <p style={{ margin: '0 0 10px' }}>
-          <button
-            onClick={() =>
-              navigate(`/project/${issue.project_id}/model`, {
-                state: { focus: { modelDbId: issue.model_id, expressID: issue.express_id } },
-              })
-            }
-          >
-            📍 위치 보기 (3D 객체 #{issue.express_id})
-          </button>
+      {(hasLocation || issue.viewpoint_id) && (
+        <p style={{ margin: '0 0 10px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {hasLocation && (
+            <button
+              onClick={() =>
+                navigate(`/project/${issue.project_id}/model`, {
+                  state: { focus: { modelDbId: issue.model_id, expressID: issue.express_id } },
+                })
+              }
+            >
+              📍 위치 보기 (3D 객체 #{issue.express_id})
+            </button>
+          )}
+          {issue.viewpoint_id && (
+            <button
+              onClick={() =>
+                navigate(`/project/${issue.project_id}/model`, {
+                  state: { openViewpoint: issue.viewpoint_id },
+                })
+              }
+            >
+              📌 뷰포인트 열기
+            </button>
+          )}
         </p>
       )}
 

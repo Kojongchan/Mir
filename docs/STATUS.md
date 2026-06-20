@@ -2,13 +2,47 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-19 · **S32~S36 완료 확인·기획 현행화**. 충돌검사(S32, three-mesh-bvh)
+**마지막 업데이트**: 2026-06-20 · **S37 저장 뷰포인트 + 마크업(redline) 완료**(branch
+`claude/viewpoints-markup-8bu09a`). 카메라·표시상태·2D 주석을 이름 붙여 저장·재호출·공유 +
+뷰포인트↔이슈 양방향 연계. 배포 SQL=`supabase/setup_all.sql`(0003~0017). typecheck·build 통과.
+**다음 스텝=S38 간섭 보고서**(사용자 Word 양식 채우기, `docxtemplater`/D15 — 양식 도착 시).
+**장비 시뮬(S16)은 기획안 최후로 연기**(D15 우선순위). 그 외 백로그(§9): 마크업 도형 개별 편집·
+카메라 애니메이션 · 간섭 그룹화/필터 · 2D 도면 핀 · 모바일 현장 모드 · (대기) S17 APS.
+
+## S37 결과 (branch: claude/viewpoints-markup-8bu09a) — 저장 뷰포인트 + 마크업(redline)
+> Navisworks 잔여 협업 핵심. 카메라 뷰 저장·공유 + 화면 2D 주석. 마이그레이션 `0017_viewpoints.sql`
+> (추가형·멱등, 0001~0016 무수정) + setup_all.sql 갱신. typecheck·build 통과.
+- ✅ **`0017_viewpoints.sql`**: `viewpoints`(project_id·model_id·name·camera(jsonb)·display(jsonb)·
+  markup(jsonb)·thumbnail·created_by) + `issues.viewpoint_id` 컬럼(이슈↔뷰포인트). RLS 읽기=멤버,
+  쓰기=admin(D11). setup_all.sql 0003~0017 로 확장.
+- ✅ **IfcViewer**: `getCameraState`/`applyCameraState`(position·target·up·fov·near·far, 월드좌표) +
+  `captureThumbnail`(다운스케일 JPEG)·`captureSnapshot`(풀해상도 PNG, 이슈 첨부용).
+- ✅ **데이터층 `lib/viewpoints.ts`**: 타입(CameraState·DisplayState·MarkupShape·RedlineColor) +
+  CRUD(list/get/create/delete) + `resolveRedline`(토큰 해석)·`bakeMarkup`(스냅샷에 주석 굽기, **이슈
+  첨부 시에만**, D16)·`dataUrlToFile`. 마크업은 좌표(정규화 0..1)로 저장(D16).
+- ✅ **마크업 오버레이 `components/MarkupOverlay.tsx`**: 뷰포트 위 SVG(viewBox 0..1000, 정규화).
+  도구=화살표/선/사각형/텍스트, 색=`--redline-*` 토큰 5종. active 일 때만 포인터 캡처(비활성 시
+  pointer-events:none 으로 3D 조작 방해 X).
+- ✅ **뷰포인트 패널 `components/ViewpointPanel.tsx`**: 이동/크기조절 창(clash-win 재사용). 현재 뷰
+  저장(이름·카메라·표시상태·마크업·썸네일) + 썸네일 목록에서 **재호출**(카메라+표시상태+마크업 복원)
+  + 삭제 + **뷰포인트→이슈**(재호출 후 스냅샷에 마크업 구워 첨부 + viewpoint_id 연결). 멤버=재호출만,
+  저장/삭제/이슈=admin(D11).
+- ✅ **Workspace 연동**: 뷰어바 `📌 뷰포인트`·`✎ 마크업`(도구·색·지우기). 표시상태 get/apply
+  (모델·카테고리 숨김 + 단면). modelDbId=단일모델이면 그 모델, 다중이면 장면 전체(null). 마크업 켜면
+  측정 모드 자동 해제(둘 다 클릭 가로챔).
+- ✅ **이슈↔뷰포인트 양방향**: `createIssue(..., viewpoint_id)`(0017 미적용 폴백=값 있을 때만 포함).
+  Issues 상세에 `📌 뷰포인트 열기`→통합모델로 이동 후 자동 재호출(라우터 state `openViewpoint`).
+- ✅ 검증: `typecheck`·`build` 통과(메인 gzip 698KB). 색은 `index.css` 토큰만(`--redline-*` 신설).
+  📌 배포: `0017_viewpoints.sql` 실행(또는 setup_all 재실행). 라이브 눈검증은 IFC 로드 후 사용자
+  화면 권장(원격 egress 제약).
+- 📌 후속(범위 밖): 마크업 도형 개별 선택/이동/삭제(현재 전체 지우기) · 카메라 애니메이션(Animator) ·
+  뷰포인트 폴더/순서 · 표시상태 복원을 4D/간섭 모드까지 확장(현재 카메라+단면은 전 모드, 모델/카테고리
+  숨김은 통합모델).
+
+## S32~S36 (직전 누적) — 충돌검사·모듈분리·간섭 UX·리뷰도구
+> **S32~S36 완료 확인·기획 현행화**. 충돌검사(S32, three-mesh-bvh)
 + 3D 모듈 분리/모델풀 공유(S33·S34, D14) + 간섭 UX(S35) + **버그픽스·리뷰도구(S36: 측정📏·단면✂·
 이슈핀 팝업·모델/카테고리 토글)**. CDE+포털+권한+첨부+이슈WF+삭제완화까지 누적 완료.
-배포 SQL=`supabase/setup_all.sql`(0003~0016). typecheck·build 통과 확인.
-**다음 스텝(사용자 확정)=S37 저장 뷰포인트 + 마크업(redline)**. 이어서 **S38 간섭 보고서**(사용자
-Word 양식 채우기, `docxtemplater`/D15 — 양식 도착 시). **장비 시뮬(S16)은 기획안 최후로 연기**(D15 우선순위).
-그 외 백로그(§9): 간섭 그룹화/필터 · 2D 도면 핀 · 모바일 현장 모드 · (대기) S17 APS.
 
 ## S36 결과 (branches: clash-sim-fix · issue-pin-popup · model-visibility · measure-section) — 버그픽스 + 뷰어 리뷰도구
 > 사용자 피드백/제안 반영. 4개 PR(#45~#48) 순차 머지.

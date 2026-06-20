@@ -61,6 +61,16 @@ export interface ClashGeom {
   bvh: MeshBVH;
 }
 
+/** Serializable camera pose for saved viewpoints (Three.js world space). */
+export interface CameraState {
+  position: [number, number, number];
+  target: [number, number, number];
+  up: [number, number, number];
+  fov: number;
+  near: number;
+  far: number;
+}
+
 /** A reference to one side of a clash. */
 export interface ClashElementRef {
   modelID: number;
@@ -590,6 +600,65 @@ export class IfcViewer {
       box.expandByObject(mesh);
     }
     if (!box.isEmpty()) this.frameBox(box);
+  }
+
+  // --- 저장 뷰포인트(카메라 상태) ---------------------------------------
+
+  /**
+   * Snapshot the current camera (position/target/up/fov/near/far) so it can be
+   * named, stored, and recalled later (Navisworks Saved Viewpoints). Coordinates
+   * are in Three.js world space — stable across reloads as long as the same
+   * models are loaded (we recenter by a pure translation, no per-load jitter).
+   */
+  getCameraState(): CameraState {
+    const t = this.controls.target;
+    return {
+      position: [this.camera.position.x, this.camera.position.y, this.camera.position.z],
+      target: [t.x, t.y, t.z],
+      up: [this.camera.up.x, this.camera.up.y, this.camera.up.z],
+      fov: this.camera.fov,
+      near: this.camera.near,
+      far: this.camera.far,
+    };
+  }
+
+  /** Restore a previously saved camera state and refresh the controls. */
+  applyCameraState(s: CameraState) {
+    if (!s || !s.position || !s.target) return;
+    this.camera.position.set(s.position[0], s.position[1], s.position[2]);
+    this.controls.target.set(s.target[0], s.target[1], s.target[2]);
+    if (s.up) this.camera.up.set(s.up[0], s.up[1], s.up[2]);
+    if (typeof s.fov === 'number') this.camera.fov = s.fov;
+    if (typeof s.near === 'number') this.camera.near = s.near;
+    if (typeof s.far === 'number') this.camera.far = s.far;
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
+  }
+
+  /**
+   * Render once and return a downscaled JPEG data URL of the current view, used
+   * as a viewpoint thumbnail. `maxW` caps the width (height keeps aspect).
+   * preserveDrawingBuffer is on, so reading the canvas after a render is valid.
+   */
+  captureThumbnail(maxW = 320, quality = 0.7): string {
+    this.renderer.render(this.scene, this.camera);
+    const src = this.renderer.domElement;
+    const scale = Math.min(1, maxW / (src.width || maxW));
+    const w = Math.max(1, Math.round(src.width * scale));
+    const h = Math.max(1, Math.round(src.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return src.toDataURL('image/jpeg', quality);
+    ctx.drawImage(src, 0, 0, w, h);
+    return canvas.toDataURL('image/jpeg', quality);
+  }
+
+  /** Full-resolution PNG snapshot of the current view (for issue attachments). */
+  captureSnapshot(): string {
+    this.renderer.render(this.scene, this.camera);
+    return this.renderer.domElement.toDataURL('image/png');
   }
 
   // --- 4D construction layer ---------------------------------------------
