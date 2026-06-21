@@ -5,6 +5,9 @@ import {
   IfcAPI,
   IFCGEOMETRICREPRESENTATIONCONTEXT,
   IFCMAPCONVERSION,
+  IFCSIUNIT,
+  IFCCONVERSIONBASEDUNIT,
+  IFCRELDEFINESBYPROPERTIES,
   type FlatMesh,
   type PlacedGeometry,
 } from 'web-ifc';
@@ -45,6 +48,24 @@ export interface ElementMeta {
   name: string;
   /** IFC type name, e.g. "IFCWALL" / "IFCBEAM" (from the type code). */
   category: string;
+}
+
+/**
+ * Raw quantities for one element, expressed in the model's own length unit
+ * (NOT yet normalized to metres). `source` records where each came from:
+ * 'ifc' = read from an IfcElementQuantity (BaseQuantities), 'mesh' = derived
+ * from the rendered triangle mesh (volume/area integral + bbox), 'count' =
+ * geometry-less (only the object count is meaningful). The quantification
+ * layer (`src/lib/quantities.ts`) scales these to m/m²/m³.
+ */
+export interface RawElementQty {
+  /** longest meaningful linear measure (model units); 0 if unknown */
+  length: number;
+  /** surface/section area (model units²); 0 if unknown */
+  area: number;
+  /** volume (model units³); 0 if unknown */
+  volume: number;
+  source: 'ifc' | 'mesh' | 'count';
 }
 
 /** A loaded model summary for the clash set picker. */
@@ -154,6 +175,10 @@ export class IfcViewer {
   private nameCache = new Map<number, Map<number, string>>();
   /** expressID -> IFC category(type) cache per model, for the clash picker */
   private categoryCache = new Map<number, Map<number, string>>();
+  /** metres-per-model-length-unit cache (null = undetectable) per model (QTO) */
+  private lengthScaleCache = new Map<number, number | null>();
+  /** expressID -> IfcElementQuantity BaseQuantities cache per model (QTO) */
+  private quantityIndexCache = new Map<number, Map<number, { length: number; area: number; volume: number }>>();
 
   // --- 측정 / 단면(클리핑) ----------------------------------------------
   private measureMode = false;
@@ -798,6 +823,188 @@ export class IfcViewer {
     } catch {
       return 'UNKNOWN';
     }
+  }
+
+  // --- 5D quantification (QTO) support ----------------------------------
+
+  /**
+   * Metres per model length unit, read from the model's IfcUnitAssignment
+   * (IfcSIUnit LENGTHUNIT prefix, or an IfcConversionBasedUnit factor). e.g. a
+   * millimetre model returns 0.001. Returns null when the unit cannot be
+   * determined, so the caller can fall back to a manual mm/m toggle. Cached.
+   */
+  getLengthUnitToMeters(modelID: number): number | null {
+    if (this.lengthScaleCache.has(modelID)) return this.lengthScaleCache.get(modelID) ?? null;
+    let scale: number | null = null;
+    try {
+      scale = this.readSiLengthScale(modelID) ?? this.readConversionLengthScale(modelID);
+    } catch {
+      scale = null;
+    }
+    this.lengthScaleCache.set(modelID, scale);
+    return scale;
+  }
+
+  /** SI prefix → factor relative to the base unit (metre). */
+  private static readonly SI_PREFIX: Record<string, number> = {
+    EXA: 1e18, PETA: 1e15, TERA: 1e12, GIGA: 1e9, MEGA: 1e6, KILO: 1e3,
+    HECTO: 1e2, DECA: 1e1, DECI: 1e-1, CENTI: 1e-2, MILLI: 1e-3,
+    MICRO: 1e-6, NANO: 1e-9, PICO: 1e-12, FEMTO: 1e-15, ATTO: 1e-18,
+  };
+
+  private readSiLengthScale(modelID: number): number | null {
+    const ids = this.ifcAPI.GetLineIDsWithType(modelID, IFCSIUNIT);
+    for (let i = 0; i < ids.size(); i++) {
+      const u = this.ifcAPI.GetLine(modelID, ids.get(i), false) as Record<string, any>;
+      if (u?.UnitType?.value !== 'LENGTHUNIT') continue;
+      const prefix = u?.Prefix?.value as string | undefined;
+      return prefix ? IfcViewer.SI_PREFIX[prefix] ?? 1 : 1; // METRE base = 1 m
+    }
+    return null;
+  }
+
+  /** Imperial / custom length units defined via IfcConversionBasedUnit. */
+  private readConversionLengthScale(modelID: number): number | null {
+    const ids = this.ifcAPI.GetLineIDsWithType(modelID, IFCCONVERSIONBASEDUNIT);
+    for (let i = 0; i < ids.size(); i++) {
+      const u = this.ifcAPI.GetLine(modelID, ids.get(i), true) as Record<string, any>;
+      if (u?.UnitType?.value !== 'LENGTHUNIT') continue;
+      const factor = Number(u?.ConversionFactor?.ValueComponent?.value);
+      if (!Number.isFinite(factor) || factor <= 0) continue;
+      // The referenced unit is the SI base it converts to (almost always metre).
+      const refUnit = u?.ConversionFactor?.UnitComponent as Record<string, any> | undefined;
+      const refPrefix = refUnit?.Prefix?.value as string | undefined;
+      const refScale = refPrefix ? IfcViewer.SI_PREFIX[refPrefix] ?? 1 : 1;
+      return factor * refScale;
+    }
+    return null;
+  }
+
+  /**
+   * BaseQuantities (IfcElementQuantity) for one element, in model length units,
+   * or null if the element has none. The per-model index of element→quantities
+   * is built once (walking IfcRelDefinesByProperties) and cached.
+   */
+  getElementBaseQuantities(modelID: number, expressID: number): { length: number; area: number; volume: number } | null {
+    let index = this.quantityIndexCache.get(modelID);
+    if (!index) {
+      try {
+        index = this.buildQuantityIndex(modelID);
+      } catch {
+        index = new Map();
+      }
+      this.quantityIndexCache.set(modelID, index);
+    }
+    return index.get(expressID) ?? null;
+  }
+
+  private buildQuantityIndex(modelID: number): Map<number, { length: number; area: number; volume: number }> {
+    const out = new Map<number, { length: number; area: number; volume: number }>();
+    const rels = this.ifcAPI.GetLineIDsWithType(modelID, IFCRELDEFINESBYPROPERTIES);
+    for (let i = 0; i < rels.size(); i++) {
+      try {
+        const rel = this.ifcAPI.GetLine(modelID, rels.get(i), false) as Record<string, any>;
+        const pdId = rel?.RelatingPropertyDefinition?.value as number | undefined;
+        if (pdId == null) continue;
+        const pd = this.ifcAPI.GetLine(modelID, pdId, true) as Record<string, any>;
+        const quantities = pd?.Quantities;
+        if (!Array.isArray(quantities)) continue; // not an IfcElementQuantity
+        const q = this.pickBaseQuantities(quantities);
+        if (q.length === 0 && q.area === 0 && q.volume === 0) continue;
+        const related = rel?.RelatedObjects;
+        if (!Array.isArray(related)) continue;
+        for (const ro of related) {
+          const id = ro?.value as number | undefined;
+          if (id == null) continue;
+          const prev = out.get(id);
+          // Keep the richer record if an element is defined by multiple psets.
+          if (!prev) out.set(id, { ...q });
+          else out.set(id, {
+            length: prev.length || q.length,
+            area: prev.area || q.area,
+            volume: prev.volume || q.volume,
+          });
+        }
+      } catch {
+        /* skip malformed relation */
+      }
+    }
+    return out;
+  }
+
+  /**
+   * From an IfcElementQuantity's quantity list pick the best Length/Area/Volume.
+   * Prefers Net* then Gross* then any, matching common BaseQuantities naming.
+   */
+  private pickBaseQuantities(quantities: any[]): { length: number; area: number; volume: number } {
+    const rank = (name: string): number => {
+      const n = name.toLowerCase();
+      if (n.startsWith('net')) return 0;
+      if (n.startsWith('gross')) return 1;
+      return 2;
+    };
+    let length = 0, area = 0, volume = 0;
+    let lr = 99, ar = 99, vr = 99;
+    for (const q of quantities) {
+      const name = (q?.Name?.value as string) ?? '';
+      const r = rank(name);
+      const vol = q?.VolumeValue?.value;
+      const ara = q?.AreaValue?.value;
+      const len = q?.LengthValue?.value;
+      if (vol != null && Number.isFinite(Number(vol)) && r < vr) { volume = Math.abs(Number(vol)); vr = r; }
+      else if (ara != null && Number.isFinite(Number(ara)) && r < ar) { area = Math.abs(Number(ara)); ar = r; }
+      else if (len != null && Number.isFinite(Number(len)) && r < lr) { length = Math.abs(Number(len)); lr = r; }
+    }
+    return { length, area, volume };
+  }
+
+  /**
+   * Mesh-based quantities for one element (model length units): closed-volume
+   * via the signed tetrahedron (divergence) integral, total surface area, and
+   * bounding-box dimensions. Returns null if the element has no geometry.
+   * Used as the fallback when an element carries no IfcElementQuantity.
+   */
+  getMeshQuantities(modelID: number, expressID: number): { volume: number; area: number; bbox: THREE.Vector3 } | null {
+    const meshes = this.meshesFor(modelID, expressID);
+    if (meshes.length === 0) return null;
+    let volume = 0;
+    let area = 0;
+    const box = new THREE.Box3();
+    box.makeEmpty();
+    const a = new THREE.Vector3();
+    const b = new THREE.Vector3();
+    const c = new THREE.Vector3();
+    const ab = new THREE.Vector3();
+    const ac = new THREE.Vector3();
+    const cross = new THREE.Vector3();
+    for (const mesh of meshes) {
+      mesh.updateWorldMatrix(true, false);
+      const geom = mesh.geometry as THREE.BufferGeometry;
+      const pos = geom.getAttribute('position') as THREE.BufferAttribute | undefined;
+      if (!pos) continue;
+      const m = mesh.matrixWorld;
+      const index = geom.getIndex();
+      const triCount = index ? index.count / 3 : pos.count / 3;
+      for (let t = 0; t < triCount; t++) {
+        const i0 = index ? index.getX(t * 3) : t * 3;
+        const i1 = index ? index.getX(t * 3 + 1) : t * 3 + 1;
+        const i2 = index ? index.getX(t * 3 + 2) : t * 3 + 2;
+        a.fromBufferAttribute(pos, i0).applyMatrix4(m);
+        b.fromBufferAttribute(pos, i1).applyMatrix4(m);
+        c.fromBufferAttribute(pos, i2).applyMatrix4(m);
+        box.expandByPoint(a);
+        box.expandByPoint(b);
+        box.expandByPoint(c);
+        ab.subVectors(b, a);
+        ac.subVectors(c, a);
+        cross.crossVectors(ab, ac);
+        area += cross.length() * 0.5;
+        // signed volume of the tetrahedron (origin, a, b, c) = a · (b × c) / 6
+        volume += a.dot(cross.copy(b).cross(c)) / 6;
+      }
+    }
+    const bbox = box.isEmpty() ? new THREE.Vector3() : box.getSize(new THREE.Vector3());
+    return { volume: Math.abs(volume), area, bbox };
   }
 
   /**

@@ -331,10 +331,21 @@
 
 ---
 
-## 12. 5D 물량 산출·원가 연계 (Quantification) (S42) ← 신규 기획
+## 12. 5D 물량 산출·원가 연계 (Quantification) (S42) ✅ MVP 완료
 **목표**: BIM 요소에서 **물량(개수·길이·면적·체적)** 을 카테고리/공종별로 집계(QTO)하고,
 기존 **기성/원가(billing_items, 0011)** 와 연계해 5D(원가) 흐름을 완성한다. Navisworks
 Quantification 의 웹 버전 + 우리 포털 원가 모듈 연결.
+
+### S42 구현 결과 (branch `feature/quantities`) ✅
+- **IfcViewer 확장**: `getLengthUnitToMeters`(IfcSIUnit/IfcConversionBasedUnit → 미터 환산 계수, 캐시) ·
+  `getElementBaseQuantities`(IfcRelDefinesByProperties 1회 순회로 요소→IfcElementQuantity 인덱스, Net>Gross
+  우선) · `getMeshQuantities`(삼각형 적분 체적·표면적·bbox).
+- **`lib/quantities.ts`**: `computeQuantities`(단위 정규화 + 청크 진행률) · `aggregateByCategory` ·
+  `quantitiesToCsv` · `fmtQty`. 카테고리=`getElementMeta`(S32) 재사용.
+- **`pages/Quantities.tsx`** + 라우트 `/project/:id/quantities` + 좌측 메뉴 `🧮 물량 산출 (QTO)`. 대상 집합
+  (모델→카테고리) 2단계(ClashPanel 패턴) · 단위 자동/m/mm 토글 · 공종별 물량표+합계 · CSV · 행 클릭 포커스 ·
+  **기성내역 행 제안**(createBillingItem, admin). 마이그레이션 없음(계산만으로 MVP 충족).
+- **후속**: 단가 DB(물량→금액 자동) · 기성 quantity 컬럼(0019) · QTO_* 표준 수량셋 매핑 · 기간별 투입물량 곡선.
 
 ### 가능성 (🟢)
 - web-ifc 로 요소별 **IfcElementQuantity(BaseQuantities)** 읽기 가능. 없으면 메시에서

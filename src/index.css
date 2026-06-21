@@ -1893,6 +1893,106 @@ button.danger:hover:not(:disabled) {
   min-height: 0;
 }
 
+/* 5D 물량 산출(QTO) */
+.qto-side {
+  padding-bottom: 16px;
+}
+.qto-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.qto-controls .clash-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.qto-controls .clash-field > span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.qto-controls select {
+  width: 100%;
+}
+.qto-count {
+  font-size: 12px;
+}
+.qto-run {
+  margin-top: 4px;
+}
+.qto-summary {
+  margin: 4px 12px 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+.qto-sum-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 2px 0;
+  font-size: 13px;
+}
+.qto-source {
+  margin-top: 6px;
+  font-size: 11px;
+}
+.qto-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.qto-scales {
+  margin: 10px 12px 0;
+  font-size: 11px;
+}
+.qto-scales-h {
+  margin-bottom: 4px;
+}
+.qto-scale-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 1px 0;
+}
+.qto-scale-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qto-viewport {
+  flex: 1;
+  min-height: 120px;
+}
+.qto-table-panel {
+  flex-shrink: 0;
+  max-height: 42%;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+.qto-empty {
+  padding: 14px 16px;
+  margin: 0;
+  font-size: 13px;
+}
+.qto-table tbody tr {
+  cursor: pointer;
+}
+.qto-table tbody tr:hover {
+  background: var(--row-hover);
+}
+.qto-total-row:hover {
+  background: var(--panel-2) !important;
+}
+.qto-src {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 /* 자료관리 안에서 IFC 인라인 뷰어 */
 .inline-viewer {
   position: relative;

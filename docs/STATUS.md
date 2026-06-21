@@ -2,12 +2,34 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-20 · **S41 2D 도면(PDF/DXF) + 이슈 핀 완료**(branch `feature/drawings-2d`).
-현장 도면 업로드·열람(PDF=pdf.js, DXF=자체 렌더)·줌/팬 + 도면 위 이슈 핀(정규화 좌표)↔이슈 연계.
-마이그레이션 `0018_drawings.sql`(추가형·멱등) + setup_all.sql 갱신. typecheck·build 통과.
+**마지막 업데이트**: 2026-06-21 · **S42 5D 물량 산출(QTO) + 기성 연계 완료**(branch `feature/quantities`).
+BIM 요소 물량을 공종/카테고리별로 집계(개수·길이·면적·체적) + IFC 단위 정규화 + 기성내역 행 제안.
+마이그레이션 **없음**(계산만으로 충분 — MVP). typecheck·build 통과.
 **DWG 직접열기는 변환 필요 → S17(APS)로 분리**(D: A안). **S38 간섭 보고서 보류**(Word 양식 대기).
-**장비 시뮬(S16)은 최후 연기**. **추가 기획(신규)**: **S42 5D 물량·원가 연계**(§12) · **S43 CDE
-고도화(승인·자료전송)**(§13). 지금 착수가능: S42 · S43 · 모바일 현장 모드. (대기) S38 Word양식 · S17 APS.
+**장비 시뮬(S16)은 최후 연기**. 지금 착수가능: **S43 CDE 고도화(승인·자료전송)**(§13) · 모바일 현장 모드 ·
+단가 DB(물량→금액 자동) 후속. (대기) S38 Word양식 · S17 APS.
+
+## S42 결과 (branch: feature/quantities) — 5D 물량 산출(QTO) + 기성 연계
+> BIM 요소 물량을 공종/카테고리별 집계 → 기성내역(0011) 연계. 마이그레이션 없음(클라이언트 계산). typecheck·build 통과.
+- ✅ **단위 정규화(IfcViewer)**: `getLengthUnitToMeters(modelID)` — `IfcSIUnit`(LENGTHUNIT prefix:
+  MILLI/CENTI…) 또는 `IfcConversionBasedUnit`(imperial)에서 **미터 환산 계수**를 읽어 캐시. 감지 실패 시 null
+  → UI 에서 m/mm 수동 토글 폴백. (안 하면 체적이 10⁹배 틀어짐)
+- ✅ **물량 소스(IfcViewer)**: `getElementBaseQuantities` — `IfcRelDefinesByProperties` 를 1회 순회해
+  요소→`IfcElementQuantity`(BaseQuantities: Net/Gross Volume·Area·Length) 인덱스 구축·캐시(Net>Gross>any
+  우선). 없으면 `getMeshQuantities` — **삼각형 적분 체적**(부호있는 사면체합)·표면적·bbox(모델단위). 개수는 항상.
+- ✅ **데이터층 `lib/quantities.ts`**: `computeQuantities`(요소 순회·단위 스케일 적용·청크+yield 진행률) →
+  `aggregateByCategory`(카테고리=`getElementMeta` 재사용) → `CategoryQty`(count·length m·area m²·volume m³ +
+  소스 내역 ifc/mesh/count). `quantitiesToCsv`(BOM 한글)·`fmtQty`.
+- ✅ **페이지 `pages/Quantities.tsx`** + 라우트 `/project/:id/quantities`(ProjectShell 중첩) + 좌측 메뉴
+  `🧮 물량 산출 (QTO)`. 자체 IfcViewer + 모델 자동 로드(풀 공유). 대상 집합 = ClashPanel **(모델→카테고리)**
+  2단계 패턴. 단위 토글(자동/m/mm) · 산출 진행바 · 요약(체적·면적·길이·소스 내역) · **공종별 물량표 + 합계**
+  · CSV 내보내기. 표의 공종 행 클릭 → 그 공종 **체적 최대 대표 요소로 `focusElement`**.
+- ✅ **기성 연계**: 산출된 공종별 물량을 `createBillingItem`(0011)으로 **기성내역 행 제안**(admin, D11) — 공종명에
+  대표 물량 기입·금액 0원으로 추가 → 기성내역에서 단가/금액 입력. `기성내역 →` 링크.
+- ✅ 검증: `typecheck`·`build` 통과(메인 gzip 828KB). 색은 `index.css` 토큰만. 라이브 눈검증(실 IFC 단위·물량
+  정확도)은 모델 로드 후 사용자 화면 권장(원격 egress 제약).
+- 📌 후속(범위 밖): **단가 DB(복합단가)로 물량→금액 자동 산출** · 기성 quantity 컬럼(0019) 영속화 ·
+  IFC 표준 수량셋(QTO_*) 매핑 정교화 · 4D 일정 묶어 기간별 투입물량 곡선 · 메시 길이근사(bbox 최장변) 개선.
 
 ## S41 결과 (branch: feature/drawings-2d) — 2D 도면(PDF/DXF) + 이슈 핀
 > 현장 2D 도면 열람 + 도면 위 이슈 핀. DWG는 변환(APS/ODA) 필요 → S17 분리(A안). dxf-parser 추가.
