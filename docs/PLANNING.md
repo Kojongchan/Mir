@@ -349,6 +349,21 @@ Quantification 의 웹 버전 + 우리 포털 원가 모듈 연결.
 - **데이터**: 계산은 클라이언트. 영속화 필요 시 `0019_quantities.sql`(quantities 캐시, RLS D11).
 - **다음**: 단가 DB 연동(복합단가) · 자동 수량-원가 산출서 · IFC 표준 수량셋(QTO) 매핑 정교화.
 
+### 구현 메모 (S42 — 재사용/주의)
+- **물량 소스 우선순위**: ① IFC `IfcElementQuantity`(BaseQuantities: `Q_GrossVolume`/`NetVolume`/
+  `GrossArea`/`Length` 등)를 `ifcAPI.GetLine`(IfcViewer 내부, `getProperties` 패턴)으로 읽기 →
+  ② 없으면 **메시 기반 근사**(`elementMeshes` 삼각형 적분 체적·면적·bbox) → ③ 항상 **개수**는 집계.
+- **⚠ 단위 처리(정확도 핵심)**: IFC 길이단위(mm/m)가 모델마다 달라 체적이 10^9 배 틀어질 수 있음.
+  `IfcUnitAssignment`/`IfcSIUnit`(LENGTHUNIT prefix)로 **스케일을 읽어 m·m²·m³ 로 정규화**.
+  자동 추정 실패 시 **수동 단위 토글**(mm/m) 폴백 제공.
+- **재사용**: 카테고리=`IfcViewer.getElementMeta()`(S32) · 집합 선택기=ClashPanel 의 (모델→카테고리)
+  2단계 UI(S35) · 모델 목록=`getLoadedModels()` · 포커스=`focusElement`(S29).
+- **기성 연계**: `src/lib/portal.ts` `listBillingItems/createBillingItem`(0011: `category`·
+  `contract_amount`·`prev_amount`·`current_amount`)에 **공종(category) 매핑으로 물량 행 제안**.
+  쓰기는 관리자(D11). 물량→금액은 단가 입력이 있어야 하므로 MVP 는 **수량 제공 + 수동 단가**.
+- **위치**: 새 데이터층 `src/lib/quantities.ts` + 좌측 모듈 메뉴 `물량 산출(QTO)` 페이지
+  (`/project/:id/quantities`), 기성내역에서 링크. 색은 `index.css` 토큰만.
+
 ---
 
 ## 13. CDE 고도화 — 승인 워크플로우·자료전송 (S43) ← 신규 기획
