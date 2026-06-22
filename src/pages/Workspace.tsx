@@ -75,8 +75,9 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   const [shownVer, setShownVer] = useState<Map<string, string>>(new Map());
   const [overlays, setOverlays] = useState<Map<string, number>>(new Map());
   const [verBusy, setVerBusy] = useState(false);
-  // 버전 비교(diff): 비교 중인 키 + 비교용으로 로드한 이전버전 런타임 id.
-  const [diff, setDiff] = useState<{ key: string; oldRid: number } | null>(null);
+  // 버전 비교(diff): 비교 중인 키 + 비교용 런타임 id(신규/이전) + 투명도.
+  const [diff, setDiff] = useState<{ key: string; newRid: number; oldRid: number } | null>(null);
+  const [diffOp, setDiffOp] = useState({ added: 1, removed: 0.5, same: 0.35 });
 
   // 런타임 modelID → DB 모델 uuid (4D 매핑·간섭 저장·이슈 핀 매핑용).
   const [modelIdMap, setModelIdMap] = useState<Map<number, string>>(new Map());
@@ -390,6 +391,17 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
     viewer?.setMeasureType(measureType);
   }, [viewer, measureType]);
 
+  // diff 투명도 슬라이더 변경 시 재적용(추가의견1).
+  useEffect(() => {
+    if (viewer && diff)
+      viewer.applyVersionDiff(diff.newRid, diff.oldRid, {
+        addedOpacity: diffOp.added,
+        removedOpacity: diffOp.removed,
+        sameOpacity: diffOp.same,
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [diffOp]);
+
   // 단면(클리핑) 적용.
   useEffect(() => {
     if (!viewer) return;
@@ -591,10 +603,14 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
       await viewer.loadIfc(bytes, { label: `${m.name} v${ver.version_no} (비교)` });
       const oldRid = viewer.primaryModelID;
       if (oldRid == null) return;
-      viewer.applyVersionDiff(newRid, oldRid);
-      setDiff({ key: `${m.id}:${ver.id}`, oldRid });
+      viewer.applyVersionDiff(newRid, oldRid, {
+        addedOpacity: diffOp.added,
+        removedOpacity: diffOp.removed,
+        sameOpacity: diffOp.same,
+      });
+      setDiff({ key: `${m.id}:${ver.id}`, newRid, oldRid });
       setModelCount(viewer.modelCount);
-      setStatus('버전 비교: 🟢추가 · 🔴삭제 · ⚪동일');
+      setStatus('버전 비교: 🟦추가 · 🟧삭제 · ⚪동일');
     } catch (e) {
       setStatus(`버전 비교 실패: ${errMessage(e)}`);
     } finally {
@@ -786,7 +802,33 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
                               );
                             })}
                             {diff && (
-                              <li className="model-ver-legend">🟢 추가 · 🔴 삭제 · ⚪ 동일(반투명)</li>
+                              <li className="model-ver-legend">
+                                <div>🟦 추가 · 🟧 삭제 · ⚪ 동일</div>
+                                <label className="diff-op">
+                                  추가
+                                  <input
+                                    type="range" min={0} max={1} step={0.05}
+                                    value={diffOp.added}
+                                    onChange={(e) => setDiffOp((s) => ({ ...s, added: Number(e.target.value) }))}
+                                  />
+                                </label>
+                                <label className="diff-op">
+                                  삭제
+                                  <input
+                                    type="range" min={0} max={1} step={0.05}
+                                    value={diffOp.removed}
+                                    onChange={(e) => setDiffOp((s) => ({ ...s, removed: Number(e.target.value) }))}
+                                  />
+                                </label>
+                                <label className="diff-op">
+                                  동일
+                                  <input
+                                    type="range" min={0} max={1} step={0.05}
+                                    value={diffOp.same}
+                                    onChange={(e) => setDiffOp((s) => ({ ...s, same: Number(e.target.value) }))}
+                                  />
+                                </label>
+                              </li>
                             )}
                             {(versions.get(m.id)?.length ?? 0) === 0 && (
                               <li className="muted empty">버전 정보를 불러오는 중…</li>
