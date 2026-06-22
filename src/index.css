@@ -312,6 +312,17 @@ body {
   font-size: 11px;
   color: var(--muted);
   padding: 2px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.diff-op {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.diff-op input {
+  flex: 1;
 }
 .model-ver-date {
   flex: 1;

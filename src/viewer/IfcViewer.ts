@@ -65,6 +65,13 @@ export type SnapKind = 'vertex' | 'midpoint' | 'center' | 'nearest';
 /** 측정 종류(추가의견3): 거리·각도·면적·연속. */
 export type MeasureType = 'distance' | 'angle' | 'area' | 'continuous';
 
+/** 버전 diff 투명도 옵션(추가의견1). */
+export interface DiffOpts {
+  addedOpacity?: number;
+  removedOpacity?: number;
+  sameOpacity?: number;
+}
+
 const MEASURE_HINT: Record<MeasureType, string> = {
   distance: '두 점을 클릭해 거리를 잽니다.',
   angle: '세 점(꼭짓점은 두 번째)을 클릭합니다.',
@@ -218,6 +225,9 @@ export class IfcViewer {
 
   private readonly container: HTMLElement;
   private readonly models: LoadedModel[] = [];
+  /** Shared recenter offset (first model's origin) so all models keep true relative
+   *  positions instead of stacking on the project base point (추가의견2). */
+  private sceneOffset: THREE.Vector3 | null = null;
 
   /** material clones swapped in for the current selection, kept so we can restore */
   private highlighted: { mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] }[] = [];
@@ -396,10 +406,12 @@ export class IfcViewer {
     const elementMeshes = new Map<number, THREE.Mesh[]>();
     const materialCache = new Map<string, THREE.Material>();
 
-    // Origin of the first element seen, subtracted from every transform so
-    // geometry stays near the local origin. This preserves float32 precision
-    // for far-from-origin georeferenced coordinates without baking in rotation.
-    let modelOffset: THREE.Vector3 | null = null;
+    // Recentering offset. The FIRST loaded model's first-element origin becomes a
+    // single shared scene offset; every later model is recentered by the SAME
+    // offset so georeferenced models keep their true relative positions instead of
+    // all stacking on the project base point (추가의견2). Far-from-origin
+    // coordinates still stay near the local origin for float32 precision.
+    let modelOffset: THREE.Vector3 | null = this.sceneOffset ? this.sceneOffset.clone() : null;
 
     this.ifcAPI.StreamAllMeshes(modelID, (flatMesh: FlatMesh) => {
       const expressID = flatMesh.expressID;
@@ -413,7 +425,9 @@ export class IfcViewer {
 
         const matrix = new THREE.Matrix4().fromArray(placed.flatTransformation);
         if (!modelOffset) {
+          // First model in the scene → its first-element origin defines the shared offset.
           modelOffset = new THREE.Vector3().setFromMatrixPosition(matrix);
+          this.sceneOffset = modelOffset.clone();
         }
         // Strip only the global translation; per-element rotation is preserved.
         matrix.setPosition(
@@ -2230,6 +2244,7 @@ export class IfcViewer {
     mats.forEach((m) => m.dispose());
     model.elementMeshes.clear();
     this.models.splice(idx, 1);
+    if (this.models.length === 0) this.sceneOffset = null; // 모두 비면 기준 재설정
     this.spatialTreeCache = undefined;
     this.globalIdCache.delete(modelID);
     this.nameCache.delete(modelID);
@@ -2269,17 +2284,23 @@ export class IfcViewer {
   }
 
   /**
-   * Colour two loaded versions by IfcRoot GlobalId diff (추가의견1):
-   *   • 추가(신규 only) = 초록, 동일 = 옅은 회색(반투명) — newID 모델
-   *   • 삭제(이전 only) = 빨강, 동일 = 숨김 — oldID 모델
-   * Originals are stored and restored by clearVersionDiff().
+   * Colour two loaded versions by IfcRoot GlobalId diff (추가의견1). Colours avoid
+   * the issue/clash red·green palette: 신규=청록, 삭제=주황(반투명), 동일=옅은 회색.
+   * Opacities are adjustable (`opts`). Originals restored by clearVersionDiff().
    */
-  applyVersionDiff(newID: number, oldID: number) {
+  applyVersionDiff(newID: number, oldID: number, opts?: DiffOpts) {
     this.clearVersionDiff();
+    const addedOp = opts?.addedOpacity ?? 1;
+    const removedOp = opts?.removedOpacity ?? 0.5;
+    const sameOp = opts?.sameOpacity ?? 0.35;
     const oldVals = new Set(this.globalIdMap(oldID).values());
     const newVals = new Set(this.globalIdMap(newID).values());
     const override = (mesh: THREE.Mesh, hex: number, opacity: number) => {
       this.diffOverrides.push({ mesh, mat: mesh.material, visible: mesh.visible });
+      if (opacity <= 0) {
+        mesh.visible = false;
+        return;
+      }
       mesh.material = new THREE.MeshLambertMaterial({
         color: hex,
         side: THREE.DoubleSide,
@@ -2296,20 +2317,14 @@ export class IfcViewer {
       for (const [eid, meshes] of newModel.elementMeshes) {
         const gid = gidN.get(eid);
         const added = gid != null && !oldVals.has(gid);
-        for (const mesh of meshes) override(mesh, added ? 0x16a34a : 0xc2c9d4, added ? 1 : 0.4);
+        for (const mesh of meshes) override(mesh, added ? 0x06b6d4 : 0xc2c9d4, added ? addedOp : sameOp);
       }
     }
     if (oldModel) {
       for (const [eid, meshes] of oldModel.elementMeshes) {
         const gid = gidO.get(eid);
         const removed = gid != null && !newVals.has(gid);
-        for (const mesh of meshes) {
-          if (removed) override(mesh, 0xdc2626, 1);
-          else {
-            this.diffOverrides.push({ mesh, mat: mesh.material, visible: mesh.visible });
-            mesh.visible = false;
-          }
-        }
+        for (const mesh of meshes) override(mesh, 0xf59e0b, removed ? removedOp : 0); // 동일은 숨김
       }
     }
   }
