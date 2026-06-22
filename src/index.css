@@ -915,6 +915,79 @@ button.danger:hover:not(:disabled) {
   word-break: break-word;
 }
 
+/* 속성정보 팝업(추가3): 그룹 접기 + 사용자 크기조절(우하단 핸들). */
+.props-popup {
+  resize: both;
+  overflow: auto;
+  width: min(340px, calc(100vw - 24px));
+  min-width: 240px;
+  min-height: 160px;
+  max-height: calc(100vh - 80px);
+}
+.props-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.props-head h2 {
+  margin: 0 0 8px;
+}
+.props-close {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+  line-height: 1;
+}
+.props-close:hover {
+  color: var(--text);
+}
+.props-empty {
+  margin: 6px 0 0;
+}
+.props-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.prop-group {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.prop-group-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  padding: 6px 8px;
+  background: var(--chip-neutral-bg, transparent);
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.prop-group-head:hover {
+  background: var(--hover, rgba(127, 127, 127, 0.08));
+}
+.prop-group-twisty {
+  width: 12px;
+  color: var(--muted);
+}
+.prop-group-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prop-group .prop-table {
+  border-top: 1px solid var(--border);
+}
+
 /* ---- narrow screens ---- */
 @media (max-width: 640px) {
   .workspace {
