@@ -92,8 +92,7 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   const [showCats, setShowCats] = useState(false);
   const [catQuery, setCatQuery] = useState('');
 
-  // 뷰 환경(S44): 격자·원점 인디케이터 토글 + 호버 좌표 HUD.
-  const [gridOn, setGridOn] = useState(false);
+  // 뷰 환경(S44): 원점 인디케이터 토글 + 호버 좌표 HUD.
   const [originOn, setOriginOn] = useState(false);
   const [coord, setCoord] = useState<{ x: number; y: number; z: number } | null>(null);
 
@@ -137,6 +136,17 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
       viewer.clearConstruction();
       viewer.showAll();
     }
+  }, [viewer, mode]);
+
+  // 메뉴 전환 시 카메라를 그 메뉴의 시작뷰로 되돌린다. 세 모듈이 같은 IfcViewer
+  // 인스턴스를 공유하므로 그냥 두면 직전 메뉴에서 움직인 카메라가 그대로 남는다.
+  // (최초 로드는 loadAllModels 가 처리하므로 모델 로드 후에만 적용.)
+  useEffect(() => {
+    if (!viewer || !loadedAllRef.current) return;
+    const home = loadHomeView(projectId, mode);
+    if (home) viewer.applyCameraState(home);
+    else viewer.frameAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewer, mode]);
 
   // 진입 시 프로젝트의 모든 모델을 자동 로드(클릭 불필요). 통합모델에 업로드만 하면
@@ -304,11 +314,6 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
     if (!viewer) return;
     viewer.setSection({ enabled: sectionOn, axis: sectionAxis, offset: sectionOffset, flip: sectionFlip });
   }, [viewer, sectionOn, sectionAxis, sectionOffset, sectionFlip]);
-
-  // 격자 토글.
-  useEffect(() => {
-    if (viewer) viewer.setGridVisible(gridOn);
-  }, [viewer, gridOn]);
 
   // 원점 인디케이터(모델 로드 후 위치 계산되므로 modelIdMap 변화에도 갱신).
   useEffect(() => {
@@ -597,16 +602,9 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
 
           <span className="tl-divider" />
           <button
-            className={gridOn ? 'is-active' : undefined}
-            onClick={() => setGridOn((v) => !v)}
-            title="바닥 격자 표시/숨김"
-          >
-            # 격자
-          </button>
-          <button
             className={originOn ? 'is-active' : undefined}
             onClick={() => setOriginOn((v) => !v)}
-            title="모델 원점·좌표축(동서/높이/남북) 표시·숨김"
+            title="모델 원점·좌표축 표시·숨김"
           >
             ⛬ 원점
           </button>
@@ -680,12 +678,12 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
             selected={markupSel}
             onSelect={setMarkupSel}
           />
-          <div className="coord-hud" title="마우스 위치(프로젝트 좌표: 동서 / 남북 / 높이)">
-            <span className="coord-axis coord-x">동서</span>
+          <div className="coord-hud" title="마우스 위치(프로젝트 좌표)">
+            <span className="coord-axis coord-x">X</span>
             <span className="coord-val">{coord ? coord.x.toFixed(3) : '—'}</span>
-            <span className="coord-axis coord-y">남북</span>
+            <span className="coord-axis coord-y">Y</span>
             <span className="coord-val">{coord ? coord.y.toFixed(3) : '—'}</span>
-            <span className="coord-axis coord-z">EL</span>
+            <span className="coord-axis coord-z">Z</span>
             <span className="coord-val">{coord ? coord.z.toFixed(3) : '—'}</span>
           </div>
         </div>

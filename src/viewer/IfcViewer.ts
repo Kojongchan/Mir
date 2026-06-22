@@ -233,9 +233,7 @@ export class IfcViewer {
   private disposed = false;
   private resizeObserver?: ResizeObserver;
 
-  /** ground grid (off by default; toggled via setGridVisible) */
-  private grid?: THREE.GridHelper;
-  /** R/G/B axes at the project origin (off by default; setOriginVisible) */
+  /** R/G/B axes at the model origin (off by default; setOriginVisible) */
   private originHelper?: THREE.AxesHelper;
 
   constructor(container: HTMLElement) {
@@ -1690,18 +1688,6 @@ export class IfcViewer {
     const dir = new THREE.DirectionalLight(0xffffff, 1.2);
     dir.position.set(10, 20, 10);
     this.scene.add(dir);
-
-    // 흰색 배경에서 보이도록 밝은 회색 그리드(중심선은 약간 진하게). 기본 숨김 —
-    // 인프라 모델은 원점에서 멀리 떨어져 있어 100m 그리드가 도움이 안 될 때가 많다.
-    const grid = new THREE.GridHelper(100, 100, 0x9aa5b5, 0xd7dde6);
-    grid.visible = false;
-    this.grid = grid;
-    this.scene.add(grid);
-  }
-
-  /** Toggle the ground reference grid (off by default). */
-  setGridVisible(on: boolean) {
-    if (this.grid) this.grid.visible = on;
   }
 
   /**
