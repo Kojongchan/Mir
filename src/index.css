@@ -2129,6 +2129,31 @@ button.danger:hover:not(:disabled) {
   min-height: 28px;
 }
 
+/* 업로드 진행률 바(추가의견5). */
+.upload-progress {
+  position: relative;
+  height: 16px;
+  margin: 6px 14px;
+  border-radius: 8px;
+  background: var(--border);
+  overflow: hidden;
+}
+.upload-progress-bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.15s ease;
+}
+.upload-progress-pct {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text, #fff);
+}
+
 /* ---- 활동 로그 모달 ---- */
 .cde-activity {
   list-style: none;

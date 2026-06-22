@@ -212,6 +212,52 @@ function versionPath(projectId: string, fileId: string, versionNo: number, name:
     : `${projectId}/${fileId}/v${versionNo}`;
 }
 
+export type ProgressFn = (fraction: number) => void;
+
+/**
+ * Upload an object. When `onProgress` is given, upload via a signed upload URL +
+ * XMLHttpRequest so we can report 0~100% progress (추가의견5); supabase-js' own
+ * `upload()` exposes no progress callback. Falls back to the plain upload if the
+ * signed URL path is unavailable.
+ */
+async function putObject(path: string, file: File, onProgress?: ProgressFn): Promise<void> {
+  const contentType = file.type || 'application/octet-stream';
+  if (!onProgress) {
+    const { error } = await supabase.storage.from(BUCKET).upload(path, file, { contentType, upsert: false });
+    if (error) throw error;
+    return;
+  }
+  const signed = await supabase.storage.from(BUCKET).createSignedUploadUrl(path);
+  if (signed.error || !signed.data) {
+    const { error } = await supabase.storage.from(BUCKET).upload(path, file, { contentType, upsert: false });
+    if (error) throw error;
+    onProgress(1);
+    return;
+  }
+  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+  const { data: sess } = await supabase.auth.getSession();
+  const token = sess.session?.access_token ?? anonKey;
+  await new Promise<void>((resolve, reject) => {
+    const fd = new FormData();
+    fd.append('cacheControl', '3600');
+    fd.append('', file);
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', signed.data.signedUrl, true);
+    xhr.setRequestHeader('apikey', anonKey);
+    xhr.setRequestHeader('authorization', `Bearer ${token}`);
+    xhr.setRequestHeader('x-upsert', 'false');
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(new Error(xhr.responseText || `업로드 실패 (${xhr.status})`));
+    xhr.onerror = () => reject(new Error('업로드 네트워크 오류'));
+    xhr.send(fd);
+  });
+}
+
 /**
  * Upload a brand-new document into a folder as version 1. Creates the storage
  * object, the `files` record, the v1 `file_versions` row, links it as the
@@ -222,14 +268,12 @@ export async function uploadNewFile(
   folderId: string | null,
   file: File,
   note?: string,
+  onProgress?: ProgressFn,
 ): Promise<CdeFile> {
   const fileId = crypto.randomUUID();
   const path = versionPath(projectId, fileId, 1, file.name);
 
-  const { error: upErr } = await supabase.storage
-    .from(BUCKET)
-    .upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: false });
-  if (upErr) throw upErr;
+  await putObject(path, file, onProgress);
 
   const { data: userData } = await supabase.auth.getUser();
   const uid = userData.user?.id ?? null;
@@ -284,15 +328,13 @@ export async function uploadNewVersion(
   target: CdeFile,
   file: File,
   note?: string,
+  onProgress?: ProgressFn,
 ): Promise<void> {
   const nextNo = await nextVersionNo(target.id);
   // Keep the original document's extension so the viewer dispatch stays stable.
   const path = versionPath(target.project_id, target.id, nextNo, target.name);
 
-  const { error: upErr } = await supabase.storage
-    .from(BUCKET)
-    .upload(path, file, { contentType: file.type || 'application/octet-stream', upsert: false });
-  if (upErr) throw upErr;
+  await putObject(path, file, onProgress);
 
   const { data: userData } = await supabase.auth.getUser();
   const { data: ver, error: verErr } = await supabase
