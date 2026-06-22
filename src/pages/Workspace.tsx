@@ -17,6 +17,8 @@ import { Toolbar } from '../components/Toolbar';
 import { ToolbarMenu } from '../components/ToolbarMenu';
 import { PropertiesPanel } from '../components/PropertiesPanel';
 import { ObjectTree } from '../components/ObjectTree';
+import { SpatialTree } from '../components/SpatialTree';
+import type { SpatialNode } from '../viewer/IfcViewer';
 import { Timeline } from '../components/Timeline';
 import { ClashPanel } from '../components/ClashPanel';
 import { ViewpointPanel } from '../components/ViewpointPanel';
@@ -102,6 +104,9 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   const [hiddenElems, setHiddenElems] = useState<Set<string>>(new Set());
   const [showCats, setShowCats] = useState(false);
   const [catQuery, setCatQuery] = useState('');
+  // 객체 트리 보기 모드: 카테고리 묶음 / IFC 공간(층·부재) 계층.
+  const [objMode, setObjMode] = useState<'cat' | 'spatial'>('cat');
+  const [spatial, setSpatial] = useState<SpatialNode[]>([]);
 
   // 뷰 환경(S44): 원점 인디케이터 토글 + 호버 좌표 HUD.
   const [originOn, setOriginOn] = useState(false);
@@ -300,9 +305,12 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
     });
   }, [viewer, issues]);
 
-  // 통합모델: 모델이 로드되면 요소 메타(카테고리)를 읽어 표시 토글에 쓴다.
+  // 통합모델: 모델이 로드되면 요소 메타(카테고리) + 공간 트리를 읽어 표시 토글에 쓴다.
   useEffect(() => {
-    if (viewer && mode === 'integrated') setMeta(viewer.getElementMeta());
+    if (viewer && mode === 'integrated') {
+      setMeta(viewer.getElementMeta());
+      setSpatial(viewer.getSpatialTree());
+    }
   }, [viewer, mode, modelIdMap]);
 
   const catByKey = useMemo(() => {
@@ -392,6 +400,13 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
     setHiddenElems((s) => {
       const n = new Set(s);
       n.has(key) ? n.delete(key) : n.add(key);
+      return n;
+    });
+  // 공간 노드: 하위 부재 키들을 일괄 숨김/표시.
+  const setElemsHidden = (keys: string[], hidden: boolean) =>
+    setHiddenElems((s) => {
+      const n = new Set(s);
+      for (const k of keys) (hidden ? n.add(k) : n.delete(k));
       return n;
     });
 
@@ -685,40 +700,67 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
             </ul>
           </div>
 
-          {/* 객체 트리(추가2) — 카테고리별 묶음 + 가시성 눈 토글 + 3D 선택 연동 */}
+          {/* 객체 트리(추가2/3) — 카테고리 묶음 또는 IFC 공간(층·부재) 계층 */}
           <div className="subtree-objects">
             <div className="sidebar-head">
               <h2>객체 {meta.length > 0 && <span className="muted">({meta.length})</span>}</h2>
-              <button onClick={() => setShowCats((v) => !v)} title="객체 트리 표시 토글">
-                {showCats ? '접기' : '펼치기'}
-              </button>
-            </div>
-            {showCats && (
-              <>
-                <div className="cat-tools">
-                  <input
-                    className="cat-search"
-                    type="search"
-                    placeholder="객체·카테고리 검색…"
-                    value={catQuery}
-                    onChange={(e) => setCatQuery(e.target.value)}
-                  />
-                  <button onClick={toggleAllCats} title="보이는 카테고리 전체 표시/숨김">
-                    전체 토글
+              <div className="obj-head-tools">
+                <div className="obj-mode-toggle" role="tablist">
+                  <button
+                    className={objMode === 'cat' ? 'is-active' : undefined}
+                    onClick={() => setObjMode('cat')}
+                    title="카테고리별 보기"
+                  >
+                    카테고리
+                  </button>
+                  <button
+                    className={objMode === 'spatial' ? 'is-active' : undefined}
+                    onClick={() => setObjMode('spatial')}
+                    title="IFC 공간(층·부재) 계층 보기"
+                  >
+                    공간
                   </button>
                 </div>
-                <ObjectTree
-                  meta={meta}
-                  query={catQuery}
-                  hiddenCats={hiddenCats}
+                <button onClick={() => setShowCats((v) => !v)} title="객체 트리 표시 토글">
+                  {showCats ? '접기' : '펼치기'}
+                </button>
+              </div>
+            </div>
+            {showCats &&
+              (objMode === 'cat' ? (
+                <>
+                  <div className="cat-tools">
+                    <input
+                      className="cat-search"
+                      type="search"
+                      placeholder="객체·카테고리 검색…"
+                      value={catQuery}
+                      onChange={(e) => setCatQuery(e.target.value)}
+                    />
+                    <button onClick={toggleAllCats} title="보이는 카테고리 전체 표시/숨김">
+                      전체 토글
+                    </button>
+                  </div>
+                  <ObjectTree
+                    meta={meta}
+                    query={catQuery}
+                    hiddenCats={hiddenCats}
+                    hiddenElems={hiddenElems}
+                    onToggleCat={toggleCat}
+                    onToggleElem={toggleElem}
+                    selectedKey={selected ? `${selected.modelID}:${selected.expressID}` : null}
+                    onSelectElem={(mid, eid) => viewer?.selectElement(mid, eid)}
+                  />
+                </>
+              ) : (
+                <SpatialTree
+                  nodes={spatial}
                   hiddenElems={hiddenElems}
-                  onToggleCat={toggleCat}
-                  onToggleElem={toggleElem}
+                  onSetHidden={setElemsHidden}
                   selectedKey={selected ? `${selected.modelID}:${selected.expressID}` : null}
                   onSelectElem={(mid, eid) => viewer?.selectElement(mid, eid)}
                 />
-              </>
-            )}
+              ))}
           </div>
           <div className="subtree-resizer" onMouseDown={startSidebarResize} title="좌우 폭 조절" />
         </aside>

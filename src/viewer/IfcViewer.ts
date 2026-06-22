@@ -8,6 +8,9 @@ import {
   IFCSIUNIT,
   IFCCONVERSIONBASEDUNIT,
   IFCRELDEFINESBYPROPERTIES,
+  IFCPROJECT,
+  IFCRELAGGREGATES,
+  IFCRELCONTAINEDINSPATIALSTRUCTURE,
   type FlatMesh,
   type PlacedGeometry,
 } from 'web-ifc';
@@ -54,6 +57,17 @@ export interface ElementInfo {
   modelID: number;
   expressID: number;
   name: string;
+}
+
+/** A node in the IFC spatial/decomposition tree (Project→Site→…→부재). */
+export interface SpatialNode {
+  modelID: number;
+  expressID: number;
+  name: string;
+  type: string;
+  /** True when this node has geometry (selectable / visibility leaf). */
+  isElement: boolean;
+  children: SpatialNode[];
 }
 
 /** Element descriptor with IFC category (type), used by the clash layer to
@@ -402,6 +416,7 @@ export class IfcViewer {
       offset: modelOffset ?? new THREE.Vector3(0, 0, 0),
     };
     this.models.push(model);
+    this.spatialTreeCache = undefined; // 모델 구성이 바뀌면 공간 트리 재계산
 
     this.orientGroup(group, upAxis);
     this.fitToObject(group);
@@ -1026,6 +1041,82 @@ export class IfcViewer {
       }
     }
     return out;
+  }
+
+  private spatialTreeCache?: SpatialNode[];
+
+  /**
+   * IFC spatial/decomposition tree (추가3): Project → Site → Building → Storey →
+   * 부재, built from IfcRelAggregates (공간 분해) + IfcRelContainedInSpatialStructure
+   * (요소→공간 배치). Leaves that carry geometry are marked `isElement` so the UI
+   * can select them. Cached; combined across loaded models.
+   */
+  getSpatialTree(): SpatialNode[] {
+    if (this.spatialTreeCache) return this.spatialTreeCache;
+    const out: SpatialNode[] = [];
+    for (const model of this.models) {
+      try {
+        out.push(...this.spatialTreeForModel(model.modelID));
+      } catch {
+        /* skip malformed model */
+      }
+    }
+    this.spatialTreeCache = out;
+    return out;
+  }
+
+  private spatialTreeForModel(modelID: number): SpatialNode[] {
+    const childrenOf = new Map<number, number[]>();
+    const add = (parent: number, kids: number[]) => {
+      const arr = childrenOf.get(parent) ?? [];
+      for (const k of kids) if (!arr.includes(k)) arr.push(k);
+      childrenOf.set(parent, arr);
+    };
+    const collectRel = (relType: number, parentKey: string, childKey: string) => {
+      const rels = this.ifcAPI.GetLineIDsWithType(modelID, relType);
+      for (let i = 0; i < rels.size(); i++) {
+        try {
+          const rel = this.ifcAPI.GetLine(modelID, rels.get(i), false) as Record<string, any>;
+          const parent = rel?.[parentKey]?.value as number | undefined;
+          const kids = rel?.[childKey];
+          if (parent == null || !Array.isArray(kids)) continue;
+          add(parent, kids.map((k: any) => k?.value).filter((v: unknown): v is number => v != null));
+        } catch {
+          /* skip */
+        }
+      }
+    };
+    collectRel(IFCRELAGGREGATES, 'RelatingObject', 'RelatedObjects');
+    collectRel(IFCRELCONTAINEDINSPATIALSTRUCTURE, 'RelatingStructure', 'RelatedElements');
+
+    const geom = new Set(this.models.find((m) => m.modelID === modelID)?.elementMeshes.keys() ?? []);
+    const seen = new Set<number>();
+    const build = (id: number, depth: number): SpatialNode | null => {
+      if (seen.has(id) || depth > 30) return null;
+      seen.add(id);
+      const kids = (childrenOf.get(id) ?? [])
+        .map((k) => build(k, depth + 1))
+        .filter((n): n is SpatialNode => n !== null);
+      const isElement = geom.has(id);
+      // 지오메트리도 없고 하위 노드도 없는 빈 가지는 버린다.
+      if (!isElement && kids.length === 0) return null;
+      return {
+        modelID,
+        expressID: id,
+        name: this.readName(modelID, id) || this.readCategory(modelID, id),
+        type: this.readCategory(modelID, id),
+        isElement,
+        children: kids,
+      };
+    };
+
+    const projects = this.ifcAPI.GetLineIDsWithType(modelID, IFCPROJECT);
+    const roots: SpatialNode[] = [];
+    for (let i = 0; i < projects.size(); i++) {
+      const n = build(projects.get(i), 0);
+      if (n) roots.push(n);
+    }
+    return roots;
   }
 
   private readCategory(modelID: number, expressID: number): string {
@@ -1908,6 +1999,7 @@ export class IfcViewer {
     mats.forEach((m) => m.dispose());
     model.elementMeshes.clear();
     this.models.splice(idx, 1);
+    this.spatialTreeCache = undefined;
     this.nameCache.delete(modelID);
     this.categoryCache.delete(modelID);
     this.quantityIndexCache.delete(modelID);
