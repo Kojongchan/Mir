@@ -28,7 +28,7 @@ import {
   type ModelPurpose,
   type ModelRecord,
 } from '../lib/api';
-import { listFolders, listProjectFiles, type Folder } from '../lib/cde';
+import { listFolders, listProjectFiles, listVersions, type Folder, type FileVersion } from '../lib/cde';
 
 /**
  * 3D 뷰어 모듈의 용도. 모델 풀은 셋이 공유한다(통합모델에 올린 모델이 4D·간섭체크
@@ -59,6 +59,12 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   // BIM 폴더트리 미러용: 폴더 목록 + 파일→폴더 매핑(통합모델 모델을 폴더별로 묶음).
   const [folders, setFolders] = useState<Folder[]>([]);
   const [fileToFolder, setFileToFolder] = useState<Map<string, string | null>>(new Map());
+  // 버전(B-2): 펼친 모델 + 모델별 버전목록 + 현재 표시 버전 + 중첩(overlay) 런타임.
+  const [verOpenFor, setVerOpenFor] = useState<string | null>(null);
+  const [versions, setVersions] = useState<Map<string, FileVersion[]>>(new Map());
+  const [shownVer, setShownVer] = useState<Map<string, string>>(new Map());
+  const [overlays, setOverlays] = useState<Map<string, number>>(new Map());
+  const [verBusy, setVerBusy] = useState(false);
 
   // 런타임 modelID → DB 모델 uuid (4D 매핑·간섭 저장·이슈 핀 매핑용).
   const [modelIdMap, setModelIdMap] = useState<Map<number, string>>(new Map());
@@ -459,6 +465,80 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
     for (const [rid, db] of modelIdMap.entries()) if (db === m.id) viewer.fitModel(rid);
   };
 
+  // --- 버전(B-2) ---------------------------------------------------------
+  // 모델별 현재 표시 버전(없으면 연동된 current version).
+  const currentVer = (m: ModelRecord) => shownVer.get(m.id) ?? m.version_id ?? null;
+
+  // 버전 목록 펼치기(처음 열 때 file_versions 로드).
+  const openVersions = (m: ModelRecord) => {
+    setVerOpenFor((prev) => (prev === m.id ? null : m.id));
+    if (m.file_id && !versions.has(m.id)) {
+      listVersions(m.file_id)
+        .then((vs) => setVersions((mp) => new Map(mp).set(m.id, vs)))
+        .catch(() => {});
+    }
+  };
+
+  // 표시 버전 전환: 현재 런타임 모델을 내리고 선택 버전을 로드(같은 DB id에 재매핑).
+  const switchVersion = async (m: ModelRecord, ver: FileVersion) => {
+    if (!viewer || currentVer(m) === ver.id) return;
+    setVerBusy(true);
+    setStatus(`버전 전환: ${m.name} → v${ver.version_no}`);
+    try {
+      let rid: number | null = null;
+      for (const [r, db] of modelIdMap.entries()) if (db === m.id) rid = r;
+      if (rid != null) {
+        viewer.unloadModel(rid);
+        setModelIdMap((prev) => {
+          const n = new Map(prev);
+          n.delete(rid as number);
+          return n;
+        });
+      }
+      const bytes = await downloadModelBytes(ver.storage_path, 'docs');
+      await viewer.loadIfc(bytes, { label: m.name });
+      const nrid = viewer.primaryModelID;
+      if (nrid != null) setModelIdMap((prev) => new Map(prev).set(nrid, m.id));
+      setShownVer((mp) => new Map(mp).set(m.id, ver.id));
+      setModelCount(viewer.modelCount);
+      setStatus(`표시 버전: ${m.name} v${ver.version_no}`);
+    } catch (e) {
+      setStatus(`버전 전환 실패: ${errMessage(e)}`);
+    } finally {
+      setVerBusy(false);
+    }
+  };
+
+  // 중첩(overlay): 선택 버전을 추가 모델로 띄우거나 내린다(modelIdMap 에는 넣지 않음).
+  const toggleOverlay = async (m: ModelRecord, ver: FileVersion) => {
+    if (!viewer) return;
+    const key = `${m.id}:${ver.id}`;
+    if (overlays.has(key)) {
+      viewer.unloadModel(overlays.get(key) as number);
+      setOverlays((mp) => {
+        const n = new Map(mp);
+        n.delete(key);
+        return n;
+      });
+      setModelCount(viewer.modelCount);
+      return;
+    }
+    setVerBusy(true);
+    setStatus(`중첩 로드: ${m.name} v${ver.version_no}`);
+    try {
+      const bytes = await downloadModelBytes(ver.storage_path, 'docs');
+      await viewer.loadIfc(bytes, { label: `${m.name} v${ver.version_no}` });
+      const rid = viewer.primaryModelID;
+      if (rid != null) setOverlays((mp) => new Map(mp).set(key, rid));
+      setModelCount(viewer.modelCount);
+      setStatus(`중첩 표시: ${m.name} v${ver.version_no}`);
+    } catch (e) {
+      setStatus(`중첩 로드 실패: ${errMessage(e)}`);
+    } finally {
+      setVerBusy(false);
+    }
+  };
+
   // CDE BIM 폴더트리 미러: 통합모델 모델을 소속 폴더별로 묶는다(폴더 풀패스 라벨).
   // file_id 가 없는(레거시 직접업로드) 모델은 '기타(미연동)' 그룹으로.
   const modelGroups = useMemo(() => {
@@ -530,18 +610,64 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
                   </div>
                   <ul className="model-list">
                     {g.models.map((m) => (
-                      <li key={m.id} className="model-row">
-                        <input
-                          type="checkbox"
-                          className="model-check"
-                          checked={!hiddenModels.has(m.id)}
-                          onChange={() => toggleModel(m.id)}
-                          title="표시/숨김"
-                        />
-                        <button className="model-item" onClick={() => frameModel(m)} title={`${m.name} — 카메라 맞춤`}>
-                          <span className="model-name">{m.name}</span>
-                          <span className="muted">{sizeLabel(m.size_bytes)}</span>
-                        </button>
+                      <li key={m.id} className="model-row-wrap">
+                        <div className="model-row">
+                          <input
+                            type="checkbox"
+                            className="model-check"
+                            checked={!hiddenModels.has(m.id)}
+                            onChange={() => toggleModel(m.id)}
+                            title="표시/숨김"
+                          />
+                          <button className="model-item" onClick={() => frameModel(m)} title={`${m.name} — 카메라 맞춤`}>
+                            <span className="model-name">{m.name}</span>
+                            <span className="muted">{sizeLabel(m.size_bytes)}</span>
+                          </button>
+                          {m.file_id && (
+                            <button
+                              className={`model-ver-btn${verOpenFor === m.id ? ' is-active' : ''}`}
+                              onClick={() => openVersions(m)}
+                              title="버전 이력(전환·중첩)"
+                            >
+                              버전 {verOpenFor === m.id ? '▾' : '▸'}
+                            </button>
+                          )}
+                        </div>
+                        {verOpenFor === m.id && (
+                          <ul className="model-ver-list">
+                            {(versions.get(m.id) ?? []).map((v) => {
+                              const isCur = currentVer(m) === v.id;
+                              const ovKey = `${m.id}:${v.id}`;
+                              return (
+                                <li key={v.id} className={`model-ver-row${isCur ? ' is-cur' : ''}`}>
+                                  <button
+                                    className="model-ver-show"
+                                    onClick={() => switchVersion(m, v)}
+                                    disabled={verBusy || isCur}
+                                    title="이 버전을 표시"
+                                  >
+                                    {isCur ? '● ' : '○ '}v{v.version_no}
+                                  </button>
+                                  <span className="muted model-ver-date">
+                                    {new Date(v.created_at).toLocaleDateString('ko-KR')}
+                                  </span>
+                                  <label className="model-ver-ov" title="이 버전을 현재 위에 겹쳐 표시">
+                                    <input
+                                      type="checkbox"
+                                      checked={overlays.has(ovKey)}
+                                      onChange={() => toggleOverlay(m, v)}
+                                      disabled={verBusy}
+                                    />
+                                    중첩
+                                  </label>
+                                </li>
+                              );
+                            })}
+                            {(versions.get(m.id)?.length ?? 0) === 0 && (
+                              <li className="muted empty">버전 정보를 불러오는 중…</li>
+                            )}
+                          </ul>
+                        )}
                       </li>
                     ))}
                   </ul>
