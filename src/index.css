@@ -2130,6 +2130,35 @@ button.danger:hover:not(:disabled) {
   overflow: auto;
 }
 
+/* 객체 트리 보기 모드 토글(카테고리/공간). */
+.obj-head-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.obj-mode-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.obj-mode-toggle button {
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  padding: 3px 8px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.obj-mode-toggle button.is-active {
+  background: var(--accent);
+  color: #fff;
+}
+.obj-cat-name.is-sel-name .obj-name {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* 객체 트리 노드(추가2). */
 .obj-tree {
   padding: 4px 6px;
