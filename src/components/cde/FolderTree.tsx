@@ -5,25 +5,32 @@ interface Props {
   folders: Folder[];
   selectedId: string | null; // null = root
   onSelect: (folderId: string | null) => void;
+  /** Label for the synthetic root node (문서 섹션: "전체 · 미분류"). */
+  rootLabel?: string;
+  /** Whether to render the synthetic null root. BIM 섹션은 미분류가 없어 false. */
+  showRoot?: boolean;
 }
 
 /**
  * Recursive folder tree for the CDE document manager. The synthetic root
  * ("전체 / 미분류") holds files with no folder. Selecting a node drives the
- * file table on the right.
+ * file table on the right. With `showRoot=false` only the real folders render
+ * (used by the BIM 데이터 섹션, which has no unfiled bucket).
  */
-export function FolderTree({ folders, selectedId, onSelect }: Props) {
+export function FolderTree({ folders, selectedId, onSelect, rootLabel = '전체 · 미분류', showRoot = true }: Props) {
   const byParent = buildFolderTree(folders);
   return (
     <ul className="cde-tree">
       <li>
-        <button
-          className={`cde-tree-node${selectedId === null ? ' is-active' : ''}`}
-          onClick={() => onSelect(null)}
-        >
-          <span className="cde-tree-ico">🗂</span>
-          <span className="cde-tree-label">전체 · 미분류</span>
-        </button>
+        {showRoot && (
+          <button
+            className={`cde-tree-node${selectedId === null ? ' is-active' : ''}`}
+            onClick={() => onSelect(null)}
+          >
+            <span className="cde-tree-ico">🗂</span>
+            <span className="cde-tree-label">{rootLabel}</span>
+          </button>
+        )}
         <Branch parentId={null} byParent={byParent} selectedId={selectedId} onSelect={onSelect} />
       </li>
     </ul>

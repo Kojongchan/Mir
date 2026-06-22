@@ -116,9 +116,16 @@ export async function uploadModel(
   return { ...legacy.data, purpose: 'integrated' as ModelPurpose };
 }
 
-/** Download the IFC bytes for a stored model (RLS-checked signed access). */
-export async function downloadModelBytes(storagePath: string): Promise<Uint8Array> {
-  const { data, error } = await supabase.storage.from(BUCKET).download(storagePath);
+/**
+ * Download the IFC bytes for a stored model (RLS-checked signed access).
+ * `bucket` lets CDE-linked models read from the shared 'docs' bucket where
+ * file versions live; legacy models stay in the 'models' bucket (default).
+ */
+export async function downloadModelBytes(
+  storagePath: string,
+  bucket: string = BUCKET,
+): Promise<Uint8Array> {
+  const { data, error } = await supabase.storage.from(bucket).download(storagePath);
   if (error) throw error;
   return new Uint8Array(await data.arrayBuffer());
 }
