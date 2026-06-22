@@ -95,6 +95,8 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
 
   // 뷰 환경(S44): 원점 인디케이터 토글 + 호버 좌표 HUD.
   const [originOn, setOriginOn] = useState(false);
+  // 속성정보 팝업 표시 여부(객체 선택 시 자동으로 열림).
+  const [showProps, setShowProps] = useState(false);
   const [coord, setCoord] = useState<{ x: number; y: number; z: number } | null>(null);
 
   const { status, setStatus, setSelected, setModelCount, selected } = useStore();
@@ -335,6 +337,11 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   useEffect(() => {
     if (viewer) viewer.setOriginVisible(originOn);
   }, [viewer, originOn, modelIdMap]);
+
+  // 객체를 선택하면 속성정보 팝업을 자동으로 연다(닫아도 다음 선택 때 다시 열림).
+  useEffect(() => {
+    if (selected) setShowProps(true);
+  }, [selected]);
 
   // 호버 좌표 HUD: 객체 위 마우스의 프로젝트 좌표를 우하단에 실시간 표시.
   useEffect(() => {
@@ -651,6 +658,13 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
 
           <span className="tl-divider" />
           <button
+            className={showProps ? 'is-active' : undefined}
+            onClick={() => setShowProps((v) => !v)}
+            title="선택 객체 속성정보(매개변수) 팝업"
+          >
+            ℹ 속성정보
+          </button>
+          <button
             className={showViewpoints ? 'is-active' : undefined}
             onClick={() => setShowViewpoints((v) => !v)}
             title="저장 뷰포인트 패널"
@@ -719,7 +733,7 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
             <span className="coord-val">{coord ? coord.z.toFixed(3) : '—'}</span>
           </div>
         </div>
-        <PropertiesPanel />
+        {showProps && <PropertiesPanel onClose={() => setShowProps(false)} />}
         {pinPopup && (
           <div
             className="pin-popup"

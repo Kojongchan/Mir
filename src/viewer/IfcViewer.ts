@@ -12,12 +12,22 @@ import {
   type PlacedGeometry,
 } from 'web-ifc';
 
+export interface PropertyGroup {
+  /** Group title — the IFC property-set / quantity-set name (Revit exports these
+   *  as 일반·치수·구속조건·재료 및 마감재 등, so we surface them verbatim). */
+  name: string;
+  props: { key: string; value: string }[];
+}
+
 export interface ElementProperties {
   modelID: number;
   expressID: number;
   type: string;
   name: string;
+  /** Flat direct attributes (kept for existing consumers). */
   attributes: { key: string; value: string }[];
+  /** Grouped view: 일반(직접 속성) + IFC 속성세트/수량세트별 묶음. */
+  groups: PropertyGroup[];
 }
 
 interface LoadedModel {
@@ -325,6 +335,9 @@ export class IfcViewer {
     // translation (see modelOffset) — no rotation contamination.
     const modelID = this.ifcAPI.OpenModel(data, {
       COORDINATE_TO_ORIGIN: false,
+      // 원형 단면(말뚝·기둥 등)을 다각형이 아닌 매끈한 원으로 보이게 분할수를 올린다.
+      // web-ifc 기본 12 → 24 (실루엣이 충분히 둥글면서 삼각형 증가는 제한적).
+      CIRCLE_SEGMENTS: 24,
     });
 
     const group = new THREE.Group();
@@ -686,7 +699,82 @@ export class IfcViewer {
     }
 
     const name = this.readValue(line.Name) ?? '(unnamed)';
-    return { modelID, expressID, type, name, attributes };
+
+    // 그룹뷰: 일반(직접 속성) + IFC 속성세트/수량세트별 묶음.
+    const groups: PropertyGroup[] = [];
+    if (attributes.length) groups.push({ name: '일반', props: attributes });
+    groups.push(...this.propertyGroupsFor(modelID, expressID));
+
+    return { modelID, expressID, type, name, attributes, groups };
+  }
+
+  // expressID → 속성세트/수량세트 그룹. 모델당 1회 인덱싱 후 캐시.
+  private propertyGroupsCache = new Map<number, Map<number, PropertyGroup[]>>();
+
+  private propertyGroupsFor(modelID: number, expressID: number): PropertyGroup[] {
+    let index = this.propertyGroupsCache.get(modelID);
+    if (!index) {
+      try {
+        index = this.buildPropertyIndex(modelID);
+      } catch {
+        index = new Map();
+      }
+      this.propertyGroupsCache.set(modelID, index);
+    }
+    return index.get(expressID) ?? [];
+  }
+
+  /**
+   * Index every element's IFC property sets (IfcPropertySet → IfcPropertySingleValue)
+   * and quantity sets (IfcElementQuantity), grouped by set name. Revit exports its
+   * 매개변수 groups as these set names, so the result mirrors the authoring tool.
+   */
+  private buildPropertyIndex(modelID: number): Map<number, PropertyGroup[]> {
+    const out = new Map<number, PropertyGroup[]>();
+    const rels = this.ifcAPI.GetLineIDsWithType(modelID, IFCRELDEFINESBYPROPERTIES);
+    for (let i = 0; i < rels.size(); i++) {
+      try {
+        const rel = this.ifcAPI.GetLine(modelID, rels.get(i), false) as Record<string, any>;
+        const pdId = rel?.RelatingPropertyDefinition?.value as number | undefined;
+        const related = rel?.RelatedObjects;
+        if (pdId == null || !Array.isArray(related)) continue;
+
+        const pd = this.ifcAPI.GetLine(modelID, pdId, true) as Record<string, any>;
+        const setName = this.readValue(pd?.Name) ?? 'IFC 매개변수';
+        const props: { key: string; value: string }[] = [];
+
+        if (Array.isArray(pd?.HasProperties)) {
+          for (const p of pd.HasProperties) {
+            const key = this.readValue(p?.Name);
+            const val = this.readValue(p?.NominalValue);
+            if (key && val != null) props.push({ key, value: val });
+          }
+        } else if (Array.isArray(pd?.Quantities)) {
+          for (const q of pd.Quantities) {
+            const key = this.readValue(q?.Name);
+            const val =
+              this.readValue(q?.LengthValue) ??
+              this.readValue(q?.AreaValue) ??
+              this.readValue(q?.VolumeValue) ??
+              this.readValue(q?.CountValue) ??
+              this.readValue(q?.WeightValue);
+            if (key && val != null) props.push({ key, value: val });
+          }
+        }
+        if (props.length === 0) continue;
+
+        for (const ro of related) {
+          const id = ro?.value as number | undefined;
+          if (id == null) continue;
+          const arr = out.get(id) ?? [];
+          arr.push({ name: setName, props });
+          out.set(id, arr);
+        }
+      } catch {
+        /* skip malformed relation */
+      }
+    }
+    return out;
   }
 
   private readValue(raw: unknown): string | null {
