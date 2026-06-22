@@ -29,6 +29,12 @@ interface LoadedModel {
   upAxis: UpAxis;
   /** human-readable label (the source file name) for the clash set picker */
   label: string;
+  /**
+   * Translation subtracted from every transform at load time so far-from-origin
+   * georeferenced geometry stays near the local origin (float32 precision). Add
+   * it back after `group.worldToLocal()` to recover original project coordinates.
+   */
+  offset: THREE.Vector3;
 }
 
 export type UpAxis = 'x' | 'y' | 'z';
@@ -137,6 +143,12 @@ type SelectCallback = (props: ElementProperties | null) => void;
 
 const HIGHLIGHT_COLOR = new THREE.Color(0xffaa00);
 
+/** On-screen size of an issue pin (sprite scale, sizeAttenuation off; the sprite
+ *  spans this fraction of the NDC cube, i.e. half this fraction of the viewport). */
+const PIN_SIZE = 0.075;
+/** Pin canvas aspect (width / height) — teardrop is taller than wide. */
+const PIN_ASPECT = 0.8;
+
 /**
  * Imperative Three.js + web-ifc engine.
  *
@@ -212,9 +224,19 @@ export class IfcViewer {
   } | null = null;
   /** fired when an issue pin is clicked (issueId + screen coords) */
   private onIssuePin: (issueId: string, clientX: number, clientY: number) => void = () => {};
+  /** fired on mouse move with the hovered point in project coords (null = empty) */
+  private onHover: (p: THREE.Vector3 | null) => void = () => {};
+  /** rAF handle throttling hover raycasts to one per frame */
+  private hoverRaf = 0;
+  private hoverEvent: { x: number; y: number } | null = null;
   private initialized = false;
   private disposed = false;
   private resizeObserver?: ResizeObserver;
+
+  /** ground grid (off by default; toggled via setGridVisible) */
+  private grid?: THREE.GridHelper;
+  /** R/G/B axes at the project origin (off by default; setOriginVisible) */
+  private originHelper?: THREE.AxesHelper;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -242,6 +264,8 @@ export class IfcViewer {
     this.setupSceneHelpers();
 
     this.renderer.domElement.addEventListener('click', this.handleClick);
+    this.renderer.domElement.addEventListener('mousemove', this.handleMouseMove);
+    this.renderer.domElement.addEventListener('mouseleave', this.handleMouseLeave);
     window.addEventListener('resize', this.handleResize);
     // Container can resize without a window resize (e.g. the 4D timeline panel
     // expanding/collapsing, or switching modules in the portal shell) — keep the
@@ -260,6 +284,15 @@ export class IfcViewer {
 
   setOnIssuePin(cb: (issueId: string, clientX: number, clientY: number) => void) {
     this.onIssuePin = cb;
+  }
+
+  /**
+   * Report the hovered surface point in project coordinates as the mouse moves
+   * (rAF-throttled, one raycast per frame). The callback gets null over empty
+   * space. Used by the coordinate HUD.
+   */
+  setOnHover(cb: (p: THREE.Vector3 | null) => void) {
+    this.onHover = cb;
   }
 
   async init() {
@@ -349,7 +382,14 @@ export class IfcViewer {
     this.scene.add(group);
 
     const label = opts?.label ?? `모델 ${this.models.length + 1}`;
-    const model: LoadedModel = { modelID, group, elementMeshes, upAxis, label };
+    const model: LoadedModel = {
+      modelID,
+      group,
+      elementMeshes,
+      upAxis,
+      label,
+      offset: modelOffset ?? new THREE.Vector3(0, 0, 0),
+    };
     this.models.push(model);
 
     this.orientGroup(group, upAxis);
@@ -423,6 +463,19 @@ export class IfcViewer {
     return this.models.length ? this.models[this.models.length - 1].upAxis : 'z';
   }
 
+  /**
+   * Convert a Three.js world-space point back to the model's original project
+   * coordinates (the IFC georeferenced numbers shown to surveyors). The group is
+   * rotated for the up-axis and recentered by `offset` at load, so we must undo
+   * the world transform (`worldToLocal`) then add the offset back. Returns null
+   * if the model isn't loaded.
+   */
+  worldToProject(modelID: number, p: THREE.Vector3): THREE.Vector3 | null {
+    const model = this.models.find((m) => m.modelID === modelID);
+    if (!model) return null;
+    return model.group.worldToLocal(p.clone()).add(model.offset);
+  }
+
   private buildGeometry(modelID: number, placed: PlacedGeometry): THREE.BufferGeometry {
     const geom = this.ifcAPI.GetGeometry(modelID, placed.geometryExpressID);
     const verts = this.ifcAPI.GetVertexArray(geom.GetVertexData(), geom.GetVertexDataSize());
@@ -494,17 +547,71 @@ export class IfcViewer {
     this.onSelect(this.getProperties(hit.modelID, hit.expressID));
   };
 
-  private pickIssuePin(clientX: number, clientY: number): string | null {
-    if (!this.issuePinGroup || !this.issuePinGroup.visible) return null;
+  // Hover → coordinate HUD. Coalesce moves to one raycast per animation frame so
+  // fast mouse motion over large models doesn't flood the picker.
+  private handleMouseMove = (event: MouseEvent) => {
+    this.hoverEvent = { x: event.clientX, y: event.clientY };
+    if (this.hoverRaf) return;
+    this.hoverRaf = requestAnimationFrame(() => {
+      this.hoverRaf = 0;
+      const e = this.hoverEvent;
+      if (!e) return;
+      const hit = this.pickHover(e.x, e.y);
+      this.onHover(hit);
+    });
+  };
+
+  private handleMouseLeave = () => {
+    this.hoverEvent = null;
+    this.onHover(null);
+  };
+
+  /** Raycast against visible meshes; return the hit point in project coords. */
+  private pickHover(clientX: number, clientY: number): THREE.Vector3 | null {
     const rect = this.renderer.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(
       ((clientX - rect.left) / rect.width) * 2 - 1,
       -((clientY - rect.top) / rect.height) * 2 + 1,
     );
     this.raycaster.setFromCamera(ndc, this.camera);
-    const hits = this.raycaster.intersectObjects(this.issuePinGroup.children, false);
-    const id = hits[0]?.object.userData.issueId;
-    return typeof id === 'string' ? id : null;
+    const hits = this.raycaster.intersectObjects(this.allMeshes().filter((m) => m.visible), false);
+    const hit = hits[0];
+    if (!hit) return null;
+    const modelID = (hit.object.userData.modelID as number) ?? this.primaryModelID;
+    if (modelID == null) return null;
+    return this.worldToProject(modelID, hit.point);
+  }
+
+  /**
+   * Pick an issue pin by screen-space proximity. The pins are constant-size
+   * billboards (sizeAttenuation off), so their world scale is tiny and a normal
+   * raycast misses; instead we project each pin to screen pixels and take the
+   * nearest one within a click radius, preferring pins closer to the camera.
+   */
+  private pickIssuePin(clientX: number, clientY: number): string | null {
+    if (!this.issuePinGroup || !this.issuePinGroup.visible) return null;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const px = clientX - rect.left;
+    const py = clientY - rect.top;
+    // Pins are anchored at their teardrop tip and the body sits above it. Bias the
+    // hit centre up by ~half the rendered height and use a radius covering the body.
+    const pinH = PIN_SIZE * 0.5 * rect.height; // rendered pin height in px
+    const bias = pinH * 0.5;
+    const threshold = Math.max(24, pinH);
+    const v = new THREE.Vector3();
+    let best: { id: string; depth: number } | null = null;
+    for (const child of this.issuePinGroup.children) {
+      const id = child.userData.issueId;
+      if (typeof id !== 'string') continue;
+      v.setFromMatrixPosition(child.matrixWorld).project(this.camera);
+      if (v.z > 1) continue; // behind the camera
+      const sx = (v.x * 0.5 + 0.5) * rect.width;
+      const sy = (-v.y * 0.5 + 0.5) * rect.height - bias;
+      const dist2 = (sx - px) ** 2 + (sy - py) ** 2;
+      if (dist2 > threshold * threshold) continue;
+      if (!best || v.z < best.depth) best = { id, depth: v.z };
+    }
+    return best?.id ?? null;
   }
 
   private pick(clientX: number, clientY: number): { modelID: number; expressID: number } | null {
@@ -1335,14 +1442,20 @@ export class IfcViewer {
    * where issues live. Color encodes status (open=red / closed=green). Toggle
    * with setIssuePinsVisible(). Elements not found are skipped.
    */
-  setIssuePins(pins: { modelID: number; expressID: number; color?: number; issueId?: string }[]) {
+  setIssuePins(
+    pins: {
+      modelID: number;
+      expressID: number;
+      color?: number;
+      issueId?: string;
+      /** label drawn inside the pin (e.g. issue number) */
+      label?: string;
+      /** unresolved issues gently pulse to draw the eye */
+      open?: boolean;
+    }[],
+  ) {
     this.clearIssuePins();
     if (pins.length === 0) return;
-
-    const sceneBox = new THREE.Box3();
-    for (const model of this.models) sceneBox.expandByObject(model.group);
-    const maxDim = sceneBox.isEmpty() ? 10 : sceneBox.getSize(new THREE.Vector3()).length();
-    const r = Math.max(maxDim * 0.01, 0.25);
 
     const group = new THREE.Group();
     const box = new THREE.Box3();
@@ -1350,22 +1463,40 @@ export class IfcViewer {
       box.makeEmpty();
       for (const mesh of this.meshesFor(p.modelID, p.expressID)) box.expandByObject(mesh);
       if (box.isEmpty()) continue;
-      const marker = new THREE.Mesh(
-        new THREE.SphereGeometry(r, 14, 14),
-        new THREE.MeshBasicMaterial({
-          color: p.color ?? 0xdc2626,
+      const color = new THREE.Color(p.color ?? 0xdc2626).getStyle();
+      const tex = new THREE.CanvasTexture(makePinTexture(color, p.label ?? ''));
+      tex.anisotropy = 4;
+      const sprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({
+          map: tex,
           depthTest: false,
+          // constant on-screen size regardless of distance (Navisworks-style markers)
+          sizeAttenuation: false,
           transparent: true,
-          opacity: 0.95,
         }),
       );
-      marker.position.copy(box.getCenter(new THREE.Vector3()));
-      marker.renderOrder = 998;
-      marker.userData.issueId = p.issueId;
-      group.add(marker);
+      // anchor the teardrop tip (bottom-centre of the canvas) on the element
+      sprite.center.set(0.5, 0);
+      sprite.position.copy(box.getCenter(new THREE.Vector3()));
+      sprite.renderOrder = 998;
+      sprite.scale.set(PIN_SIZE * PIN_ASPECT, PIN_SIZE, 1);
+      sprite.userData.issueId = p.issueId;
+      sprite.userData.pulse = !!p.open;
+      group.add(sprite);
     }
     this.issuePinGroup = group;
     this.scene.add(group);
+  }
+
+  /** Gently pulse unresolved issue pins (called once per animation frame). */
+  private pulseIssuePins() {
+    if (!this.issuePinGroup || !this.issuePinGroup.visible) return;
+    const f = 1 + 0.14 * Math.sin(performance.now() / 280);
+    for (const child of this.issuePinGroup.children) {
+      const s = child as THREE.Sprite;
+      if (!s.userData.pulse) continue;
+      s.scale.set(PIN_SIZE * PIN_ASPECT * f, PIN_SIZE * f, 1);
+    }
   }
 
   setIssuePinsVisible(visible: boolean) {
@@ -1376,9 +1507,11 @@ export class IfcViewer {
     if (!this.issuePinGroup) return;
     this.scene.remove(this.issuePinGroup);
     this.issuePinGroup.traverse((o) => {
-      const m = o as THREE.Mesh;
+      const m = o as THREE.Mesh & THREE.Sprite;
       m.geometry?.dispose?.();
-      (m.material as THREE.Material)?.dispose?.();
+      const mat = m.material as (THREE.Material & { map?: THREE.Texture }) | undefined;
+      mat?.map?.dispose?.();
+      mat?.dispose?.();
     });
     this.issuePinGroup = null;
   }
@@ -1520,7 +1653,14 @@ export class IfcViewer {
     this.frameBox(box);
   }
 
-  private frameBox(box: THREE.Box3, factor = 1.8) {
+  /** Frame the camera on every loaded model combined (the "home/start" view). */
+  frameAll() {
+    const box = new THREE.Box3();
+    for (const m of this.models) box.expandByObject(m.group);
+    if (!box.isEmpty()) this.frameBox(box);
+  }
+
+  private frameBox(box: THREE.Box3, factor = 1.2) {
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z) || 1;
@@ -1541,9 +1681,45 @@ export class IfcViewer {
     dir.position.set(10, 20, 10);
     this.scene.add(dir);
 
-    // 흰색 배경에서 보이도록 밝은 회색 그리드(중심선은 약간 진하게).
+    // 흰색 배경에서 보이도록 밝은 회색 그리드(중심선은 약간 진하게). 기본 숨김 —
+    // 인프라 모델은 원점에서 멀리 떨어져 있어 100m 그리드가 도움이 안 될 때가 많다.
     const grid = new THREE.GridHelper(100, 100, 0x9aa5b5, 0xd7dde6);
+    grid.visible = false;
+    this.grid = grid;
     this.scene.add(grid);
+  }
+
+  /** Toggle the ground reference grid (off by default). */
+  setGridVisible(on: boolean) {
+    if (this.grid) this.grid.visible = on;
+  }
+
+  /**
+   * Toggle an R/G/B axes indicator placed at the *project* origin (IFC 0,0,0).
+   * Geometry is recentered by each model's `offset` at load, so the project
+   * origin's world position = group.localToWorld(-offset) of the first model.
+   * Created lazily so it can be sized to the loaded scene. Off by default.
+   */
+  setOriginVisible(on: boolean) {
+    if (!on) {
+      if (this.originHelper) this.originHelper.visible = false;
+      return;
+    }
+    const model = this.models[0];
+    if (!model) return;
+    const box = new THREE.Box3();
+    for (const m of this.models) box.expandByObject(m.group);
+    const span = box.isEmpty() ? 10 : box.getSize(new THREE.Vector3()).length();
+    const size = Math.max(span * 0.08, 1);
+    if (!this.originHelper) {
+      this.originHelper = new THREE.AxesHelper(1);
+      (this.originHelper.material as THREE.Material).depthTest = false;
+      this.originHelper.renderOrder = 997;
+      this.scene.add(this.originHelper);
+    }
+    this.originHelper.scale.setScalar(size);
+    this.originHelper.position.copy(model.group.localToWorld(model.offset.clone().negate()));
+    this.originHelper.visible = true;
   }
 
   private handleResize = () => {
@@ -1559,6 +1735,7 @@ export class IfcViewer {
     if (this.disposed) return;
     requestAnimationFrame(this.animate);
     this.stepCameraTween();
+    this.pulseIssuePins();
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
   };
@@ -1585,12 +1762,62 @@ export class IfcViewer {
 
   dispose() {
     this.disposed = true;
+    if (this.hoverRaf) cancelAnimationFrame(this.hoverRaf);
     this.resizeObserver?.disconnect();
     window.removeEventListener('resize', this.handleResize);
     this.renderer.domElement.removeEventListener('click', this.handleClick);
+    this.renderer.domElement.removeEventListener('mousemove', this.handleMouseMove);
+    this.renderer.domElement.removeEventListener('mouseleave', this.handleMouseLeave);
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
+}
+
+/**
+ * Render a map-style teardrop issue pin to a canvas: status-coloured drop with a
+ * white outline and an inner white disc carrying the issue number. Returns the
+ * canvas for use as a Sprite texture. Drawn at 2× for crisp edges.
+ */
+function makePinTexture(color: string, label: string): HTMLCanvasElement {
+  const s = 2; // supersample
+  const canvas = document.createElement('canvas');
+  canvas.width = 64 * s;
+  canvas.height = 80 * s;
+  const ctx = canvas.getContext('2d')!;
+  ctx.scale(s, s);
+  const cx = 32;
+  const cy = 26;
+  const r = 22;
+  const tipY = 76;
+
+  // teardrop body
+  ctx.beginPath();
+  ctx.moveTo(cx, tipY);
+  ctx.quadraticCurveTo(cx - r, cy + r * 0.75, cx - r, cy);
+  ctx.arc(cx, cy, r, Math.PI, 0, false);
+  ctx.quadraticCurveTo(cx + r, cy + r * 0.75, cx, tipY);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = '#ffffff';
+  ctx.stroke();
+
+  // inner disc
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.56, 0, Math.PI * 2);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+
+  // number
+  if (label) {
+    ctx.fillStyle = color;
+    ctx.font = `bold ${label.length > 2 ? 18 : 24}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, cx, cy + 1);
+  }
+  return canvas;
 }
 
 /** Draw a rounded-rectangle path (fallback for label backgrounds). */

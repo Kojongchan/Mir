@@ -10,7 +10,7 @@ import {
   dueDeltaLabel,
   type Issue,
 } from '../lib/issues';
-import { IfcViewer, type ElementMeta, type UpAxis } from '../viewer/IfcViewer';
+import { IfcViewer, type CameraState, type ElementMeta, type UpAxis } from '../viewer/IfcViewer';
 import { useStore } from '../store/useStore';
 import { useAuth } from '../auth/AuthProvider';
 import { Toolbar } from '../components/Toolbar';
@@ -27,12 +27,6 @@ import {
   type ModelPurpose,
   type ModelRecord,
 } from '../lib/api';
-import {
-  listFiles,
-  sizeLabel as fileSizeLabel,
-  type FileRecord,
-} from '../lib/files';
-import { uploadNewFile } from '../lib/cde';
 
 /**
  * 3D 뷰어 모듈의 용도. 모델 풀은 셋이 공유한다(통합모델에 올린 모델이 4D·간섭체크
@@ -62,10 +56,6 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   const [models, setModels] = useState<ModelRecord[]>([]);
   const [uploading, setUploading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
-
-  const [files, setFiles] = useState<FileRecord[]>([]);
-  const [docUploading, setDocUploading] = useState(false);
-  const docInput = useRef<HTMLInputElement>(null);
 
   // 런타임 modelID → DB 모델 uuid (4D 매핑·간섭 저장·이슈 핀 매핑용).
   const [modelIdMap, setModelIdMap] = useState<Map<number, string>>(new Map());
@@ -100,6 +90,12 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   const [hiddenModels, setHiddenModels] = useState<Set<string>>(new Set());
   const [hiddenCats, setHiddenCats] = useState<Set<string>>(new Set());
   const [showCats, setShowCats] = useState(false);
+  const [catQuery, setCatQuery] = useState('');
+
+  // 뷰 환경(S44): 격자·원점 인디케이터 토글 + 호버 좌표 HUD.
+  const [gridOn, setGridOn] = useState(false);
+  const [originOn, setOriginOn] = useState(false);
+  const [coord, setCoord] = useState<{ x: number; y: number; z: number } | null>(null);
 
   const { status, setStatus, setSelected, setModelCount, selected } = useStore();
 
@@ -125,14 +121,12 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
 
   useEffect(() => {
     refreshModels();
-    if (showTree) refreshFiles();
     if (mode === 'integrated') listIssues(projectId).then(setIssues).catch(() => setIssues([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, mode]);
 
   // 모델 풀은 모듈 공유(전체 조회). 4D/간섭은 통합모델에 올린 모델을 그대로 본다.
   const refreshModels = () => listModels(projectId).then(setModels).catch(() => setModels([]));
-  const refreshFiles = () => listFiles(projectId).then(setFiles).catch(() => setFiles([]));
 
   // 모드 전환 시 4D 시공 시뮬 상태가 다른 모듈로 새지 않게 정리한다. 라우터가 세 모듈을
   // 같은 Workspace 컴포넌트(=같은 IfcViewer 인스턴스)로 렌더하므로, mode 가 바뀌어도
@@ -183,7 +177,35 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
       viewer.clearConstruction();
       viewer.showAll();
     }
+    // 시작 카메라: 통합모델은 저장된 홈뷰가 있으면 복원, 없으면 전체 맞춤.
+    // 4D/간섭도 마지막 모델이 아니라 전체가 화면을 채우도록 맞춘다.
+    if (ok) {
+      if (mode === 'integrated') {
+        const home = loadHomeView(projectId);
+        if (home) viewer.applyCameraState(home);
+        else viewer.frameAll();
+      } else {
+        viewer.frameAll();
+      }
+    }
     setStatus(ok ? `불러옴: 모델 ${ok}개` : '표시할 모델이 없습니다.');
+  };
+
+  // 시작뷰 저장(관리자) / 복원(전원).
+  const saveHomeView = () => {
+    if (!viewer) return;
+    try {
+      localStorage.setItem(HOME_VIEW_KEY(projectId), JSON.stringify(viewer.getCameraState()));
+      setStatus('현재 화면을 시작뷰로 저장했습니다.');
+    } catch {
+      setStatus('시작뷰 저장 실패(저장공간).');
+    }
+  };
+  const gotoHomeView = () => {
+    if (!viewer) return;
+    const home = loadHomeView(projectId);
+    if (home) viewer.applyCameraState(home);
+    else viewer.frameAll();
   };
 
   // 이슈에 연결된 객체로 카메라 이동(위치 보기). 모든 모델 로드 후 매핑으로 해석.
@@ -205,12 +227,17 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
     for (const [rid, db] of modelIdMap.entries()) dbToRuntime.set(db, rid);
     const pins = issues
       .filter((i) => i.model_id && i.express_id != null && dbToRuntime.has(i.model_id))
-      .map((i) => ({
-        modelID: dbToRuntime.get(i.model_id as string) as number,
-        expressID: i.express_id as number,
-        color: OPEN_STATUSES.includes(i.status) ? 0xdc2626 : 0x16a34a,
-        issueId: i.id,
-      }));
+      .map((i, idx) => {
+        const open = OPEN_STATUSES.includes(i.status);
+        return {
+          modelID: dbToRuntime.get(i.model_id as string) as number,
+          expressID: i.express_id as number,
+          color: open ? 0xdc2626 : 0x16a34a,
+          issueId: i.id,
+          label: String(idx + 1),
+          open,
+        };
+      });
     viewer.setIssuePins(pins);
     viewer.setIssuePinsVisible(showPins);
   }, [viewer, mode, issues, modelIdMap, showPins]);
@@ -239,6 +266,19 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
     for (const e of meta) c.set(e.category, (c.get(e.category) ?? 0) + 1);
     return [...c.entries()].sort((a, b) => b[1] - a[1]);
   }, [meta]);
+  const filteredCats = useMemo(() => {
+    const q = catQuery.trim().toLowerCase();
+    return q ? categories.filter(([c]) => c.toLowerCase().includes(q)) : categories;
+  }, [categories, catQuery]);
+  // 보이는(필터된) 카테고리 중 하나라도 표시중이면 모두 숨김, 아니면 모두 표시.
+  const toggleAllCats = () => {
+    setHiddenCats((s) => {
+      const n = new Set(s);
+      const anyVisible = filteredCats.some(([c]) => !n.has(c));
+      for (const [c] of filteredCats) anyVisible ? n.add(c) : n.delete(c);
+      return n;
+    });
+  };
 
   // 표시 토글 적용(모델 OR 카테고리 숨김이면 비표시).
   useEffect(() => {
@@ -268,6 +308,23 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
     if (!viewer) return;
     viewer.setSection({ enabled: sectionOn, axis: sectionAxis, offset: sectionOffset, flip: sectionFlip });
   }, [viewer, sectionOn, sectionAxis, sectionOffset, sectionFlip]);
+
+  // 격자 토글.
+  useEffect(() => {
+    if (viewer) viewer.setGridVisible(gridOn);
+  }, [viewer, gridOn]);
+
+  // 원점 인디케이터(모델 로드 후 위치 계산되므로 modelIdMap 변화에도 갱신).
+  useEffect(() => {
+    if (viewer) viewer.setOriginVisible(originOn);
+  }, [viewer, originOn, modelIdMap]);
+
+  // 호버 좌표 HUD: 객체 위 마우스의 프로젝트 좌표를 우하단에 실시간 표시.
+  useEffect(() => {
+    if (!viewer) return;
+    viewer.setOnHover((p) => setCoord(p ? { x: p.x, y: p.y, z: p.z } : null));
+    return () => viewer.setOnHover(() => {});
+  }, [viewer]);
 
   const toggleModel = (dbId: string) =>
     setHiddenModels((s) => {
@@ -365,25 +422,6 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
     }
   };
 
-  const onUploadDoc = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setDocUploading(true);
-    setStatus(`업로드 중: ${file.name}`);
-    try {
-      await uploadNewFile(projectId, null, file);
-      await refreshFiles();
-      setStatus(`업로드 완료: ${file.name}`);
-    } catch (err) {
-      setStatus(`업로드 실패: ${errMessage(err)}`);
-    } finally {
-      setDocUploading(false);
-      if (docInput.current) docInput.current.value = '';
-    }
-  };
-
-  const openFile = (f: FileRecord) => window.open(`/view/${f.id}`, '_blank', 'noopener');
-
   // 통합모델 트리에서 모델 클릭 → 그 모델로 카메라 맞춤(이미 로드돼 있음).
   const frameModel = (m: ModelRecord) => {
     if (!viewer) return;
@@ -455,54 +493,43 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
                 </button>
               </div>
               {showCats && (
-                <ul className="model-list cat-list">
-                  {hiddenCats.size > 0 && (
-                    <li>
-                      <button className="model-item cat-clear" onClick={() => setHiddenCats(new Set())}>
-                        전체 표시로 초기화
-                      </button>
-                    </li>
-                  )}
-                  {categories.map(([c, n]) => (
-                    <li key={c} className="model-row">
-                      <input
-                        type="checkbox"
-                        className="model-check"
-                        checked={!hiddenCats.has(c)}
-                        onChange={() => toggleCat(c)}
-                        title="표시/숨김"
-                      />
-                      <span className="cat-name" title={c}>
-                        {c}
-                      </span>
-                      <span className="muted">{n}</span>
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <div className="cat-tools">
+                    <input
+                      className="cat-search"
+                      type="search"
+                      placeholder="카테고리 검색…"
+                      value={catQuery}
+                      onChange={(e) => setCatQuery(e.target.value)}
+                    />
+                    <button onClick={toggleAllCats} title="보이는 카테고리 전체 선택/해제">
+                      전체 토글
+                    </button>
+                  </div>
+                  <ul className="model-list cat-list">
+                    {filteredCats.map(([c, n]) => (
+                      <li key={c} className="model-row">
+                        <input
+                          type="checkbox"
+                          className="model-check"
+                          checked={!hiddenCats.has(c)}
+                          onChange={() => toggleCat(c)}
+                          title="표시/숨김"
+                        />
+                        <span className="cat-name" title={c}>
+                          {c}
+                        </span>
+                        <span className="muted">{n}</span>
+                      </li>
+                    ))}
+                    {filteredCats.length === 0 && (
+                      <li className="muted empty">검색 결과가 없습니다.</li>
+                    )}
+                  </ul>
+                </>
               )}
             </>
           )}
-
-          <div className="sidebar-head">
-            <h2>문서 · 미디어</h2>
-            <input ref={docInput} type="file" style={{ display: 'none' }} onChange={onUploadDoc} />
-            {isAdmin && (
-              <button onClick={() => docInput.current?.click()} disabled={docUploading}>
-                {docUploading ? '업로드 중…' : '파일 업로드'}
-              </button>
-            )}
-          </div>
-          <ul className="model-list">
-            {files.map((f) => (
-              <li key={f.id}>
-                <button className="model-item" onClick={() => openFile(f)} title={`${f.name} — 새 탭에서 미리보기`}>
-                  <span className="model-name">{f.name}</span>
-                  <span className="muted">{fileSizeLabel(f.size_bytes)}</span>
-                </button>
-              </li>
-            ))}
-            {files.length === 0 && <li className="muted empty">등록된 문서가 없습니다.</li>}
-          </ul>
         </aside>
       )}
 
@@ -574,6 +601,30 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
 
           <span className="tl-divider" />
           <button
+            className={gridOn ? 'is-active' : undefined}
+            onClick={() => setGridOn((v) => !v)}
+            title="바닥 격자 표시/숨김"
+          >
+            # 격자
+          </button>
+          <button
+            className={originOn ? 'is-active' : undefined}
+            onClick={() => setOriginOn((v) => !v)}
+            title="프로젝트 원점(0,0,0) 축 표시/숨김"
+          >
+            ⛬ 원점
+          </button>
+          <button onClick={gotoHomeView} title="저장된 시작뷰로 이동(없으면 전체 맞춤)">
+            🏠 시작뷰로
+          </button>
+          {isAdmin && mode === 'integrated' && (
+            <button onClick={saveHomeView} title="현재 화면을 시작뷰로 저장">
+              시작뷰 저장
+            </button>
+          )}
+
+          <span className="tl-divider" />
+          <button
             className={showViewpoints ? 'is-active' : undefined}
             onClick={() => setShowViewpoints((v) => !v)}
             title="저장 뷰포인트 패널"
@@ -633,6 +684,14 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
             selected={markupSel}
             onSelect={setMarkupSel}
           />
+          <div className="coord-hud" title="마우스 위치(프로젝트 좌표)">
+            <span className="coord-axis coord-x">X</span>
+            <span className="coord-val">{coord ? coord.x.toFixed(3) : '—'}</span>
+            <span className="coord-axis coord-y">Y</span>
+            <span className="coord-val">{coord ? coord.y.toFixed(3) : '—'}</span>
+            <span className="coord-axis coord-z">Z</span>
+            <span className="coord-val">{coord ? coord.z.toFixed(3) : '—'}</span>
+          </div>
         </div>
         <PropertiesPanel />
         {pinPopup && (
@@ -709,6 +768,20 @@ const UP_AXIS_KEY = (modelId: string) => `mir.upaxis.${modelId}`;
 function loadUpAxisPref(modelId: string): UpAxis | null {
   const v = localStorage.getItem(UP_AXIS_KEY(modelId));
   return v === 'x' || v === 'y' || v === 'z' ? v : null;
+}
+
+const HOME_VIEW_KEY = (projectId: string) => `mir.homeview.${projectId}`;
+
+/** Read a saved start/home camera view for a project (null if none/invalid). */
+function loadHomeView(projectId: string): CameraState | null {
+  try {
+    const raw = localStorage.getItem(HOME_VIEW_KEY(projectId));
+    if (!raw) return null;
+    const s = JSON.parse(raw) as CameraState;
+    return s && Array.isArray(s.position) && Array.isArray(s.target) ? s : null;
+  } catch {
+    return null;
+  }
 }
 
 function sizeLabel(bytes: number | null): string {

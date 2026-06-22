@@ -3379,6 +3379,57 @@ button.danger:hover:not(:disabled) {
   font-weight: 600;
 }
 
+/* ===================== 뷰 환경(S44): 좌표 HUD ===================== */
+.coord-hud {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--chrome) 86%, transparent);
+  color: var(--chrome-text);
+  border: 1px solid var(--chrome-border);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  pointer-events: none;
+  user-select: none;
+}
+.coord-hud .coord-axis {
+  font-weight: 700;
+  margin-left: 4px;
+}
+.coord-hud .coord-axis:first-child {
+  margin-left: 0;
+}
+.coord-hud .coord-x {
+  color: #ef5350;
+}
+.coord-hud .coord-y {
+  color: #66bb6a;
+}
+.coord-hud .coord-z {
+  color: #5c9dff;
+}
+.coord-hud .coord-val {
+  min-width: 64px;
+  text-align: right;
+}
+
+/* 카테고리 검색/일괄 토글 */
+.cat-tools {
+  display: flex;
+  gap: 6px;
+  padding: 4px 0 6px;
+}
+.cat-tools .cat-search {
+  flex: 1;
+  min-width: 0;
+}
+
 /* ===================== 마크업(redline) + 저장 뷰포인트 (S37) ===================== */
 .viewport-wrap {
   position: relative;
