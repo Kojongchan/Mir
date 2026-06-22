@@ -475,15 +475,39 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
     if (openViewpoint) setShowViewpoints(true);
   }, [openViewpoint]);
 
-  // 뷰포인트 저장/복원용 표시상태(모델/카테고리 숨김 + 단면).
-  const getDisplayState = (): DisplayState => ({
-    hiddenModels: [...hiddenModels],
-    hiddenCats: [...hiddenCats],
-    section: { enabled: sectionOn, axis: sectionAxis, offset: sectionOffset, flip: sectionFlip },
-  });
+  // 뷰포인트 저장/복원용 표시상태(모델/카테고리/개별객체 숨김 + 단면). 개별 객체는
+  // 런타임 modelID 가 세션마다 달라지므로 DB 모델 id 기준("dbId:expressID")으로 저장한다.
+  const getDisplayState = (): DisplayState => {
+    const hiddenElemsDb = [...hiddenElems]
+      .map((k) => {
+        const i = k.lastIndexOf(':');
+        const db = modelIdMap.get(Number(k.slice(0, i)));
+        return db ? `${db}:${k.slice(i + 1)}` : null;
+      })
+      .filter((v): v is string => v !== null);
+    return {
+      hiddenModels: [...hiddenModels],
+      hiddenCats: [...hiddenCats],
+      hiddenElems: hiddenElemsDb,
+      section: { enabled: sectionOn, axis: sectionAxis, offset: sectionOffset, flip: sectionFlip },
+    };
+  };
   const applyDisplayState = (d: DisplayState) => {
     setHiddenModels(new Set(d.hiddenModels ?? []));
     setHiddenCats(new Set(d.hiddenCats ?? []));
+    const dbToRid = new Map<string, number>();
+    for (const [rid, db] of modelIdMap.entries()) dbToRid.set(db, rid);
+    setHiddenElems(
+      new Set(
+        (d.hiddenElems ?? [])
+          .map((k) => {
+            const i = k.lastIndexOf(':');
+            const rid = dbToRid.get(k.slice(0, i));
+            return rid != null ? `${rid}:${k.slice(i + 1)}` : null;
+          })
+          .filter((v): v is string => v !== null),
+      ),
+    );
     if (d.section) {
       setSectionOn(d.section.enabled);
       setSectionAxis(d.section.axis);
