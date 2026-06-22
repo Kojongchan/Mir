@@ -100,6 +100,21 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   const [originOn, setOriginOn] = useState(false);
   // 속성정보 팝업 표시 여부(객체 선택 시 자동으로 열림).
   const [showProps, setShowProps] = useState(false);
+  // 사이드바 좌우 폭(우측 가장자리 핸들 드래그).
+  const [sidebarW, setSidebarW] = useState(260);
+  const startSidebarResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarW;
+    const onMove = (ev: MouseEvent) =>
+      setSidebarW(Math.min(640, Math.max(200, startW + (ev.clientX - startX))));
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
   const [coord, setCoord] = useState<{ x: number; y: number; z: number } | null>(null);
 
   const { status, setStatus, setSelected, setModelCount, selected } = useStore();
@@ -497,7 +512,7 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   return (
     <div className="mod-fill viewer-fill">
       {showTree && (
-        <aside className="mod-subtree">
+        <aside className="mod-subtree" style={{ width: sidebarW }}>
           <div className="sidebar-head">
             <h2>모델</h2>
             <span className="muted model-src-hint" title="모델 업로드는 자료관리 → BIM 데이터 폴더에서 합니다">
@@ -572,6 +587,7 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
               </>
             )}
           </div>
+          <div className="subtree-resizer" onMouseDown={startSidebarResize} title="좌우 폭 조절" />
         </aside>
       )}
 
