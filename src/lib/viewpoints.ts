@@ -23,6 +23,7 @@ export type MarkupShape =
 export interface DisplayState {
   hiddenModels: string[]; // DB 모델 uuid
   hiddenCats: string[];
+  hiddenElems?: string[]; // 개별 객체 숨김 "runtimeModelID:expressID" (추가의견4)
   section: { enabled: boolean; axis: 'x' | 'y' | 'z'; offset: number; flip: boolean };
 }
 
