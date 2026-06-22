@@ -9,6 +9,7 @@ import type { PropertyGroup } from '../viewer/IfcViewer';
  */
 export function PropertiesPanel({ onClose }: { onClose?: () => void } = {}) {
   const selected = useStore((s) => s.selected);
+  const [query, setQuery] = useState('');
 
   if (!selected) {
     return (
@@ -26,8 +27,19 @@ export function PropertiesPanel({ onClose }: { onClose?: () => void } = {}) {
     );
   }
 
-  const groups: PropertyGroup[] =
+  const allGroups: PropertyGroup[] =
     selected.groups?.length ? selected.groups : [{ name: '일반', props: selected.attributes }];
+
+  // 속성 내 검색(추가의견5): 키/값에 검색어가 든 항목만, 매칭 그룹은 자동 펼침.
+  const q = query.trim().toLowerCase();
+  const groups: PropertyGroup[] = q
+    ? allGroups
+        .map((g) => ({
+          ...g,
+          props: g.props.filter((p) => p.key.toLowerCase().includes(q) || p.value.toLowerCase().includes(q)),
+        }))
+        .filter((g) => g.props.length > 0)
+    : allGroups;
 
   return (
     <div className="panel properties props-popup">
@@ -44,10 +56,23 @@ export function PropertiesPanel({ onClose }: { onClose?: () => void } = {}) {
         <div className="prop-name">{selected.name}</div>
         <div className="muted">#{selected.expressID}</div>
       </div>
+      <input
+        className="props-search"
+        type="search"
+        placeholder="속성 검색(이름·값)…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
       <div className="props-groups">
         {groups.map((g, i) => (
-          <PropGroup key={`${g.name}-${i}`} group={g} defaultOpen={i < 2} selKey={selected.expressID} />
+          <PropGroup
+            key={`${g.name}-${i}`}
+            group={g}
+            defaultOpen={q ? true : i < 2}
+            selKey={selected.expressID}
+          />
         ))}
+        {groups.length === 0 && <p className="muted props-empty">검색 결과가 없습니다.</p>}
       </div>
     </div>
   );

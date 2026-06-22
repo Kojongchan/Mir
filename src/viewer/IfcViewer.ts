@@ -219,6 +219,9 @@ export class IfcViewer {
   // --- 측정 / 단면(클리핑) ----------------------------------------------
   private measureMode = false;
   private measurePts: THREE.Vector3[] = [];
+  /** 측정 스냅(추가4): 커서 근처로 스냅된 월드 점(없으면 null) + 표시 마커. */
+  private snapWorld: THREE.Vector3 | null = null;
+  private snapSprite?: THREE.Sprite;
   private readonly measureGroup = new THREE.Group();
   private onMeasure: (text: string | null) => void = () => {};
   private readonly sectionPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
@@ -561,9 +564,9 @@ export class IfcViewer {
   // --- selection ---------------------------------------------------------
 
   private handleClick = (event: MouseEvent) => {
-    // 측정 모드: 표면 점을 찍어 두 점 사이 거리를 잰다.
+    // 측정 모드: 스냅된 점(끝점·중간점)이 있으면 그 점을, 없으면 표면 점을 찍는다.
     if (this.measureMode) {
-      const p = this.pickPoint(event.clientX, event.clientY);
+      const p = this.snapWorld?.clone() ?? this.pickPoint(event.clientX, event.clientY);
       if (p) this.addMeasurePoint(p);
       return;
     }
@@ -594,6 +597,8 @@ export class IfcViewer {
       if (!e) return;
       const hit = this.pickHover(e.x, e.y);
       this.onHover(hit);
+      // 측정 모드에서는 커서 근처 꼭짓점/중간점으로 스냅 마커를 갱신.
+      if (this.measureMode) this.updateSnap(e.x, e.y);
     });
   };
 
@@ -1502,7 +1507,93 @@ export class IfcViewer {
     this.measureMode = on;
     this.measurePts = [];
     this.renderer.domElement.style.cursor = on ? 'crosshair' : '';
-    if (!on) this.onMeasure(null);
+    if (!on) {
+      this.onMeasure(null);
+      this.snapWorld = null;
+      if (this.snapSprite) this.snapSprite.visible = false;
+    }
+  }
+
+  /**
+   * Measurement snap (추가4): find the nearest model vertex (끝점) or triangle edge
+   * midpoint (중간점) to the cursor, within a screen-pixel threshold, and place a
+   * snap marker there. The snapped world point (if any) is used on the next click.
+   */
+  private updateSnap(clientX: number, clientY: number) {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const hits = this.raycaster.intersectObjects(this.allMeshes().filter((m) => m.visible), false);
+    const hit = hits[0];
+    if (!hit || !hit.face) {
+      this.snapWorld = null;
+      if (this.snapSprite) this.snapSprite.visible = false;
+      return;
+    }
+    const geom = (hit.object as THREE.Mesh).geometry as THREE.BufferGeometry;
+    const pos = geom.getAttribute('position') as THREE.BufferAttribute | undefined;
+    if (!pos) {
+      this.snapWorld = null;
+      if (this.snapSprite) this.snapSprite.visible = false;
+      return;
+    }
+    const mw = (hit.object as THREE.Mesh).matrixWorld;
+    const { a, b, c } = hit.face;
+    const va = new THREE.Vector3().fromBufferAttribute(pos, a).applyMatrix4(mw);
+    const vb = new THREE.Vector3().fromBufferAttribute(pos, b).applyMatrix4(mw);
+    const vc = new THREE.Vector3().fromBufferAttribute(pos, c).applyMatrix4(mw);
+    // 후보: 꼭짓점 3 + 엣지 중간점 3. 꼭짓점을 살짝 우대(가중치).
+    const candidates: { p: THREE.Vector3; bias: number }[] = [
+      { p: va, bias: 0 },
+      { p: vb, bias: 0 },
+      { p: vc, bias: 0 },
+      { p: va.clone().lerp(vb, 0.5), bias: 3 },
+      { p: vb.clone().lerp(vc, 0.5), bias: 3 },
+      { p: vc.clone().lerp(va, 0.5), bias: 3 },
+    ];
+    const SNAP_PX = 14;
+    let best: THREE.Vector3 | null = null;
+    let bestScore = SNAP_PX;
+    for (const cand of candidates) {
+      const proj = cand.p.clone().project(this.camera);
+      const sx = rect.left + (proj.x * 0.5 + 0.5) * rect.width;
+      const sy = rect.top + (-proj.y * 0.5 + 0.5) * rect.height;
+      const d = Math.hypot(sx - clientX, sy - clientY) + cand.bias;
+      if (d < bestScore) {
+        bestScore = d;
+        best = cand.p;
+      }
+    }
+    this.snapWorld = best;
+    this.showSnapMarker(best);
+  }
+
+  private showSnapMarker(p: THREE.Vector3 | null) {
+    if (!p) {
+      if (this.snapSprite) this.snapSprite.visible = false;
+      return;
+    }
+    if (!this.snapSprite) {
+      const s = 64;
+      const c = document.createElement('canvas');
+      c.width = c.height = s;
+      const ctx = c.getContext('2d')!;
+      ctx.strokeStyle = '#16a34a';
+      ctx.lineWidth = 7;
+      ctx.strokeRect(10, 10, s - 20, s - 20);
+      const tex = new THREE.CanvasTexture(c);
+      this.snapSprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: tex, depthTest: false, sizeAttenuation: false, transparent: true }),
+      );
+      this.snapSprite.renderOrder = 1004;
+      this.snapSprite.scale.set(0.026, 0.026, 1);
+      this.scene.add(this.snapSprite);
+    }
+    this.snapSprite.position.copy(p);
+    this.snapSprite.visible = true;
   }
 
   /** Raycast against visible meshes and return the world-space hit point. */
