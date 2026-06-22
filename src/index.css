@@ -1055,6 +1055,75 @@ button.danger:hover:not(:disabled) {
   width: 12px;
   color: var(--muted);
 }
+
+/* 객체 스냅 옵션 패널(보완1). */
+.measure-ctrls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.snap-menu {
+  position: relative;
+  display: inline-flex;
+}
+.snap-panel {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: 170px;
+  padding: 8px;
+  background: var(--glass, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(8px);
+}
+.snap-panel-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.snap-opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 3px 2px;
+  cursor: pointer;
+}
+.snap-glyph {
+  width: 12px;
+  height: 12px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.snap-glyph-vertex {
+  border: 2px solid #16a34a;
+}
+.snap-glyph-midpoint {
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 12px solid #f59e0b;
+}
+.snap-glyph-center {
+  border: 2px solid #2563eb;
+  border-radius: 50%;
+}
+.snap-glyph-nearest {
+  position: relative;
+  color: #a855f7;
+}
+.snap-glyph-nearest::before {
+  content: '✕';
+  position: absolute;
+  inset: -3px 0 0;
+  font-size: 13px;
+  line-height: 1;
+}
 .prop-group-name {
   flex: 1;
   overflow: hidden;

@@ -18,7 +18,7 @@ import { ToolbarMenu } from '../components/ToolbarMenu';
 import { PropertiesPanel } from '../components/PropertiesPanel';
 import { ObjectTree } from '../components/ObjectTree';
 import { SpatialTree } from '../components/SpatialTree';
-import type { SpatialNode } from '../viewer/IfcViewer';
+import type { SpatialNode, SnapKind } from '../viewer/IfcViewer';
 import { Timeline } from '../components/Timeline';
 import { ClashPanel } from '../components/ClashPanel';
 import { ViewpointPanel } from '../components/ViewpointPanel';
@@ -41,6 +41,14 @@ import { listFolders, listProjectFiles, listVersions, type Folder, type FileVers
  *  - clash: 간섭체크. 트리 숨김(메인 확대) + 간섭체크 결과 팝업.
  */
 export type ViewerMode = ModelPurpose;
+
+/** 객체 스냅 옵션(보완1) — 라벨 + 마커 글리프 매핑. */
+const SNAP_OPTIONS: { key: SnapKind; label: string }[] = [
+  { key: 'vertex', label: '정점(끝점)' },
+  { key: 'midpoint', label: '모서리 중간점' },
+  { key: 'center', label: '면 중심' },
+  { key: 'nearest', label: '면 위 근처점' },
+];
 
 const MODE_TITLE: Record<ViewerMode, string> = {
   integrated: '통합모델 (3D)',
@@ -83,6 +91,14 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   // 측정 / 단면(클리핑) — 범용 리뷰 도구.
   const [measureOn, setMeasureOn] = useState(false);
   const [measureMsg, setMeasureMsg] = useState<string | null>(null);
+  // 객체 스냅 모드(보완1) + 설정 팝오버.
+  const [snapModes, setSnapModes] = useState<Record<SnapKind, boolean>>({
+    vertex: true,
+    midpoint: true,
+    center: true,
+    nearest: false,
+  });
+  const [snapPanelOpen, setSnapPanelOpen] = useState(false);
   const [sectionOn, setSectionOn] = useState(false);
   const [sectionAxis, setSectionAxis] = useState<'x' | 'y' | 'z'>('y');
   const [sectionOffset, setSectionOffset] = useState(0.5);
@@ -360,6 +376,11 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
     viewer.setOnMeasure(setMeasureMsg);
     viewer.setMeasureMode(measureOn);
   }, [viewer, measureOn]);
+
+  // 객체 스냅 모드 반영(보완1).
+  useEffect(() => {
+    viewer?.setSnapModes(snapModes);
+  }, [viewer, snapModes]);
 
   // 단면(클리핑) 적용.
   useEffect(() => {
@@ -830,9 +851,36 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
 
           {/* 활성 도구의 인라인 상세 컨트롤 */}
           {measureOn && (
-            <button onClick={() => viewer?.clearMeasurements()} title="측정 지우기">
-              측정 지우기
-            </button>
+            <span className="measure-ctrls">
+              <button onClick={() => viewer?.clearMeasurements()} title="측정 지우기">
+                측정 지우기
+              </button>
+              <span className="snap-menu">
+                <button
+                  className={snapPanelOpen ? 'is-active' : undefined}
+                  onClick={() => setSnapPanelOpen((v) => !v)}
+                  title="객체 스냅 옵션"
+                >
+                  ⌖ 스냅
+                </button>
+                {snapPanelOpen && (
+                  <div className="snap-panel" onMouseLeave={() => setSnapPanelOpen(false)}>
+                    <div className="snap-panel-title">객체 스냅 모드</div>
+                    {SNAP_OPTIONS.map((o) => (
+                      <label key={o.key} className="snap-opt">
+                        <input
+                          type="checkbox"
+                          checked={snapModes[o.key]}
+                          onChange={(e) => setSnapModes((s) => ({ ...s, [o.key]: e.target.checked }))}
+                        />
+                        <span className={`snap-glyph snap-glyph-${o.key}`} aria-hidden />
+                        {o.label}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </span>
+            </span>
           )}
           {sectionOn && (
             <span className="section-ctrls">

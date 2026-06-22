@@ -59,6 +59,9 @@ export interface ElementInfo {
   name: string;
 }
 
+/** 측정 객체 스냅 종류(보완1): 정점·중간점·면중심·근처점. */
+export type SnapKind = 'vertex' | 'midpoint' | 'center' | 'nearest';
+
 /** A node in the IFC spatial/decomposition tree (Project→Site→…→부재). */
 export interface SpatialNode {
   modelID: number;
@@ -219,9 +222,17 @@ export class IfcViewer {
   // --- 측정 / 단면(클리핑) ----------------------------------------------
   private measureMode = false;
   private measurePts: THREE.Vector3[] = [];
-  /** 측정 스냅(추가4): 커서 근처로 스냅된 월드 점(없으면 null) + 표시 마커. */
+  /** 측정 스냅(추가4/보완1): 커서 근처로 스냅된 월드 점(없으면 null) + 표시 마커. */
   private snapWorld: THREE.Vector3 | null = null;
   private snapSprite?: THREE.Sprite;
+  private snapTextures = new Map<SnapKind, THREE.CanvasTexture>();
+  /** 켜진 스냅 모드(AutoCAD 객체 스냅 유사). */
+  private snapModes: Record<SnapKind, boolean> = {
+    vertex: true,
+    midpoint: true,
+    center: true,
+    nearest: false,
+  };
   private readonly measureGroup = new THREE.Group();
   private onMeasure: (text: string | null) => void = () => {};
   private readonly sectionPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
@@ -1545,17 +1556,32 @@ export class IfcViewer {
     const va = new THREE.Vector3().fromBufferAttribute(pos, a).applyMatrix4(mw);
     const vb = new THREE.Vector3().fromBufferAttribute(pos, b).applyMatrix4(mw);
     const vc = new THREE.Vector3().fromBufferAttribute(pos, c).applyMatrix4(mw);
-    // 후보: 꼭짓점 3 + 엣지 중간점 3. 꼭짓점을 살짝 우대(가중치).
-    const candidates: { p: THREE.Vector3; bias: number }[] = [
-      { p: va, bias: 0 },
-      { p: vb, bias: 0 },
-      { p: vc, bias: 0 },
-      { p: va.clone().lerp(vb, 0.5), bias: 3 },
-      { p: vb.clone().lerp(vc, 0.5), bias: 3 },
-      { p: vc.clone().lerp(va, 0.5), bias: 3 },
-    ];
+
+    // 켜진 모드별 후보. 우선순위 bias(작을수록 우대): 정점 > 중간점 > 면중심 > 근처점.
+    const candidates: { p: THREE.Vector3; bias: number; kind: SnapKind }[] = [];
+    if (this.snapModes.vertex) {
+      candidates.push({ p: va, bias: 0, kind: 'vertex' });
+      candidates.push({ p: vb, bias: 0, kind: 'vertex' });
+      candidates.push({ p: vc, bias: 0, kind: 'vertex' });
+    }
+    if (this.snapModes.midpoint) {
+      candidates.push({ p: va.clone().lerp(vb, 0.5), bias: 3, kind: 'midpoint' });
+      candidates.push({ p: vb.clone().lerp(vc, 0.5), bias: 3, kind: 'midpoint' });
+      candidates.push({ p: vc.clone().lerp(va, 0.5), bias: 3, kind: 'midpoint' });
+    }
+    if (this.snapModes.center) {
+      candidates.push({
+        p: new THREE.Vector3().add(va).add(vb).add(vc).multiplyScalar(1 / 3),
+        bias: 5,
+        kind: 'center',
+      });
+    }
+    if (this.snapModes.nearest) {
+      candidates.push({ p: hit.point.clone(), bias: 10, kind: 'nearest' });
+    }
+
     const SNAP_PX = 14;
-    let best: THREE.Vector3 | null = null;
+    let best: { p: THREE.Vector3; kind: SnapKind } | null = null;
     let bestScore = SNAP_PX;
     for (const cand of candidates) {
       const proj = cand.p.clone().project(this.camera);
@@ -1564,36 +1590,74 @@ export class IfcViewer {
       const d = Math.hypot(sx - clientX, sy - clientY) + cand.bias;
       if (d < bestScore) {
         bestScore = d;
-        best = cand.p;
+        best = { p: cand.p, kind: cand.kind };
       }
     }
-    this.snapWorld = best;
+    this.snapWorld = best?.p ?? null;
     this.showSnapMarker(best);
   }
 
-  private showSnapMarker(p: THREE.Vector3 | null) {
-    if (!p) {
+  /** Enable/disable snap modes (객체 스냅 옵션). */
+  setSnapModes(modes: Partial<Record<SnapKind, boolean>>) {
+    this.snapModes = { ...this.snapModes, ...modes };
+  }
+
+  private showSnapMarker(best: { p: THREE.Vector3; kind: SnapKind } | null) {
+    if (!best) {
       if (this.snapSprite) this.snapSprite.visible = false;
       return;
     }
     if (!this.snapSprite) {
-      const s = 64;
-      const c = document.createElement('canvas');
-      c.width = c.height = s;
-      const ctx = c.getContext('2d')!;
-      ctx.strokeStyle = '#16a34a';
-      ctx.lineWidth = 7;
-      ctx.strokeRect(10, 10, s - 20, s - 20);
-      const tex = new THREE.CanvasTexture(c);
       this.snapSprite = new THREE.Sprite(
-        new THREE.SpriteMaterial({ map: tex, depthTest: false, sizeAttenuation: false, transparent: true }),
+        new THREE.SpriteMaterial({ depthTest: false, sizeAttenuation: false, transparent: true }),
       );
       this.snapSprite.renderOrder = 1004;
-      this.snapSprite.scale.set(0.026, 0.026, 1);
+      this.snapSprite.scale.set(0.028, 0.028, 1);
       this.scene.add(this.snapSprite);
     }
-    this.snapSprite.position.copy(p);
+    (this.snapSprite.material as THREE.SpriteMaterial).map = this.snapTexture(best.kind);
+    (this.snapSprite.material as THREE.SpriteMaterial).needsUpdate = true;
+    this.snapSprite.position.copy(best.p);
     this.snapSprite.visible = true;
+  }
+
+  /** Per-kind snap marker glyph (정점=사각, 중간점=삼각, 면중심=원, 근처점=X). */
+  private snapTexture(kind: SnapKind): THREE.CanvasTexture {
+    const cached = this.snapTextures.get(kind);
+    if (cached) return cached;
+    const s = 64;
+    const c = document.createElement('canvas');
+    c.width = c.height = s;
+    const ctx = c.getContext('2d')!;
+    ctx.lineWidth = 7;
+    ctx.lineJoin = 'round';
+    const color = { vertex: '#16a34a', midpoint: '#f59e0b', center: '#2563eb', nearest: '#a855f7' }[kind];
+    ctx.strokeStyle = color;
+    const m = 10;
+    if (kind === 'vertex') {
+      ctx.strokeRect(m, m, s - 2 * m, s - 2 * m);
+    } else if (kind === 'midpoint') {
+      ctx.beginPath();
+      ctx.moveTo(s / 2, m);
+      ctx.lineTo(s - m, s - m);
+      ctx.lineTo(m, s - m);
+      ctx.closePath();
+      ctx.stroke();
+    } else if (kind === 'center') {
+      ctx.beginPath();
+      ctx.arc(s / 2, s / 2, s / 2 - m, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(m, m);
+      ctx.lineTo(s - m, s - m);
+      ctx.moveTo(s - m, m);
+      ctx.lineTo(m, s - m);
+      ctx.stroke();
+    }
+    const tex = new THREE.CanvasTexture(c);
+    this.snapTextures.set(kind, tex);
+    return tex;
   }
 
   /** Raycast against visible meshes and return the world-space hit point. */
