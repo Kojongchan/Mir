@@ -1014,6 +1014,17 @@ button.danger:hover:not(:disabled) {
 .props-empty {
   margin: 6px 0 0;
 }
+.props-search {
+  width: 100%;
+  margin: 6px 0 8px;
+  padding: 5px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2, transparent);
+  color: inherit;
+  box-sizing: border-box;
+}
 .props-groups {
   display: flex;
   flex-direction: column;
