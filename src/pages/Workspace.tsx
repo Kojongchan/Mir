@@ -18,7 +18,7 @@ import { ToolbarMenu } from '../components/ToolbarMenu';
 import { PropertiesPanel } from '../components/PropertiesPanel';
 import { ObjectTree } from '../components/ObjectTree';
 import { SpatialTree } from '../components/SpatialTree';
-import type { SpatialNode, SnapKind } from '../viewer/IfcViewer';
+import type { SpatialNode, SnapKind, MeasureType } from '../viewer/IfcViewer';
 import { Timeline } from '../components/Timeline';
 import { ClashPanel } from '../components/ClashPanel';
 import { ViewpointPanel } from '../components/ViewpointPanel';
@@ -90,6 +90,7 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
 
   // 측정 / 단면(클리핑) — 범용 리뷰 도구.
   const [measureOn, setMeasureOn] = useState(false);
+  const [measureType, setMeasureType] = useState<MeasureType>('distance');
   const [measureMsg, setMeasureMsg] = useState<string | null>(null);
   // 객체 스냅 모드(보완1) + 설정 팝오버.
   const [snapModes, setSnapModes] = useState<Record<SnapKind, boolean>>({
@@ -381,6 +382,11 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   useEffect(() => {
     viewer?.setSnapModes(snapModes);
   }, [viewer, snapModes]);
+
+  // 측정 종류 반영(추가의견3).
+  useEffect(() => {
+    viewer?.setMeasureType(measureType);
+  }, [viewer, measureType]);
 
   // 단면(클리핑) 적용.
   useEffect(() => {
@@ -876,6 +882,21 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
           {/* 활성 도구의 인라인 상세 컨트롤 */}
           {measureOn && (
             <span className="measure-ctrls">
+              <select
+                value={measureType}
+                onChange={(e) => setMeasureType(e.target.value as MeasureType)}
+                title="측정 종류"
+              >
+                <option value="distance">거리</option>
+                <option value="angle">각도</option>
+                <option value="area">면적</option>
+                <option value="continuous">연속</option>
+              </select>
+              {(measureType === 'area' || measureType === 'continuous') && (
+                <button onClick={() => viewer?.finishMeasure()} title="현재 측정 완료">
+                  완료
+                </button>
+              )}
               <button onClick={() => viewer?.clearMeasurements()} title="측정 지우기">
                 측정 지우기
               </button>

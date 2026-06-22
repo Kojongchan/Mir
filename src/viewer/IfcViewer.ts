@@ -62,6 +62,29 @@ export interface ElementInfo {
 /** 측정 객체 스냅 종류(보완1): 정점·중간점·면중심·근처점. */
 export type SnapKind = 'vertex' | 'midpoint' | 'center' | 'nearest';
 
+/** 측정 종류(추가의견3): 거리·각도·면적·연속. */
+export type MeasureType = 'distance' | 'angle' | 'area' | 'continuous';
+
+const MEASURE_HINT: Record<MeasureType, string> = {
+  distance: '두 점을 클릭해 거리를 잽니다.',
+  angle: '세 점(꼭짓점은 두 번째)을 클릭합니다.',
+  area: '경계 점들을 클릭하고 완료를 누릅니다.',
+  continuous: '점을 이어 클릭하고 완료를 누릅니다(누적 거리).',
+};
+
+/** 3D 다각형 면적(Newell normal 기반, 비평면도 근사). */
+function polygonArea(pts: THREE.Vector3[]): number {
+  const n = new THREE.Vector3();
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
+    n.x += (a.y - b.y) * (a.z + b.z);
+    n.y += (a.z - b.z) * (a.x + b.x);
+    n.z += (a.x - b.x) * (a.y + b.y);
+  }
+  return n.length() / 2;
+}
+
 /** A node in the IFC spatial/decomposition tree (Project→Site→…→부재). */
 export interface SpatialNode {
   modelID: number;
@@ -221,6 +244,7 @@ export class IfcViewer {
 
   // --- 측정 / 단면(클리핑) ----------------------------------------------
   private measureMode = false;
+  private measureType: MeasureType = 'distance';
   private measurePts: THREE.Vector3[] = [];
   /** 측정 스냅(추가4/보완1): 커서 근처로 스냅된 월드 점(없으면 null) + 표시 마커. */
   private snapWorld: THREE.Vector3 | null = null;
@@ -1672,25 +1696,77 @@ export class IfcViewer {
     return hits[0]?.point.clone() ?? null;
   }
 
+  /** 측정 종류 선택(거리·각도·면적·연속). */
+  setMeasureType(t: MeasureType) {
+    this.measureType = t;
+    this.measurePts = [];
+    this.onMeasure(MEASURE_HINT[t]);
+  }
+
+  /** 면적/연속 측정을 종료(현재까지 누적된 점으로 마무리). */
+  finishMeasure() {
+    const pts = this.measurePts;
+    if (this.measureType === 'area' && pts.length >= 3) {
+      this.drawSegment(pts[pts.length - 1], pts[0]);
+      const area = polygonArea(pts);
+      const center = pts.reduce((s, p) => s.add(p), new THREE.Vector3()).multiplyScalar(1 / pts.length);
+      this.measureGroup.add(this.makeLabel(`${area.toFixed(3)} m²`, center));
+      this.onMeasure(`면적: ${area.toFixed(3)} m²`);
+    } else if (this.measureType === 'continuous' && pts.length >= 2) {
+      let total = 0;
+      for (let i = 1; i < pts.length; i++) total += pts[i - 1].distanceTo(pts[i]);
+      this.measureGroup.add(this.makeLabel(`Σ ${total.toFixed(3)} m`, pts[pts.length - 1]));
+      this.onMeasure(`누적 거리: ${total.toFixed(3)} m`);
+    }
+    this.measurePts = [];
+  }
+
+  private drawSegment(a: THREE.Vector3, b: THREE.Vector3) {
+    const line = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([a, b]),
+      new THREE.LineBasicMaterial({ color: 0x2563eb, depthTest: false }),
+    );
+    line.renderOrder = 1000;
+    this.measureGroup.add(line);
+  }
+
   private addMeasurePoint(p: THREE.Vector3) {
     this.measurePts.push(p);
     this.measureGroup.add(this.makeMeasureDot(p));
+    const pts = this.measurePts;
 
-    if (this.measurePts.length === 2) {
-      const [a, b] = this.measurePts;
-      const dist = a.distanceTo(b);
-      const geom = new THREE.BufferGeometry().setFromPoints([a, b]);
-      const line = new THREE.Line(
-        geom,
-        new THREE.LineBasicMaterial({ color: 0x2563eb, depthTest: false }),
-      );
-      line.renderOrder = 1000;
-      this.measureGroup.add(line);
-      this.measureGroup.add(this.makeLabel(`${dist.toFixed(3)} m`, a.clone().lerp(b, 0.5)));
-      this.onMeasure(`거리: ${dist.toFixed(3)} m`);
-      this.measurePts = [];
-    } else {
-      this.onMeasure('두 번째 점을 클릭하세요…');
+    switch (this.measureType) {
+      case 'distance':
+        if (pts.length === 2) {
+          const d = pts[0].distanceTo(pts[1]);
+          this.drawSegment(pts[0], pts[1]);
+          this.measureGroup.add(this.makeLabel(`${d.toFixed(3)} m`, pts[0].clone().lerp(pts[1], 0.5)));
+          this.onMeasure(`거리: ${d.toFixed(3)} m`);
+          this.measurePts = [];
+        } else this.onMeasure('두 번째 점을 클릭하세요…');
+        break;
+      case 'continuous': {
+        if (pts.length >= 2) this.drawSegment(pts[pts.length - 2], pts[pts.length - 1]);
+        let total = 0;
+        for (let i = 1; i < pts.length; i++) total += pts[i - 1].distanceTo(pts[i]);
+        this.onMeasure(pts.length < 2 ? '다음 점…(완료로 종료)' : `누적 ${total.toFixed(3)} m · 완료로 종료`);
+        break;
+      }
+      case 'angle':
+        if (pts.length >= 2) this.drawSegment(pts[pts.length - 2], pts[pts.length - 1]);
+        if (pts.length === 3) {
+          const v1 = pts[0].clone().sub(pts[1]);
+          const v2 = pts[2].clone().sub(pts[1]);
+          const deg = (v1.angleTo(v2) * 180) / Math.PI;
+          this.measureGroup.add(this.makeLabel(`${deg.toFixed(1)}°`, pts[1]));
+          this.onMeasure(`각도: ${deg.toFixed(1)}°`);
+          this.measurePts = [];
+        } else this.onMeasure('세 점(꼭짓점은 두 번째)을 클릭하세요…');
+        break;
+      case 'area':
+        if (pts.length >= 2) this.drawSegment(pts[pts.length - 2], pts[pts.length - 1]);
+        this.onMeasure(`점 ${pts.length}개 · 완료로 면적 계산`);
+        break;
     }
   }
 
