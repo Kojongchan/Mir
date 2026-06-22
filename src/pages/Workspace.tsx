@@ -529,7 +529,11 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
       const bytes = await downloadModelBytes(ver.storage_path, 'docs');
       await viewer.loadIfc(bytes, { label: `${m.name} v${ver.version_no}` });
       const rid = viewer.primaryModelID;
-      if (rid != null) setOverlays((mp) => new Map(mp).set(key, rid));
+      if (rid != null) {
+        // 베이스와 형상이 같아도 구분되도록 반투명 주황 틴트.
+        viewer.setModelTint(rid, 0xff8c00, 0.5);
+        setOverlays((mp) => new Map(mp).set(key, rid));
+      }
       setModelCount(viewer.modelCount);
       setStatus(`중첩 표시: ${m.name} v${ver.version_no}`);
     } catch (e) {
@@ -635,8 +639,9 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
                         </div>
                         {verOpenFor === m.id && (
                           <ul className="model-ver-list">
-                            {(versions.get(m.id) ?? []).map((v) => {
+                            {(versions.get(m.id) ?? []).map((v, vi) => {
                               const isCur = currentVer(m) === v.id;
+                              const isLatest = vi === 0; // listVersions 는 내림차순
                               const ovKey = `${m.id}:${v.id}`;
                               return (
                                 <li key={v.id} className={`model-ver-row${isCur ? ' is-cur' : ''}`}>
@@ -647,6 +652,7 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
                                     title="이 버전을 표시"
                                   >
                                     {isCur ? '● ' : '○ '}v{v.version_no}
+                                    {isLatest && <span className="model-ver-latest"> 최신</span>}
                                   </button>
                                   <span className="muted model-ver-date">
                                     {new Date(v.created_at).toLocaleDateString('ko-KR')}
