@@ -46,6 +46,7 @@ export function DocumentManager() {
   const [files, setFiles] = useState<CdeFile[]>([]);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null); // 0~1 업로드 진행률(추가의견5)
 
   const [historyFor, setHistoryFor] = useState<CdeFile | null>(null);
   const [showActivity, setShowActivity] = useState(false);
@@ -141,9 +142,10 @@ export function DocumentManager() {
     const file = e.target.files?.[0];
     if (!file) return;
     setBusy(true);
+    setProgress(0);
     setStatus(`업로드 중: ${file.name}`);
     try {
-      const rec = await uploadNewFile(projectId, selectedId, file);
+      const rec = await uploadNewFile(projectId, selectedId, file, undefined, setProgress);
       // BIM 폴더의 IFC 는 통합모델(3D)에 연동되도록 models 행을 함께 생성/갱신.
       if (inBim && extensionOf(file.name) === 'ifc') await syncBimModel(rec);
       await refreshFiles();
@@ -152,6 +154,7 @@ export function DocumentManager() {
       setStatus(`업로드 실패: ${errMessage(err)}`);
     } finally {
       setBusy(false);
+      setProgress(null);
       if (newFileInput.current) newFileInput.current.value = '';
     }
   };
@@ -166,9 +169,10 @@ export function DocumentManager() {
     const target = versionTarget.current;
     if (!file || !target) return;
     setBusy(true);
+    setProgress(0);
     setStatus(`새 버전 업로드 중: ${target.name}`);
     try {
-      await uploadNewVersion(target, file);
+      await uploadNewVersion(target, file, undefined, setProgress);
       // BIM IFC 새 버전 → 연동된 통합모델 행을 최신 버전으로 repoint.
       if (inBim && extensionOf(target.name) === 'ifc') {
         const updated = await getCdeFile(target.id);
@@ -180,6 +184,7 @@ export function DocumentManager() {
       setStatus(`버전 등록 실패: ${errMessage(err)}`);
     } finally {
       setBusy(false);
+      setProgress(null);
       versionTarget.current = null;
       if (versionInput.current) versionInput.current.value = '';
     }
@@ -340,6 +345,12 @@ export function DocumentManager() {
             </table>
           </div>
 
+          {progress != null && (
+            <div className="upload-progress" title={`${Math.round(progress * 100)}%`}>
+              <div className="upload-progress-bar" style={{ width: `${Math.round(progress * 100)}%` }} />
+              <span className="upload-progress-pct">{Math.round(progress * 100)}%</span>
+            </div>
+          )}
           <div className="cde-statusline muted">{status}</div>
           </>
           )}
