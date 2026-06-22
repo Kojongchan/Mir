@@ -1,5 +1,5 @@
 -- =====================================================================
--- MIR SMART — 통합 셋업 SQL (0003~0016 한 번에 실행)
+-- MIR SMART — 통합 셋업 SQL (0003~0019 한 번에 실행)
 -- Supabase 대시보드 → SQL Editor 에 '전체 복사 → 붙여넣기 → Run'.
 -- 모두 멱등(재실행 안전). docs 버킷은 미리 Private 으로 생성되어 있어야 함.
 -- =====================================================================
@@ -1073,5 +1073,38 @@ create policy drawing_pins_update on public.drawing_pins
 drop policy if exists drawing_pins_delete on public.drawing_pins;
 create policy drawing_pins_delete on public.drawing_pins
   for delete using (public.is_admin());
+
+-- ===================== 0019_bim_folders.sql =====================
+-- CDE 폴더 종류(문서/BIM) + 통합모델 연동 기반. 추가형·멱등.
+alter table public.folders
+  add column if not exists kind text not null default 'doc';
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'folders_kind_check') then
+    alter table public.folders
+      add constraint folders_kind_check check (kind in ('doc', 'bim'));
+  end if;
+end $$;
+create index if not exists folders_kind_idx on public.folders (project_id, kind);
+
+alter table public.models
+  add column if not exists file_id uuid references public.files on delete set null;
+alter table public.models
+  add column if not exists version_id uuid references public.file_versions on delete set null;
+alter table public.models
+  add column if not exists bucket text not null default 'models';
+create index if not exists models_file_idx on public.models (file_id);
+
+insert into public.folders (project_id, parent_id, name, kind)
+select p.id, null, 'BIM 데이터', 'bim'
+from public.projects p
+where not exists (
+  select 1 from public.folders f
+  where f.project_id = p.id and f.parent_id is null and f.kind = 'bim'
+);
+
+drop policy if exists storage_models_delete on storage.objects;
+create policy storage_models_delete on storage.objects
+  for delete using (bucket_id = 'models' and public.is_admin());
 
 notify pgrst, 'reload schema';
