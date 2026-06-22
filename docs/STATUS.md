@@ -2,12 +2,12 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-22 · **S45 문제5 Phase A: CDE 문서/BIM 분리 + 연동 기반**(branch `feature/cde-bim-folders`).
-자료관리 폴더트리를 **문서 / BIM 데이터** 두 섹션으로 분리 + `folders.kind`·`models.file_id/version_id/bucket`·
-'BIM 데이터' 시드·`storage_models_delete`(admin) 마이그레이션(**0019**). typecheck·build 통과.
-**다음 할 일**: 0019 **운영 DB 적용** → **S45 Phase B**(통합모델 좌측 패널=BIM 폴더 미러, 파일선택 로드·누적,
-버전 전환/중첩, 자동갱신). 문제4(모델 삭제)는 현재 대시보드 수동(사용자), Phase B에서 자료관리로 통합.
-**(이전) S44.1**: 좌표 HUD Revit 기준점 일치 · 원점 인디케이터 모델원점 · 메뉴별 시작뷰(문제1·2·3, #61 머지).
+**마지막 업데이트**: 2026-06-22 · **S45 Phase B-1: CDE BIM ↔ 통합모델 연동(단일 소스)**(branch `feature/cde-bim-3d`).
+자료관리 BIM 폴더에 올린 IFC가 `models` 행으로 자동 연동(`bucket='docs'`)되어 통합모델/4D/간섭에 표시 →
+**통합모델 별도 업로드 제거**(자료관리로 일원화). 통합모델 좌측 패널은 **BIM 폴더별 그룹(미러)**. typecheck·build 통과.
+**다음 할 일**: 0019 **운영 DB 적용**(필수) → 실화면 확인 → **Phase B-2**(버전 V1/V2 전환·중첩 UI, 열린 상태 자동갱신).
+**문제4**: 통합모델 직접삭제는 자료관리(BIM 파일 삭제 시 연동 models 행도 자동 제거). 레거시 직접업로드분은 대시보드 정리.
+**(이전) S44.1/1·2·3 후속**: 좌표 매핑 유지+HUD X/Y/Z 라벨 · 메뉴별 시작뷰 리셋 · 격자 제거(#64). 원점=모델원점.
 
 **(이전) S44 통합모델(3D) 뷰 환경·탐색 UX 완료**:
 시작 카메라 근접+홈뷰 저장/복원 · 호버 좌표 HUD(프로젝트 좌표) · 격자/원점 인디케이터 토글 ·
@@ -44,7 +44,23 @@
 - ✅ 검증: `typecheck`·`build` 통과. 색은 토큰만(`.cde-tree-section-label`은 `--muted`).
 - ⚠️ **운영 적용 필수**: 0019 마이그레이션을 Supabase에 적용해야 함(folders.kind 등). 미적용시 cde.ts가 'doc' 폴백.
 
-## S45 Phase B (미착수) — 통합모델(3D) ↔ CDE BIM 미러 + 버전 전환/중첩
+## S45 Phase B-1 결과 (branch: feature/cde-bim-3d) — CDE BIM ↔ 통합모델 연동(단일 소스)
+> 통합모델 소스를 **CDE BIM 파일로 일원화**. 별도 업로드 제거. 추가 마이그레이션 없음(0019 컬럼 사용). typecheck·build 통과.
+- ✅ **api.ts**: `ModelRecord`에 `bucket`/`file_id`/`version_id` + `normalizeModel`(폴백 시 기본값). `listModels`/`getModel`
+  3단 폴백(0019→0016→legacy). `syncBimModel(file)`(file_id 기준 upsert: insert/repoint, purpose='integrated',
+  bucket='docs'), `deleteBimModel(fileId)`. `uploadModel`/`downloadModelBytes(path,bucket)` 정규화.
+- ✅ **cde.ts**: `getCdeFile(fileId)`, `listProjectFiles(projectId)`(id/folder_id/name) 추가.
+- ✅ **DocumentManager**: BIM 폴더에 IFC 업로드/새버전 → `syncBimModel`로 통합모델 행 생성·repoint, 삭제 → `deleteBimModel`.
+  업로드 성공 메시지에 '통합모델 연동됨' 표기.
+- ✅ **Workspace(통합모델)**: `loadOne`이 `m.bucket`에서 바이트 로드(docs/models). 좌측 "모델" 패널을 **BIM 폴더별 그룹
+  미러**(`modelGroups`: 폴더 풀패스 라벨, file_id 없는 레거시는 '기타(미연동)'). **별도 IFC 업로드 버튼 제거** → '자료관리(BIM)에서
+  업로드' 힌트. 진입/모드전환 시 `refreshBimTree`로 폴더·파일 매핑 로드.
+- ✅ 검증: `typecheck`·`build` 통과. 색 토큰만(`.model-group*`).
+- ⚠️ **0019 미적용시**: bucket/file_id 컬럼이 없어 연동 비활성(기존 동작 유지). 운영 DB에 0019 적용 필요.
+- 📌 **Phase B-2(남음)**: 버전 V1/V2 **전환·중첩 UI**(file_versions는 이미 있음, models.version_id repoint로 전환),
+  열린 상태에서 **자동 갱신**(현재는 메뉴 재진입 시 반영), 모델 그룹 트리화(현재 폴더 풀패스 1-레벨 그룹).
+
+## (참고) S45 Phase B 원안 — 통합모델(3D) ↔ CDE BIM 미러 + 버전 전환/중첩
 > Phase A 위에서 통합모델 소스를 **CDE BIM 파일로 일원화**. 별도 업로드 제거 → 문제4 자동 해소.
 - **목표**: 통합모델 좌측 "모델" 패널 = CDE **BIM 데이터 폴더트리 미러**. 파일 선택시 메인뷰 로드·**누적 유지**.
   CDE에서 새 버전 올리면 3D **자동 갱신**, **버전 이력**(V1/V2…) 전환 + **중첩표시**(V1·V2 동시).

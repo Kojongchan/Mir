@@ -228,6 +228,26 @@ body {
   margin-bottom: 4px;
 }
 
+/* BIM 폴더트리 미러: 폴더 그룹 헤더 + 중첩 모델 목록(S45 Phase B). */
+.model-group {
+  margin-bottom: 6px;
+}
+.model-group-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  padding: 4px 4px 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.model-group .model-list {
+  padding: 0 0 0 6px;
+}
+.model-src-hint {
+  font-size: 11px;
+}
+
 .model-name {
   min-width: 0;
   overflow: hidden;
