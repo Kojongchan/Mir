@@ -464,16 +464,26 @@ export class IfcViewer {
   }
 
   /**
-   * Convert a Three.js world-space point back to the model's original project
-   * coordinates (the IFC georeferenced numbers shown to surveyors). The group is
-   * rotated for the up-axis and recentered by `offset` at load, so we must undo
-   * the world transform (`worldToLocal`) then add the offset back. Returns null
-   * if the model isn't loaded.
+   * Convert a Three.js world-space point to the project's survey coordinates so
+   * the numbers match the authoring tool's project base point (Revit 동서/남북/높이,
+   * IFC Easting/Northing/Elevation). The group is rotated for the up-axis and
+   * recentered by `offset` at load, so we first undo the world transform
+   * (`worldToLocal`) and add the offset back to recover raw model-space coords.
+   *
+   * The bridge IFC exports we handle are delivered Y-up, where the raw model axes
+   * are (Easting, Elevation, −Northing) — i.e. height is Y and the horizontal
+   * plane is X(동서)/Z, with North along −Z. We remap those to
+   * x=동서(Easting), y=남북(Northing), z=높이(Elevation) so a hovered point lines
+   * up with the project base point shown in Revit. Genuine Z-up models already
+   * carry (Easting, Northing, Elevation) and pass through unchanged.
+   * Returns null if the model isn't loaded.
    */
   worldToProject(modelID: number, p: THREE.Vector3): THREE.Vector3 | null {
     const model = this.models.find((m) => m.modelID === modelID);
     if (!model) return null;
-    return model.group.worldToLocal(p.clone()).add(model.offset);
+    const local = model.group.worldToLocal(p.clone()).add(model.offset);
+    if (model.upAxis === 'y') return new THREE.Vector3(local.x, -local.z, local.y);
+    return local;
   }
 
   private buildGeometry(modelID: number, placed: PlacedGeometry): THREE.BufferGeometry {
@@ -1695,10 +1705,12 @@ export class IfcViewer {
   }
 
   /**
-   * Toggle an R/G/B axes indicator placed at the *project* origin (IFC 0,0,0).
-   * Geometry is recentered by each model's `offset` at load, so the project
-   * origin's world position = group.localToWorld(-offset) of the first model.
-   * Created lazily so it can be sized to the loaded scene. Off by default.
+   * Toggle an R/G/B axes indicator marking the model's coordinate origin
+   * (insertion point). We deliberately do NOT use the survey origin (IFC 0,0,0):
+   * georeferenced infrastructure models sit hundreds of km from 0,0,0, so an
+   * indicator placed there is always off-screen ("작동 안 함"). The model's own
+   * origin is at the group's local (0,0,0), which lands right on the geometry and
+   * is close to the project base point. Sized to the loaded scene, off by default.
    */
   setOriginVisible(on: boolean) {
     if (!on) {
@@ -1718,7 +1730,7 @@ export class IfcViewer {
       this.scene.add(this.originHelper);
     }
     this.originHelper.scale.setScalar(size);
-    this.originHelper.position.copy(model.group.localToWorld(model.offset.clone().negate()));
+    this.originHelper.position.copy(model.group.localToWorld(new THREE.Vector3(0, 0, 0)));
     this.originHelper.visible = true;
   }
 
