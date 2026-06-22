@@ -1428,13 +1428,7 @@ export class IfcViewer {
 
   private addMeasurePoint(p: THREE.Vector3) {
     this.measurePts.push(p);
-    const dot = new THREE.Mesh(
-      new THREE.SphereGeometry(this.measureDotRadius(), 12, 12),
-      new THREE.MeshBasicMaterial({ color: 0x2563eb, depthTest: false }),
-    );
-    dot.position.copy(p);
-    dot.renderOrder = 1000;
-    this.measureGroup.add(dot);
+    this.measureGroup.add(this.makeMeasureDot(p));
 
     if (this.measurePts.length === 2) {
       const [a, b] = this.measurePts;
@@ -1454,33 +1448,72 @@ export class IfcViewer {
     }
   }
 
-  private measureDotRadius(): number {
-    const box = new THREE.Box3();
-    for (const m of this.models) box.expandByObject(m.group);
-    const d = box.isEmpty() ? 10 : box.getSize(new THREE.Vector3()).length();
-    return Math.max(d * 0.004, 0.08);
+  /** Small constant-size dot sprite marking a measurement point. */
+  private makeMeasureDot(p: THREE.Vector3): THREE.Sprite {
+    const sprite = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: this.measureDotTexture(),
+        depthTest: false,
+        sizeAttenuation: false,
+        transparent: true,
+      }),
+    );
+    sprite.position.copy(p);
+    sprite.scale.set(0.014, 0.014, 1);
+    sprite.renderOrder = 1002;
+    return sprite;
   }
 
-  /** A camera-facing text sprite (canvas texture) used for measurement labels. */
+  private _dotTex?: THREE.CanvasTexture;
+  private measureDotTexture(): THREE.CanvasTexture {
+    if (this._dotTex) return this._dotTex;
+    const s = 64;
+    const c = document.createElement('canvas');
+    c.width = c.height = s;
+    const ctx = c.getContext('2d')!;
+    ctx.beginPath();
+    ctx.arc(s / 2, s / 2, s / 2 - 6, 0, Math.PI * 2);
+    ctx.fillStyle = '#2563eb';
+    ctx.fill();
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = '#fff';
+    ctx.stroke();
+    this._dotTex = new THREE.CanvasTexture(c);
+    return this._dotTex;
+  }
+
+  /** A camera-facing, constant on-screen-size text label for measurements. */
   private makeLabel(text: string, pos: THREE.Vector3): THREE.Sprite {
+    const dpr = 2;
+    const fontPx = 26;
+    const padX = 14;
+    const probe = document.createElement('canvas').getContext('2d')!;
+    probe.font = `600 ${fontPx}px sans-serif`;
+    const textW = Math.ceil(probe.measureText(text).width);
+    const w = textW + padX * 2;
+    const h = fontPx + 16;
     const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 64;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
     const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = 'rgba(37, 99, 235, 0.92)';
-    roundRect(ctx, 4, 4, 248, 56, 12);
+    ctx.scale(dpr, dpr);
+    ctx.fillStyle = 'rgba(17, 24, 39, 0.88)';
+    roundRect(ctx, 0, 0, w, h, 8);
     ctx.fill();
     ctx.fillStyle = '#fff';
-    ctx.font = 'bold 30px sans-serif';
+    ctx.font = `600 ${fontPx}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(text, 128, 34);
+    ctx.fillText(text, w / 2, h / 2 + 1);
     const tex = new THREE.CanvasTexture(canvas);
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false }));
+    tex.anisotropy = 4;
+    const sprite = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: tex, depthTest: false, sizeAttenuation: false, transparent: true }),
+    );
     sprite.position.copy(pos);
-    const s = this.measureDotRadius() * 18;
-    sprite.scale.set(s * 2, s * 0.5, 1);
-    sprite.renderOrder = 1001;
+    const screenH = 0.05; // 화면 높이 대비 일정 비율(거리에 무관하게 일정 크기)
+    sprite.scale.set(screenH * (w / h), screenH, 1);
+    sprite.renderOrder = 1003;
     return sprite;
   }
 
@@ -1885,6 +1918,28 @@ export class IfcViewer {
       /* already closed */
     }
     this.clearHighlight();
+  }
+
+  /**
+   * Tint a whole model translucent — used to distinguish an overlaid version
+   * (B-2 중첩) from the base model when their geometry is identical. Overrides
+   * every mesh material's colour/opacity in place (the overlay has its own fresh
+   * material instances from load, so the base model is unaffected).
+   */
+  setModelTint(modelID: number, hex: number, opacity: number) {
+    const model = this.models.find((m) => m.modelID === modelID);
+    if (!model) return;
+    const color = new THREE.Color(hex);
+    model.group.traverse((o) => {
+      const mat = (o as THREE.Mesh).material as THREE.MeshLambertMaterial | undefined;
+      if (mat && 'color' in mat) {
+        mat.color.copy(color);
+        mat.transparent = true;
+        mat.opacity = opacity;
+        mat.depthWrite = false;
+        mat.needsUpdate = true;
+      }
+    });
   }
 
   dispose() {
