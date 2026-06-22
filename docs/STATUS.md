@@ -2,12 +2,34 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-21 · **S42 5D 물량 산출(QTO) + 기성 연계 완료**(branch `feature/quantities`).
-BIM 요소 물량을 공종/카테고리별로 집계(개수·길이·면적·체적) + IFC 단위 정규화 + 기성내역 행 제안.
-마이그레이션 **없음**(계산만으로 충분 — MVP). typecheck·build 통과.
-**DWG 직접열기는 변환 필요 → S17(APS)로 분리**(D: A안). **S38 간섭 보고서 보류**(Word 양식 대기).
-**장비 시뮬(S16)은 최후 연기**. 지금 착수가능: **S43 CDE 고도화(승인·자료전송)**(§13) · 모바일 현장 모드 ·
-단가 DB(물량→금액 자동) 후속. (대기) S38 Word양식 · S17 APS.
+**마지막 업데이트**: 2026-06-22 · **S44 통합모델(3D) 뷰 환경·탐색 UX 완료**(branch `claude/youthful-meitner-20zonx`).
+시작 카메라 근접+홈뷰 저장/복원 · 호버 좌표 HUD(프로젝트 좌표) · 격자/원점 인디케이터 토글 ·
+이슈 핀 비주얼(물방울 빌보드+번호+상태색+펄스) · 통합모델 트리 정리(문서·미디어 제거, 카테고리 검색·일괄토글).
+마이그레이션 **없음**(순수 프론트엔드). typecheck·build 통과.
+**다음 착수가능**: 측정 스냅(S45) · 단면 박스/기즈모(S46) · 렌더 스타일(S47) · 마크업 3D 앵커(S48) ·
+**S43 CDE 고도화(승인·자료전송)**(§13) · 단가 DB(물량→금액 자동). (대기) S38 Word양식 · S17 APS.
+
+## S44 결과 (branch: claude/youthful-meitner-20zonx) — 통합모델(3D) 뷰 환경·탐색 UX
+> 통합모델 3D 뷰어의 시작 카메라·좌표 HUD·뷰 헬퍼·이슈 핀·트리 UX 개선. 마이그레이션 없음(순수 프론트엔드). typecheck·build 통과.
+- ✅ **공통 선작업(IfcViewer)**: `LoadedModel.offset`(로드시 빼낸 재중심 평행이동) 저장 + `worldToProject(modelID, p)`
+  = `group.worldToLocal(p).add(offset)` — 월드점을 IFC 원본 프로젝트 좌표로 역변환(그룹 up-axis 회전 후 offset 가산).
+- ✅ **시작 카메라 + 홈뷰**: `frameBox` 기본 factor 1.8→1.2(객체가 화면을 더 채움) + `frameAll()` 공개. 자동 로드
+  완료 후 통합모델은 `mir.homeview.<projectId>`(localStorage, S37 `getCameraState`) 있으면 복원, 없으면 `frameAll()`.
+  툴바 **🏠 시작뷰로**(전원) + **시작뷰 저장**(admin·통합모델). 4D/간섭도 마지막 모델이 아닌 전체로 맞춤.
+- ✅ **호버 좌표 HUD**: `setOnHover(cb)` + mousemove(rAF 1회/프레임 스로틀) — 히트시 `worldToProject`로 프로젝트
+  좌표, 빈 공간=null. Workspace 우하단 `.coord-hud`(X/Y/Z 소수 3자리·축색, 빈 공간=—).
+- ✅ **격자·원점 토글**: `GridHelper`를 `this.grid`로 보관·기본 숨김 + `setGridVisible`. 원점은 프로젝트 원점
+  (`group.localToWorld(-offset)`)에 `AxesHelper`(R/G/B, depthTest off) 지연생성 + `setOriginVisible`(기본 끔, 씬크기로 스케일).
+  툴바 **# 격자**·**⛬ 원점** 토글.
+- ✅ **이슈 핀 비주얼**: `SphereGeometry`→캔버스 텍스처 **빌보드 Sprite**(물방울 핀+흰테두리+상태색+번호,
+  `sizeAttenuation` off로 화면상 일정 크기, 팁 앵커 `center=(0.5,0)`). 미해결 핀은 animate 루프에서 은은한 펄스.
+  `userData.issueId` 유지 + `pickIssuePin`은 화면좌표 투영 근접 픽으로 교체(상수크기 스프라이트는 raycast 부적합).
+- ✅ **트리 정리**: 통합모델 사이드바 **문서·미디어 섹션 제거**(문서는 CDE로 일원화) + 관련 상태/핸들러/import 정리.
+  카테고리 트리에 **검색 필터 + 전체 토글**(보이는 카테고리 일괄 표시/숨김) 추가.
+- ✅ 검증: `typecheck`·`build` 통과(메인 gzip 830KB). 색은 `index.css` 토큰만(3D 머티리얼/캔버스 hex 예외).
+  라이브 눈검증(실 IFC 좌표·핀 클릭)은 모델 로드 후 사용자 화면 권장(원격 egress 제약).
+- 📌 후속(범위 밖): 측정 스냅(S45) · 단면 박스/기즈모(S46) · 렌더 스타일(S47) · 마크업 3D 앵커(S48) ·
+  홈뷰 서버 영속화(현재 localStorage) · 핀 클러스터링/번호 안정 정렬.
 
 ## S42 결과 (branch: feature/quantities) — 5D 물량 산출(QTO) + 기성 연계
 > BIM 요소 물량을 공종/카테고리별 집계 → 기성내역(0011) 연계. 마이그레이션 없음(클라이언트 계산). typecheck·build 통과.
