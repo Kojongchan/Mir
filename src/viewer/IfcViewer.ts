@@ -1855,6 +1855,38 @@ export class IfcViewer {
     }
   };
 
+  /**
+   * Remove a loaded model from the scene and free its GPU/wasm resources. Used by
+   * version switching (B-2): unload the shown version before loading another.
+   */
+  unloadModel(modelID: number) {
+    const idx = this.models.findIndex((m) => m.modelID === modelID);
+    if (idx < 0) return;
+    const model = this.models[idx];
+    this.scene.remove(model.group);
+    const mats = new Set<THREE.Material>();
+    model.group.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.geometry) mesh.geometry.dispose();
+      const m = mesh.material;
+      if (Array.isArray(m)) m.forEach((x) => mats.add(x));
+      else if (m) mats.add(m);
+    });
+    mats.forEach((m) => m.dispose());
+    model.elementMeshes.clear();
+    this.models.splice(idx, 1);
+    this.nameCache.delete(modelID);
+    this.categoryCache.delete(modelID);
+    this.quantityIndexCache.delete(modelID);
+    this.propertyGroupsCache.delete(modelID);
+    try {
+      this.ifcAPI.CloseModel(modelID);
+    } catch {
+      /* already closed */
+    }
+    this.clearHighlight();
+  }
+
   dispose() {
     this.disposed = true;
     if (this.hoverRaf) cancelAnimationFrame(this.hoverRaf);
