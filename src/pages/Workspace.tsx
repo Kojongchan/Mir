@@ -75,6 +75,8 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   const [shownVer, setShownVer] = useState<Map<string, string>>(new Map());
   const [overlays, setOverlays] = useState<Map<string, number>>(new Map());
   const [verBusy, setVerBusy] = useState(false);
+  // 버전 비교(diff): 비교 중인 키 + 비교용으로 로드한 이전버전 런타임 id.
+  const [diff, setDiff] = useState<{ key: string; oldRid: number } | null>(null);
 
   // 런타임 modelID → DB 모델 uuid (4D 매핑·간섭 저장·이슈 핀 매핑용).
   const [modelIdMap, setModelIdMap] = useState<Map<number, string>>(new Map());
@@ -575,6 +577,39 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
     }
   };
 
+  // 버전 비교(추가의견1): 현재(base)와 선택 버전의 GlobalId diff 를 색으로 표시.
+  const startDiff = async (m: ModelRecord, ver: FileVersion) => {
+    if (!viewer) return;
+    let newRid: number | null = null;
+    for (const [r, db] of modelIdMap.entries()) if (db === m.id) newRid = r;
+    if (newRid == null) return;
+    if (diff) endDiff();
+    setVerBusy(true);
+    setStatus(`버전 비교 준비: ${m.name} v${ver.version_no}`);
+    try {
+      const bytes = await downloadModelBytes(ver.storage_path, 'docs');
+      await viewer.loadIfc(bytes, { label: `${m.name} v${ver.version_no} (비교)` });
+      const oldRid = viewer.primaryModelID;
+      if (oldRid == null) return;
+      viewer.applyVersionDiff(newRid, oldRid);
+      setDiff({ key: `${m.id}:${ver.id}`, oldRid });
+      setModelCount(viewer.modelCount);
+      setStatus('버전 비교: 🟢추가 · 🔴삭제 · ⚪동일');
+    } catch (e) {
+      setStatus(`버전 비교 실패: ${errMessage(e)}`);
+    } finally {
+      setVerBusy(false);
+    }
+  };
+  const endDiff = () => {
+    if (!viewer || !diff) return;
+    viewer.clearVersionDiff();
+    viewer.unloadModel(diff.oldRid);
+    setDiff(null);
+    setModelCount(viewer.modelCount);
+    setStatus('버전 비교 종료');
+  };
+
   // 중첩(overlay): 선택 버전을 추가 모델로 띄우거나 내린다(modelIdMap 에는 넣지 않음).
   const toggleOverlay = async (m: ModelRecord, ver: FileVersion) => {
     if (!viewer) return;
@@ -728,13 +763,31 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
                                       type="checkbox"
                                       checked={overlays.has(ovKey)}
                                       onChange={() => toggleOverlay(m, v)}
-                                      disabled={verBusy}
+                                      disabled={verBusy || !!diff}
                                     />
                                     중첩
                                   </label>
+                                  {!isCur &&
+                                    (diff?.key === ovKey ? (
+                                      <button className="model-ver-diff is-on" onClick={endDiff} title="비교 종료">
+                                        비교 종료
+                                      </button>
+                                    ) : (
+                                      <button
+                                        className="model-ver-diff"
+                                        onClick={() => startDiff(m, v)}
+                                        disabled={verBusy}
+                                        title="현재 버전과 이 버전의 변경(추가·삭제) 비교"
+                                      >
+                                        비교
+                                      </button>
+                                    ))}
                                 </li>
                               );
                             })}
+                            {diff && (
+                              <li className="model-ver-legend">🟢 추가 · 🔴 삭제 · ⚪ 동일(반투명)</li>
+                            )}
                             {(versions.get(m.id)?.length ?? 0) === 0 && (
                               <li className="muted empty">버전 정보를 불러오는 중…</li>
                             )}

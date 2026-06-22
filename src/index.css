@@ -296,6 +296,23 @@ body {
   font-weight: 600;
   color: #16a34a;
 }
+.model-ver-diff {
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  cursor: pointer;
+}
+.model-ver-diff.is-on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.model-ver-legend {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 2px 0;
+}
 .model-ver-date {
   flex: 1;
   font-size: 11px;
