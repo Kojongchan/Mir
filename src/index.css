@@ -1058,6 +1058,62 @@ button.danger:hover:not(:disabled) {
   margin: 0 2px;
 }
 
+/* 툴바 드롭다운 메뉴(추가4). */
+.tl-menu {
+  position: relative;
+  display: inline-flex;
+}
+.tl-menu-btn.is-active::after {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
+.tl-menu-caret {
+  font-size: 10px;
+  opacity: 0.7;
+}
+.tl-menu.is-open .tl-menu-btn {
+  background: var(--hover, rgba(127, 127, 127, 0.12));
+}
+.tl-menu-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  background: var(--glass, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(8px);
+}
+/* 팝업 안 버튼/툴바는 세로로 꽉 차게. */
+.tl-menu-pop button,
+.tl-menu-pop .toolbar {
+  width: 100%;
+}
+.tl-menu-pop .toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+.tl-menu-pop .toolbar button {
+  text-align: left;
+}
+
 .tl-stats {
   font-size: 12px;
 }
