@@ -2,10 +2,12 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-22 · **S44.1 뷰어 좌표/원점/시작뷰 피드백 수정**(branch `claude/youthful-meitner-20zonx`).
-좌표 HUD를 Revit 기준점과 일치(동서/남북/높이) · 원점 인디케이터를 모델 원점으로(원거리 georef 보이지 않던 문제) ·
-시작뷰를 메뉴별 분리(통합/4D/간섭 각자 저장). 마이그레이션 **없음**(프론트엔드). typecheck·build 통과.
-**미결정(사용자 확인 대기)**: 문제4(모델 삭제 UI)·문제5(자료관리 BIM 폴더트리↔통합모델 연동·버전이력) — §S44.2 참조.
+**마지막 업데이트**: 2026-06-22 · **S45 문제5 Phase A: CDE 문서/BIM 분리 + 연동 기반**(branch `feature/cde-bim-folders`).
+자료관리 폴더트리를 **문서 / BIM 데이터** 두 섹션으로 분리 + `folders.kind`·`models.file_id/version_id/bucket`·
+'BIM 데이터' 시드·`storage_models_delete`(admin) 마이그레이션(**0019**). typecheck·build 통과.
+**다음 할 일**: 0019 **운영 DB 적용** → **S45 Phase B**(통합모델 좌측 패널=BIM 폴더 미러, 파일선택 로드·누적,
+버전 전환/중첩, 자동갱신). 문제4(모델 삭제)는 현재 대시보드 수동(사용자), Phase B에서 자료관리로 통합.
+**(이전) S44.1**: 좌표 HUD Revit 기준점 일치 · 원점 인디케이터 모델원점 · 메뉴별 시작뷰(문제1·2·3, #61 머지).
 
 **(이전) S44 통합모델(3D) 뷰 환경·탐색 UX 완료**:
 시작 카메라 근접+홈뷰 저장/복원 · 호버 좌표 HUD(프로젝트 좌표) · 격자/원점 인디케이터 토글 ·
@@ -26,18 +28,34 @@
   로드시 모듈별 홈뷰 복원, 없으면 frameAll. **시작뷰 저장 버튼을 전 모듈 노출**(admin). 기존 무접두 키는 통합모델에 한해 자동 마이그레이션.
 - 📌 **문제4·5 미결정** → 아래 S44.2.
 
-## S44.2 제안 (미착수) — 모델 삭제 UI(문제4) + 자료관리 BIM 폴더트리↔통합모델 연동(문제5)
-> 문제5가 구현되면 문제4는 자동 해소(사용자 의견). SQL(마이그레이션) **필요**. 사용자 승인 후 착수.
-- **현재 3D 파일 저장 위치 / 삭제 방법(문제4 답)**: 통합모델은 `models` 테이블(`purpose='integrated'`) + Storage
-  버킷 `models`(경로 `<project_id>/<model_id>.ifc`). 행 DELETE RLS=admin **이미 존재**, 단 **앱 내 삭제 UI/함수
-  없음**(`api.ts`에 `deleteModel` 미존재). Storage 객체 **delete 정책 없음**(`storage_models_delete` 부재) →
-  대시보드(서비스롤)에서 삭제하거나 신규 마이그레이션으로 정책 추가 필요. 정리는 Supabase 대시보드 Table Editor `models`
-  행 삭제 + Storage `models` 버킷 객체 삭제로 즉시 가능.
-- **문제5 설계(요지)**: 자료관리(CDE) 폴더트리 최상위를 **문서 / BIM 데이터**로 분리 → BIM 데이터 하위 폴더트리에
-  업로드한 IFC가 **통합모델(3D)에 동일 트리로 연동**(문서 제외). 파일 선택 시 메인뷰에 로드(누적 표시), 자료관리에서
-  모델 갱신 시 3D 자동 반영, **버전 이력**(V1/V2…) 보관·전환·중첩표시. ⇒ 통합모델의 모델 소스를 별도 업로드에서
-  **CDE BIM 파일로 일원화**. 필요 작업: 폴더 종류 컬럼/모델-버전 테이블 등 **신규 마이그레이션**, CDE↔3D 연동 프론트 개편,
-  버전 전환/중첩 렌더. 규모상 별도 세션(S45+) 권장.
+## S45 결과 (branch: feature/cde-bim-folders) — 문제5 Phase A: CDE 문서/BIM 분리 + 연동 기반
+> 자료관리(CDE) 폴더트리 최상위를 **문서 / BIM 데이터**로 분리(사용자가 처음 요청한 가시적 절반) + 통합모델 연동을 위한
+> 데이터모델 기반. **추가형 마이그레이션 0019**. typecheck·build 통과. (Phase B = 3D 미러/버전 전환·중첩은 후속.)
+- ✅ **마이그레이션 0019_bim_folders.sql**: `folders.kind`('doc'|'bim', 기본 doc, check 제약) + `(project_id,kind)` 인덱스.
+  `models.file_id`/`version_id`(fk, nullable) + `models.bucket`(기본 'models') — Phase B에서 통합모델이 CDE BIM
+  파일/버전을 가리키기 위한 컬럼(지금은 추가만, 동작 불변). 프로젝트별 **'BIM 데이터' 최상위 폴더 시드**(없을 때).
+  **`storage_models_delete`(admin) 정책 추가** — 관리자 모델 완전삭제 가능(문제4 기반).
+- ✅ **cde.ts**: `FolderKind`·`Folder.kind` 추가, `listFolders`는 0019 미적용시 'doc' 폴백. `createFolder(.,.,.,kind)`로
+  하위 폴더가 **부모 kind 상속**(BIM 서브트리 유지). `ensureBimRoot(projectId)`(idempotent, admin 진입시 보장).
+- ✅ **FolderTree**: `rootLabel`·`showRoot` props 추가(문서=미분류 루트 표시, BIM=루트 숨김·실폴더만).
+- ✅ **DocumentManager**: 사이드바를 **📄 문서 / 🧊 BIM 데이터 두 섹션**으로 렌더(종류별 트리). 새 폴더는 현재 폴더 kind
+  상속, BIM 섹션 업로드는 `accept=".ifc"` + 버튼 라벨 'BIM 업로드(IFC)'. 진입시 `ensureBimRoot`.
+- ✅ **api.ts**: `downloadModelBytes(path, bucket='models')` — 버킷 인자 추가(Phase B에서 'docs' 버킷 IFC 로드용).
+- ✅ 검증: `typecheck`·`build` 통과. 색은 토큰만(`.cde-tree-section-label`은 `--muted`).
+- ⚠️ **운영 적용 필수**: 0019 마이그레이션을 Supabase에 적용해야 함(folders.kind 등). 미적용시 cde.ts가 'doc' 폴백.
+
+## S45 Phase B (미착수) — 통합모델(3D) ↔ CDE BIM 미러 + 버전 전환/중첩
+> Phase A 위에서 통합모델 소스를 **CDE BIM 파일로 일원화**. 별도 업로드 제거 → 문제4 자동 해소.
+- **목표**: 통합모델 좌측 "모델" 패널 = CDE **BIM 데이터 폴더트리 미러**. 파일 선택시 메인뷰 로드·**누적 유지**.
+  CDE에서 새 버전 올리면 3D **자동 갱신**, **버전 이력**(V1/V2…) 전환 + **중첩표시**(V1·V2 동시).
+- **방식(저위험)**: BIM 폴더에 IFC 업로드시 `models` 행을 함께 생성(`file_id`/`version_id`/`bucket='docs'`로 연동) →
+  기존 통합모델/4D/간섭/이슈 파이프라인(`models.id` 참조)을 **깨지 않고** 유지. `downloadModelBytes(path,'docs')`로 로드.
+  버전 전환 = 연동 행의 `version_id`/`storage_path` 갱신 후 재로드, 중첩 = 이전 버전 바이트를 추가 모델로 로드.
+- **주의(설계 결정 필요)**: 통합모델 모델 식별자를 CDE file로 바꾸면 **이슈 `model_id` 재연결** 필요 →
+  위 '모델 행 동반 생성' 방식이면 회피 가능. 자동 갱신은 폴링/실시간 구독 택일.
+- **문제4 답(현행)**: 통합모델 파일은 `models` 테이블 + `models` 버킷(`<project_id>/<model_id>.ifc`). 행 DELETE RLS=admin,
+  0019로 **스토리지 delete(admin)도 추가**. 앱 내 삭제 UI는 아직 없음 → **Supabase 대시보드**에서 `models` 행 + Storage
+  객체 삭제로 정리(사용자가 직접). Phase B에서 CDE로 일원화되면 자료관리에서 삭제로 통합됨.
 
 ## S44 결과 (branch: claude/youthful-meitner-20zonx) — 통합모델(3D) 뷰 환경·탐색 UX
 > 통합모델 3D 뷰어의 시작 카메라·좌표 HUD·뷰 헬퍼·이슈 핀·트리 UX 개선. 마이그레이션 없음(순수 프론트엔드). typecheck·build 통과.

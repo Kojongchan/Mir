@@ -14,6 +14,7 @@ import {
   createFolder,
   deleteCdeFile,
   deleteFolder,
+  ensureBimRoot,
   listCdeFiles,
   listFolders,
   renameFolder,
@@ -24,6 +25,7 @@ import {
   type CdeFile,
   type FileStatus,
   type Folder,
+  type FolderKind,
 } from '../lib/cde';
 
 /**
@@ -52,7 +54,11 @@ export function DocumentManager() {
   const versionTarget = useRef<CdeFile | null>(null);
 
   useEffect(() => {
-    refreshFolders();
+    // 'BIM 데이터' 최상위 폴더가 없으면 만들고(관리자), 폴더 목록을 읽는다.
+    (async () => {
+      if (isAdmin) await ensureBimRoot(projectId).catch(() => {});
+      await refreshFolders();
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
@@ -71,6 +77,13 @@ export function DocumentManager() {
     [folders, selectedId],
   );
 
+  // 폴더트리를 종류별로 나눠 두 섹션(문서 / BIM 데이터)으로 렌더한다.
+  const docFolders = useMemo(() => folders.filter((f) => f.kind !== 'bim'), [folders]);
+  const bimFolders = useMemo(() => folders.filter((f) => f.kind === 'bim'), [folders]);
+  // 현재 작업중인 섹션의 종류(미분류=문서). 새 폴더/업로드 컨텍스트에 사용.
+  const currentKind: FolderKind = selectedFolder?.kind ?? 'doc';
+  const inBim = currentKind === 'bim';
+
   const breadcrumb = useMemo(() => buildBreadcrumb(folders, selectedId), [folders, selectedId]);
 
   const childFolderCount = useMemo(
@@ -83,7 +96,8 @@ export function DocumentManager() {
     const name = window.prompt('새 폴더 이름', '새 폴더');
     if (!name?.trim()) return;
     try {
-      await createFolder(projectId, selectedId, name);
+      // 하위 폴더는 부모(=현재 선택 폴더)의 종류를 물려받는다. 미선택(미분류)이면 문서.
+      await createFolder(projectId, selectedId, name, currentKind);
       await refreshFolders();
       setStatus(`폴더 생성: ${name.trim()}`);
     } catch (e) {
@@ -197,7 +211,20 @@ export function DocumentManager() {
             {isAdmin && <button onClick={onNewFolder}>＋ 폴더</button>}
           </div>
           <div className="cde-tree-wrap">
-            <FolderTree folders={folders} selectedId={selectedId} onSelect={setSelectedId} />
+            <div className="cde-tree-section-label">📄 문서</div>
+            <FolderTree
+              folders={docFolders}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              rootLabel="전체 · 미분류"
+            />
+            <div className="cde-tree-section-label">🧊 BIM 데이터</div>
+            <FolderTree
+              folders={bimFolders}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              showRoot={false}
+            />
           </div>
           {isAdmin && selectedFolder && (
             <div className="cde-side-actions">
@@ -230,11 +257,17 @@ export function DocumentManager() {
             </nav>
             <div className="spacer" />
             <button onClick={() => setShowActivity(true)}>활동 로그</button>
-            <input ref={newFileInput} type="file" style={{ display: 'none' }} onChange={onUploadNew} />
+            <input
+              ref={newFileInput}
+              type="file"
+              accept={inBim ? '.ifc' : undefined}
+              style={{ display: 'none' }}
+              onChange={onUploadNew}
+            />
             <input ref={versionInput} type="file" style={{ display: 'none' }} onChange={onUploadVersion} />
             {isAdmin && (
               <button className="primary" onClick={() => newFileInput.current?.click()} disabled={busy}>
-                {busy ? '처리 중…' : '문서 업로드'}
+                {busy ? '처리 중…' : inBim ? 'BIM 업로드(IFC)' : '문서 업로드'}
               </button>
             )}
           </div>

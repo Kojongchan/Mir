@@ -24,11 +24,15 @@ export const STATUS_LABEL: Record<FileStatus, string> = {
   Archived: '보관',
 };
 
+/** 폴더 종류: 'doc' = 일반 문서, 'bim' = BIM 데이터(통합모델 연동 대상). */
+export type FolderKind = 'doc' | 'bim';
+
 export interface Folder {
   id: string;
   project_id: string;
   parent_id: string | null;
   name: string;
+  kind: FolderKind;
   created_at: string;
 }
 
@@ -75,21 +79,38 @@ const FILE_COLS =
 // Folders
 // --------------------------------------------------------------------------
 
+const FOLDER_COLS = 'id, project_id, parent_id, name, kind, created_at';
+
 /** All folders in a project (RLS restricts to members). Build the tree client-side. */
 export async function listFolders(projectId: string): Promise<Folder[]> {
   const { data, error } = await supabase
     .from('folders')
-    .select('id, project_id, parent_id, name, created_at')
+    .select(FOLDER_COLS)
     .eq('project_id', projectId)
     .order('name', { ascending: true });
-  if (error) throw error;
-  return data ?? [];
+  if (error) {
+    // 0019 미적용(kind 컬럼 없음) → 레거시 조회로 폴백: 모든 폴더를 'doc' 로 간주.
+    const legacy = await supabase
+      .from('folders')
+      .select('id, project_id, parent_id, name, created_at')
+      .eq('project_id', projectId)
+      .order('name', { ascending: true });
+    if (legacy.error) throw error;
+    return (legacy.data ?? []).map((f) => ({ ...f, kind: 'doc' as FolderKind }));
+  }
+  return (data ?? []) as Folder[];
 }
 
+/**
+ * Create a folder. New folders inherit the parent's `kind`, so a whole BIM
+ * subtree stays kind='bim'. Root folders (parentId null) take the explicit
+ * `kind` (defaults to 'doc' for the 문서 section).
+ */
 export async function createFolder(
   projectId: string,
   parentId: string | null,
   name: string,
+  kind: FolderKind = 'doc',
 ): Promise<Folder> {
   const { data: userData } = await supabase.auth.getUser();
   const { data, error } = await supabase
@@ -98,13 +119,30 @@ export async function createFolder(
       project_id: projectId,
       parent_id: parentId,
       name: name.trim(),
+      kind,
       created_by: userData.user?.id ?? null,
     })
-    .select('id, project_id, parent_id, name, created_at')
+    .select(FOLDER_COLS)
     .single();
   if (error) throw error;
   await logActivity(projectId, 'folder.create', 'folder', data.id, { name: data.name });
-  return data;
+  return data as Folder;
+}
+
+/**
+ * Ensure the project has a top-level 'BIM 데이터' (kind='bim') folder so the
+ * BIM section is usable even on projects created before 0019's seed ran.
+ * Idempotent — returns the existing/created bim root.
+ */
+export async function ensureBimRoot(projectId: string): Promise<Folder | null> {
+  const folders = await listFolders(projectId);
+  const existing = folders.find((f) => f.parent_id === null && f.kind === 'bim');
+  if (existing) return existing;
+  try {
+    return await createFolder(projectId, null, 'BIM 데이터', 'bim');
+  } catch {
+    return null; // 권한 없음 등은 무시(다음 admin 진입 시 생성).
+  }
 }
 
 export async function renameFolder(folder: Folder, name: string): Promise<void> {
