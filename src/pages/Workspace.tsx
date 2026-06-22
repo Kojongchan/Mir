@@ -177,16 +177,12 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
       viewer.clearConstruction();
       viewer.showAll();
     }
-    // 시작 카메라: 통합모델은 저장된 홈뷰가 있으면 복원, 없으면 전체 맞춤.
-    // 4D/간섭도 마지막 모델이 아니라 전체가 화면을 채우도록 맞춘다.
+    // 시작 카메라: 모듈별로 저장된 홈뷰가 있으면 복원, 없으면 전체 맞춤.
+    // (전체가 화면을 채우도록 마지막 모델이 아니라 frameAll 사용.)
     if (ok) {
-      if (mode === 'integrated') {
-        const home = loadHomeView(projectId);
-        if (home) viewer.applyCameraState(home);
-        else viewer.frameAll();
-      } else {
-        viewer.frameAll();
-      }
+      const home = loadHomeView(projectId, mode);
+      if (home) viewer.applyCameraState(home);
+      else viewer.frameAll();
     }
     setStatus(ok ? `불러옴: 모델 ${ok}개` : '표시할 모델이 없습니다.');
   };
@@ -195,15 +191,15 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   const saveHomeView = () => {
     if (!viewer) return;
     try {
-      localStorage.setItem(HOME_VIEW_KEY(projectId), JSON.stringify(viewer.getCameraState()));
-      setStatus('현재 화면을 시작뷰로 저장했습니다.');
+      localStorage.setItem(HOME_VIEW_KEY(projectId, mode), JSON.stringify(viewer.getCameraState()));
+      setStatus('현재 화면을 이 메뉴의 시작뷰로 저장했습니다.');
     } catch {
       setStatus('시작뷰 저장 실패(저장공간).');
     }
   };
   const gotoHomeView = () => {
     if (!viewer) return;
-    const home = loadHomeView(projectId);
+    const home = loadHomeView(projectId, mode);
     if (home) viewer.applyCameraState(home);
     else viewer.frameAll();
   };
@@ -610,15 +606,15 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
           <button
             className={originOn ? 'is-active' : undefined}
             onClick={() => setOriginOn((v) => !v)}
-            title="프로젝트 원점(0,0,0) 축 표시/숨김"
+            title="모델 원점·좌표축(동서/높이/남북) 표시·숨김"
           >
             ⛬ 원점
           </button>
           <button onClick={gotoHomeView} title="저장된 시작뷰로 이동(없으면 전체 맞춤)">
             🏠 시작뷰로
           </button>
-          {isAdmin && mode === 'integrated' && (
-            <button onClick={saveHomeView} title="현재 화면을 시작뷰로 저장">
+          {isAdmin && (
+            <button onClick={saveHomeView} title="현재 화면을 이 메뉴의 시작뷰로 저장">
               시작뷰 저장
             </button>
           )}
@@ -684,12 +680,12 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
             selected={markupSel}
             onSelect={setMarkupSel}
           />
-          <div className="coord-hud" title="마우스 위치(프로젝트 좌표)">
-            <span className="coord-axis coord-x">X</span>
+          <div className="coord-hud" title="마우스 위치(프로젝트 좌표: 동서 / 남북 / 높이)">
+            <span className="coord-axis coord-x">동서</span>
             <span className="coord-val">{coord ? coord.x.toFixed(3) : '—'}</span>
-            <span className="coord-axis coord-y">Y</span>
+            <span className="coord-axis coord-y">남북</span>
             <span className="coord-val">{coord ? coord.y.toFixed(3) : '—'}</span>
-            <span className="coord-axis coord-z">Z</span>
+            <span className="coord-axis coord-z">EL</span>
             <span className="coord-val">{coord ? coord.z.toFixed(3) : '—'}</span>
           </div>
         </div>
@@ -770,18 +766,27 @@ function loadUpAxisPref(modelId: string): UpAxis | null {
   return v === 'x' || v === 'y' || v === 'z' ? v : null;
 }
 
-const HOME_VIEW_KEY = (projectId: string) => `mir.homeview.${projectId}`;
+// Start view is saved per (project, module): 통합모델·공정관리(4D)·간섭체크 each keep
+// their own home view so saving in one module no longer overrides the others.
+const HOME_VIEW_KEY = (projectId: string, mode: ViewerMode) => `mir.homeview.${projectId}.${mode}`;
 
-/** Read a saved start/home camera view for a project (null if none/invalid). */
-function loadHomeView(projectId: string): CameraState | null {
+function parseCameraState(raw: string | null): CameraState | null {
+  if (!raw) return null;
   try {
-    const raw = localStorage.getItem(HOME_VIEW_KEY(projectId));
-    if (!raw) return null;
     const s = JSON.parse(raw) as CameraState;
     return s && Array.isArray(s.position) && Array.isArray(s.target) ? s : null;
   } catch {
     return null;
   }
+}
+
+/** Read the saved start/home camera view for a project module (null if none). */
+function loadHomeView(projectId: string, mode: ViewerMode): CameraState | null {
+  const v = parseCameraState(localStorage.getItem(HOME_VIEW_KEY(projectId, mode)));
+  if (v) return v;
+  // Migrate transparently: the integrated module used an unscoped key before S44.
+  if (mode === 'integrated') return parseCameraState(localStorage.getItem(`mir.homeview.${projectId}`));
+  return null;
 }
 
 function sizeLabel(bytes: number | null): string {
