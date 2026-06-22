@@ -23,10 +23,10 @@ import { REDLINE_COLORS, type DisplayState, type MarkupShape, type RedlineColor 
 import {
   downloadModelBytes,
   listModels,
-  uploadModel,
   type ModelPurpose,
   type ModelRecord,
 } from '../lib/api';
+import { listFolders, listProjectFiles, type Folder } from '../lib/cde';
 
 /**
  * 3D 뷰어 모듈의 용도. 모델 풀은 셋이 공유한다(통합모델에 올린 모델이 4D·간섭체크
@@ -54,8 +54,9 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   const [viewer, setViewer] = useState<IfcViewer | null>(null);
 
   const [models, setModels] = useState<ModelRecord[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const fileInput = useRef<HTMLInputElement>(null);
+  // BIM 폴더트리 미러용: 폴더 목록 + 파일→폴더 매핑(통합모델 모델을 폴더별로 묶음).
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [fileToFolder, setFileToFolder] = useState<Map<string, string | null>>(new Map());
 
   // 런타임 modelID → DB 모델 uuid (4D 매핑·간섭 저장·이슈 핀 매핑용).
   const [modelIdMap, setModelIdMap] = useState<Map<number, string>>(new Map());
@@ -120,12 +121,27 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
 
   useEffect(() => {
     refreshModels();
-    if (mode === 'integrated') listIssues(projectId).then(setIssues).catch(() => setIssues([]));
+    if (mode === 'integrated') {
+      listIssues(projectId).then(setIssues).catch(() => setIssues([]));
+      refreshBimTree();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, mode]);
 
   // 모델 풀은 모듈 공유(전체 조회). 4D/간섭은 통합모델에 올린 모델을 그대로 본다.
   const refreshModels = () => listModels(projectId).then(setModels).catch(() => setModels([]));
+
+  // 통합모델 좌측 패널을 CDE BIM 폴더트리로 미러하기 위한 폴더/파일 매핑 로드.
+  const refreshBimTree = async () => {
+    try {
+      const [fs, files] = await Promise.all([listFolders(projectId), listProjectFiles(projectId)]);
+      setFolders(fs);
+      setFileToFolder(new Map(files.map((f) => [f.id, f.folder_id])));
+    } catch {
+      setFolders([]);
+      setFileToFolder(new Map());
+    }
+  };
 
   // 모드 전환 시 4D 시공 시뮬 상태가 다른 모듈로 새지 않게 정리한다. 라우터가 세 모듈을
   // 같은 Workspace 컴포넌트(=같은 IfcViewer 인스턴스)로 렌더하므로, mode 가 바뀌어도
@@ -160,7 +176,7 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
 
   const loadOne = async (m: ModelRecord) => {
     if (!viewer) return;
-    const bytes = await downloadModelBytes(m.storage_path);
+    const bytes = await downloadModelBytes(m.storage_path, m.bucket);
     const saved = loadUpAxisPref(m.id);
     await viewer.loadIfc(bytes, { label: m.name, ...(saved ? { upAxis: saved } : {}) });
     if (viewer.primaryModelID != null) {
@@ -404,30 +420,38 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   // 뷰포인트 저장 컨텍스트: 단일 모델 프로젝트면 그 모델, 다중이면 장면 전체(null).
   const modelDbId = modelIdMap.size === 1 ? [...modelIdMap.values()][0] : null;
 
-  const onUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-    setStatus(`업로드 중: ${file.name}`);
-    try {
-      const rec = await uploadModel(projectId, file); // 공유 풀(기본 integrated)
-      await refreshModels();
-      await loadOne(rec); // 방금 올린 모델을 현재 화면에도 즉시 표시
-      setModelCount(viewer?.modelCount ?? 0);
-      setStatus(`업로드 완료: ${file.name}`);
-    } catch (err) {
-      setStatus(`업로드 실패: ${errMessage(err)}`);
-    } finally {
-      setUploading(false);
-      if (fileInput.current) fileInput.current.value = '';
-    }
-  };
-
   // 통합모델 트리에서 모델 클릭 → 그 모델로 카메라 맞춤(이미 로드돼 있음).
   const frameModel = (m: ModelRecord) => {
     if (!viewer) return;
     for (const [rid, db] of modelIdMap.entries()) if (db === m.id) viewer.fitModel(rid);
   };
+
+  // CDE BIM 폴더트리 미러: 통합모델 모델을 소속 폴더별로 묶는다(폴더 풀패스 라벨).
+  // file_id 가 없는(레거시 직접업로드) 모델은 '기타(미연동)' 그룹으로.
+  const modelGroups = useMemo(() => {
+    const byId = new Map(folders.map((f) => [f.id, f]));
+    const pathOf = (folderId: string | null): string => {
+      const chain: string[] = [];
+      let cur = folderId ? byId.get(folderId) ?? null : null;
+      while (cur) {
+        chain.unshift(cur.name);
+        cur = cur.parent_id ? byId.get(cur.parent_id) ?? null : null;
+      }
+      return chain.length ? chain.join(' / ') : 'BIM 데이터';
+    };
+    const groups = new Map<string, { label: string; models: ModelRecord[] }>();
+    const UNLINKED = '기타(미연동)';
+    for (const m of models) {
+      const label = m.file_id ? pathOf(fileToFolder.get(m.file_id) ?? null) : UNLINKED;
+      const g = groups.get(label) ?? { label, models: [] };
+      g.models.push(m);
+      groups.set(label, g);
+    }
+    // 미연동 그룹은 항상 마지막.
+    return [...groups.values()].sort((a, b) =>
+      a.label === UNLINKED ? 1 : b.label === UNLINKED ? -1 : a.label.localeCompare(b.label),
+    );
+  }, [models, folders, fileToFolder]);
 
   // 선택한 3D 객체에 연결된 이슈 생성(관리자).
   const selectedModelDbId = selected ? modelIdMap.get(selected.modelID) ?? null : null;
@@ -459,30 +483,38 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
         <aside className="mod-subtree">
           <div className="sidebar-head">
             <h2>모델</h2>
-            <input ref={fileInput} type="file" accept=".ifc" style={{ display: 'none' }} onChange={onUpload} />
-            {isAdmin && (
-              <button onClick={() => fileInput.current?.click()} disabled={uploading}>
-                {uploading ? '업로드 중…' : 'IFC 업로드'}
-              </button>
-            )}
+            <span className="muted model-src-hint" title="모델 업로드는 자료관리 → BIM 데이터 폴더에서 합니다">
+              자료관리(BIM)에서 업로드
+            </span>
           </div>
           <ul className="model-list">
-            {models.map((m) => (
-              <li key={m.id} className="model-row">
-                <input
-                  type="checkbox"
-                  className="model-check"
-                  checked={!hiddenModels.has(m.id)}
-                  onChange={() => toggleModel(m.id)}
-                  title="표시/숨김"
-                />
-                <button className="model-item" onClick={() => frameModel(m)} title={`${m.name} — 카메라 맞춤`}>
-                  <span className="model-name">{m.name}</span>
-                  <span className="muted">{sizeLabel(m.size_bytes)}</span>
-                </button>
+            {modelGroups.map((g) => (
+              <li key={g.label} className="model-group">
+                <div className="model-group-label" title={g.label}>
+                  🗂 {g.label}
+                </div>
+                <ul className="model-list">
+                  {g.models.map((m) => (
+                    <li key={m.id} className="model-row">
+                      <input
+                        type="checkbox"
+                        className="model-check"
+                        checked={!hiddenModels.has(m.id)}
+                        onChange={() => toggleModel(m.id)}
+                        title="표시/숨김"
+                      />
+                      <button className="model-item" onClick={() => frameModel(m)} title={`${m.name} — 카메라 맞춤`}>
+                        <span className="model-name">{m.name}</span>
+                        <span className="muted">{sizeLabel(m.size_bytes)}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               </li>
             ))}
-            {models.length === 0 && <li className="muted empty">등록된 모델이 없습니다. IFC를 업로드하세요.</li>}
+            {models.length === 0 && (
+              <li className="muted empty">등록된 모델이 없습니다. 자료관리 → BIM 데이터에서 IFC를 업로드하세요.</li>
+            )}
           </ul>
 
           {categories.length > 0 && (

@@ -8,6 +8,7 @@ import { VersionHistory } from '../components/cde/VersionHistory';
 import { ActivityLog } from '../components/cde/ActivityLog';
 import { IfcModelViewer } from '../components/IfcModelViewer';
 import { extensionOf } from '../lib/files';
+import { syncBimModel, deleteBimModel } from '../lib/api';
 import {
   FILE_STATUSES,
   STATUS_LABEL,
@@ -15,6 +16,7 @@ import {
   deleteCdeFile,
   deleteFolder,
   ensureBimRoot,
+  getCdeFile,
   listCdeFiles,
   listFolders,
   renameFolder,
@@ -141,9 +143,11 @@ export function DocumentManager() {
     setBusy(true);
     setStatus(`업로드 중: ${file.name}`);
     try {
-      await uploadNewFile(projectId, selectedId, file);
+      const rec = await uploadNewFile(projectId, selectedId, file);
+      // BIM 폴더의 IFC 는 통합모델(3D)에 연동되도록 models 행을 함께 생성/갱신.
+      if (inBim && extensionOf(file.name) === 'ifc') await syncBimModel(rec);
       await refreshFiles();
-      setStatus(`업로드 완료: ${file.name}`);
+      setStatus(`업로드 완료: ${file.name}${inBim ? ' · 통합모델 연동됨' : ''}`);
     } catch (err) {
       setStatus(`업로드 실패: ${errMessage(err)}`);
     } finally {
@@ -165,6 +169,11 @@ export function DocumentManager() {
     setStatus(`새 버전 업로드 중: ${target.name}`);
     try {
       await uploadNewVersion(target, file);
+      // BIM IFC 새 버전 → 연동된 통합모델 행을 최신 버전으로 repoint.
+      if (inBim && extensionOf(target.name) === 'ifc') {
+        const updated = await getCdeFile(target.id);
+        if (updated) await syncBimModel(updated);
+      }
       await refreshFiles();
       setStatus(`새 버전 등록: ${target.name}`);
     } catch (err) {
@@ -189,6 +198,8 @@ export function DocumentManager() {
     if (!window.confirm(`'${f.name}' 문서를 모든 버전과 함께 삭제할까요?`)) return;
     try {
       await deleteCdeFile(f);
+      // 연동된 통합모델 행도 함께 정리(BIM IFC).
+      if (extensionOf(f.name) === 'ifc') await deleteBimModel(f.id).catch(() => {});
       await refreshFiles();
       setStatus(`삭제 완료: ${f.name}`);
     } catch (e) {

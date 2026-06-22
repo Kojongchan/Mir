@@ -186,6 +186,25 @@ export async function listCdeFiles(
   return (data ?? []) as CdeFile[];
 }
 
+/** All files in a project (id, folder_id, name) — for mapping models→folders. */
+export async function listProjectFiles(
+  projectId: string,
+): Promise<Array<{ id: string; folder_id: string | null; name: string }>> {
+  const { data, error } = await supabase
+    .from('files')
+    .select('id, folder_id, name')
+    .eq('project_id', projectId);
+  if (error) throw error;
+  return data ?? [];
+}
+
+/** A single CDE file by id (with current_version_id) — RLS-checked. */
+export async function getCdeFile(fileId: string): Promise<CdeFile | null> {
+  const { data, error } = await supabase.from('files').select(FILE_COLS).eq('id', fileId).single();
+  if (error) return null;
+  return data as CdeFile;
+}
+
 function versionPath(projectId: string, fileId: string, versionNo: number, name: string): string {
   const ext = extensionOf(name);
   return ext
