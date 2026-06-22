@@ -1963,13 +1963,108 @@ button.danger:hover:not(:disabled) {
   grid-template-columns: 248px 1fr;
 }
 .mod-subtree {
-  width: 232px;
+  width: 260px;
   flex-shrink: 0;
   background: var(--panel-2);
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  /* 좌우 폭 조절(긴 객체명도 다 보이게) — 우측 핸들 드래그. */
+  resize: horizontal;
+  min-width: 200px;
+  max-width: 640px;
+}
+/* 모델 폴더 영역: 상하 조절(객체 트리와 영역 배분). */
+.subtree-models {
   overflow: auto;
+  resize: vertical;
+  min-height: 80px;
+  max-height: 70vh;
+  height: 38%;
+  border-bottom: 1px solid var(--border);
+}
+/* 객체 트리 영역: 남은 공간을 채우고 자체 스크롤. */
+.subtree-objects {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.subtree-objects .obj-tree {
+  flex: 1;
+  overflow: auto;
+}
+
+/* 객체 트리 노드(추가2). */
+.obj-tree {
+  padding: 4px 6px;
+}
+.obj-cat-head,
+.obj-elem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.obj-twisty {
+  width: 16px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+}
+.obj-eye {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px;
+  line-height: 1;
+  opacity: 0.9;
+}
+.obj-eye.is-off {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+.obj-cat-name {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  text-align: left;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+  overflow: hidden;
+}
+.obj-elems {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 18px;
+}
+.obj-elem-name {
+  flex: 1;
+  text-align: left;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  overflow: hidden;
+  padding: 2px 0;
+}
+.obj-elem.is-sel .obj-elem-name {
+  color: var(--accent);
+  font-weight: 600;
+}
+.obj-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
 }
 .mod-main {
   position: relative;

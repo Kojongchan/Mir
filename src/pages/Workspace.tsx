@@ -15,6 +15,7 @@ import { useStore } from '../store/useStore';
 import { useAuth } from '../auth/AuthProvider';
 import { Toolbar } from '../components/Toolbar';
 import { PropertiesPanel } from '../components/PropertiesPanel';
+import { ObjectTree } from '../components/ObjectTree';
 import { Timeline } from '../components/Timeline';
 import { ClashPanel } from '../components/ClashPanel';
 import { ViewpointPanel } from '../components/ViewpointPanel';
@@ -90,6 +91,8 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   const [meta, setMeta] = useState<ElementMeta[]>([]);
   const [hiddenModels, setHiddenModels] = useState<Set<string>>(new Set());
   const [hiddenCats, setHiddenCats] = useState<Set<string>>(new Set());
+  // 개별 객체 숨김("modelID:expressID"). 객체 트리의 눈 토글이 채운다.
+  const [hiddenElems, setHiddenElems] = useState<Set<string>>(new Set());
   const [showCats, setShowCats] = useState(false);
   const [catQuery, setCatQuery] = useState('');
 
@@ -304,10 +307,10 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
     });
   };
 
-  // 표시 토글 적용(모델 OR 카테고리 숨김이면 비표시).
+  // 표시 토글 적용(모델 OR 카테고리 OR 개별 객체 숨김이면 비표시).
   useEffect(() => {
     if (!viewer || mode !== 'integrated') return;
-    if (hiddenModels.size === 0 && hiddenCats.size === 0) {
+    if (hiddenModels.size === 0 && hiddenCats.size === 0 && hiddenElems.size === 0) {
       viewer.showAll();
       return;
     }
@@ -316,9 +319,10 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
       if (db && hiddenModels.has(db)) return false;
       const cat = catByKey.get(`${mid}:${eid}`);
       if (cat && hiddenCats.has(cat)) return false;
+      if (hiddenElems.has(`${mid}:${eid}`)) return false;
       return true;
     });
-  }, [viewer, mode, hiddenModels, hiddenCats, modelIdMap, catByKey]);
+  }, [viewer, mode, hiddenModels, hiddenCats, hiddenElems, modelIdMap, catByKey]);
 
   // 측정 모드 토글 + 메시지 콜백.
   useEffect(() => {
@@ -360,6 +364,12 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
     setHiddenCats((s) => {
       const n = new Set(s);
       n.has(cat) ? n.delete(cat) : n.add(cat);
+      return n;
+    });
+  const toggleElem = (key: string) =>
+    setHiddenElems((s) => {
+      const n = new Set(s);
+      n.has(key) ? n.delete(key) : n.add(key);
       return n;
     });
 
@@ -494,82 +504,74 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
               자료관리(BIM)에서 업로드
             </span>
           </div>
-          <ul className="model-list">
-            {modelGroups.map((g) => (
-              <li key={g.label} className="model-group">
-                <div className="model-group-label" title={g.label}>
-                  🗂 {g.label}
-                </div>
-                <ul className="model-list">
-                  {g.models.map((m) => (
-                    <li key={m.id} className="model-row">
-                      <input
-                        type="checkbox"
-                        className="model-check"
-                        checked={!hiddenModels.has(m.id)}
-                        onChange={() => toggleModel(m.id)}
-                        title="표시/숨김"
-                      />
-                      <button className="model-item" onClick={() => frameModel(m)} title={`${m.name} — 카메라 맞춤`}>
-                        <span className="model-name">{m.name}</span>
-                        <span className="muted">{sizeLabel(m.size_bytes)}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </li>
-            ))}
-            {models.length === 0 && (
-              <li className="muted empty">등록된 모델이 없습니다. 자료관리 → BIM 데이터에서 IFC를 업로드하세요.</li>
-            )}
-          </ul>
-
-          {categories.length > 0 && (
-            <>
-              <div className="sidebar-head">
-                <h2>카테고리</h2>
-                <button onClick={() => setShowCats((v) => !v)} title="카테고리 표시 토글">
-                  {showCats ? '접기' : `펼치기 (${categories.length})`}
-                </button>
-              </div>
-              {showCats && (
-                <>
-                  <div className="cat-tools">
-                    <input
-                      className="cat-search"
-                      type="search"
-                      placeholder="카테고리 검색…"
-                      value={catQuery}
-                      onChange={(e) => setCatQuery(e.target.value)}
-                    />
-                    <button onClick={toggleAllCats} title="보이는 카테고리 전체 선택/해제">
-                      전체 토글
-                    </button>
+          {/* 모델 폴더(미러) — 상하 리사이즈로 객체 트리와 영역 배분 */}
+          <div className="subtree-models">
+            <ul className="model-list">
+              {modelGroups.map((g) => (
+                <li key={g.label} className="model-group">
+                  <div className="model-group-label" title={g.label}>
+                    🗂 {g.label}
                   </div>
-                  <ul className="model-list cat-list">
-                    {filteredCats.map(([c, n]) => (
-                      <li key={c} className="model-row">
+                  <ul className="model-list">
+                    {g.models.map((m) => (
+                      <li key={m.id} className="model-row">
                         <input
                           type="checkbox"
                           className="model-check"
-                          checked={!hiddenCats.has(c)}
-                          onChange={() => toggleCat(c)}
+                          checked={!hiddenModels.has(m.id)}
+                          onChange={() => toggleModel(m.id)}
                           title="표시/숨김"
                         />
-                        <span className="cat-name" title={c}>
-                          {c}
-                        </span>
-                        <span className="muted">{n}</span>
+                        <button className="model-item" onClick={() => frameModel(m)} title={`${m.name} — 카메라 맞춤`}>
+                          <span className="model-name">{m.name}</span>
+                          <span className="muted">{sizeLabel(m.size_bytes)}</span>
+                        </button>
                       </li>
                     ))}
-                    {filteredCats.length === 0 && (
-                      <li className="muted empty">검색 결과가 없습니다.</li>
-                    )}
                   </ul>
-                </>
+                </li>
+              ))}
+              {models.length === 0 && (
+                <li className="muted empty">등록된 모델이 없습니다. 자료관리 → BIM 데이터에서 IFC를 업로드하세요.</li>
               )}
-            </>
-          )}
+            </ul>
+          </div>
+
+          {/* 객체 트리(추가2) — 카테고리별 묶음 + 가시성 눈 토글 + 3D 선택 연동 */}
+          <div className="subtree-objects">
+            <div className="sidebar-head">
+              <h2>객체 {meta.length > 0 && <span className="muted">({meta.length})</span>}</h2>
+              <button onClick={() => setShowCats((v) => !v)} title="객체 트리 표시 토글">
+                {showCats ? '접기' : '펼치기'}
+              </button>
+            </div>
+            {showCats && (
+              <>
+                <div className="cat-tools">
+                  <input
+                    className="cat-search"
+                    type="search"
+                    placeholder="객체·카테고리 검색…"
+                    value={catQuery}
+                    onChange={(e) => setCatQuery(e.target.value)}
+                  />
+                  <button onClick={toggleAllCats} title="보이는 카테고리 전체 표시/숨김">
+                    전체 토글
+                  </button>
+                </div>
+                <ObjectTree
+                  meta={meta}
+                  query={catQuery}
+                  hiddenCats={hiddenCats}
+                  hiddenElems={hiddenElems}
+                  onToggleCat={toggleCat}
+                  onToggleElem={toggleElem}
+                  selectedKey={selected ? `${selected.modelID}:${selected.expressID}` : null}
+                  onSelectElem={(mid, eid) => viewer?.selectElement(mid, eid)}
+                />
+              </>
+            )}
+          </div>
         </aside>
       )}
 

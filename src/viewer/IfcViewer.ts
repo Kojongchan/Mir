@@ -665,6 +665,15 @@ export class IfcViewer {
     return true;
   }
 
+  /** Select an element from the object tree: highlight + fire onSelect, without
+   *  moving the camera (use focusElement when a camera jump is wanted). */
+  selectElement(modelID: number, expressID: number): boolean {
+    if (this.meshesFor(modelID, expressID).length === 0) return false;
+    this.highlight(modelID, expressID);
+    this.onSelect(this.getProperties(modelID, expressID));
+    return true;
+  }
+
   private highlight(modelID: number, expressID: number) {
     this.clearHighlight();
     const meshes = this.meshesFor(modelID, expressID);
