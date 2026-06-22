@@ -14,6 +14,7 @@ import { Subcontracts } from './pages/Subcontracts';
 import { Board } from './pages/Board';
 import { DocumentManager } from './pages/DocumentManager';
 import { Drawings } from './pages/Drawings';
+import { Quantities } from './pages/Quantities';
 import { Admin } from './pages/Admin';
 import { FileViewer } from './pages/FileViewer';
 
@@ -81,6 +82,7 @@ export default function App() {
             <Route path="model" element={<Workspace mode="integrated" />} />
             <Route path="viewer" element={<Workspace mode="4d" />} />
             <Route path="clash" element={<Workspace mode="clash" />} />
+            <Route path="quantities" element={<Quantities />} />
             <Route path="drawings" element={<Drawings />} />
             <Route path="docs" element={<DocumentManager />} />
             <Route path="members" element={<AdminOnly><Admin embedded /></AdminOnly>} />
