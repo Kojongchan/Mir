@@ -14,6 +14,7 @@ import { IfcViewer, type CameraState, type ElementMeta, type UpAxis } from '../v
 import { useStore } from '../store/useStore';
 import { useAuth } from '../auth/AuthProvider';
 import { Toolbar } from '../components/Toolbar';
+import { ToolbarMenu } from '../components/ToolbarMenu';
 import { PropertiesPanel } from '../components/PropertiesPanel';
 import { ObjectTree } from '../components/ObjectTree';
 import { Timeline } from '../components/Timeline';
@@ -595,7 +596,45 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
         <div className="viewer-bar">
           <span className="viewer-mode-title">{MODE_TITLE[mode]}</span>
           <span className="tl-divider" />
-          <Toolbar viewer={viewer} />
+
+          {/* 표시 — 선택 객체 보기 조작 */}
+          <ToolbarMenu label="🧊 표시">
+            <Toolbar viewer={viewer} />
+          </ToolbarMenu>
+
+          {/* 도구 — 측정·단면·마크업(켜면 상세 컨트롤이 툴바에 인라인으로 표시) */}
+          <ToolbarMenu label="🛠 도구" active={measureOn || sectionOn || markupOn}>
+            <button className={measureOn ? 'is-active' : undefined} onClick={() => setMeasureOn((v) => !v)}>
+              📏 측정
+            </button>
+            <button className={sectionOn ? 'is-active' : undefined} onClick={() => setSectionOn((v) => !v)}>
+              ✂ 단면
+            </button>
+            <button className={markupOn ? 'is-active' : undefined} onClick={() => setMarkupOn((v) => !v)}>
+              ✎ 마크업
+            </button>
+          </ToolbarMenu>
+
+          {/* 뷰 — 원점·시작뷰 */}
+          <ToolbarMenu label="📐 뷰" active={originOn}>
+            <button className={originOn ? 'is-active' : undefined} onClick={() => setOriginOn((v) => !v)}>
+              ⛬ 원점
+            </button>
+            <button onClick={gotoHomeView}>🏠 시작뷰로</button>
+            {isAdmin && <button onClick={saveHomeView}>💾 시작뷰 저장</button>}
+          </ToolbarMenu>
+
+          {/* 정보 — 속성·뷰포인트 */}
+          <ToolbarMenu label="ℹ 정보" active={showProps || showViewpoints}>
+            <button className={showProps ? 'is-active' : undefined} onClick={() => setShowProps((v) => !v)}>
+              ℹ 속성정보
+            </button>
+            <button className={showViewpoints ? 'is-active' : undefined} onClick={() => setShowViewpoints((v) => !v)}>
+              📌 뷰포인트
+            </button>
+          </ToolbarMenu>
+
+          {/* 문맥 버튼(선택/모드별) */}
           {isAdmin && selected && (
             <button onClick={onCreateIssueFromSelection}>＋ 선택 객체로 이슈</button>
           )}
@@ -615,26 +654,12 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
             </button>
           )}
 
-          <span className="tl-divider" />
-          <button
-            className={measureOn ? 'is-active' : undefined}
-            onClick={() => setMeasureOn((v) => !v)}
-            title="두 점을 클릭해 거리 측정"
-          >
-            📏 측정
-          </button>
+          {/* 활성 도구의 인라인 상세 컨트롤 */}
           {measureOn && (
             <button onClick={() => viewer?.clearMeasurements()} title="측정 지우기">
-              지우기
+              측정 지우기
             </button>
           )}
-          <button
-            className={sectionOn ? 'is-active' : undefined}
-            onClick={() => setSectionOn((v) => !v)}
-            title="단면(클리핑 평면)"
-          >
-            ✂ 단면
-          </button>
           {sectionOn && (
             <span className="section-ctrls">
               <select value={sectionAxis} onChange={(e) => setSectionAxis(e.target.value as 'x' | 'y' | 'z')}>
@@ -656,46 +681,6 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
               </button>
             </span>
           )}
-
-          <span className="tl-divider" />
-          <button
-            className={originOn ? 'is-active' : undefined}
-            onClick={() => setOriginOn((v) => !v)}
-            title="모델 원점·좌표축 표시·숨김"
-          >
-            ⛬ 원점
-          </button>
-          <button onClick={gotoHomeView} title="저장된 시작뷰로 이동(없으면 전체 맞춤)">
-            🏠 시작뷰로
-          </button>
-          {isAdmin && (
-            <button onClick={saveHomeView} title="현재 화면을 이 메뉴의 시작뷰로 저장">
-              시작뷰 저장
-            </button>
-          )}
-
-          <span className="tl-divider" />
-          <button
-            className={showProps ? 'is-active' : undefined}
-            onClick={() => setShowProps((v) => !v)}
-            title="선택 객체 속성정보(매개변수) 팝업"
-          >
-            ℹ 속성정보
-          </button>
-          <button
-            className={showViewpoints ? 'is-active' : undefined}
-            onClick={() => setShowViewpoints((v) => !v)}
-            title="저장 뷰포인트 패널"
-          >
-            📌 뷰포인트
-          </button>
-          <button
-            className={markupOn ? 'is-active' : undefined}
-            onClick={() => setMarkupOn((v) => !v)}
-            title="2D 마크업(redline) 그리기"
-          >
-            ✎ 마크업
-          </button>
           {markupOn && (
             <span className="markup-ctrls">
               <select value={markupTool} onChange={(e) => setMarkupTool(e.target.value as MarkupTool)} title="도구">
