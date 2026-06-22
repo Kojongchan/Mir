@@ -2231,6 +2231,7 @@ export class IfcViewer {
     model.elementMeshes.clear();
     this.models.splice(idx, 1);
     this.spatialTreeCache = undefined;
+    this.globalIdCache.delete(modelID);
     this.nameCache.delete(modelID);
     this.categoryCache.delete(modelID);
     this.quantityIndexCache.delete(modelID);
@@ -2241,6 +2242,88 @@ export class IfcViewer {
       /* already closed */
     }
     this.clearHighlight();
+  }
+
+  // --- 버전 diff(추가의견1) ----------------------------------------------
+  private globalIdCache = new Map<number, Map<number, string>>();
+  private diffOverrides: { mesh: THREE.Mesh; mat: THREE.Material | THREE.Material[]; visible: boolean }[] = [];
+
+  private globalIdMap(modelID: number): Map<number, string> {
+    let m = this.globalIdCache.get(modelID);
+    if (m) return m;
+    m = new Map();
+    const model = this.models.find((x) => x.modelID === modelID);
+    if (model) {
+      for (const eid of model.elementMeshes.keys()) {
+        try {
+          const line = this.ifcAPI.GetLine(modelID, eid, false) as Record<string, any>;
+          const gid = line?.GlobalId?.value as string | undefined;
+          if (gid) m.set(eid, gid);
+        } catch {
+          /* skip */
+        }
+      }
+    }
+    this.globalIdCache.set(modelID, m);
+    return m;
+  }
+
+  /**
+   * Colour two loaded versions by IfcRoot GlobalId diff (추가의견1):
+   *   • 추가(신규 only) = 초록, 동일 = 옅은 회색(반투명) — newID 모델
+   *   • 삭제(이전 only) = 빨강, 동일 = 숨김 — oldID 모델
+   * Originals are stored and restored by clearVersionDiff().
+   */
+  applyVersionDiff(newID: number, oldID: number) {
+    this.clearVersionDiff();
+    const oldVals = new Set(this.globalIdMap(oldID).values());
+    const newVals = new Set(this.globalIdMap(newID).values());
+    const override = (mesh: THREE.Mesh, hex: number, opacity: number) => {
+      this.diffOverrides.push({ mesh, mat: mesh.material, visible: mesh.visible });
+      mesh.material = new THREE.MeshLambertMaterial({
+        color: hex,
+        side: THREE.DoubleSide,
+        transparent: opacity < 1,
+        opacity,
+        depthWrite: opacity >= 1,
+      });
+    };
+    const newModel = this.models.find((m) => m.modelID === newID);
+    const oldModel = this.models.find((m) => m.modelID === oldID);
+    const gidN = this.globalIdMap(newID);
+    const gidO = this.globalIdMap(oldID);
+    if (newModel) {
+      for (const [eid, meshes] of newModel.elementMeshes) {
+        const gid = gidN.get(eid);
+        const added = gid != null && !oldVals.has(gid);
+        for (const mesh of meshes) override(mesh, added ? 0x16a34a : 0xc2c9d4, added ? 1 : 0.4);
+      }
+    }
+    if (oldModel) {
+      for (const [eid, meshes] of oldModel.elementMeshes) {
+        const gid = gidO.get(eid);
+        const removed = gid != null && !newVals.has(gid);
+        for (const mesh of meshes) {
+          if (removed) override(mesh, 0xdc2626, 1);
+          else {
+            this.diffOverrides.push({ mesh, mat: mesh.material, visible: mesh.visible });
+            mesh.visible = false;
+          }
+        }
+      }
+    }
+  }
+
+  clearVersionDiff() {
+    for (const o of this.diffOverrides) {
+      const cur = o.mesh.material;
+      if (cur !== o.mat) {
+        (Array.isArray(cur) ? cur : [cur]).forEach((m) => (m as THREE.Material).dispose?.());
+      }
+      o.mesh.material = o.mat;
+      o.mesh.visible = o.visible;
+    }
+    this.diffOverrides = [];
   }
 
   /**
