@@ -6,83 +6,96 @@ import type { FileRecord } from '../../lib/files';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
+type PDF = pdfjsLib.PDFDocumentProxy;
+
+/** 보일 때만 렌더되는 썸네일(많은 페이지에서도 즉시 목록 표시·빠름). */
+function Thumb({ pdf, n, active, onClick }: { pdf: PDF; n: number; active: boolean; onClick: () => void }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const done = useRef(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      async (entries) => {
+        if (!entries[0].isIntersecting || done.current) return;
+        done.current = true;
+        try {
+          const page = await pdf.getPage(n);
+          const vp = page.getViewport({ scale: 0.22 });
+          el.width = vp.width;
+          el.height = vp.height;
+          const ctx = el.getContext('2d');
+          if (ctx) await page.render({ canvasContext: ctx, viewport: vp }).promise;
+        } catch {
+          /* 렌더 실패 무시 */
+        }
+      },
+      { rootMargin: '300px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [pdf, n]);
+
+  return (
+    <button
+      data-page={n}
+      onClick={onClick}
+      style={{
+        display: 'block',
+        width: '100%',
+        marginBottom: 8,
+        padding: 4,
+        border: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+        borderRadius: 5,
+        background: 'transparent',
+        cursor: 'pointer',
+      }}
+    >
+      <canvas
+        ref={ref}
+        style={{ width: '100%', display: 'block', background: '#fff', minHeight: 70, borderRadius: 3 }}
+      />
+      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{n}</div>
+    </button>
+  );
+}
+
 /**
- * PDF 미리보기 — 좌측 썸네일(전체 페이지) + 상단 페이지 넘김/점프 + 본문 1페이지.
- * ACC Docs PDF 뷰어와 동등한 탐색(썸네일 클릭/이전·다음/번호 입력).
+ * PDF 미리보기 — 좌측 썸네일(지연 렌더) + 상단 페이지 넘김/점프 + 본문 1페이지.
+ * ACC Docs 와 동등한 탐색. 많은 페이지에서도 사이드바가 즉시 뜬다.
  */
 export function PdfViewer({ url }: { url: string; file: FileRecord }) {
   const mainRef = useRef<HTMLCanvasElement>(null);
   const thumbsRef = useRef<HTMLDivElement>(null);
-  const pdfRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null);
   const renderTaskRef = useRef<ReturnType<pdfjsLib.PDFPageProxy['render']> | null>(null);
+  const [pdf, setPdf] = useState<PDF | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pageCount, setPageCount] = useState(0);
   const [current, setCurrent] = useState(1);
 
-  // 문서 로드 + 썸네일 생성(한 번).
   useEffect(() => {
     let cancelled = false;
     const task = pdfjsLib.getDocument({ url });
     task.promise
-      .then(async (pdf) => {
+      .then((doc) => {
         if (cancelled) return;
-        pdfRef.current = pdf;
-        setPageCount(pdf.numPages);
+        setPdf(doc);
+        setPageCount(doc.numPages);
         setCurrent(1);
-        const host = thumbsRef.current;
-        if (host) host.innerHTML = '';
-        for (let n = 1; n <= pdf.numPages; n++) {
-          if (cancelled) return;
-          const page = await pdf.getPage(n);
-          const vp = page.getViewport({ scale: 0.22 });
-          const canvas = document.createElement('canvas');
-          canvas.width = vp.width;
-          canvas.height = vp.height;
-          canvas.style.width = '100%';
-          canvas.style.display = 'block';
-          canvas.style.borderRadius = '3px';
-          const ctx = canvas.getContext('2d');
-          if (!ctx) continue;
-          await page.render({ canvasContext: ctx, viewport: vp }).promise;
-
-          const btn = document.createElement('button');
-          btn.className = 'doc-pdf-thumb-btn';
-          btn.dataset.page = String(n);
-          Object.assign(btn.style, {
-            display: 'block',
-            width: '100%',
-            marginBottom: '8px',
-            padding: '4px',
-            border: '2px solid transparent',
-            borderRadius: '5px',
-            background: 'transparent',
-            cursor: 'pointer',
-          } as CSSStyleDeclaration);
-          const num = document.createElement('div');
-          num.textContent = String(n);
-          Object.assign(num.style, { fontSize: '11px', color: 'var(--muted)', marginTop: '2px' } as CSSStyleDeclaration);
-          btn.appendChild(canvas);
-          btn.appendChild(num);
-          btn.onclick = () => setCurrent(n);
-          host?.appendChild(btn);
-        }
       })
       .catch((e: unknown) => {
         if (!cancelled) setError((e as Error).message);
       });
-
     return () => {
       cancelled = true;
       task.destroy();
-      pdfRef.current = null;
     };
   }, [url]);
 
-  // 현재 페이지를 본문에 렌더 + 썸네일 활성표시/스크롤.
+  // 현재 페이지를 본문에 렌더 + 활성 썸네일로 스크롤.
   useEffect(() => {
-    const pdf = pdfRef.current;
     const canvas = mainRef.current;
-    if (!pdf || !canvas || pageCount === 0) return;
+    if (!pdf || !canvas) return;
     let cancelled = false;
     (async () => {
       const page = await pdf.getPage(current);
@@ -101,24 +114,20 @@ export function PdfViewer({ url }: { url: string; file: FileRecord }) {
       } catch {
         /* 렌더 취소 무시 */
       }
-      thumbsRef.current?.querySelectorAll<HTMLButtonElement>('.doc-pdf-thumb-btn').forEach((el) => {
-        const active = el.dataset.page === String(current);
-        el.style.borderColor = active ? 'var(--accent)' : 'transparent';
-        if (active) el.scrollIntoView({ block: 'nearest' });
-      });
+      thumbsRef.current?.querySelector(`[data-page="${current}"]`)?.scrollIntoView({ block: 'nearest' });
     })();
     return () => {
       cancelled = true;
     };
-  }, [current, pageCount]);
+  }, [pdf, current]);
 
   const go = (d: number) => setCurrent((c) => Math.min(pageCount, Math.max(1, c + d)));
 
   return (
     <div className="doc-stage" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       {error && <p className="doc-error">PDF를 열 수 없습니다: {error}</p>}
-      {!error && pageCount === 0 && <p className="muted doc-loading">PDF 불러오는 중…</p>}
-      {pageCount > 0 && (
+      {!error && !pdf && <p className="muted doc-loading">PDF 불러오는 중…</p>}
+      {pdf && pageCount > 0 && (
         <>
           <div
             style={{
@@ -155,7 +164,11 @@ export function PdfViewer({ url }: { url: string; file: FileRecord }) {
               ref={thumbsRef}
               className="doc-pdf-thumbs"
               style={{ width: 150, overflowY: 'auto', borderRight: '1px solid var(--border)', padding: 8 }}
-            />
+            >
+              {Array.from({ length: pageCount }, (_, i) => i + 1).map((n) => (
+                <Thumb key={n} pdf={pdf} n={n} active={n === current} onClick={() => setCurrent(n)} />
+              ))}
+            </div>
             <div
               style={{
                 flex: 1,
