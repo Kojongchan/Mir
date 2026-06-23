@@ -23,8 +23,8 @@ const APS_CLIENT_SECRET = process.env.APS_CLIENT_SECRET;
 const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// 뷰어 전용 최소 권한. (ACC 데이터 탐색까지 하려면 data:read 도 추가)
-const SCOPE = 'viewables:read';
+// 뷰어 + ACC 데이터(파일 트리) 조회용 읽기 권한.
+const SCOPE = 'data:read viewables:read';
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
