@@ -18,6 +18,7 @@ import { Quantities } from './pages/Quantities';
 import { Admin } from './pages/Admin';
 import { FileViewer } from './pages/FileViewer';
 import { FragmentsSpike } from './pages/FragmentsSpike';
+import { ApsViewerSpike } from './pages/ApsViewerSpike';
 
 function Protected({ children }: { children: ReactElement }) {
   const { session, loading } = useAuth();
@@ -109,6 +110,14 @@ export default function App() {
             element={
               <Protected>
                 <FragmentsSpike />
+              </Protected>
+            }
+          />
+          <Route
+            path="/aps"
+            element={
+              <Protected>
+                <ApsViewerSpike />
               </Protected>
             }
           />
