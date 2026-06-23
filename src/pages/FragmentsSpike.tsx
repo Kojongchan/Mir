@@ -33,6 +33,17 @@ export function FragmentsSpike() {
         world.scene.setup();
         world.scene.three.background = new THREE.Color(0xffffff);
 
+        // 동적 해상도: 회전/이동 중에는 낮은 픽셀비로 그려 FPS↑, 멈추면 선명하게 복원.
+        const renderer = world.renderer.three;
+        const maxDpr = Math.min(window.devicePixelRatio || 1, 2);
+        const setRes = (r: number) => {
+          renderer.setPixelRatio(r);
+          renderer.setSize(container.clientWidth, container.clientHeight, false);
+        };
+        setRes(maxDpr);
+        world.camera.controls.addEventListener('control', () => setRes(Math.min(maxDpr, 1)));
+        world.camera.controls.addEventListener('rest', () => setRes(maxDpr));
+
         const fragments = components.get(OBC.FragmentsManager);
         fragments.init('/thatopen/worker.mjs');
 
