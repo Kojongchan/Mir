@@ -105,6 +105,7 @@ export function AccModels() {
   const urnFromUrl = params.get('urn') ?? '';
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<unknown>(null);
+  const resizeObsRef = useRef<ResizeObserver | null>(null);
   const [urn, setUrn] = useState(urnFromUrl);
   const [status, setStatus] = useState('APS Viewer 준비…');
 
@@ -390,6 +391,17 @@ export function AccModels() {
         viewer.start();
         // 라이트회색 기본 배경이 앱 다크 테마와 안 맞아 어두운 그라데이션으로 통일.
         viewer.setBackgroundColor(40, 48, 64, 20, 26, 38);
+        // ACC 와 동일한 휠 방향(휠 위=확대) + 커서 기준 줌.
+        try {
+          viewer.setReverseZoomDirection(true);
+          viewer.navigation.setZoomTowardsPivot(true);
+        } catch {
+          /* 일부 버전 미지원 무시 */
+        }
+        // 패널 토글/리사이즈/창크기 변경 시 캔버스를 컨테이너에 맞춤(잘림·빈 박스 방지).
+        const ro = new ResizeObserver(() => viewer.resize());
+        ro.observe(containerRef.current);
+        resizeObsRef.current = ro;
         viewerRef.current = viewer;
 
         // URL 에 urn 이 직접 오면 그걸 우선(딥링크).
@@ -441,12 +453,23 @@ export function AccModels() {
     })();
     return () => {
       cancelled = true;
+      resizeObsRef.current?.disconnect();
+      resizeObsRef.current = null;
       const v = viewerRef.current as any;
       if (v?.finish) v.finish();
       viewerRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 패널 열고/닫기·폭 변경 직후 캔버스 크기 재계산(메인뷰가 빈틈 없이 채워지게).
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      const v = viewerRef.current as any;
+      if (v?.resize) v.resize();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [showBrowser, panelW]);
 
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
