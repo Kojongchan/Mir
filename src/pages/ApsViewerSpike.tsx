@@ -47,6 +47,21 @@ async function getApsToken(): Promise<{ access_token: string; expires_in: number
   return res.json();
 }
 
+/** ACC Data Management 프록시 호출(서버가 2-legged 처리). */
+async function accFetch(params: Record<string, string>): Promise<any> {
+  const { data } = await supabase.auth.getSession();
+  const qs = new URLSearchParams(params).toString();
+  const res = await fetch(`/api/aps-acc?${qs}`, {
+    headers: data.session ? { authorization: `Bearer ${data.session.access_token}` } : {},
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `ACC 오류(${res.status})`);
+  return body;
+}
+
+type Named = { id: string; name: string };
+type Item = { id: string; name: string; urn: string | null };
+
 export function ApsViewerSpike() {
   const [params] = useSearchParams();
   const urnFromUrl = params.get('urn') ?? '';
@@ -54,6 +69,91 @@ export function ApsViewerSpike() {
   const viewerRef = useRef<unknown>(null);
   const [urn, setUrn] = useState(urnFromUrl);
   const [status, setStatus] = useState('APS Viewer 준비…');
+
+  // ACC 탐색 상태.
+  const [showBrowser, setShowBrowser] = useState(!urnFromUrl);
+  const [hubs, setHubs] = useState<Named[]>([]);
+  const [hub, setHub] = useState('');
+  const [projects, setProjects] = useState<Named[]>([]);
+  const [project, setProject] = useState('');
+  const [folders, setFolders] = useState<Named[]>([]); // 현재 폴더의 하위 폴더
+  const [folderPath, setFolderPath] = useState<Named[]>([]); // 브레드크럼
+  const [items, setItems] = useState<Item[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  const loadHubs = async () => {
+    setBusy(true);
+    try {
+      const { hubs } = await accFetch({ action: 'hubs' });
+      setHubs(hubs);
+    } catch (e) {
+      setStatus(`허브 조회 실패: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pickHub = async (h: string) => {
+    setHub(h);
+    setProject('');
+    setProjects([]);
+    setFolders([]);
+    setFolderPath([]);
+    setItems([]);
+    if (!h) return;
+    setBusy(true);
+    try {
+      const { projects } = await accFetch({ action: 'projects', hub: h });
+      setProjects(projects);
+    } catch (e) {
+      setStatus(`프로젝트 조회 실패: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pickProject = async (p: string) => {
+    setProject(p);
+    setFolders([]);
+    setFolderPath([]);
+    setItems([]);
+    if (!p) return;
+    setBusy(true);
+    try {
+      const { folders } = await accFetch({ action: 'topFolders', hub, project: p });
+      setFolders(folders);
+      setFolderPath([]);
+      setItems([]);
+    } catch (e) {
+      setStatus(`폴더 조회 실패: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openFolder = async (f: Named, depth: number) => {
+    setBusy(true);
+    try {
+      const { folders, items } = await accFetch({ action: 'contents', project, folder: f.id });
+      setFolders(folders);
+      setItems(items);
+      setFolderPath((prev) => [...prev.slice(0, depth), f]);
+    } catch (e) {
+      setStatus(`내용 조회 실패: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pickItem = (it: Item) => {
+    if (!it.urn) {
+      setStatus(`${it.name}: 변환된 뷰가 없습니다(ACC에서 처리 중일 수 있음).`);
+      return;
+    }
+    setUrn(it.urn);
+    setShowBrowser(false);
+    void openModel(it.urn);
+  };
 
   const openModel = async (rawUrn: string) => {
     const Autodesk = (window as unknown as { Autodesk?: any }).Autodesk;
@@ -100,8 +200,9 @@ export function ApsViewerSpike() {
         const viewer = new Autodesk.Viewing.GuiViewer3D(containerRef.current);
         viewer.start();
         viewerRef.current = viewer;
-        setStatus(urnFromUrl ? 'URN 로딩…' : 'URN 을 입력하세요(ACC/OSS 인코딩 값).');
+        setStatus(urnFromUrl ? 'URN 로딩…' : 'ACC에서 모델을 선택하세요.');
         if (urnFromUrl) void openModel(urnFromUrl);
+        else void loadHubs();
       } catch (e) {
         setStatus(`초기화 오류: ${(e as Error).message}`);
       }
@@ -128,9 +229,106 @@ export function ApsViewerSpike() {
         <button onClick={() => void openModel(urn)} style={{ padding: '4px 10px', borderRadius: 6 }}>
           열기
         </button>
+        <button
+          onClick={() => setShowBrowser((s) => !s)}
+          style={{ padding: '4px 10px', borderRadius: 6 }}
+        >
+          {showBrowser ? '탐색 닫기' : 'ACC 탐색'}
+        </button>
         <span style={{ fontSize: 12, opacity: 0.85 }}>{status}</span>
       </div>
-      <div ref={containerRef} style={{ position: 'relative', flex: 1 }} />
+      <div style={{ position: 'relative', flex: 1, display: 'flex' }}>
+        {showBrowser && (
+          <div
+            style={{
+              width: 320,
+              borderRight: '1px solid #1f2937',
+              background: '#0b1220',
+              color: '#e5e7eb',
+              padding: 10,
+              overflowY: 'auto',
+              fontSize: 13,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+              <strong>ACC 탐색</strong>
+              {busy && <span style={{ opacity: 0.7 }}>로딩…</span>}
+            </div>
+
+            <label style={{ display: 'block', marginTop: 8 }}>허브</label>
+            <select value={hub} onChange={(e) => void pickHub(e.target.value)} style={selStyle}>
+              <option value="">선택…</option>
+              {hubs.map((h) => (
+                <option key={h.id} value={h.id}>
+                  {h.name}
+                </option>
+              ))}
+            </select>
+
+            {projects.length > 0 && (
+              <>
+                <label style={{ display: 'block', marginTop: 8 }}>프로젝트</label>
+                <select value={project} onChange={(e) => void pickProject(e.target.value)} style={selStyle}>
+                  <option value="">선택…</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
+
+            {project && (
+              <div style={{ marginTop: 10, fontSize: 12, opacity: 0.85 }}>
+                📁 {folderPath.length ? folderPath.map((f) => f.name).join(' / ') : '최상위'}
+              </div>
+            )}
+
+            <ul style={{ listStyle: 'none', padding: 0, margin: '6px 0' }}>
+              {folders.map((f) => (
+                <li key={f.id}>
+                  <button
+                    onClick={() => void openFolder(f, folderPath.length)}
+                    style={rowStyle}
+                  >
+                    📂 {f.name}
+                  </button>
+                </li>
+              ))}
+              {items.map((it) => (
+                <li key={it.id}>
+                  <button onClick={() => pickItem(it)} style={{ ...rowStyle, opacity: it.urn ? 1 : 0.5 }}>
+                    🧱 {it.name}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div ref={containerRef} style={{ position: 'relative', flex: 1 }} />
+      </div>
     </div>
   );
 }
+
+const selStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '4px 6px',
+  borderRadius: 6,
+  marginTop: 2,
+  background: '#111827',
+  color: '#e5e7eb',
+  border: '1px solid #374151',
+};
+const rowStyle: React.CSSProperties = {
+  display: 'block',
+  width: '100%',
+  textAlign: 'left',
+  padding: '4px 6px',
+  background: 'transparent',
+  color: '#e5e7eb',
+  border: 'none',
+  cursor: 'pointer',
+  borderRadius: 4,
+};
