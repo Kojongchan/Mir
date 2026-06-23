@@ -20,3 +20,12 @@ for (const f of files) {
     console.warn(`[copy-wasm] missing ${from}`);
   }
 }
+
+// ThatOpen Fragments worker (성능 마이그레이션 spike) — served from /thatopen/.
+const fragWorker = resolve(root, 'node_modules/@thatopen/fragments/dist/Worker/worker.mjs');
+const fragDest = resolve(root, 'public/thatopen');
+if (existsSync(fragWorker)) {
+  mkdirSync(fragDest, { recursive: true });
+  copyFileSync(fragWorker, resolve(fragDest, 'worker.mjs'));
+  console.log('[copy-wasm] fragments worker.mjs -> public/thatopen/');
+}
