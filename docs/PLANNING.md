@@ -13,10 +13,28 @@
 
 ---
 
+## ⚡ 0-A. 전략 전환 (S46, 2026-06) — 3D/저장소 = APS + ACC  ★기획 전제 변경★
+> 기존 "web-ifc 자체 뷰어" 전제 위에 **Autodesk APS Viewer + ACC** 가 올라왔다.
+> 자세한 배경·완료 범위는 `ROADMAP.md` 상단 '전략 전환' + `DECISIONS.md` D18.
+
+- **이유**: 자체 엔진으론 텍스처·대용량·rvt/nwd 네이티브가 어렵다. 사용자가 **ACC 구독 보유** →
+  ACC 변환 SVF2를 우리가 읽어 보여줌. **외부인은 오토데스크 계정 불필요(우리 서버가 토큰 브로커),
+  비용 0(ACC 구독 재사용)**.
+- **완료(S46, PR #87)**: `ACC 모델` 메뉴 — 프로젝트별 ACC 고정·폴더 트리·파일 종류별 분기
+  (모델=APS Viewer / 문서=우리 뷰어).
+- **앞으로 기획 시 전제**:
+  - 무거운 모델/도면(rvt·nwd·dwg) = **APS**, 문서·PDF·미디어 = **우리 뷰어**.
+  - 파일 저장소는 **ACC로 일원화** 방향(자료관리=ACC 폴더, 업로드도 ACC). 동기화 불필요.
+  - 우리 고유 가치(4D·간섭·물량·이슈·기성·CDE·권한)는 **Supabase 유지**, APS 위에 이식/연계.
+  - web-ifc 자체 뷰어는 **무료·IFC 백업**으로 점진 은퇴.
+- **다음 기획 후보**: ① 자료관리 ACC 일원화(업로드 포함) ② 4D·간섭·이슈핀·물량 APS 이식
+  ③ PPT(pptx) 뷰어 ④ 상단 PDF 페이지네비 등 ACC 앱 UI 보강.
+
 ## 0. 현재 위치 (요약)
 - ✅ Phase 0 인증/권한(RLS)/저장 · Phase 1 3D IFC 뷰어 · Phase 2 4D 시뮬레이션(S4).
-- 스택: Vite+React+TS / Three.js + web-ifc(WASM) / Supabase(Auth·PG·Storage·RLS) / Vercel.
+- 스택: Vite+React+TS / Three.js + web-ifc(WASM) **+ APS Viewer/ACC(S46)** / Supabase / Vercel.
 - 뷰어는 **web-ifc 직접 사용**(D2) → 요소(expressID) 단위 정밀 제어가 4D/장비 시뮬의 핵심.
+  (S46 이후 무거운 모델은 APS로 분담, 자체 뷰어는 IFC 백업.)
 
 ---
 
