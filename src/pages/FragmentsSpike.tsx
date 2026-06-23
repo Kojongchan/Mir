@@ -36,14 +36,20 @@ export function FragmentsSpike() {
         const fragments = components.get(OBC.FragmentsManager);
         fragments.init('/thatopen/worker.mjs');
 
-        // 카메라가 멈출 때 Fragments LOD/컬링 갱신.
-        world.camera.controls.addEventListener('rest', () => fragments.core.update(true));
+        // 회전/이동 중에도 LOD·컬링을 계속 갱신(멈출 때만 하면 회전 중 사라짐).
+        world.camera.controls.addEventListener('control', () => fragments.core.update());
         world.camera.controls.addEventListener('update', () => fragments.core.update());
+        world.camera.controls.addEventListener('rest', () => fragments.core.update(true));
 
-        // 모델이 추가되면 씬에 붙이고 카메라를 연결.
+        // 모델이 추가되면 씬에 붙이고, 양면 렌더로(뒷면 사라짐 방지) + 카메라 연결.
         fragments.list.onItemSet.add(({ value: model }) => {
           model.useCamera(world.camera.three);
           world.scene.three.add(model.object);
+          model.object.traverse((o) => {
+            const mat = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+            if (!mat) return;
+            for (const mm of Array.isArray(mat) ? mat : [mat]) mm.side = THREE.DoubleSide;
+          });
           fragments.core.update(true);
         });
 
@@ -62,17 +68,22 @@ export function FragmentsSpike() {
           setStatus(`Fragments 변환·로드 중: ${m.name} (${i + 1}/${models.length})`);
           const bytes = await downloadModelBytes(m.storage_path, m.bucket);
           if (cancelled) return;
-          await ifcLoader.load(bytes, false, m.name);
+          // coordinate=true: 원점으로 재정렬해 georeference 대좌표의 깊이/클리핑·작게보임 방지.
+          await ifcLoader.load(bytes, true, m.name);
         }
         if (cancelled) return;
 
-        // 전체 맞춤.
-        try {
-          await world.camera.controls.fitToBox(world.scene.three, false);
-        } catch {
-          /* 빈 박스 등은 무시 */
-        }
-        fragments.core.update(true);
+        // 전체 맞춤(로드 직후 + 살짝 뒤 한 번 더: Fragments 후처리 반영).
+        const fit = async () => {
+          try {
+            await world.camera.controls.fitToBox(world.scene.three, false);
+          } catch {
+            /* 빈 박스 등은 무시 */
+          }
+          fragments.core.update(true);
+        };
+        await fit();
+        setTimeout(() => void fit(), 600);
         setStatus(`완료 — 모델 ${models.length}개 (회전 부드러움 비교)`);
       } catch (e) {
         setStatus(`오류: ${errMessage(e)} (콘솔 로그를 알려주시면 바로 보완합니다)`);
