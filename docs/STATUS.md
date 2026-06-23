@@ -2,7 +2,21 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-22 · **S45 뷰어 고급기능 3차**(좌표오프셋·diff색상/투명도·업로드 진행률).
+**마지막 업데이트**: 2026-06-23 · **S46 APS/ACC 뷰어 전환 — 1단계**(외부 계정 없이 ACC 모델 조회).
+- **배경/결정(D18)**: 자체 ThatOpen 뷰어로는 텍스처·대용량·rvt/nwd 네이티브를 무료로 풀기 어려움.
+  사용자가 ACC 구독 보유 → **APS Viewer + ACC(2-legged) 임베드**로 전환 확정. **추가 비용 0**
+  (ACC가 자동 변환한 결과를 우리 앱이 읽기만 함 — 인증·DM·SVF2 스트리밍 무료). 외부 사용자는
+  **오토데스크 계정 불필요**(우리 서버가 토큰 브로커, MIR 로그인만으로 조회 → ACC 좌석 미소모).
+- **1단계 완료(branch feature/aps-viewer)**: 서버리스 2-legged 토큰(`api/aps-token.ts`) +
+  Data Management 프록시(`api/aps-acc.ts`) + 프로젝트 메뉴 **🅰 ACC 모델**(`/project/:id/acc`,
+  `pages/AccModels.tsx`: 허브→프로젝트→폴더→모델 선택, 변환된 URN 자동 해석). 사용자 검증 OK
+  (쌍용건설 허브에서 모델 로드·텍스처·성능 확인). typecheck·build 통과.
+- **운영 전제**: Vercel env `APS_CLIENT_ID`/`APS_CLIENT_SECRET`(Preview·Production), ACC 사용자
+  지정 통합에 앱 Client ID 승인(완료). 자체 변환(OSS) 안 함 → 변환 크레딧 미소모.
+- **다음(2단계~ 점진 이식)**: 이슈 핀 → 4D → 간섭 → 물량을 APS Viewer 위로 순차 이식 후 IfcViewer
+  경로 은퇴. MIR 프로젝트 ↔ ACC 프로젝트 매핑, 외부 공유 링크(익명 뷰) 검토.
+
+**(이전) S45 뷰어 고급기능 3차**(좌표오프셋·diff색상/투명도·업로드 진행률).
 - **공통 좌표 오프셋**(#80): 여러 모델이 원점에 겹쳐 쌓이던 버그 → 첫 모델 기준 공통 sceneOffset 으로 상대 실좌표 보존.
 - **버전 diff 색상/투명도**(#80): 신규=청록·삭제=주황·동일=회색(간섭/이슈색 회피) + 추가/삭제/동일 투명도 슬라이더.
 - **업로드 진행률 0~100%**(#81): createSignedUploadUrl + XHR(FormData) 로 onprogress.

@@ -27,5 +27,7 @@
 
 | D17 | **2D 도면은 A안 = PDF/DXF 우선(무료·순수 프론트), DWG 직접열기는 변환 필요 → S17(APS)로 분리**. PDF=pdf.js, DXF=자체 경량 캔버스 렌더(`dxf-parser`). 도면 핀은 정규화 좌표(0..1, D16 동일 원칙)로 저장해 줌/팬·해상도 무관. **S41**(`0018_drawings.sql`) | DWG는 독점 바이너리라 브라우저 직접 파싱 불가(LibreDWG-WASM은 GPL·불안정). 현장 수요의 대부분은 PDF/DXF로 무비용 커버. DWG는 APS(유료 클라우드 번역, 백엔드 OAuth 필요)·ODA 서버변환 등 변환 파이프라인이 필요해 예산/계정 결정과 함께 S17에서 처리 |
 
+| D18 | **3D 뷰어를 APS(Autodesk Platform Services) Viewer + ACC(2-legged)로 전환**. 사용자 ACC 구독 보유 → ACC Docs가 자동 변환한 SVF2(텍스처·rvt/nwd/dwg 네이티브)를 우리 서버(2-legged client_credentials, `viewables:read`+`data:read`)가 토큰 브로커로 읽어 **APS Viewer로 임베드**. 외부 사용자는 **오토데스크 계정 불필요**(MIR/Supabase 로그인만 → ACC 좌석 미소모). **추가 비용 0**(ACC 변환 결과 재사용·인증/DM/스트리밍 무료, 자체 OSS 변환은 안 함). 실행은 **단계적**: 1단계=정식 메뉴 'ACC 모델'(`/project/:id/acc`), 이후 이슈핀·4D·간섭·물량을 APS 위로 이식하며 IfcViewer 은퇴. **S46** | 자체 ThatOpen/web-ifc 뷰어로는 텍스처·대용량·네이티브 포맷을 무료로 풀기 어렵고 사용자의 반복 통증(렉·텍스처깨짐·rvt). ACC 자산을 그대로 활용해 3대 문제+외부공유를 동시 해결, 추가비용 없이. Secret은 서버리스(edge)에만. 트레이드오프=벤더 종속(3D 데이터·렌더 Autodesk), 비-3D 기능(4D·QTO·이슈·CDE)은 Supabase로 유지하고 Viewer Extension으로 연계 |
+
 ## 우선순위 (사용자 확정 · 갱신)
 뷰어 → 4D → 충돌검사 → CDE/PMIS 포털 → 리뷰도구 → **장비운용(강점)은 기획안 최후로 연기**(S16, 사용자 결정) → VR. 포맷은 **IFC**.

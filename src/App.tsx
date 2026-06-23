@@ -17,6 +17,7 @@ import { Drawings } from './pages/Drawings';
 import { Quantities } from './pages/Quantities';
 import { Admin } from './pages/Admin';
 import { FileViewer } from './pages/FileViewer';
+import { AccModels } from './pages/AccModels';
 
 function Protected({ children }: { children: ReactElement }) {
   const { session, loading } = useAuth();
@@ -79,6 +80,7 @@ export default function App() {
                 left module rail stays put and only the right side changes. */}
             {/* 통합모델(3D) · 공정관리(4D) · 간섭체크 — 각 모듈이 자기 용도의
                 모델 세트만 보도록 mode 로 구분(S33). 'viewer' 는 4D 하위호환 별칭. */}
+            <Route path="acc" element={<AccModels />} />
             <Route path="model" element={<Workspace mode="integrated" />} />
             <Route path="viewer" element={<Workspace mode="4d" />} />
             <Route path="clash" element={<Workspace mode="clash" />} />
