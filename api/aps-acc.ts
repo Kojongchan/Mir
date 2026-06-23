@@ -35,6 +35,11 @@ function toBase64Url(s: string): string {
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+// 자연 정렬: "1, 2, 3, … 10, 11" (사전식 "1,10,2" 방지).
+function byName(a: { name?: string }, b: { name?: string }): number {
+  return (a.name ?? '').localeCompare(b.name ?? '', undefined, { numeric: true, sensitivity: 'base' });
+}
+
 async function mintToken(): Promise<string> {
   const basic = btoa(`${APS_CLIENT_ID}:${APS_CLIENT_SECRET}`);
   const res = await fetch(`${APS}/authentication/v2/token`, {
@@ -88,7 +93,10 @@ export default async function handler(req: Request): Promise<Response> {
         `/project/v1/hubs/${encodeURIComponent(hub)}/projects/${encodeURIComponent(project)}/topFolders`,
         token,
       );
-      return json({ folders: (d.data ?? []).map((f: any) => ({ id: f.id, name: f.attributes?.displayName ?? f.attributes?.name })) });
+      const folders = (d.data ?? [])
+        .map((f: any) => ({ id: f.id, name: f.attributes?.displayName ?? f.attributes?.name }))
+        .sort(byName);
+      return json({ folders });
     }
     if (action === 'contents') {
       const d = await dm(
@@ -97,7 +105,8 @@ export default async function handler(req: Request): Promise<Response> {
       );
       const folders = (d.data ?? [])
         .filter((x: any) => x.type === 'folders')
-        .map((x: any) => ({ id: x.id, name: x.attributes?.displayName ?? x.attributes?.name }));
+        .map((x: any) => ({ id: x.id, name: x.attributes?.displayName ?? x.attributes?.name }))
+        .sort(byName);
       const items = (d.data ?? [])
         .filter((x: any) => x.type === 'items')
         .map((x: any) => {
@@ -107,7 +116,8 @@ export default async function handler(req: Request): Promise<Response> {
             name: x.attributes?.displayName ?? x.attributes?.name,
             urn: tip ? toBase64Url(tip) : null,
           };
-        });
+        })
+        .sort(byName);
       return json({ folders, items });
     }
     return json({ error: 'unknown action' }, 400);

@@ -92,6 +92,7 @@ export function AccModels() {
   // 프로젝트별 ACC 고정 매핑(0020). pinned = 허브·프로젝트가 고정된 상태.
   const [pinnedHubName, setPinnedHubName] = useState('');
   const [pinnedProjectName, setPinnedProjectName] = useState('');
+  const [pinnedRootName, setPinnedRootName] = useState('');
   const [defaultName, setDefaultName] = useState('');
   const [openName, setOpenName] = useState('');
   const pinned = !!pinnedHubName && !!pinnedProjectName;
@@ -217,6 +218,22 @@ export function AccModels() {
     }
   };
 
+  // 관리자: 현재 폴더를 '시작 폴더'로 고정(사용자는 그 안쪽만 봄).
+  const pinFolder = async () => {
+    const cur = folderPath[folderPath.length - 1];
+    if (!cur) {
+      setStatus('고정할 폴더 안으로 먼저 들어가세요.');
+      return;
+    }
+    try {
+      await setProjectAcc(projectId, { acc_root_folder_id: cur.id, acc_root_folder_name: cur.name });
+      setPinnedRootName(cur.name);
+      setStatus(`시작 폴더 고정: ${cur.name}`);
+    } catch (e) {
+      setStatus(`폴더 고정 실패: ${(e as Error).message}`);
+    }
+  };
+
   // 관리자: 현재 연 모델을 '기본(자동 열림)' 모델로 지정.
   const setAsDefault = async () => {
     if (!urn) {
@@ -292,8 +309,29 @@ export function AccModels() {
           if (acc.acc_hub_id && acc.acc_project_id) {
             setHub(acc.acc_hub_id);
             setProject(acc.acc_project_id);
+            setPinnedRootName(acc.acc_root_folder_name ?? '');
             void resolveNames(acc.acc_hub_id, acc.acc_project_id);
-            void loadTopFolders(acc.acc_hub_id, acc.acc_project_id);
+            if (acc.acc_root_folder_id) {
+              // 고정된 시작 폴더 안쪽부터 보여준다(ACC 내부 폴더 노출 방지).
+              const root = { id: acc.acc_root_folder_id, name: acc.acc_root_folder_name ?? '시작 폴더' };
+              setBusy(true);
+              try {
+                const { folders, items } = await accFetch({
+                  action: 'contents',
+                  project: acc.acc_project_id,
+                  folder: root.id,
+                });
+                setFolders(folders);
+                setItems(items);
+                setFolderPath([root]);
+              } catch (e) {
+                setStatus(`시작 폴더 로드 실패: ${(e as Error).message}`);
+              } finally {
+                setBusy(false);
+              }
+            } else {
+              void loadTopFolders(acc.acc_hub_id, acc.acc_project_id);
+            }
             if (acc.acc_default_urn) {
               // 관리자가 지정한 기본 모델 자동 오픈.
               setUrn(acc.acc_default_urn);
@@ -423,6 +461,17 @@ export function AccModels() {
             {project && (
               <div style={{ marginTop: 10, fontSize: 12, opacity: 0.85 }}>
                 📁 {folderPath.length ? folderPath.map((f) => f.name).join(' / ') : '최상위'}
+              </div>
+            )}
+
+            {isAdmin && folderPath.length > 0 && (
+              <button onClick={() => void pinFolder()} style={{ ...btnStyle, width: '100%', marginTop: 6 }}>
+                📌 이 폴더를 시작 폴더로 고정
+              </button>
+            )}
+            {isAdmin && pinnedRootName && (
+              <div style={{ marginTop: 4, fontSize: 11, color: 'var(--muted)' }}>
+                시작 폴더: {pinnedRootName}
               </div>
             )}
 

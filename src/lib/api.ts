@@ -12,6 +12,8 @@ export interface ProjectAcc {
   acc_project_id: string | null;
   acc_default_urn: string | null;
   acc_default_name: string | null;
+  acc_root_folder_id: string | null;
+  acc_root_folder_name: string | null;
 }
 
 const EMPTY_ACC: ProjectAcc = {
@@ -19,13 +21,15 @@ const EMPTY_ACC: ProjectAcc = {
   acc_project_id: null,
   acc_default_urn: null,
   acc_default_name: null,
+  acc_root_folder_id: null,
+  acc_root_folder_name: null,
 };
 
-/** 관리자가 고정한 ACC 허브/프로젝트/기본모델을 읽는다(0020 미적용 시 null). */
+/** 관리자가 고정한 ACC 허브/프로젝트/시작폴더/기본모델을 읽는다(미적용 시 null). */
 export async function getProjectAcc(projectId: string): Promise<ProjectAcc> {
   const { data, error } = await supabase
     .from('projects')
-    .select('acc_hub_id, acc_project_id, acc_default_urn, acc_default_name')
+    .select('acc_hub_id, acc_project_id, acc_default_urn, acc_default_name, acc_root_folder_id, acc_root_folder_name')
     .eq('id', projectId)
     .single();
   if (error || !data) return EMPTY_ACC; // 0020 미적용 폴백
