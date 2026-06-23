@@ -1,13 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../auth/AuthProvider';
+import { getProjectAcc, setProjectAcc } from '../lib/api';
 
 /**
- * APS(Autodesk Platform Services) Viewer 스파이크 — ACC/OSS 에 있는 모델(rvt·nwd·
- * dwg·ifc, 텍스처 유지·SVF2 스트리밍)을 우리 사이트에서 띄운다. 2-legged 토큰은
- * 서버(/api/aps-token)가 발급하므로 **외부 사용자는 오토데스크 계정이 필요 없다**.
+ * ACC 모델 (APS Viewer) — ACC 에 있는 모델(rvt·nwd·dwg·ifc, 텍스처 유지·SVF2)을
+ * 우리 사이트에서 띄운다. 2-legged 토큰은 서버(/api/aps-token)가 발급하므로
+ * **외부 사용자는 오토데스크 계정이 필요 없다**.
  *
- * 사용: /aps?urn=<base64 URN>  (URN 은 ACC 아이템 버전/OSS 오브젝트의 인코딩 값)
+ * 프로젝트별 ACC 고정(0020): 관리자가 허브·프로젝트를 이 MIR 프로젝트에 고정하고
+ * '기본 모델'을 지정하면, 일반 사용자는 그 범위만(전체 ACC 탐색 없이) 보고 기본
+ * 모델이 자동으로 열린다. 관리자는 좌측 패널에서 자유 탐색·고정·기본지정 가능.
+ *
  * 사전조건: Vercel 환경변수 APS_CLIENT_ID / APS_CLIENT_SECRET + ACC 앱 통합 승인.
  */
 const VIEWER_VER = '7.*';
@@ -63,6 +68,9 @@ type Named = { id: string; name: string };
 type Item = { id: string; name: string; urn: string | null };
 
 export function AccModels() {
+  const { projectId = '' } = useParams();
+  const { profile } = useAuth();
+  const isAdmin = !!profile?.is_admin;
   const [params] = useSearchParams();
   const urnFromUrl = params.get('urn') ?? '';
   const containerRef = useRef<HTMLDivElement>(null);
@@ -80,6 +88,13 @@ export function AccModels() {
   const [folderPath, setFolderPath] = useState<Named[]>([]); // 브레드크럼
   const [items, setItems] = useState<Item[]>([]);
   const [busy, setBusy] = useState(false);
+
+  // 프로젝트별 ACC 고정 매핑(0020). pinned = 허브·프로젝트가 고정된 상태.
+  const [pinnedHubName, setPinnedHubName] = useState('');
+  const [pinnedProjectName, setPinnedProjectName] = useState('');
+  const [defaultName, setDefaultName] = useState('');
+  const [openName, setOpenName] = useState('');
+  const pinned = !!pinnedHubName && !!pinnedProjectName;
 
   const loadHubs = async () => {
     setBusy(true);
@@ -151,8 +166,71 @@ export function AccModels() {
       return;
     }
     setUrn(it.urn);
+    setOpenName(it.name);
     setShowBrowser(false);
     void openModel(it.urn);
+  };
+
+  // 지정된 허브/프로젝트의 최상위 폴더를 바로 연다(고정 매핑 경로).
+  const loadTopFolders = async (h: string, p: string) => {
+    setBusy(true);
+    try {
+      const { folders } = await accFetch({ action: 'topFolders', hub: h, project: p });
+      setFolders(folders);
+      setFolderPath([]);
+      setItems([]);
+    } catch (e) {
+      setStatus(`폴더 조회 실패: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 고정된 허브/프로젝트 id → 표시용 이름 해석(+ 관리자 변경용 드롭다운 채움).
+  const resolveNames = async (h: string, p: string) => {
+    try {
+      const { hubs } = await accFetch({ action: 'hubs' });
+      setHubs(hubs);
+      setPinnedHubName(hubs.find((x: Named) => x.id === h)?.name ?? h);
+      const { projects } = await accFetch({ action: 'projects', hub: h });
+      setProjects(projects);
+      setPinnedProjectName(projects.find((x: Named) => x.id === p)?.name ?? p);
+    } catch {
+      setPinnedHubName(h);
+      setPinnedProjectName(p);
+    }
+  };
+
+  // 관리자: 현재 선택한 허브·프로젝트를 이 MIR 프로젝트에 고정.
+  const pinCurrent = async () => {
+    if (!hub || !project) {
+      setStatus('허브·프로젝트를 먼저 선택하세요.');
+      return;
+    }
+    try {
+      await setProjectAcc(projectId, { acc_hub_id: hub, acc_project_id: project });
+      setPinnedHubName(hubs.find((x) => x.id === hub)?.name ?? hub);
+      setPinnedProjectName(projects.find((x) => x.id === project)?.name ?? project);
+      setStatus('이 프로젝트에 ACC 허브·프로젝트를 고정했습니다.');
+    } catch (e) {
+      setStatus(`고정 실패: ${(e as Error).message}`);
+    }
+  };
+
+  // 관리자: 현재 연 모델을 '기본(자동 열림)' 모델로 지정.
+  const setAsDefault = async () => {
+    if (!urn) {
+      setStatus('먼저 모델을 여세요.');
+      return;
+    }
+    const name = openName || '기본 모델';
+    try {
+      await setProjectAcc(projectId, { acc_default_urn: urn, acc_default_name: name });
+      setDefaultName(name);
+      setStatus(`기본 모델로 지정: ${name}`);
+    } catch (e) {
+      setStatus(`지정 실패: ${(e as Error).message}`);
+    }
   };
 
   const openModel = async (rawUrn: string) => {
@@ -202,9 +280,42 @@ export function AccModels() {
         // 라이트회색 기본 배경이 앱 다크 테마와 안 맞아 어두운 그라데이션으로 통일.
         viewer.setBackgroundColor(40, 48, 64, 20, 26, 38);
         viewerRef.current = viewer;
-        setStatus(urnFromUrl ? 'URN 로딩…' : 'ACC에서 모델을 선택하세요.');
-        if (urnFromUrl) void openModel(urnFromUrl);
-        else void loadHubs();
+
+        // URL 에 urn 이 직접 오면 그걸 우선(딥링크).
+        if (urnFromUrl) {
+          setStatus('URN 로딩…');
+          void openModel(urnFromUrl);
+        } else {
+          // 프로젝트별 ACC 고정 매핑을 적용.
+          const acc = await getProjectAcc(projectId);
+          if (cancelled) return;
+          if (acc.acc_hub_id && acc.acc_project_id) {
+            setHub(acc.acc_hub_id);
+            setProject(acc.acc_project_id);
+            void resolveNames(acc.acc_hub_id, acc.acc_project_id);
+            void loadTopFolders(acc.acc_hub_id, acc.acc_project_id);
+            if (acc.acc_default_urn) {
+              // 관리자가 지정한 기본 모델 자동 오픈.
+              setUrn(acc.acc_default_urn);
+              setOpenName(acc.acc_default_name ?? '');
+              setDefaultName(acc.acc_default_name ?? '');
+              setShowBrowser(false);
+              void openModel(acc.acc_default_urn);
+            } else {
+              setShowBrowser(true);
+              setStatus('폴더에서 모델을 선택하세요.');
+            }
+          } else if (isAdmin) {
+            // 매핑 없음 + 관리자 → 전체 탐색해서 고정 가능.
+            setShowBrowser(true);
+            void loadHubs();
+            setStatus('허브·프로젝트를 선택해 "이 프로젝트에 고정"을 누르세요.');
+          } else {
+            // 매핑 없음 + 일반 사용자 → 안내만.
+            setShowBrowser(false);
+            setStatus('관리자가 이 프로젝트의 ACC 모델을 아직 지정하지 않았습니다.');
+          }
+        }
       } catch (e) {
         setStatus(`초기화 오류: ${(e as Error).message}`);
       }
@@ -231,28 +342,22 @@ export function AccModels() {
           alignItems: 'center',
         }}
       >
-        <strong style={{ fontSize: 13 }}>🅰 ACC 모델 (APS)</strong>
-        <input
-          value={urn}
-          onChange={(e) => setUrn(e.target.value)}
-          placeholder="base64 URN (ACC item version / OSS object)"
-          style={{
-            flex: 1,
-            padding: '4px 8px',
-            borderRadius: 6,
-            border: '1px solid var(--border)',
-            background: 'var(--bg)',
-            color: 'var(--text)',
-            fontSize: 12,
-          }}
-        />
-        <button onClick={() => void openModel(urn)} style={btnStyle}>
-          열기
-        </button>
+        <strong style={{ fontSize: 13 }}>🅰 ACC 모델</strong>
+        {defaultName && (
+          <span style={{ fontSize: 12, color: 'var(--muted)' }}>기본: {defaultName}</span>
+        )}
+        <span style={{ flex: 1 }} />
+        {isAdmin && urn && (
+          <button onClick={() => void setAsDefault()} style={btnStyle} title="이 모델을 자동으로 열리게 지정">
+            ⭐ 기본 모델로 지정
+          </button>
+        )}
         <button onClick={() => setShowBrowser((s) => !s)} style={btnStyle}>
-          {showBrowser ? '탐색 닫기' : 'ACC 탐색'}
+          {showBrowser ? '탐색 닫기' : '📂 폴더'}
         </button>
-        <span style={{ fontSize: 12, color: 'var(--muted)' }}>{status}</span>
+        <span style={{ fontSize: 12, color: 'var(--muted)', maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {status}
+        </span>
       </div>
       <div style={{ position: 'relative', flex: 1, display: 'flex' }}>
         {showBrowser && (
@@ -268,32 +373,51 @@ export function AccModels() {
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-              <strong>ACC 탐색</strong>
+              <strong>{isAdmin ? 'ACC 탐색' : pinnedProjectName || 'ACC'}</strong>
               {busy && <span style={{ opacity: 0.7 }}>로딩…</span>}
             </div>
 
-            <label style={{ display: 'block', marginTop: 8 }}>허브</label>
-            <select value={hub} onChange={(e) => void pickHub(e.target.value)} style={selStyle}>
-              <option value="">선택…</option>
-              {hubs.map((h) => (
-                <option key={h.id} value={h.id}>
-                  {h.name}
-                </option>
-              ))}
-            </select>
-
-            {projects.length > 0 && (
+            {isAdmin ? (
               <>
-                <label style={{ display: 'block', marginTop: 8 }}>프로젝트</label>
-                <select value={project} onChange={(e) => void pickProject(e.target.value)} style={selStyle}>
+                {/* 관리자: 허브·프로젝트를 자유 선택하고 이 MIR 프로젝트에 고정 */}
+                <label style={{ display: 'block', marginTop: 8 }}>허브</label>
+                <select value={hub} onChange={(e) => void pickHub(e.target.value)} style={selStyle}>
                   <option value="">선택…</option>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
+                  {hubs.map((h) => (
+                    <option key={h.id} value={h.id}>
+                      {h.name}
                     </option>
                   ))}
                 </select>
+                {projects.length > 0 && (
+                  <>
+                    <label style={{ display: 'block', marginTop: 8 }}>프로젝트</label>
+                    <select value={project} onChange={(e) => void pickProject(e.target.value)} style={selStyle}>
+                      <option value="">선택…</option>
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+                {hub && project && (
+                  <button onClick={() => void pinCurrent()} style={{ ...btnStyle, width: '100%', marginTop: 8 }}>
+                    📌 이 프로젝트에 고정
+                  </button>
+                )}
+                {pinned && (
+                  <div style={{ marginTop: 6, fontSize: 11, color: 'var(--muted)' }}>
+                    고정됨: {pinnedHubName} / {pinnedProjectName}
+                  </div>
+                )}
               </>
+            ) : (
+              /* 일반 사용자: 고정된 프로젝트만(드롭다운 없이) */
+              <div style={{ marginTop: 4, fontSize: 12, color: 'var(--muted)' }}>
+                🏢 {pinnedHubName} / {pinnedProjectName}
+              </div>
             )}
 
             {project && (

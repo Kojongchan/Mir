@@ -6,6 +6,38 @@ export interface Project {
   code: string | null;
 }
 
+/** 프로젝트별 ACC(Autodesk) 고정 매핑 (0020). 미적용 시 전부 null 폴백. */
+export interface ProjectAcc {
+  acc_hub_id: string | null;
+  acc_project_id: string | null;
+  acc_default_urn: string | null;
+  acc_default_name: string | null;
+}
+
+const EMPTY_ACC: ProjectAcc = {
+  acc_hub_id: null,
+  acc_project_id: null,
+  acc_default_urn: null,
+  acc_default_name: null,
+};
+
+/** 관리자가 고정한 ACC 허브/프로젝트/기본모델을 읽는다(0020 미적용 시 null). */
+export async function getProjectAcc(projectId: string): Promise<ProjectAcc> {
+  const { data, error } = await supabase
+    .from('projects')
+    .select('acc_hub_id, acc_project_id, acc_default_urn, acc_default_name')
+    .eq('id', projectId)
+    .single();
+  if (error || !data) return EMPTY_ACC; // 0020 미적용 폴백
+  return { ...EMPTY_ACC, ...(data as Partial<ProjectAcc>) };
+}
+
+/** ACC 매핑 저장(관리자만 — projects update RLS). */
+export async function setProjectAcc(projectId: string, fields: Partial<ProjectAcc>): Promise<void> {
+  const { error } = await supabase.from('projects').update(fields).eq('id', projectId);
+  if (error) throw error;
+}
+
 export type ModelPurpose = 'integrated' | '4d' | 'clash';
 
 export interface ModelRecord {

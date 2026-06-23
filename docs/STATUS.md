@@ -13,8 +13,15 @@
   (쌍용건설 허브에서 모델 로드·텍스처·성능 확인). typecheck·build 통과.
 - **운영 전제**: Vercel env `APS_CLIENT_ID`/`APS_CLIENT_SECRET`(Preview·Production), ACC 사용자
   지정 통합에 앱 Client ID 승인(완료). 자체 변환(OSS) 안 함 → 변환 크레딧 미소모.
-- **다음(2단계~ 점진 이식)**: 이슈 핀 → 4D → 간섭 → 물량을 APS Viewer 위로 순차 이식 후 IfcViewer
-  경로 은퇴. MIR 프로젝트 ↔ ACC 프로젝트 매핑, 외부 공유 링크(익명 뷰) 검토.
+- **1-b 완료(같은 브랜치)**: ① 색감을 앱 테마 토큰으로 통일 + 뷰어 배경 다크. ② **프로젝트별
+  ACC 고정**(`0020_acc_mapping.sql`: projects.acc_hub_id/acc_project_id/acc_default_urn/
+  acc_default_name) — 관리자가 허브·프로젝트를 MIR 프로젝트에 고정·기본모델 지정, 일반 사용자는
+  그 범위만 보고 기본모델 자동 오픈(드롭다운 숨김). `getProjectAcc`/`setProjectAcc`(api.ts).
+- **사용자 결정**: 파일 저장소를 **ACC로 일원화**(자료관리=ACC 폴더, 업로드도 ACC로 → 동기화
+  불필요·비용 0). Supabase 문서 저장은 폐기 방향. → **다음 작업**.
+- **운영**: `0020_acc_mapping.sql` 적용 필요(미적용 시 매핑 null 폴백 — 관리자 전체탐색만 동작).
+- **다음**: (a) **자료관리를 ACC 폴더로 전환**(업로드=Data Management write, scope data:create/write
+  추가) (b) 2단계 기능 이식: 이슈 핀 → 4D → 간섭 → 물량을 APS Viewer 위로 → IfcViewer 은퇴.
 
 **(이전) S45 뷰어 고급기능 3차**(좌표오프셋·diff색상/투명도·업로드 진행률).
 - **공통 좌표 오프셋**(#80): 여러 모델이 원점에 겹쳐 쌓이던 버그 → 첫 모델 기준 공통 sceneOffset 으로 상대 실좌표 보존.
