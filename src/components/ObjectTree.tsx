@@ -94,10 +94,14 @@ function CatNode({
   onSelectElem: (modelID: number, expressID: number) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // 대량 카테고리 렉 방지(성능): 한 번에 렌더하는 행 수를 제한하고 '더 보기'로 확장.
+  const PAGE = 150;
+  const [limit, setLimit] = useState(PAGE);
   // 3D에서 이 카테고리의 객체를 선택하면 자동으로 펼친다.
   useEffect(() => {
     if (forceOpen) setOpen(true);
   }, [forceOpen]);
+  const shown = items.slice(0, limit);
 
   return (
     <li className="obj-cat">
@@ -119,7 +123,7 @@ function CatNode({
       </div>
       {open && (
         <ul className="obj-elems">
-          {items.map((m) => {
+          {shown.map((m) => {
             const k = keyOf(m);
             const hidden = hiddenElems.has(k) || catHidden;
             return (
@@ -140,6 +144,13 @@ function CatNode({
               </li>
             );
           })}
+          {items.length > limit && (
+            <li className="obj-more">
+              <button onClick={() => setLimit((n) => n + PAGE * 4)}>
+                더 보기 (+{Math.min(PAGE * 4, items.length - limit)} / 남은 {items.length - limit})
+              </button>
+            </li>
+          )}
         </ul>
       )}
     </li>
