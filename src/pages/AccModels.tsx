@@ -19,6 +19,28 @@ const VIEWER_VER = '7.*';
 const VIEWER_CSS = `https://developer.api.autodesk.com/modelderivative/v2/viewers/${VIEWER_VER}/style.min.css`;
 const VIEWER_JS = `https://developer.api.autodesk.com/modelderivative/v2/viewers/${VIEWER_VER}/viewer3D.min.js`;
 
+// ACC 와 동일 계열의 표준 도구 묶음. 번들에 없는 id 는 뷰어가 조용히 무시한다.
+const VIEWER_EXTENSIONS = [
+  'Autodesk.Measure', // 거리/면적/각도 측정
+  'Autodesk.Section', // 단면(섹션) 자르기
+  'Autodesk.Explode', // 분해
+  'Autodesk.Viewing.MarkupsCore', // 마크업(주석) 코어
+  'Autodesk.Viewing.MarkupsGui', // 마크업 UI
+  'Autodesk.BIMWalk', // 1인칭 워크
+  'Autodesk.Viewing.ZoomWindow', // 영역 줌
+  'Autodesk.FullScreen', // 전체화면
+  'Autodesk.DocumentBrowser', // 시트/뷰 탐색
+  'Autodesk.PropertiesManager', // 속성 패널
+  'Autodesk.ModelStructure', // 모델 트리(부재 탐색)
+  'Autodesk.Hyperlink', // 하이퍼링크
+  'Autodesk.VisualClusters', // 클러스터 보기
+  'Autodesk.AEC.LevelsExtension', // 층(레벨) 필터
+  'Autodesk.AEC.Minimap3DExtension', // 미니맵
+  'Autodesk.AEC.Hypermodeling', // 2D↔3D 하이퍼모델링
+  'Autodesk.PDF', // PDF 로드 지원
+];
+
+
 function loadScriptOnce(src: string, css: string): Promise<void> {
   return new Promise((resolve, reject) => {
     if ((window as unknown as { Autodesk?: unknown }).Autodesk) return resolve();
@@ -387,7 +409,10 @@ export function AccModels() {
           ),
         );
         if (cancelled || !containerRef.current) return;
-        const viewer = new Autodesk.Viewing.GuiViewer3D(containerRef.current);
+        const viewer = new Autodesk.Viewing.GuiViewer3D(containerRef.current, {
+          // ACC 와 동일 계열의 표준 도구를 전부 로드(없는 id 는 무시됨).
+          extensions: VIEWER_EXTENSIONS,
+        });
         viewer.start();
         // 라이트회색 기본 배경이 앱 다크 테마와 안 맞아 어두운 그라데이션으로 통일.
         viewer.setBackgroundColor(40, 48, 64, 20, 26, 38);
