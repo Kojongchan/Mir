@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { MeshBVH } from 'three-mesh-bvh';
 import {
   IfcAPI,
@@ -205,6 +206,9 @@ const HIGHLIGHT_COLOR = new THREE.Color(0xffaa00);
 /** On-demand 렌더: 마지막 활동 후 이 시간(ms)까지만 매 프레임 그린다. */
 const RENDER_GRACE_MS = 350;
 
+/** 이 개수 이상의 메시일 때만 회전 중 머지 경량 렌더로 전환(작은 씬은 불필요). */
+const FAST_MESH_THRESHOLD = 800;
+
 const PIN_SIZE = 0.075;
 /** Pin canvas aspect (width / height) — teardrop is taller than wide. */
 const PIN_ASPECT = 0.8;
@@ -233,6 +237,10 @@ export class IfcViewer {
   private sceneOffset: THREE.Vector3 | null = null;
   /** On-demand 렌더: 마지막 활동 시각(ms). animate 는 이후 RENDER_GRACE_MS 만 그린다. */
   private lastActive = performance.now();
+  /** 회전 렉 완화: 카메라 조작 중에는 머티리얼별로 머지한 경량 메시로 그린다(성능3). */
+  private fastGroup?: THREE.Group;
+  private gestureActive = false;
+  private fastActive = false;
 
   /** material clones swapped in for the current selection, kept so we can restore */
   private highlighted: { mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] }[] = [];
@@ -335,7 +343,16 @@ export class IfcViewer {
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     // On-demand 렌더: 카메라가 움직이면(댐핑 포함) 활성 표시 → 그 후 잠깐만 렌더.
-    this.controls.addEventListener('change', () => this.requestRender());
+    // 또한 실제 이동이 시작되면(첫 'change') 머지 경량 메시(fast)로 전환해 회전 렉↓.
+    this.controls.addEventListener('start', () => (this.gestureActive = true));
+    this.controls.addEventListener('change', () => {
+      this.requestRender();
+      if (this.gestureActive && !this.fastActive) this.enterFastMode();
+    });
+    this.controls.addEventListener('end', () => {
+      this.gestureActive = false;
+      this.exitFastMode();
+    });
 
     this.scene.add(this.measureGroup);
     this.setupSceneHelpers();
@@ -2249,6 +2266,71 @@ export class IfcViewer {
   requestRender = () => {
     this.lastActive = performance.now();
   };
+
+  /**
+   * Enter "fast" rendering for the duration of a camera gesture: merge all
+   * currently-visible element geometries by material into a few meshes (a handful
+   * of draw calls instead of thousands) and hide the detailed per-element groups.
+   * Rebuilt fresh each gesture so it always matches current visibility/colours;
+   * skipped for small scenes where the merge isn't worth the build cost.
+   */
+  private enterFastMode() {
+    let total = 0;
+    for (const m of this.models) for (const meshes of m.elementMeshes.values()) total += meshes.length;
+    if (total < FAST_MESH_THRESHOLD) return; // 작은 씬은 그대로(머지 비용 > 이득)
+
+    const byMaterial = new Map<THREE.Material, THREE.BufferGeometry[]>();
+    for (const model of this.models) {
+      if (!model.group.visible) continue;
+      for (const meshes of model.elementMeshes.values()) {
+        for (const mesh of meshes) {
+          if (!mesh.visible) continue;
+          const mat = mesh.material as THREE.Material;
+          if (Array.isArray(mesh.material)) continue; // 단일 머티리얼만(우리 로더는 항상 단일)
+          mesh.updateWorldMatrix(true, false);
+          const g = mesh.geometry.clone();
+          g.applyMatrix4(mesh.matrixWorld); // 월드 좌표로 베이크(머지 메시는 단위 변환)
+          const arr = byMaterial.get(mat) ?? [];
+          arr.push(g);
+          byMaterial.set(mat, arr);
+        }
+      }
+    }
+
+    const group = new THREE.Group();
+    for (const [mat, geoms] of byMaterial) {
+      try {
+        const merged = mergeGeometries(geoms, false);
+        if (merged) group.add(new THREE.Mesh(merged, mat));
+      } catch {
+        /* 호환 안 되는 지오메트리 그룹은 건너뜀 */
+      }
+      geoms.forEach((g) => g.dispose());
+    }
+    // 안전장치: 머지 결과가 비면 상세 모델을 숨기지 않는다(빈 화면 방지).
+    if (group.children.length === 0) return;
+    this.disposeFastGroup();
+    this.fastGroup = group;
+    this.scene.add(group);
+    for (const m of this.models) m.group.visible = false;
+    this.fastActive = true;
+    this.requestRender();
+  }
+
+  private exitFastMode() {
+    if (!this.fastActive) return;
+    for (const m of this.models) m.group.visible = true;
+    this.disposeFastGroup();
+    this.fastActive = false;
+    this.requestRender();
+  }
+
+  private disposeFastGroup() {
+    if (!this.fastGroup) return;
+    this.scene.remove(this.fastGroup);
+    this.fastGroup.traverse((o) => (o as THREE.Mesh).geometry?.dispose?.());
+    this.fastGroup = undefined;
+  }
 
   /** Advance the camera fly-through one frame (smoothstep easing). */
   private stepCameraTween() {
