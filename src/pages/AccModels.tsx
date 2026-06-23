@@ -378,7 +378,21 @@ export function AccModels() {
       (doc: any) => {
         const node = doc.getRoot().getDefaultGeometry();
         viewer.loadDocumentNode(doc, node);
-        setStatus('완료 — 회전/확대해 성능·텍스처 확인');
+        // 여러 페이지/시트(예: PDF 74p)면 '시트 및 뷰' 패널을 자동으로 띄운다.
+        try {
+          const all = doc.getRoot().search({ type: 'geometry' }) ?? [];
+          if (all.length > 1) {
+            viewer.loadExtension('Autodesk.DocumentBrowser').then((ext: any) => {
+              ext?.activate?.();
+              ext?.setVisible?.(true);
+            });
+            setStatus(`완료 — ${all.length}개 시트/뷰. 우측 '시트 및 뷰'에서 페이지 전환`);
+          } else {
+            setStatus('완료 — 회전/확대해 성능·텍스처 확인');
+          }
+        } catch {
+          setStatus('완료');
+        }
       },
       (code: unknown, msg: unknown) => setStatus(`문서 로드 실패: ${msg ?? code} (URN/권한 확인)`),
     );
