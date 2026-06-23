@@ -202,6 +202,9 @@ const HIGHLIGHT_COLOR = new THREE.Color(0xffaa00);
 
 /** On-screen size of an issue pin (sprite scale, sizeAttenuation off; the sprite
  *  spans this fraction of the NDC cube, i.e. half this fraction of the viewport). */
+/** On-demand 렌더: 마지막 활동 후 이 시간(ms)까지만 매 프레임 그린다. */
+const RENDER_GRACE_MS = 350;
+
 const PIN_SIZE = 0.075;
 /** Pin canvas aspect (width / height) — teardrop is taller than wide. */
 const PIN_ASPECT = 0.8;
@@ -228,6 +231,8 @@ export class IfcViewer {
   /** Shared recenter offset (first model's origin) so all models keep true relative
    *  positions instead of stacking on the project base point (추가의견2). */
   private sceneOffset: THREE.Vector3 | null = null;
+  /** On-demand 렌더: 마지막 활동 시각(ms). animate 는 이후 RENDER_GRACE_MS 만 그린다. */
+  private lastActive = performance.now();
 
   /** material clones swapped in for the current selection, kept so we can restore */
   private highlighted: { mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] }[] = [];
@@ -329,6 +334,8 @@ export class IfcViewer {
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
+    // On-demand 렌더: 카메라가 움직이면(댐핑 포함) 활성 표시 → 그 후 잠깐만 렌더.
+    this.controls.addEventListener('change', () => this.requestRender());
 
     this.scene.add(this.measureGroup);
     this.setupSceneHelpers();
@@ -336,6 +343,8 @@ export class IfcViewer {
     this.renderer.domElement.addEventListener('click', this.handleClick);
     this.renderer.domElement.addEventListener('mousemove', this.handleMouseMove);
     this.renderer.domElement.addEventListener('mouseleave', this.handleMouseLeave);
+    this.renderer.domElement.addEventListener('pointerdown', this.requestRender);
+    this.renderer.domElement.addEventListener('wheel', this.requestRender, { passive: true });
     window.addEventListener('resize', this.handleResize);
     // Container can resize without a window resize (e.g. the 4D timeline panel
     // expanding/collapsing, or switching modules in the portal shell) — keep the
@@ -472,6 +481,7 @@ export class IfcViewer {
 
     this.orientGroup(group, upAxis);
     this.fitToObject(group);
+    this.requestRender();
     return model;
   }
 
@@ -646,8 +656,11 @@ export class IfcViewer {
       if (!e) return;
       const hit = this.pickHover(e.x, e.y);
       this.onHover(hit);
-      // 측정 모드에서는 커서 근처 꼭짓점/중간점으로 스냅 마커를 갱신.
-      if (this.measureMode) this.updateSnap(e.x, e.y);
+      // 측정 모드에서는 커서 근처 꼭짓점/중간점으로 스냅 마커를 갱신(렌더 유지).
+      if (this.measureMode) {
+        this.updateSnap(e.x, e.y);
+        this.requestRender();
+      }
     });
   };
 
@@ -754,6 +767,7 @@ export class IfcViewer {
       });
       mesh.material = highlightMat;
     }
+    this.requestRender();
   }
 
   private clearHighlight() {
@@ -762,6 +776,7 @@ export class IfcViewer {
       mesh.material = material;
     }
     this.highlighted = [];
+    this.requestRender();
   }
 
   getProperties(modelID: number, expressID: number): ElementProperties {
@@ -876,6 +891,7 @@ export class IfcViewer {
 
   setElementVisible(modelID: number, expressID: number, visible: boolean) {
     for (const mesh of this.meshesFor(modelID, expressID)) mesh.visible = visible;
+    this.requestRender();
   }
 
   hideSelected(selection: { modelID: number; expressID: number } | null) {
@@ -888,10 +904,12 @@ export class IfcViewer {
     if (!selection) return;
     const keep = new Set(this.meshesFor(selection.modelID, selection.expressID));
     for (const mesh of this.allMeshes()) mesh.visible = keep.has(mesh);
+    this.requestRender();
   }
 
   showAll() {
     for (const mesh of this.allMeshes()) mesh.visible = true;
+    this.requestRender();
   }
 
   /**
@@ -906,6 +924,7 @@ export class IfcViewer {
         for (const mesh of meshes) mesh.visible = v;
       }
     }
+    this.requestRender();
   }
 
   fitToSelection(selection: { modelID: number; expressID: number } | null) {
@@ -1479,6 +1498,7 @@ export class IfcViewer {
     this.clashHighlighted = [];
     for (const { mesh, material } of this.clashDimmed) mesh.material = material;
     this.clashDimmed = [];
+    this.requestRender();
   }
 
   private getClashGhostMaterial(): THREE.Material {
@@ -1561,6 +1581,7 @@ export class IfcViewer {
       this.snapWorld = null;
       if (this.snapSprite) this.snapSprite.visible = false;
     }
+    this.requestRender();
   }
 
   /**
@@ -1641,6 +1662,7 @@ export class IfcViewer {
   }
 
   private showSnapMarker(best: { p: THREE.Vector3; kind: SnapKind } | null) {
+    this.requestRender();
     if (!best) {
       if (this.snapSprite) this.snapSprite.visible = false;
       return;
@@ -1657,6 +1679,7 @@ export class IfcViewer {
     (this.snapSprite.material as THREE.SpriteMaterial).needsUpdate = true;
     this.snapSprite.position.copy(best.p);
     this.snapSprite.visible = true;
+    this.requestRender();
   }
 
   /** Per-kind snap marker glyph (정점=사각, 중간점=삼각, 면중심=원, 근처점=X). */
@@ -1733,6 +1756,7 @@ export class IfcViewer {
       this.onMeasure(`누적 거리: ${total.toFixed(3)} m`);
     }
     this.measurePts = [];
+    this.requestRender();
   }
 
   private drawSegment(a: THREE.Vector3, b: THREE.Vector3) {
@@ -1782,6 +1806,7 @@ export class IfcViewer {
         this.onMeasure(`점 ${pts.length}개 · 완료로 면적 계산`);
         break;
     }
+    this.requestRender();
   }
 
   /** Small constant-size dot sprite marking a measurement point. */
@@ -1864,6 +1889,7 @@ export class IfcViewer {
     }
     this.measurePts = [];
     this.onMeasure(null);
+    this.requestRender();
   }
 
   // --- 단면(클리핑 평면) ------------------------------------------------
@@ -1874,6 +1900,7 @@ export class IfcViewer {
     if (opts.offset !== undefined) this.sectionOffset = opts.offset;
     if (opts.flip !== undefined) this.sectionFlip = opts.flip;
     this.applySection();
+    this.requestRender();
   }
 
   private applySection() {
@@ -1960,21 +1987,26 @@ export class IfcViewer {
     }
     this.issuePinGroup = group;
     this.scene.add(group);
+    this.requestRender();
   }
 
   /** Gently pulse unresolved issue pins (called once per animation frame). */
   private pulseIssuePins() {
     if (!this.issuePinGroup || !this.issuePinGroup.visible) return;
     const f = 1 + 0.14 * Math.sin(performance.now() / 280);
+    let pulsed = false;
     for (const child of this.issuePinGroup.children) {
       const s = child as THREE.Sprite;
       if (!s.userData.pulse) continue;
       s.scale.set(PIN_SIZE * PIN_ASPECT * f, PIN_SIZE * f, 1);
+      pulsed = true;
     }
+    if (pulsed) this.requestRender(); // 펄스 동안 계속 렌더
   }
 
   setIssuePinsVisible(visible: boolean) {
     if (this.issuePinGroup) this.issuePinGroup.visible = visible;
+    this.requestRender();
   }
 
   clearIssuePins() {
@@ -2029,6 +2061,7 @@ export class IfcViewer {
       rec.key = key;
       this.applyMeshState(mesh, state, opts, rec.saved.material);
     }
+    this.requestRender();
   }
 
   private applyMeshState(
@@ -2075,6 +2108,7 @@ export class IfcViewer {
       mesh.visible = rec.saved.visible;
     }
     this.constructionOverrides.clear();
+    this.requestRender();
   }
 
   private getColorMaterial(hex: string, opacity: number): THREE.Material {
@@ -2167,6 +2201,7 @@ export class IfcViewer {
   setOriginVisible(on: boolean) {
     if (!on) {
       if (this.originHelper) this.originHelper.visible = false;
+      this.requestRender();
       return;
     }
     const model = this.models[0];
@@ -2184,6 +2219,7 @@ export class IfcViewer {
     this.originHelper.scale.setScalar(size);
     this.originHelper.position.copy(model.group.localToWorld(new THREE.Vector3(0, 0, 0)));
     this.originHelper.visible = true;
+    this.requestRender();
   }
 
   private handleResize = () => {
@@ -2193,6 +2229,7 @@ export class IfcViewer {
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
+    this.requestRender();
   };
 
   private animate = () => {
@@ -2201,13 +2238,23 @@ export class IfcViewer {
     this.stepCameraTween();
     this.pulseIssuePins();
     this.controls.update();
-    this.renderer.render(this.scene, this.camera);
+    // On-demand: 마지막 활동(카메라 이동·씬 변경·트윈·핀 펄스) 후 RENDER_GRACE_MS
+    // 동안만 실제로 그린다 → 유휴 시 GPU 루프가 멈춰 잔렉/발열이 준다.
+    if (performance.now() - this.lastActive < RENDER_GRACE_MS) {
+      this.renderer.render(this.scene, this.camera);
+    }
+  };
+
+  /** Mark the scene dirty so the on-demand loop renders for a short window. */
+  requestRender = () => {
+    this.lastActive = performance.now();
   };
 
   /** Advance the camera fly-through one frame (smoothstep easing). */
   private stepCameraTween() {
     const tw = this.cameraTween;
     if (!tw) return;
+    this.requestRender(); // 트윈 동안 계속 렌더
     const t = Math.min(1, (performance.now() - tw.start) / tw.dur);
     const e = t * t * (3 - 2 * t); // smoothstep
     this.camera.position.lerpVectors(tw.fromPos, tw.toPos, e);
@@ -2327,6 +2374,7 @@ export class IfcViewer {
         for (const mesh of meshes) override(mesh, 0xf59e0b, removed ? removedOp : 0); // 동일은 숨김
       }
     }
+    this.requestRender();
   }
 
   clearVersionDiff() {
@@ -2339,6 +2387,7 @@ export class IfcViewer {
       o.mesh.visible = o.visible;
     }
     this.diffOverrides = [];
+    this.requestRender();
   }
 
   /**
@@ -2361,6 +2410,7 @@ export class IfcViewer {
         mat.needsUpdate = true;
       }
     });
+    this.requestRender();
   }
 
   dispose() {
@@ -2371,6 +2421,8 @@ export class IfcViewer {
     this.renderer.domElement.removeEventListener('click', this.handleClick);
     this.renderer.domElement.removeEventListener('mousemove', this.handleMouseMove);
     this.renderer.domElement.removeEventListener('mouseleave', this.handleMouseLeave);
+    this.renderer.domElement.removeEventListener('pointerdown', this.requestRender);
+    this.renderer.domElement.removeEventListener('wheel', this.requestRender);
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
