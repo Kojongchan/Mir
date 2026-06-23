@@ -2296,6 +2296,16 @@ button.danger:hover:not(:disabled) {
 .obj-tree {
   padding: 4px 6px;
 }
+.obj-more button {
+  width: 100%;
+  font-size: 11px;
+  padding: 3px 6px;
+  border: 1px dashed var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
 .obj-cat-head,
 .obj-elem {
   display: flex;
