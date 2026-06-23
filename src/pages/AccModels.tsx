@@ -3,6 +3,25 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthProvider';
 import { getProjectAcc, setProjectAcc } from '../lib/api';
+import { viewerKindFor, type ViewerKind, type FileRecord } from '../lib/files';
+import { ImageViewer } from '../components/viewers/ImageViewer';
+import { VideoViewer } from '../components/viewers/VideoViewer';
+import { AudioViewer } from '../components/viewers/AudioViewer';
+import { TextViewer } from '../components/viewers/TextViewer';
+import { DownloadFallback } from '../components/viewers/DownloadFallback';
+import { PdfViewer } from '../components/viewers/PdfViewer';
+import { SheetViewer } from '../components/viewers/SheetViewer';
+import { DocxViewer } from '../components/viewers/DocxViewer';
+
+// APS Viewer 로 띄울 모델/도면 확장자(나머지 중 우리가 렌더 가능한 건 자체 뷰어).
+const MODEL_EXT = new Set([
+  'rvt', 'rfa', 'nwd', 'nwc', 'ifc', 'dwg', 'dwf', 'dwfx', 'dgn', 'dxf',
+  '3ds', 'fbx', 'obj', 'stp', 'step', 'iges', 'igs', 'sat', 'ipt', 'iam',
+  'prt', 'catpart', 'catproduct', 'model', 'sldprt', 'sldasm', 'jt', 'rcp',
+  'rcs', 'glb', 'gltf', 'dae', '3dm', 'skp', 'x_t', 'x_b',
+]);
+const extOf = (name: string) => name.slice(name.lastIndexOf('.') + 1).toLowerCase();
+const fakeFile = (name: string) => ({ name, size_bytes: null, mime_type: null }) as unknown as FileRecord;
 
 /**
  * ACC 모델 (APS Viewer) — ACC 에 있는 모델(rvt·nwd·dwg·ifc, 텍스처 유지·SVF2)을
@@ -149,6 +168,17 @@ export function AccModels() {
   const [openId, setOpenId] = useState(''); // 현재 연 파일(트리 체크 표시)
   const pinned = !!pinnedHubName && !!pinnedProjectName;
 
+  // 문서(비-3D) 뷰: APS 캔버스 위에 우리 뷰어를 오버레이.
+  const [docView, setDocView] = useState<{ url: string; name: string; kind: ViewerKind } | null>(null);
+  const docBlobRef = useRef<string | null>(null);
+  const clearDoc = () => {
+    if (docBlobRef.current) {
+      URL.revokeObjectURL(docBlobRef.current);
+      docBlobRef.current = null;
+    }
+    setDocView(null);
+  };
+
   // 좌측 트리 패널 가로폭(우측 가장자리 핸들 드래그) — 긴 파일명 대응.
   const [panelW, setPanelW] = useState(320);
   const startResize = (e: React.MouseEvent) => {
@@ -236,14 +266,78 @@ export function AccModels() {
   };
 
   const pickItem = (it: Item) => {
-    if (!it.urn) {
-      setStatus(`${it.name}: 변환된 뷰가 없습니다(ACC에서 처리 중일 수 있음).`);
+    setOpenId(it.id);
+    setOpenName(it.name);
+    const ext = extOf(it.name);
+    const kind = viewerKindFor(it.name);
+
+    // 우리가 직접 렌더 가능한 문서/미디어 → 자체 뷰어(ACC 원본 바이트).
+    if (kind !== 'unsupported') {
+      void openDocument(it, kind);
       return;
     }
-    setUrn(it.urn);
-    setOpenName(it.name);
-    setOpenId(it.id);
-    void openModel(it.urn);
+    // 모델/도면(rvt·nwd·ifc·dwg…) → APS Viewer.
+    if (MODEL_EXT.has(ext)) {
+      clearDoc();
+      if (!it.urn) {
+        setStatus(`${it.name}: 변환된 3D 뷰가 없습니다(ACC에서 처리 중일 수 있음).`);
+        return;
+      }
+      setUrn(it.urn);
+      void openModel(it.urn);
+      return;
+    }
+    // 그 외(ppt·hwp·zip 등) → 다운로드 폴백.
+    void openDocument(it, 'unsupported');
+  };
+
+  // ACC 원본 파일을 우리 뷰어로 연다(문서=바이트 프록시, 미디어=서명URL 리다이렉트).
+  const openDocument = async (it: Item, kind: ViewerKind) => {
+    setStatus(`${it.name} 여는 중…`);
+    try {
+      const { data } = await supabase.auth.getSession();
+      const tok = data.session?.access_token ?? '';
+      const base = `/api/aps-file?project=${encodeURIComponent(project)}&item=${encodeURIComponent(it.id)}`;
+      if (kind === 'video' || kind === 'audio' || kind === 'unsupported') {
+        // 미디어/대용량/다운로드 — 서명 URL로 직접(토큰은 쿼리로).
+        clearDoc();
+        setDocView({ url: `${base}&mode=redirect&token=${encodeURIComponent(tok)}`, name: it.name, kind });
+      } else {
+        // 문서(pdf/이미지/엑셀/워드/텍스트) — 바이트 프록시 → blob.
+        const res = await fetch(base, { headers: { authorization: `Bearer ${tok}` } });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `열기 실패(${res.status})`);
+        const blob = await res.blob();
+        clearDoc();
+        const blobUrl = URL.createObjectURL(blob);
+        docBlobRef.current = blobUrl;
+        setDocView({ url: blobUrl, name: it.name, kind });
+      }
+      setStatus(`완료: ${it.name}`);
+    } catch (e) {
+      setStatus(`문서 열기 실패: ${(e as Error).message}`);
+    }
+  };
+
+  const renderDoc = (d: { url: string; name: string; kind: ViewerKind }) => {
+    const f = fakeFile(d.name);
+    switch (d.kind) {
+      case 'image':
+        return <ImageViewer url={d.url} file={f} />;
+      case 'pdf':
+        return <PdfViewer url={d.url} file={f} />;
+      case 'video':
+        return <VideoViewer url={d.url} file={f} />;
+      case 'audio':
+        return <AudioViewer url={d.url} file={f} />;
+      case 'sheet':
+        return <SheetViewer url={d.url} file={f} />;
+      case 'docx':
+        return <DocxViewer url={d.url} file={f} />;
+      case 'text':
+        return <TextViewer url={d.url} file={f} />;
+      default:
+        return <DownloadFallback url={d.url} file={f} />;
+    }
   };
 
   // 지정된 허브/프로젝트의 최상위 폴더를 트리 루트로 로드(고정 매핑 경로).
@@ -494,6 +588,7 @@ export function AccModels() {
       cancelled = true;
       resizeObsRef.current?.disconnect();
       resizeObsRef.current = null;
+      if (docBlobRef.current) URL.revokeObjectURL(docBlobRef.current);
       const v = viewerRef.current as any;
       if (v?.finish) v.finish();
       viewerRef.current = null;
@@ -615,7 +710,41 @@ export function AccModels() {
             </ul>
           </div>
         )}
-        <div ref={containerRef} style={{ position: 'relative', flex: 1 }} />
+        <div style={{ position: 'relative', flex: 1 }}>
+          <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
+          {docView && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                zIndex: 5,
+                background: 'var(--panel)',
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '6px 10px',
+                  borderBottom: '1px solid var(--border)',
+                  color: 'var(--text)',
+                }}
+              >
+                <strong style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  📄 {docView.name}
+                </strong>
+                <span style={{ flex: 1 }} />
+                <button onClick={clearDoc} style={btnStyle}>
+                  ✕ 닫기(모델로)
+                </button>
+              </div>
+              <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>{renderDoc(docView)}</div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

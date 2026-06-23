@@ -21,6 +21,10 @@
   불필요·비용 0). Supabase 문서 저장은 폐기 방향. → **다음 작업**.
 - **1-c**: ACC 탐색을 **펼침 트리(접기/펴기·지연로드)**로 교체(브레드크럼 대신 상위 자유 이동) +
   폴더/파일 **자연 정렬**(1,2,…,10,11) + 시작 폴더 고정(`0021`, 폴더 옆 📌). FolderNode 트리.
+- **1-d**: ACC 파일 종류별 분기 — 모델(rvt/nwd/ifc/dwg…)=APS Viewer, 문서(pdf/이미지/엑셀/
+  워드/텍스트)=**우리 뷰어**(ACC 원본 바이트를 `api/aps-file` 가 프록시→blob, CORS 회피),
+  영상/오디오=서명URL 302 리다이렉트, 그 외=다운로드 폴백. PDF 뷰어에 **썸네일+페이지넘김**
+  추가(pdf.js). 표준 APS 확장 묶음(측정·단면·마크업·시트 등) 로드 + 다중페이지 자동 '시트 및 뷰'.
 - **운영**: `0020_acc_mapping.sql` + `0021_acc_root_folder.sql` 적용 필요(미적용 시 매핑 null 폴백).
 - **다음**: (a) **자료관리를 ACC 폴더로 전환**(업로드=Data Management write, scope data:create/write
   추가) (b) 2단계 기능 이식: 이슈 핀 → 4D → 간섭 → 물량을 APS Viewer 위로 → IfcViewer 은퇴.
