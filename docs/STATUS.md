@@ -2,7 +2,34 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
-**마지막 업데이트**: 2026-06-22 · **S45 뷰어 고급기능 3차**(좌표오프셋·diff색상/투명도·업로드 진행률).
+**마지막 업데이트**: 2026-06-23 · **S46 APS/ACC 뷰어 전환 — 1단계**(외부 계정 없이 ACC 모델 조회).
+- **배경/결정(D18)**: 자체 ThatOpen 뷰어로는 텍스처·대용량·rvt/nwd 네이티브를 무료로 풀기 어려움.
+  사용자가 ACC 구독 보유 → **APS Viewer + ACC(2-legged) 임베드**로 전환 확정. **추가 비용 0**
+  (ACC가 자동 변환한 결과를 우리 앱이 읽기만 함 — 인증·DM·SVF2 스트리밍 무료). 외부 사용자는
+  **오토데스크 계정 불필요**(우리 서버가 토큰 브로커, MIR 로그인만으로 조회 → ACC 좌석 미소모).
+- **1단계 완료(branch feature/aps-viewer)**: 서버리스 2-legged 토큰(`api/aps-token.ts`) +
+  Data Management 프록시(`api/aps-acc.ts`) + 프로젝트 메뉴 **🅰 ACC 모델**(`/project/:id/acc`,
+  `pages/AccModels.tsx`: 허브→프로젝트→폴더→모델 선택, 변환된 URN 자동 해석). 사용자 검증 OK
+  (쌍용건설 허브에서 모델 로드·텍스처·성능 확인). typecheck·build 통과.
+- **운영 전제**: Vercel env `APS_CLIENT_ID`/`APS_CLIENT_SECRET`(Preview·Production), ACC 사용자
+  지정 통합에 앱 Client ID 승인(완료). 자체 변환(OSS) 안 함 → 변환 크레딧 미소모.
+- **1-b 완료(같은 브랜치)**: ① 색감을 앱 테마 토큰으로 통일 + 뷰어 배경 다크. ② **프로젝트별
+  ACC 고정**(`0020_acc_mapping.sql`: projects.acc_hub_id/acc_project_id/acc_default_urn/
+  acc_default_name) — 관리자가 허브·프로젝트를 MIR 프로젝트에 고정·기본모델 지정, 일반 사용자는
+  그 범위만 보고 기본모델 자동 오픈(드롭다운 숨김). `getProjectAcc`/`setProjectAcc`(api.ts).
+- **사용자 결정**: 파일 저장소를 **ACC로 일원화**(자료관리=ACC 폴더, 업로드도 ACC로 → 동기화
+  불필요·비용 0). Supabase 문서 저장은 폐기 방향. → **다음 작업**.
+- **1-c**: ACC 탐색을 **펼침 트리(접기/펴기·지연로드)**로 교체(브레드크럼 대신 상위 자유 이동) +
+  폴더/파일 **자연 정렬**(1,2,…,10,11) + 시작 폴더 고정(`0021`, 폴더 옆 📌). FolderNode 트리.
+- **1-d**: ACC 파일 종류별 분기 — 모델(rvt/nwd/ifc/dwg…)=APS Viewer, 문서(pdf/이미지/엑셀/
+  워드/텍스트)=**우리 뷰어**(ACC 원본 바이트를 `api/aps-file` 가 프록시→blob, CORS 회피),
+  영상/오디오=서명URL 302 리다이렉트, 그 외=다운로드 폴백. PDF 뷰어에 **썸네일+페이지넘김**
+  추가(pdf.js). 표준 APS 확장 묶음(측정·단면·마크업·시트 등) 로드 + 다중페이지 자동 '시트 및 뷰'.
+- **운영**: `0020_acc_mapping.sql` + `0021_acc_root_folder.sql` 적용 필요(미적용 시 매핑 null 폴백).
+- **다음**: (a) **자료관리를 ACC 폴더로 전환**(업로드=Data Management write, scope data:create/write
+  추가) (b) 2단계 기능 이식: 이슈 핀 → 4D → 간섭 → 물량을 APS Viewer 위로 → IfcViewer 은퇴.
+
+**(이전) S45 뷰어 고급기능 3차**(좌표오프셋·diff색상/투명도·업로드 진행률).
 - **공통 좌표 오프셋**(#80): 여러 모델이 원점에 겹쳐 쌓이던 버그 → 첫 모델 기준 공통 sceneOffset 으로 상대 실좌표 보존.
 - **버전 diff 색상/투명도**(#80): 신규=청록·삭제=주황·동일=회색(간섭/이슈색 회피) + 추가/삭제/동일 투명도 슬라이더.
 - **업로드 진행률 0~100%**(#81): createSignedUploadUrl + XHR(FormData) 로 onprogress.
