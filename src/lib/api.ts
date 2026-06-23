@@ -189,7 +189,9 @@ interface BimFileLike {
   id: string;
   project_id: string;
   name: string;
-  storage_path: string;
+  // CDE 파일은 ACC 일원화 후 storage_path 가 nullable 이지만, BIM IFC 연동은
+  // 항상 docs 버킷 경로를 가진 supabase 파일에서만 호출된다(null 아님).
+  storage_path: string | null;
   size_bytes: number | null;
   current_version_id: string | null;
 }

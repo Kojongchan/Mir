@@ -29,5 +29,7 @@
 
 | D18 | **3D 뷰어를 APS(Autodesk Platform Services) Viewer + ACC(2-legged)로 전환**. 사용자 ACC 구독 보유 → ACC Docs가 자동 변환한 SVF2(텍스처·rvt/nwd/dwg 네이티브)를 우리 서버(2-legged client_credentials, `viewables:read`+`data:read`)가 토큰 브로커로 읽어 **APS Viewer로 임베드**. 외부 사용자는 **오토데스크 계정 불필요**(MIR/Supabase 로그인만 → ACC 좌석 미소모). **추가 비용 0**(ACC 변환 결과 재사용·인증/DM/스트리밍 무료, 자체 OSS 변환은 안 함). 실행은 **단계적**: 1단계=정식 메뉴 'ACC 모델'(`/project/:id/acc`), 이후 이슈핀·4D·간섭·물량을 APS 위로 이식하며 IfcViewer 은퇴. **S46** | 자체 ThatOpen/web-ifc 뷰어로는 텍스처·대용량·네이티브 포맷을 무료로 풀기 어렵고 사용자의 반복 통증(렉·텍스처깨짐·rvt). ACC 자산을 그대로 활용해 3대 문제+외부공유를 동시 해결, 추가비용 없이. Secret은 서버리스(edge)에만. 트레이드오프=벤더 종속(3D 데이터·렌더 Autodesk), 비-3D 기능(4D·QTO·이슈·CDE)은 Supabase로 유지하고 Viewer Extension으로 연계 |
 
+| D19 | **ACC 쓰기(업로드)는 2-legged(client_credentials) 브로커로 수행** — 별도 사용자 OAuth(3-legged) 도입 없이 우리 서버(`api/aps-upload.ts`)가 storage 생성→S3 서명 업로드(브라우저 직접 PUT, 진행률)→item/version 생성을 처리. **전제**: 커스텀 통합 앱(Client ID)이 대상 ACC 폴더에 **편집/업로드 권한**을 부여받아야 함(S46 은 읽기만 승인 → 운영에서 폴더 쓰기 권한 추가 필요). 스코프 `data:read data:create data:write`. **S47** | D18 의 "2-legged 토큰 브로커, 외부인 오토데스크 계정 불필요" 연장선. 읽기는 S46 에서 검증됨. 쓰기는 폴더 권한 부여 후 운영 검증 필요 — item/version 생성이 403 이면 폴더 권한 미부여이거나 3-legged 필요(그 경우 S47 범위 재조정, 사용자 합의 후 이 결정 갱신) |
+
 ## 우선순위 (사용자 확정 · 갱신)
 뷰어 → 4D → 충돌검사 → CDE/PMIS 포털 → 리뷰도구 → **장비운용(강점)은 기획안 최후로 연기**(S16, 사용자 결정) → VR. 포맷은 **IFC**.

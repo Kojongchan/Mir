@@ -2217,6 +2217,114 @@ button.danger:hover:not(:disabled) {
   display: grid;
   grid-template-columns: 248px 1fr;
 }
+/* 저장소 전환(앱/ACC)을 위해 상단 탭 + 본문이 세로로 쌓이는 래퍼. */
+.cde-wrap {
+  display: flex;
+  flex-direction: column;
+}
+.cde-embed-fill {
+  flex: 1;
+  min-height: 0;
+}
+.cde-store-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.cde-store-tabs button {
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+}
+.cde-store-tabs button.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
+/* ACC 탐색기(자료관리 안) — 펼침 트리 + 문서 미리보기 오버레이. */
+.acc-browser {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.acc-browser-body {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.acc-tree-ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.acc-row {
+  display: flex;
+  align-items: center;
+}
+.acc-row-btn {
+  display: block;
+  flex: 1;
+  text-align: left;
+  padding: 4px 6px;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.acc-row-btn:hover {
+  background: var(--panel-2);
+}
+.acc-caret {
+  display: inline-block;
+  width: 14px;
+  color: var(--muted);
+}
+.acc-row-act {
+  flex: none;
+  padding: 2px 6px;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.acc-row-act:hover {
+  color: var(--accent);
+}
+.acc-doc-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+}
+.acc-doc-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.acc-doc-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
 .mod-subtree {
   width: 260px;
   flex-shrink: 0;

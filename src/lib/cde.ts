@@ -41,12 +41,25 @@ export interface CdeFile {
   project_id: string;
   folder_id: string | null;
   name: string;
-  storage_path: string;
+  storage_path: string | null;
   mime_type: string | null;
   size_bytes: number | null;
   status: FileStatus;
   current_version_id: string | null;
   uploaded_by: string | null;
+  created_at: string;
+}
+
+/** 파일 출처: 'supabase'(docs 버킷) | 'acc'(ACC Data Management). 0022 미적용 시 supabase. */
+export type FileSource = 'supabase' | 'acc';
+
+/** ACC 업로드로 생긴 메타 행(상태/활동/이슈첨부가 ACC 아이템을 가리키게). */
+export interface AccFileMeta {
+  id: string;
+  name: string;
+  status: FileStatus;
+  acc_item_urn: string | null;
+  acc_version_urn: string | null;
   created_at: string;
 }
 
@@ -174,16 +187,103 @@ export async function deleteFolder(folder: Folder): Promise<void> {
 // Files (CDE view — richer than lib/files.ts which the viewer uses)
 // --------------------------------------------------------------------------
 
-/** Files in one folder (folderId null = root/unfiled). RLS restricts to members. */
+/**
+ * Files in one folder (folderId null = root/unfiled). RLS restricts to members.
+ * Only 'supabase' (docs-bucket) files appear here — ACC-sourced metadata rows are
+ * surfaced through the ACC tree instead, so the two stores stay visually distinct.
+ * On a DB without 0022 (no `source` column) the filter is dropped (all legacy rows
+ * are supabase anyway), so existing behaviour is preserved.
+ */
 export async function listCdeFiles(
   projectId: string,
   folderId: string | null,
 ): Promise<CdeFile[]> {
-  let q = supabase.from('files').select(FILE_COLS).eq('project_id', projectId);
-  q = folderId === null ? q.is('folder_id', null) : q.eq('folder_id', folderId);
-  const { data, error } = await q.order('created_at', { ascending: false });
-  if (error) throw error;
+  const base = () => {
+    let q = supabase.from('files').select(FILE_COLS).eq('project_id', projectId);
+    q = folderId === null ? q.is('folder_id', null) : q.eq('folder_id', folderId);
+    return q;
+  };
+  const { data, error } = await base()
+    .eq('source', 'supabase')
+    .order('created_at', { ascending: false });
+  if (error) {
+    // 0022 미적용(source 컬럼 없음) → 필터 없이 레거시 조회.
+    const legacy = await base().order('created_at', { ascending: false });
+    if (legacy.error) throw error;
+    return (legacy.data ?? []) as CdeFile[];
+  }
   return (data ?? []) as CdeFile[];
+}
+
+/**
+ * ACC 업로드로 만든 메타 행을 ACC 아이템 URN 으로 키잉해 돌려준다(상태 뱃지·이력
+ * 매핑용). 0022 미적용이면 빈 맵.
+ */
+export async function listAccFileMeta(projectId: string): Promise<Map<string, AccFileMeta>> {
+  const { data, error } = await supabase
+    .from('files')
+    .select('id, name, status, acc_item_urn, acc_version_urn, created_at')
+    .eq('project_id', projectId)
+    .eq('source', 'acc');
+  const map = new Map<string, AccFileMeta>();
+  if (error) return map; // 0022 미적용 폴백
+  for (const r of (data ?? []) as AccFileMeta[]) {
+    if (r.acc_item_urn) map.set(r.acc_item_urn, r);
+  }
+  return map;
+}
+
+/**
+ * ACC 에 업로드한 파일의 메타 행을 `files` 에 기록한다(source='acc'). 바이너리는
+ * ACC 에 있으므로 storage_path 는 null. 이 행으로 CDE 상태·활동로그·이슈첨부가
+ * ACC 파일을 가리키게 된다. 0022 미적용이면 조용히 건너뛴다(ACC 업로드 자체는 성공).
+ */
+export async function recordAccUpload(
+  projectId: string,
+  folderId: string | null,
+  name: string,
+  accItemUrn: string,
+  accVersionUrn: string | null,
+  sizeBytes?: number | null,
+): Promise<void> {
+  try {
+    const { data: userData } = await supabase.auth.getUser();
+    // 같은 ACC 아이템이 이미 기록돼 있으면(새 버전) 버전 URN 만 갱신.
+    const existing = await supabase
+      .from('files')
+      .select('id')
+      .eq('project_id', projectId)
+      .eq('acc_item_urn', accItemUrn)
+      .maybeSingle();
+    if (existing.data?.id) {
+      await supabase
+        .from('files')
+        .update({ acc_version_urn: accVersionUrn, size_bytes: sizeBytes ?? null })
+        .eq('id', existing.data.id);
+      await logActivity(projectId, 'file.version', 'file', existing.data.id, { name, store: 'acc' });
+      return;
+    }
+    const { data, error } = await supabase
+      .from('files')
+      .insert({
+        project_id: projectId,
+        folder_id: folderId,
+        name,
+        storage_path: null,
+        source: 'acc',
+        acc_item_urn: accItemUrn,
+        acc_version_urn: accVersionUrn,
+        size_bytes: sizeBytes ?? null,
+        status: 'WIP',
+        uploaded_by: userData.user?.id ?? null,
+      })
+      .select('id')
+      .single();
+    if (error) throw error;
+    await logActivity(projectId, 'file.upload', 'file', data.id, { name, store: 'acc' });
+  } catch {
+    // 0022 미적용 등 — 메타 기록 실패는 ACC 업로드를 막지 않는다.
+  }
 }
 
 /** All files in a project (id, folder_id, name) — for mapping models→folders. */
@@ -419,9 +519,10 @@ export async function moveFile(target: CdeFile, folderId: string | null): Promis
  */
 export async function deleteCdeFile(target: CdeFile): Promise<void> {
   const versions = await listVersions(target.id);
-  const paths = versions.map((v) => v.storage_path);
-  if (!paths.includes(target.storage_path)) paths.push(target.storage_path);
+  const paths = versions.map((v) => v.storage_path).filter((p): p is string => !!p);
+  if (target.storage_path && !paths.includes(target.storage_path)) paths.push(target.storage_path);
 
+  // ACC 파일(메타만, storage_path null)은 docs 버킷에 객체가 없다 → remove 생략.
   if (paths.length) await supabase.storage.from(BUCKET).remove(paths);
   const { error } = await supabase.from('files').delete().eq('id', target.id);
   if (error) throw error;

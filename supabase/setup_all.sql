@@ -1,5 +1,5 @@
 -- =====================================================================
--- MIR SMART — 통합 셋업 SQL (0003~0019 한 번에 실행)
+-- MIR SMART — 통합 셋업 SQL (0003~0022 한 번에 실행)
 -- Supabase 대시보드 → SQL Editor 에 '전체 복사 → 붙여넣기 → Run'.
 -- 모두 멱등(재실행 안전). docs 버킷은 미리 Private 으로 생성되어 있어야 함.
 -- =====================================================================
@@ -1106,5 +1106,31 @@ where not exists (
 drop policy if exists storage_models_delete on storage.objects;
 create policy storage_models_delete on storage.objects
   for delete using (bucket_id = 'models' and public.is_admin());
+
+notify pgrst, 'reload schema';
+
+-- ===================== 0020_acc_mapping.sql =====================
+alter table public.projects add column if not exists acc_hub_id text;
+alter table public.projects add column if not exists acc_project_id text;
+alter table public.projects add column if not exists acc_default_urn text;
+alter table public.projects add column if not exists acc_default_name text;
+
+-- ===================== 0021_acc_root_folder.sql =====================
+alter table public.projects add column if not exists acc_root_folder_id text;
+alter table public.projects add column if not exists acc_root_folder_name text;
+
+-- ===================== 0022_acc_storage.sql =====================
+alter table public.files add column if not exists source text not null default 'supabase';
+alter table public.files add column if not exists acc_item_urn text;
+alter table public.files add column if not exists acc_version_urn text;
+alter table public.files alter column storage_path drop not null;
+create index if not exists files_project_source_idx on public.files (project_id, source);
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'files_source_chk') then
+    alter table public.files
+      add constraint files_source_chk check (source in ('supabase', 'acc'));
+  end if;
+end $$;
 
 notify pgrst, 'reload schema';

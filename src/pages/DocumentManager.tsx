@@ -7,6 +7,7 @@ import { StatusBadge } from '../components/cde/StatusBadge';
 import { VersionHistory } from '../components/cde/VersionHistory';
 import { ActivityLog } from '../components/cde/ActivityLog';
 import { IfcModelViewer } from '../components/IfcModelViewer';
+import { AccBrowser } from '../components/acc/AccBrowser';
 import { extensionOf } from '../lib/files';
 import { syncBimModel, deleteBimModel } from '../lib/api';
 import {
@@ -40,6 +41,9 @@ export function DocumentManager() {
   const isAdmin = !!profile?.is_admin;
   // D12: 문서 삭제는 D11(admin) 예외 — 업로더 본인도 가능. profile.id 는 auth uid.
   const canDelete = (f: CdeFile) => isAdmin || (!!f.uploaded_by && f.uploaded_by === profile?.id);
+
+  // 저장소 전환: 앱(Supabase docs — 기존 자료 읽기 공존) ↔ ACC(신규 업로드 일원화).
+  const [store, setStore] = useState<'supabase' | 'acc'>('supabase');
 
   const [folders, setFolders] = useState<Folder[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null); // null = root/unfiled
@@ -220,7 +224,23 @@ export function DocumentManager() {
   };
 
   return (
-    <div className="mod-fill cde-embed">
+    <div className="mod-fill cde-wrap">
+      <div className="cde-store-tabs">
+        <button className={store === 'supabase' ? 'active' : ''} onClick={() => setStore('supabase')}>
+          📁 앱 저장소
+        </button>
+        <button className={store === 'acc' ? 'active' : ''} onClick={() => setStore('acc')}>
+          🅰 ACC 자료
+        </button>
+        <div className="spacer" />
+        <span className="muted" style={{ fontSize: 11 }}>
+          {store === 'acc' ? '신규 업로드 = ACC' : '기존 자료(읽기)'}
+        </span>
+      </div>
+      {store === 'acc' ? (
+        <AccBrowser projectId={projectId} isAdmin={isAdmin} />
+      ) : (
+      <div className="cde-embed cde-embed-fill">
         <aside className="cde-side">
           <div className="sidebar-head">
             <h2>폴더</h2>
@@ -257,7 +277,7 @@ export function DocumentManager() {
                 <button onClick={() => setViewingFile(null)}>← 목록</button>
                 <span className="cde-view-name">🧊 {viewingFile.name}</span>
               </div>
-              <IfcModelViewer bucket="docs" path={viewingFile.storage_path} />
+              <IfcModelViewer bucket="docs" path={viewingFile.storage_path ?? ''} />
             </>
           ) : (
           <>
@@ -358,6 +378,8 @@ export function DocumentManager() {
 
       {historyFor && <VersionHistory file={historyFor} onClose={() => setHistoryFor(null)} />}
       {showActivity && <ActivityLog projectId={projectId} onClose={() => setShowActivity(false)} />}
+      </div>
+      )}
     </div>
   );
 }
