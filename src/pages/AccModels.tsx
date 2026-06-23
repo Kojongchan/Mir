@@ -67,6 +67,36 @@ async function accFetch(params: Record<string, string>): Promise<any> {
 type Named = { id: string; name: string };
 type Item = { id: string; name: string; urn: string | null };
 
+// 펼침 트리 노드(폴더). 자식은 펼칠 때 지연 로드한다(ACC 처럼).
+type FolderNode = {
+  id: string;
+  name: string;
+  expanded: boolean;
+  loaded: boolean;
+  loading: boolean;
+  children: FolderNode[];
+  items: Item[];
+};
+
+const mkFolder = (id: string, name: string): FolderNode => ({
+  id,
+  name,
+  expanded: false,
+  loaded: false,
+  loading: false,
+  children: [],
+  items: [],
+});
+
+/** id 로 트리 노드를 찾아 불변 갱신. */
+function updateFolder(nodes: FolderNode[], id: string, fn: (n: FolderNode) => FolderNode): FolderNode[] {
+  return nodes.map((n) => {
+    if (n.id === id) return fn(n);
+    if (n.children.length) return { ...n, children: updateFolder(n.children, id, fn) };
+    return n;
+  });
+}
+
 export function AccModels() {
   const { projectId = '' } = useParams();
   const { profile } = useAuth();
@@ -84,9 +114,7 @@ export function AccModels() {
   const [hub, setHub] = useState('');
   const [projects, setProjects] = useState<Named[]>([]);
   const [project, setProject] = useState('');
-  const [folders, setFolders] = useState<Named[]>([]); // 현재 폴더의 하위 폴더
-  const [folderPath, setFolderPath] = useState<Named[]>([]); // 브레드크럼
-  const [items, setItems] = useState<Item[]>([]);
+  const [roots, setRoots] = useState<FolderNode[]>([]); // 펼침 트리 최상위
   const [busy, setBusy] = useState(false);
 
   // 프로젝트별 ACC 고정 매핑(0020). pinned = 허브·프로젝트가 고정된 상태.
@@ -113,9 +141,7 @@ export function AccModels() {
     setHub(h);
     setProject('');
     setProjects([]);
-    setFolders([]);
-    setFolderPath([]);
-    setItems([]);
+    setRoots([]);
     if (!h) return;
     setBusy(true);
     try {
@@ -130,16 +156,12 @@ export function AccModels() {
 
   const pickProject = async (p: string) => {
     setProject(p);
-    setFolders([]);
-    setFolderPath([]);
-    setItems([]);
+    setRoots([]);
     if (!p) return;
     setBusy(true);
     try {
       const { folders } = await accFetch({ action: 'topFolders', hub, project: p });
-      setFolders(folders);
-      setFolderPath([]);
-      setItems([]);
+      setRoots((folders as Named[]).map((f) => mkFolder(f.id, f.name)));
     } catch (e) {
       setStatus(`폴더 조회 실패: ${(e as Error).message}`);
     } finally {
@@ -147,17 +169,29 @@ export function AccModels() {
     }
   };
 
-  const openFolder = async (f: Named, depth: number) => {
-    setBusy(true);
+  // 트리에서 폴더 펼치기/접기(처음 펼칠 때만 내용 지연 로드).
+  const toggleFolder = async (node: FolderNode, projId?: string) => {
+    const p = projId || project;
+    if (node.loaded) {
+      setRoots((r) => updateFolder(r, node.id, (n) => ({ ...n, expanded: !n.expanded })));
+      return;
+    }
+    setRoots((r) => updateFolder(r, node.id, (n) => ({ ...n, loading: true })));
     try {
-      const { folders, items } = await accFetch({ action: 'contents', project, folder: f.id });
-      setFolders(folders);
-      setItems(items);
-      setFolderPath((prev) => [...prev.slice(0, depth), f]);
+      const { folders, items } = await accFetch({ action: 'contents', project: p, folder: node.id });
+      setRoots((r) =>
+        updateFolder(r, node.id, (n) => ({
+          ...n,
+          loading: false,
+          loaded: true,
+          expanded: true,
+          children: (folders as Named[]).map((f) => mkFolder(f.id, f.name)),
+          items: items as Item[],
+        })),
+      );
     } catch (e) {
-      setStatus(`내용 조회 실패: ${(e as Error).message}`);
-    } finally {
-      setBusy(false);
+      setRoots((r) => updateFolder(r, node.id, (n) => ({ ...n, loading: false })));
+      setStatus(`폴더 열기 실패: ${(e as Error).message}`);
     }
   };
 
@@ -172,14 +206,12 @@ export function AccModels() {
     void openModel(it.urn);
   };
 
-  // 지정된 허브/프로젝트의 최상위 폴더를 바로 연다(고정 매핑 경로).
+  // 지정된 허브/프로젝트의 최상위 폴더를 트리 루트로 로드(고정 매핑 경로).
   const loadTopFolders = async (h: string, p: string) => {
     setBusy(true);
     try {
       const { folders } = await accFetch({ action: 'topFolders', hub: h, project: p });
-      setFolders(folders);
-      setFolderPath([]);
-      setItems([]);
+      setRoots((folders as Named[]).map((f) => mkFolder(f.id, f.name)));
     } catch (e) {
       setStatus(`폴더 조회 실패: ${(e as Error).message}`);
     } finally {
@@ -218,17 +250,12 @@ export function AccModels() {
     }
   };
 
-  // 관리자: 현재 폴더를 '시작 폴더'로 고정(사용자는 그 안쪽만 봄).
-  const pinFolder = async () => {
-    const cur = folderPath[folderPath.length - 1];
-    if (!cur) {
-      setStatus('고정할 폴더 안으로 먼저 들어가세요.');
-      return;
-    }
+  // 관리자: 특정 폴더를 '시작 폴더'로 고정(사용자는 그 안쪽만 봄).
+  const pinFolder = async (node: FolderNode) => {
     try {
-      await setProjectAcc(projectId, { acc_root_folder_id: cur.id, acc_root_folder_name: cur.name });
-      setPinnedRootName(cur.name);
-      setStatus(`시작 폴더 고정: ${cur.name}`);
+      await setProjectAcc(projectId, { acc_root_folder_id: node.id, acc_root_folder_name: node.name });
+      setPinnedRootName(node.name);
+      setStatus(`시작 폴더 고정: ${node.name}`);
     } catch (e) {
       setStatus(`폴더 고정 실패: ${(e as Error).message}`);
     }
@@ -249,6 +276,41 @@ export function AccModels() {
       setStatus(`지정 실패: ${(e as Error).message}`);
     }
   };
+
+  // 트리 노드(폴더+하위)를 재귀 렌더. depth 로 들여쓰기.
+  const renderFolder = (node: FolderNode, depth: number): React.ReactElement => (
+    <li key={node.id}>
+      <div style={{ display: 'flex', alignItems: 'center', paddingLeft: depth * 12 }}>
+        <button onClick={() => void toggleFolder(node)} style={{ ...rowStyle, flex: 1 }}>
+          <span style={{ display: 'inline-block', width: 14, color: 'var(--muted)' }}>
+            {node.loading ? '⏳' : node.expanded ? '▾' : '▸'}
+          </span>
+          📂 {node.name}
+        </button>
+        {isAdmin && (
+          <button
+            onClick={() => void pinFolder(node)}
+            title="이 폴더를 시작 폴더로 고정"
+            style={{ ...rowStyle, width: 'auto', flex: 'none', padding: '2px 6px' }}
+          >
+            📌
+          </button>
+        )}
+      </div>
+      {node.expanded && (
+        <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+          {node.children.map((c) => renderFolder(c, depth + 1))}
+          {node.items.map((it) => (
+            <li key={it.id} style={{ paddingLeft: (depth + 1) * 12 }}>
+              <button onClick={() => pickItem(it)} style={{ ...rowStyle, opacity: it.urn ? 1 : 0.5 }}>
+                <span style={{ display: 'inline-block', width: 14 }} />🧱 {it.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
+  );
 
   const openModel = async (rawUrn: string) => {
     const Autodesk = (window as unknown as { Autodesk?: any }).Autodesk;
@@ -312,23 +374,10 @@ export function AccModels() {
             setPinnedRootName(acc.acc_root_folder_name ?? '');
             void resolveNames(acc.acc_hub_id, acc.acc_project_id);
             if (acc.acc_root_folder_id) {
-              // 고정된 시작 폴더 안쪽부터 보여준다(ACC 내부 폴더 노출 방지).
-              const root = { id: acc.acc_root_folder_id, name: acc.acc_root_folder_name ?? '시작 폴더' };
-              setBusy(true);
-              try {
-                const { folders, items } = await accFetch({
-                  action: 'contents',
-                  project: acc.acc_project_id,
-                  folder: root.id,
-                });
-                setFolders(folders);
-                setItems(items);
-                setFolderPath([root]);
-              } catch (e) {
-                setStatus(`시작 폴더 로드 실패: ${(e as Error).message}`);
-              } finally {
-                setBusy(false);
-              }
+              // 고정된 시작 폴더를 펼쳐진 루트로(그 안쪽만 보임, ACC 내부 폴더 숨김).
+              const root = mkFolder(acc.acc_root_folder_id, acc.acc_root_folder_name ?? '시작 폴더');
+              setRoots([root]);
+              void toggleFolder(root, acc.acc_project_id);
             } else {
               void loadTopFolders(acc.acc_hub_id, acc.acc_project_id);
             }
@@ -458,41 +507,14 @@ export function AccModels() {
               </div>
             )}
 
-            {project && (
-              <div style={{ marginTop: 10, fontSize: 12, opacity: 0.85 }}>
-                📁 {folderPath.length ? folderPath.map((f) => f.name).join(' / ') : '최상위'}
-              </div>
-            )}
-
-            {isAdmin && folderPath.length > 0 && (
-              <button onClick={() => void pinFolder()} style={{ ...btnStyle, width: '100%', marginTop: 6 }}>
-                📌 이 폴더를 시작 폴더로 고정
-              </button>
-            )}
             {isAdmin && pinnedRootName && (
-              <div style={{ marginTop: 4, fontSize: 11, color: 'var(--muted)' }}>
-                시작 폴더: {pinnedRootName}
+              <div style={{ marginTop: 6, fontSize: 11, color: 'var(--muted)' }}>
+                시작 폴더: {pinnedRootName} {isAdmin && '(폴더 옆 📌 로 변경)'}
               </div>
             )}
 
             <ul style={{ listStyle: 'none', padding: 0, margin: '6px 0' }}>
-              {folders.map((f) => (
-                <li key={f.id}>
-                  <button
-                    onClick={() => void openFolder(f, folderPath.length)}
-                    style={rowStyle}
-                  >
-                    📂 {f.name}
-                  </button>
-                </li>
-              ))}
-              {items.map((it) => (
-                <li key={it.id}>
-                  <button onClick={() => pickItem(it)} style={{ ...rowStyle, opacity: it.urn ? 1 : 0.5 }}>
-                    🧱 {it.name}
-                  </button>
-                </li>
-              ))}
+              {roots.map((n) => renderFolder(n, 0))}
             </ul>
           </div>
         )}
