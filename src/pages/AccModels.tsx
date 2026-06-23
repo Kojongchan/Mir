@@ -199,6 +199,8 @@ export function AccModels() {
         if (cancelled || !containerRef.current) return;
         const viewer = new Autodesk.Viewing.GuiViewer3D(containerRef.current);
         viewer.start();
+        // 라이트회색 기본 배경이 앱 다크 테마와 안 맞아 어두운 그라데이션으로 통일.
+        viewer.setBackgroundColor(40, 48, 64, 20, 26, 38);
         viewerRef.current = viewer;
         setStatus(urnFromUrl ? 'URN 로딩…' : 'ACC에서 모델을 선택하세요.');
         if (urnFromUrl) void openModel(urnFromUrl);
@@ -218,33 +220,48 @@ export function AccModels() {
 
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', gap: 8, padding: 8, background: '#111827', color: '#fff', alignItems: 'center' }}>
+      <div
+        style={{
+          display: 'flex',
+          gap: 8,
+          padding: 8,
+          background: 'var(--panel)',
+          color: 'var(--text)',
+          borderBottom: '1px solid var(--border)',
+          alignItems: 'center',
+        }}
+      >
         <strong style={{ fontSize: 13 }}>🅰 ACC 모델 (APS)</strong>
         <input
           value={urn}
           onChange={(e) => setUrn(e.target.value)}
           placeholder="base64 URN (ACC item version / OSS object)"
-          style={{ flex: 1, padding: '4px 8px', borderRadius: 6, border: 'none', fontSize: 12 }}
+          style={{
+            flex: 1,
+            padding: '4px 8px',
+            borderRadius: 6,
+            border: '1px solid var(--border)',
+            background: 'var(--bg)',
+            color: 'var(--text)',
+            fontSize: 12,
+          }}
         />
-        <button onClick={() => void openModel(urn)} style={{ padding: '4px 10px', borderRadius: 6 }}>
+        <button onClick={() => void openModel(urn)} style={btnStyle}>
           열기
         </button>
-        <button
-          onClick={() => setShowBrowser((s) => !s)}
-          style={{ padding: '4px 10px', borderRadius: 6 }}
-        >
+        <button onClick={() => setShowBrowser((s) => !s)} style={btnStyle}>
           {showBrowser ? '탐색 닫기' : 'ACC 탐색'}
         </button>
-        <span style={{ fontSize: 12, opacity: 0.85 }}>{status}</span>
+        <span style={{ fontSize: 12, color: 'var(--muted)' }}>{status}</span>
       </div>
       <div style={{ position: 'relative', flex: 1, display: 'flex' }}>
         {showBrowser && (
           <div
             style={{
               width: 320,
-              borderRight: '1px solid #1f2937',
-              background: '#0b1220',
-              color: '#e5e7eb',
+              borderRight: '1px solid var(--border)',
+              background: 'var(--panel)',
+              color: 'var(--text)',
               padding: 10,
               overflowY: 'auto',
               fontSize: 13,
@@ -317,9 +334,9 @@ const selStyle: React.CSSProperties = {
   padding: '4px 6px',
   borderRadius: 6,
   marginTop: 2,
-  background: '#111827',
-  color: '#e5e7eb',
-  border: '1px solid #374151',
+  background: 'var(--bg)',
+  color: 'var(--text)',
+  border: '1px solid var(--border)',
 };
 const rowStyle: React.CSSProperties = {
   display: 'block',
@@ -327,8 +344,16 @@ const rowStyle: React.CSSProperties = {
   textAlign: 'left',
   padding: '4px 6px',
   background: 'transparent',
-  color: '#e5e7eb',
+  color: 'var(--text)',
   border: 'none',
   cursor: 'pointer',
   borderRadius: 4,
+};
+const btnStyle: React.CSSProperties = {
+  padding: '4px 10px',
+  borderRadius: 6,
+  border: '1px solid var(--border)',
+  background: 'var(--bg)',
+  color: 'var(--text)',
+  cursor: 'pointer',
 };
