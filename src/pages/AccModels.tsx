@@ -123,7 +123,24 @@ export function AccModels() {
   const [pinnedRootName, setPinnedRootName] = useState('');
   const [defaultName, setDefaultName] = useState('');
   const [openName, setOpenName] = useState('');
+  const [openId, setOpenId] = useState(''); // 현재 연 파일(트리 체크 표시)
   const pinned = !!pinnedHubName && !!pinnedProjectName;
+
+  // 좌측 트리 패널 가로폭(우측 가장자리 핸들 드래그) — 긴 파일명 대응.
+  const [panelW, setPanelW] = useState(320);
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = panelW;
+    const onMove = (ev: MouseEvent) =>
+      setPanelW(Math.min(720, Math.max(220, startW + (ev.clientX - startX))));
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
 
   const loadHubs = async () => {
     setBusy(true);
@@ -202,7 +219,7 @@ export function AccModels() {
     }
     setUrn(it.urn);
     setOpenName(it.name);
-    setShowBrowser(false);
+    setOpenId(it.id);
     void openModel(it.urn);
   };
 
@@ -300,13 +317,28 @@ export function AccModels() {
       {node.expanded && (
         <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
           {node.children.map((c) => renderFolder(c, depth + 1))}
-          {node.items.map((it) => (
-            <li key={it.id} style={{ paddingLeft: (depth + 1) * 12 }}>
-              <button onClick={() => pickItem(it)} style={{ ...rowStyle, opacity: it.urn ? 1 : 0.5 }}>
-                <span style={{ display: 'inline-block', width: 14 }} />🧱 {it.name}
-              </button>
-            </li>
-          ))}
+          {node.items.map((it) => {
+            const open = it.id === openId;
+            return (
+              <li key={it.id} style={{ paddingLeft: (depth + 1) * 12 }}>
+                <button
+                  onClick={() => pickItem(it)}
+                  title={it.name}
+                  style={{
+                    ...rowStyle,
+                    opacity: it.urn ? 1 : 0.5,
+                    fontWeight: open ? 700 : 400,
+                    color: open ? 'var(--accent)' : 'var(--text)',
+                  }}
+                >
+                  <span style={{ display: 'inline-block', width: 14, color: 'var(--accent)' }}>
+                    {open ? '✓' : ''}
+                  </span>
+                  🧱 {it.name}
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </li>
@@ -382,11 +414,11 @@ export function AccModels() {
               void loadTopFolders(acc.acc_hub_id, acc.acc_project_id);
             }
             if (acc.acc_default_urn) {
-              // 관리자가 지정한 기본 모델 자동 오픈.
+              // 관리자가 지정한 기본 모델 자동 오픈(트리는 그대로 둠).
               setUrn(acc.acc_default_urn);
               setOpenName(acc.acc_default_name ?? '');
               setDefaultName(acc.acc_default_name ?? '');
-              setShowBrowser(false);
+              setShowBrowser(true);
               void openModel(acc.acc_default_urn);
             } else {
               setShowBrowser(true);
@@ -430,6 +462,9 @@ export function AccModels() {
         }}
       >
         <strong style={{ fontSize: 13 }}>🅰 ACC 모델</strong>
+        <button onClick={() => setShowBrowser((s) => !s)} style={btnStyle}>
+          {showBrowser ? '◀ 폴더 닫기' : '폴더 펼치기 ▶'}
+        </button>
         {defaultName && (
           <span style={{ fontSize: 12, color: 'var(--muted)' }}>기본: {defaultName}</span>
         )}
@@ -439,9 +474,6 @@ export function AccModels() {
             ⭐ 기본 모델로 지정
           </button>
         )}
-        <button onClick={() => setShowBrowser((s) => !s)} style={btnStyle}>
-          {showBrowser ? '탐색 닫기' : '📂 폴더'}
-        </button>
         <span style={{ fontSize: 12, color: 'var(--muted)', maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {status}
         </span>
@@ -450,7 +482,9 @@ export function AccModels() {
         {showBrowser && (
           <div
             style={{
-              width: 320,
+              width: panelW,
+              flex: 'none',
+              position: 'relative',
               borderRight: '1px solid var(--border)',
               background: 'var(--panel)',
               color: 'var(--text)',
@@ -459,6 +493,7 @@ export function AccModels() {
               fontSize: 13,
             }}
           >
+            <div className="subtree-resizer" onMouseDown={startResize} title="좌우 폭 조절" />
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
               <strong>{isAdmin ? 'ACC 탐색' : pinnedProjectName || 'ACC'}</strong>
               {busy && <span style={{ opacity: 0.7 }}>로딩…</span>}
@@ -543,6 +578,9 @@ const rowStyle: React.CSSProperties = {
   border: 'none',
   cursor: 'pointer',
   borderRadius: 4,
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
 };
 const btnStyle: React.CSSProperties = {
   padding: '4px 10px',
