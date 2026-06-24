@@ -82,14 +82,14 @@ export default async function handler(req: Request): Promise<Response> {
   }
   const action = body.action;
 
-  // 시스템 관리자(is_admin) 계정은 앱에서 변경 불가 — Supabase 에서만 관리(보안 결정).
-  // 사용자 대상 작업(rename/resetPassword/delete)이 시스템 관리자를 향하면 거부한다.
+  // 다른 시스템 관리자(is_admin) 계정은 앱에서 변경 불가 — Supabase 에서만 관리(보안 결정).
+  // 단 본인(callerId) 계정은 앱에서 직접 비번/아이디를 바꿀 수 있다.
   async function targetIsSystemAdmin(userId: string): Promise<boolean> {
     if (!userId) return false;
     const { data } = await admin.from('profiles').select('is_admin').eq('id', userId).single();
     return !!data?.is_admin;
   }
-  const SYSADMIN_LOCKED = '시스템 관리자 계정은 앱에서 변경할 수 없습니다. Supabase에서 관리하세요.';
+  const SYSADMIN_LOCKED = '다른 시스템 관리자 계정은 앱에서 변경할 수 없습니다. Supabase에서 관리하세요.';
 
   try {
     if (action === 'createUser') {
@@ -126,7 +126,7 @@ export default async function handler(req: Request): Promise<Response> {
       const username = String(body.username ?? '').trim();
       if (!userId) return json({ error: 'userId required' }, 400);
       if (!username) return json({ error: '새 아이디를 입력하세요.' }, 400);
-      if (await targetIsSystemAdmin(userId)) return json({ error: SYSADMIN_LOCKED }, 403);
+      if (userId !== callerId && (await targetIsSystemAdmin(userId))) return json({ error: SYSADMIN_LOCKED }, 403);
 
       // The login username also drives the internal auth e-mail (D4), so
       // both must change together. Guard against collisions up-front: the
@@ -164,7 +164,7 @@ export default async function handler(req: Request): Promise<Response> {
       const password = String(body.password ?? '');
       if (!userId) return json({ error: 'userId required' }, 400);
       if (password.length < 6) return json({ error: '비밀번호는 6자 이상이어야 합니다.' }, 400);
-      if (await targetIsSystemAdmin(userId)) return json({ error: SYSADMIN_LOCKED }, 403);
+      if (userId !== callerId && (await targetIsSystemAdmin(userId))) return json({ error: SYSADMIN_LOCKED }, 403);
       const { error } = await admin.auth.admin.updateUserById(userId, { password });
       if (error) return json({ error: error.message }, 400);
       return json({ ok: true });
@@ -174,7 +174,7 @@ export default async function handler(req: Request): Promise<Response> {
       const userId = String(body.userId ?? '');
       if (!userId) return json({ error: 'userId required' }, 400);
       if (userId === callerId) return json({ error: '자기 자신은 삭제할 수 없습니다.' }, 400);
-      if (await targetIsSystemAdmin(userId)) return json({ error: SYSADMIN_LOCKED }, 403);
+      if (userId !== callerId && (await targetIsSystemAdmin(userId))) return json({ error: SYSADMIN_LOCKED }, 403);
       // detach uploaded models first (FK) so the delete doesn't fail
       await admin.from('models').update({ uploaded_by: null }).eq('uploaded_by', userId);
       const { error } = await admin.auth.admin.deleteUser(userId);

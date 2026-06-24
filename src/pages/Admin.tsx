@@ -287,9 +287,9 @@ function UsersTab({
 
       <p className="muted admin-hint">
         <strong>시스템 관리자</strong>는 사용자 생성·권한 부여 등 <strong>모든 것</strong>을 제어하고 전 프로젝트를 관리합니다.
-        <strong> 보안상 시스템 관리자 지정·해제와 시스템 관리자 계정의 비번/아이디/삭제는 앱에서 불가</strong> —
-        <strong> Supabase</strong>(Authentication · SQL)에서만 관리합니다. 프로젝트별 <strong>관리자/실무자/뷰어</strong>는
-        ‘구성원’ 탭에서 배정합니다.
+        <strong> 시스템 관리자 지정·해제, 다른 시스템 관리자 계정 변경·삭제는 앱에서 불가</strong> —
+        <strong> Supabase</strong>(Authentication · SQL)에서만. 단 <strong>본인 계정의 아이디·비번은 직접 변경</strong> 가능.
+        프로젝트별 <strong>관리자/실무자/뷰어</strong>는 ‘구성원’ 탭에서 배정합니다.
       </p>
 
       <div className="admin-table-wrap">
@@ -305,7 +305,16 @@ function UsersTab({
                 <td>{u.is_admin ? <span className="tag tag-sysadmin">시스템 관리자</span> : '—'}</td>
                 <td className="right nowrap">
                   {u.is_admin ? (
-                    <span className="muted" title="시스템 관리자 계정은 Supabase에서만 관리합니다.">🔒 Supabase에서 관리</span>
+                    u.id === currentUserId ? (
+                      // 본인(시스템 관리자)은 자기 아이디·비번을 직접 변경 가능. 삭제·권한해제는 Supabase.
+                      <>
+                        <button onClick={() => rename(u)}>아이디 변경</button>
+                        <button onClick={() => resetPw(u)}>비번 변경</button>
+                        <span className="muted" title="시스템 관리자 해제·삭제는 Supabase에서만">🔒</span>
+                      </>
+                    ) : (
+                      <span className="muted" title="다른 시스템 관리자 계정은 Supabase에서만 관리합니다.">🔒 Supabase에서 관리</span>
+                    )
                   ) : (
                     <>
                       <button onClick={() => rename(u)}>아이디 변경</button>
