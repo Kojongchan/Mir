@@ -33,5 +33,7 @@
 
 | D20 | **권한 4단계(RBAC)로 전환** — D11(쓰기=시스템관리자만)을 폐기하고 `project_members.role`(0001부터 존재: viewer/editor/admin) + `profiles.is_admin` 으로 프로젝트별 역할을 강제. **뷰어(viewer)**=읽기·미리보기만(다운로드 UI 숨김), **실무자(editor)**=콘텐츠 쓰기 전부(업로드·수정·삭제·버전), **관리자(admin, 프로젝트)**=실무자+프로젝트 설정+역할 부여(단 시스템 관리자 멤버 보호), **시스템 관리자(is_admin)**=최상위. DB: `0023_rbac.sql` 의 `is_editor(p)`/`is_project_admin(p)`/`user_is_system_admin(uid)` 헬퍼로 전 콘텐츠 테이블 쓰기 RLS를 `is_editor(project_id)`, 설정·역할을 `is_project_admin`/`is_admin` 으로. 프론트 `useProjectRole`. **전 모듈 적용**(사용자 결정). **S48** | 현장관리자·실무자에게 프로젝트 단위로 권한을 나눠주려면 글로벌 admin 단일 권한(D11)으론 부족. ACC editor/뷰어 모델을 단순화해 차용. 다운로드 차단은 모델(SVF2 스트리밍)은 원천 차단, 문서(미리보기 바이트 노출)는 '다운로드 버튼 숨김' 소프트 차단 |
 
+| D21 | **시스템 관리자(profiles.is_admin) 계정은 앱에서 변경 불가 — Supabase 에서만 관리**. 지정/해제는 DB 트리거(`guard_is_admin`, 0024)로 일반 앱 역할(authenticated)에서 차단(postgres/service_role 만 허용). 시스템 관리자 계정의 비번/아이디/삭제는 `api/admin.ts` 가 대상이 시스템 관리자면 403. 관리자 콘솔 UI 에서도 시스템관리자 토글·생성 체크박스 제거, 시스템 관리자 행은 '🔒 Supabase에서 관리'. **S48** | 최상위 권한이 앱 안에서 탈취·실수로 바뀌면 전체가 위험. 시스템 관리자 복구/변경은 break-glass 로 Supabase(대시보드·SQL)에서만. 앱 콘솔은 일반 사용자(뷰어/실무자/프로젝트관리자)와 프로젝트 역할만 관리 |
+
 ## 우선순위 (사용자 확정 · 갱신)
 뷰어 → 4D → 충돌검사 → CDE/PMIS 포털 → 리뷰도구 → **장비운용(강점)은 기획안 최후로 연기**(S16, 사용자 결정) → VR. 포맷은 **IFC**.

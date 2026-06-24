@@ -17,7 +17,6 @@ import {
   renameUserAccount,
   resetUserPassword,
   setMember,
-  setUserAdmin,
   updateProject,
   type MemberRole,
   type MemberRow,
@@ -219,34 +218,23 @@ function UsersTab({
   const [username, setUsername] = useState('');
   const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
-  const [isAdmin, setIsAdmin] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const add = async () => {
     if (!username.trim() || password.length < 6) return;
     setBusy(true);
     try {
-      await createUserAccount(username.trim(), password, fullName.trim() || username.trim(), isAdmin);
+      // 시스템 관리자는 앱에서 만들 수 없다(Supabase 에서만) → 항상 일반 계정.
+      await createUserAccount(username.trim(), password, fullName.trim() || username.trim(), false);
       setUsername('');
       setFullName('');
       setPassword('');
-      setIsAdmin(false);
       flash('사용자를 생성했습니다. (멤버 배정 탭에서 프로젝트를 할당하세요)');
       onChange();
     } catch (e) {
       fail(e);
     } finally {
       setBusy(false);
-    }
-  };
-
-  const toggleAdmin = async (u: ProfileRow) => {
-    try {
-      await setUserAdmin(u.id, !u.is_admin);
-      flash(`${u.username} 시스템 관리자 권한을 ${!u.is_admin ? '부여' : '해제'}했습니다.`);
-      onChange();
-    } catch (e) {
-      fail(e);
     }
   };
 
@@ -292,9 +280,6 @@ function UsersTab({
         <input placeholder="아이디 (한글 가능)" value={username} onChange={(e) => setUsername(e.target.value)} />
         <input placeholder="표시이름" value={fullName} onChange={(e) => setFullName(e.target.value)} />
         <input type="password" placeholder="비밀번호 (6자+)" value={password} onChange={(e) => setPassword(e.target.value)} />
-        <label className="admin-check">
-          <input type="checkbox" checked={isAdmin} onChange={(e) => setIsAdmin(e.target.checked)} /> 시스템 관리자
-        </label>
         <button onClick={add} disabled={busy || !username.trim() || password.length < 6}>
           {busy ? '생성 중…' : '사용자 추가'}
         </button>
@@ -302,7 +287,9 @@ function UsersTab({
 
       <p className="muted admin-hint">
         <strong>시스템 관리자</strong>는 사용자 생성·권한 부여 등 <strong>모든 것</strong>을 제어하고 전 프로젝트를 관리합니다.
-        프로젝트별 <strong>관리자/실무자/뷰어</strong>는 ‘구성원’ 탭에서 배정합니다(서로 다른 권한).
+        <strong> 보안상 시스템 관리자 지정·해제와 시스템 관리자 계정의 비번/아이디/삭제는 앱에서 불가</strong> —
+        <strong> Supabase</strong>(Authentication · SQL)에서만 관리합니다. 프로젝트별 <strong>관리자/실무자/뷰어</strong>는
+        ‘구성원’ 탭에서 배정합니다.
       </p>
 
       <div className="admin-table-wrap">
@@ -317,10 +304,15 @@ function UsersTab({
                 <td className="muted">{u.full_name ?? '—'}</td>
                 <td>{u.is_admin ? <span className="tag tag-sysadmin">시스템 관리자</span> : '—'}</td>
                 <td className="right nowrap">
-                  <button onClick={() => toggleAdmin(u)}>{u.is_admin ? '시스템관리자 해제' : '시스템관리자 지정'}</button>
-                  <button onClick={() => rename(u)}>아이디 변경</button>
-                  <button onClick={() => resetPw(u)}>비번 변경</button>
-                  <button className="danger" onClick={() => remove(u)} disabled={u.id === currentUserId}>삭제</button>
+                  {u.is_admin ? (
+                    <span className="muted" title="시스템 관리자 계정은 Supabase에서만 관리합니다.">🔒 Supabase에서 관리</span>
+                  ) : (
+                    <>
+                      <button onClick={() => rename(u)}>아이디 변경</button>
+                      <button onClick={() => resetPw(u)}>비번 변경</button>
+                      <button className="danger" onClick={() => remove(u)} disabled={u.id === currentUserId}>삭제</button>
+                    </>
+                  )}
                 </td>
               </tr>
             ))}

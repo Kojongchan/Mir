@@ -1381,3 +1381,21 @@ create policy members_delete on public.project_members
 -- profiles update(시스템 관리자 플래그·표시명)은 시스템 관리자만 — 0002 그대로 유지.
 
 notify pgrst, 'reload schema';
+
+-- ===================== 0024_protect_system_admin.sql =====================
+create or replace function public.guard_is_admin()
+returns trigger language plpgsql as $$
+begin
+  if new.is_admin is distinct from old.is_admin
+     and current_user not in ('postgres', 'service_role', 'supabase_admin', 'supabase_auth_admin') then
+    raise exception '시스템 관리자(is_admin)는 앱에서 변경할 수 없습니다. Supabase에서만 관리하세요.';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_guard_is_admin on public.profiles;
+create trigger trg_guard_is_admin
+  before update on public.profiles
+  for each row execute function public.guard_is_admin();
+
+notify pgrst, 'reload schema';
