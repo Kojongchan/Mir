@@ -728,9 +728,9 @@ export function AccModels() {
           {docView && (
             <div
               style={{
-                position: 'absolute',
+                position: 'fixed',
                 inset: 0,
-                zIndex: 5,
+                zIndex: 500,
                 background: 'var(--panel)',
                 display: 'flex',
                 flexDirection: 'column',
