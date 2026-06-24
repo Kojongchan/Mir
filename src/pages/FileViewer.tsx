@@ -23,8 +23,8 @@ const PdfViewer = lazy(() =>
 const SheetViewer = lazy(() =>
   import('../components/viewers/SheetViewer').then((m) => ({ default: m.SheetViewer })),
 );
-const DocxViewer = lazy(() =>
-  import('../components/viewers/DocxViewer').then((m) => ({ default: m.DocxViewer })),
+const OfficeViewer = lazy(() =>
+  import('../components/viewers/OfficeViewer').then((m) => ({ default: m.OfficeViewer })),
 );
 
 type State =
@@ -52,6 +52,8 @@ export function FileViewer() {
             setState({ phase: 'error', message: '파일을 찾을 수 없거나 접근 권한이 없습니다.' });
           return;
         }
+        // 주의: Supabase download 옵션은 Content-Disposition: attachment 라
+        // Office Online 이 렌더를 거부한다 → office 라도 download 명을 쓰지 않는다.
         const url = await signedFileUrl(file.storage_path);
         if (!cancelled) setState({ phase: 'ready', file, url });
       } catch (e) {
@@ -110,8 +112,8 @@ function Dispatch({ file, url }: { file: FileRecord; url: string }) {
       return <AudioViewer file={file} url={url} />;
     case 'sheet':
       return <SheetViewer file={file} url={url} />;
-    case 'docx':
-      return <DocxViewer file={file} url={url} />;
+    case 'office':
+      return <OfficeViewer file={file} url={url} />;
     case 'text':
       return <TextViewer file={file} url={url} />;
     default:

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { errMessage } from '../lib/errors';
-import { useAuth } from '../auth/AuthProvider';
+import { useProjectRole } from '../auth/useProjectRole';
 import { MiniChart } from '../components/MiniChart';
 import { formatAmount, listMonthlyRecords, type MonthlyRecord } from '../lib/dashboard';
 import {
@@ -22,8 +22,8 @@ import {
 export function Billing() {
   const { projectId = '' } = useParams();
   const navigate = useNavigate();
-  const { profile } = useAuth();
-  const isAdmin = !!profile?.is_admin;
+  // 도급액·기성내역 입력·수정·삭제 = 실무자(editor) 이상. RLS(0023)와 일치.
+  const { canEdit } = useProjectRole(projectId);
   const [monthly, setMonthly] = useState<MonthlyRecord[]>([]);
   const [contract, setContract] = useState(0);
   const [draft, setDraft] = useState('0');
@@ -69,7 +69,7 @@ export function Billing() {
         <div className="card dash-stat">
           <h3>도급액</h3>
           <div className="dash-stat-big" style={{ fontSize: 30 }}>{formatAmount(contract)}<small>원</small></div>
-          {isAdmin && (
+          {canEdit && (
             <div className="dash-edit-row" style={{ marginTop: 8 }}>
               <input type="number" value={draft} onChange={(e) => setDraft(e.target.value)} />
               <button onClick={onSaveContract}>저장</button>
@@ -121,7 +121,7 @@ export function Billing() {
         )}
       </section>
 
-      <BillingItemsSection projectId={projectId} isAdmin={isAdmin} />
+      <BillingItemsSection projectId={projectId} canEdit={canEdit} />
 
       {msg && <p className="muted dash-msg">{msg}</p>}
     </div>
@@ -131,7 +131,7 @@ export function Billing() {
 const EMPTY_ITEM = { category: '', contract_amount: 0, prev_amount: 0, current_amount: 0 };
 
 /** 공종별 기성 명세 — 도급액 / 전월 누계 / 당월 → 누계·기성률. */
-function BillingItemsSection({ projectId, isAdmin }: { projectId: string; isAdmin: boolean }) {
+function BillingItemsSection({ projectId, canEdit }: { projectId: string; canEdit: boolean }) {
   const [items, setItems] = useState<BillingItem[]>([]);
   const [form, setForm] = useState<typeof EMPTY_ITEM>(EMPTY_ITEM);
   const [editId, setEditId] = useState<string | null>(null);
@@ -202,7 +202,7 @@ function BillingItemsSection({ projectId, isAdmin }: { projectId: string; isAdmi
     <section className="card" style={{ marginTop: 14 }}>
       <h3>공종별 기성 명세 <span className="muted">(도급액 · 전월누계 · 당월 → 누계 · 기성률)</span></h3>
 
-      {isAdmin && (
+      {canEdit && (
         <div className="dash-edit-row">
           <label>공종<input value={form.category} placeholder="예: 토공" onChange={(e) => setForm({ ...form, category: e.target.value })} /></label>
           <label>도급액<input type="number" value={form.contract_amount} onChange={(e) => setForm({ ...form, contract_amount: Number(e.target.value) })} /></label>
@@ -222,7 +222,7 @@ function BillingItemsSection({ projectId, isAdmin }: { projectId: string; isAdmi
               <tr>
                 <th>공종</th><th className="right">도급액</th><th className="right">전월누계</th>
                 <th className="right">당월</th><th className="right">누계</th><th className="right">기성률</th>
-                {isAdmin && <th />}
+                {canEdit && <th />}
               </tr>
             </thead>
             <tbody>
@@ -237,7 +237,7 @@ function BillingItemsSection({ projectId, isAdmin }: { projectId: string; isAdmi
                     <td className="right">{formatAmount(Number(it.current_amount))}</td>
                     <td className="right">{formatAmount(cum)}</td>
                     <td className="right">{rate.toFixed(1)}%</td>
-                    {isAdmin && (
+                    {canEdit && (
                       <td className="right nowrap">
                         <button onClick={() => onEdit(it)}>수정</button>
                         <button className="danger" onClick={() => onDelete(it.id)}>삭제</button>
@@ -253,7 +253,7 @@ function BillingItemsSection({ projectId, isAdmin }: { projectId: string; isAdmi
                 <td className="right">{formatAmount(tot.current)}</td>
                 <td className="right">{formatAmount(tot.cum)}</td>
                 <td className="right">{totRate.toFixed(1)}%</td>
-                {isAdmin && <td />}
+                {canEdit && <td />}
               </tr>
             </tbody>
           </table>

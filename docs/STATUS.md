@@ -2,6 +2,54 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
+**[2nd 계정·병렬] 2026-06-24 · S47/S48 main 병합 + Track B 전부 완료** (branch `claude/affectionate-babbage-qxs2ry`)
+- ✅ **선결 — S47/S48 main 병합 (PR #89, merge `5de0d40`)**. funny-bardeen이 main의 fast-forward라 충돌 0,
+  CI(typecheck·build) 통과 후 병합. 이제 두 트랙 모두 현재 main에서 분기 가능. (마이그레이션 0024·0025는 S48이
+  이미 사용 → Track A는 0026~, Track B는 0030~ 권장.)
+- ✅ **B1 — 모듈별 편집 게이팅 정정**: 이슈·공정·일보·기성·하도급·게시판·도면의 쓰기 UI가 글로벌 `is_admin`
+  (시스템관리자)에 묶여 실무자/프로젝트관리자가 편집 불가하던 회귀 수정 → `useProjectRole().canEdit`(RLS 0023
+  `is_editor`와 일치). 공유 컴포넌트 Attachments·DrawingSheet prop `isAdmin`→`canEdit` 명칭 정정.
+- ✅ **B2 — 이미 완료 확인(작업 불필요)**: ProjectMembers.tsx가 `canManage`(프로젝트관리자+시스템관리자) 게이팅,
+  RLS 0023 `members_*`가 `is_project_admin` 허용, ProjectNav 링크도 `manageOnly`. S48 9a2166c에서 구현됨.
+- ✅ **B3 — ACC 새 버전 올리기 UI**: lib·서버는 이미 `itemId`로 버전 생성 지원했으나 진입점이 없었음 → ⋮메뉴 +
+  버전이력 모달에 '새 버전 올리기'(canEdit). `uploadToAcc(fileName 오버라이드)`로 원본 이름 유지. 이동·버전이력은
+  기존 유지.
+- ✅ **B4 — pptx 미리보기 뷰어**: PptxViewer(pptx-preview, 순수 프론트·외부전송 없음) 추가, ViewerKind+매핑,
+  AccBrowser·FileViewer 배선. **PDF 페이지 네비/점프/썸네일은 이미 완비**라 그대로 둠.
+- ✅ **B4 후속(리뷰 반영) — 문서 뷰어 Office Online 일원화**: pptx-preview 화질이 ACC 대비 떨어져, 사용자
+  결정으로 **Office 포맷 전부(doc·docx·ppt·pptx·xls·xlsx·xlsm)를 Microsoft Office Online 전체 뷰어
+  (view.aspx)로** 통일(`OfficeViewer`, pptx-preview 제거). **풀스크린 인라인**(문서 오버레이 `fixed inset:0
+  z-index:500`)으로 ACC와 동일한 풀 메뉴바·슬라이드쇼. csv만 자체 표 뷰어 유지. 공개 Autodesk/Supabase 서명
+  URL만 Office에 전달(우리 JWT 미노출).
+- ✅ **ACC 모델 뷰어 ✕ 닫기** 추가(DWG 등 모델 열람 후 자료관리로 복귀). 폴더트리 정리는 Track A 영역.
+- ⚠️ **Office 뷰어 파일명(UUID) 한계**: Office Online 은 src URL 마지막 경로(=Autodesk 저장소 UUID)를 이름으로
+  표시. (1) 우리 도메인 경유 capability URL = Vercel **프리뷰 SSO 보호**로 외부(MS) 접근 불가, (2)
+  response-content-disposition 주입 = Office 가 렌더 거부 → **프리뷰에서 안전 수정 불가**. 실제 파일명은 우리
+  오버레이 헤더+다운로드 링크로 표시. **프로덕션(SSO 없음)에선 capability 방식이 동작할 수 있어 병합 후 재시도 여지**.
+- ⚠️ **인계(라이브 검증 필요)**: B3의 ACC 새 버전·이동 실제 쓰기(S3 PUT/CORS/version 생성)는 **운영에서 폴더
+  편집권한 부여 후 검증** 필요(기존 코드도 동일 주의). Quantities.tsx의 proposeBilling 게이트는 Track A S51
+  영역이라 system-admin 유지(인계).
+- **인수인계 한 줄**: → 2nd 계정 Track B(B1~B4) 완료·푸시. 메인 계정은 S49부터 직렬 진행. 운영: 0022·0023·
+  0024·0025 적용 + 멤버 role 부여 + ACC 폴더 편집권한 부여.
+
+---
+
+**[기획세션] 2026-06-24 · 전환 후 로드맵 직렬/병렬 분리** (branch `claude/magical-curie-d4relv`,
+S47/S48 위에 기획만 추가). 토큰 분산용 **2nd 계정 병렬 가동** 대비, 남은 일을 두 트랙으로 분리 → **PLANNING §0-B**.
+- **선결(1회)**: **S47/S48을 main에 병합** 후 두 트랙 분기(지금 main은 S46까지라 미병합 시 양쪽 깨짐).
+  마이그레이션 번호 사전배정 **A=0024~ / B=0030~**.
+- **🅰 직렬(이어서·메인)**: ACC 모델 위로 고유기능 이식 — S49(dbId↔GlobalId 매핑 + **4D/간섭 ACC 소스화로
+  신규 BIM 업로드 부재 해소** + 이슈핀) → S50(4D) → S51(물량) → S52(간섭 스파이크) → S53(IfcViewer 은퇴).
+  전부 뷰어/Workspace/매핑 공유라 직렬.
+- **🅱 분리(2nd 계정)**: B1 모듈별 canEdit 게이팅 점검 · B2 프로젝트 관리자 역할배정 권한 · B3 ACC 파일관리자
+  보강(이동·새버전·라이브검증) · B4 비-3D 뷰어 quick wins(pptx·PDF네비). 포털/Admin/AccBrowser/문서뷰어만
+  건드려 A와 파일 분리.
+- **충돌 회피**: 파일 footprint 분리 + 마이그레이션 번호 분리 + STATUS/ROADMAP는 각자 섹션. B부터 자주 병합, A는 수시 rebase.
+- **회귀 인지**: S48에서 BIM 업로드 UI 제거 → 신규 모델 등록 경로 부재(기존 모델 동작) → S49가 ACC 소스화로 해소.
+- **인수인계 한 줄**: → S47/S48 병합 후, 메인=S49부터 직렬 / 2nd 계정=B1·B3 우선 착수.
+
+---
+
 ## S48 결과 (branch: claude/funny-bardeen-d9s1af) — 권한 4단계(RBAC) + 자료관리 ACC 단독·파일관리자 UI
 > 사용자 결정: ① 권한을 **뷰어/실무자(editor)/관리자(admin)/시스템 관리자** 4단계로(전 모듈). ② 자료관리는
 > **ACC 단독**(Supabase '앱 저장소' 탭 제거). ③ ACC를 ACC식 파일관리자 UI로 재구성. typecheck·build 통과.

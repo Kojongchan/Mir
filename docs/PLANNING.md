@@ -30,6 +30,60 @@
 - **다음 기획 후보**: ① 자료관리 ACC 일원화(업로드 포함) ② 4D·간섭·이슈핀·물량 APS 이식
   ③ PPT(pptx) 뷰어 ④ 상단 PDF 페이지네비 등 ACC 앱 UI 보강.
 
+## ⚡ 0-B. 전환 후 실행 로드맵 — 직렬(이어서) vs 병렬(분리) ★기획자 확정★
+> S47(ACC 저장소 일원화)·S48(4단계 RBAC + ACC 단독 파일관리자)이 **완료**(branch
+> `claude/funny-bardeen-d9s1af`, **아직 main 미병합**). 남은 일을 **두 트랙**으로 나눈다.
+> 사용자가 **토큰 사용량 분산을 위해 별도 GitHub 계정/세션을 병렬 가동**하려 하므로,
+> **서로 파일이 겹치지 않는** 단위로 분리한다.
+
+### ⛓ 선결 (두 트랙 시작 전 1회)
+- **S47/S48을 main에 병합**한다. 두 트랙 모두 이 위에서 분기해야 충돌이 없다(지금 main은
+  S46까지라, 병합 없이 병렬 분기하면 RBAC·ACC 저장소가 없어 양쪽 모두 깨짐).
+- **마이그레이션 번호 사전 배정**(추가형이라 번호만 안 겹치면 충돌 X): **Track A=0024~**,
+  **Track B=0030~**.
+
+### ⚠️ 회귀(둘 다 인지) — 신규 BIM 업로드 경로 일시 부재
+S48에서 자료관리가 ACC 단독이 되며 **Supabase BIM(IFC) 업로드 UI가 제거**됨 → 4D·간섭용
+**신규 모델 등록 경로가 현재 없음**(기존 모델은 동작). 이를 **Track A의 첫 작업(S49)에서
+"4D·간섭 BIM 소스를 ACC로" 전환**하며 정식 해소한다(임시 복원은 throwaway라 지양).
+
+### 🅰 Track A — "이어서 해야 하는 것"(직렬·메인 세션): ACC 모델 위로 고유기능 이식
+> 모두 **APS Viewer + Workspace + 매핑 레이어**를 공유 → **서로 의존**하므로 한 세션이 직렬로.
+> 급소: APS는 `dbId`, 우리는 `expressID`/`GlobalId` → **S49에서 매핑 레이어를 먼저** 깔고 재사용.
+
+| 세션 | 범위 | 의존 | 마이그레이션 |
+|---|---|---|---|
+| **S49** | **dbId↔GlobalId↔expressID 매핑 레이어**(`src/viewer/apsMapping.ts`) + **4D·간섭의 BIM 소스를 ACC로**(신규 업로드 경로 부재 해소) + **이슈 핀 APS 이식** | S46/S48 | 0024(issues.global_id) |
+| S50 | **4D APS 이식**: 일정↔GlobalId, `setThemingColor`/`hide·show`로 타임라인 색·표시 | S49 | — |
+| S51 | **물량(QTO) APS 이식**: APS 속성DB(`getProperties`) 추출 또는 IFC 병행 산출 | S49 | — |
+| S52 | **간섭 스파이크 → 이식**: (A) ACC Model Coordination 결과 읽기 / (B) fragment 지오 추출+three-mesh-bvh 택1 | S49 | 미정 |
+| S53 | **IfcViewer 은퇴 + IA 통합**(통합모델=ACC 모델) — S49~S52 패리티 증명 후에만 | S49~S52 | 정리형 |
+
+### 🅱 Track B — "분리해서 할 수 있는 것"(병렬·2nd 계정): 권한·관리·문서뷰어
+> 포털 페이지 / Admin / AccBrowser / 문서뷰어만 건드림 → **Track A의 3D 뷰어 코드와 파일이
+> 분리**되어 병렬 가능. 항목들끼리도 대체로 독립.
+
+| 세션 | 범위 | 주요 파일(겹침 적음) | 마이그레이션 |
+|---|---|---|---|
+| **B1** | **모듈별 `canEdit` 게이팅 점검·보강**(이슈·공정·기성·게시판·일보 등 — 뷰어/실무자 구분 누락 없는지) | 포털 페이지들 + `useProjectRole` | 없음 |
+| B2 | **프로젝트 관리자도 역할 배정 가능**(현재 구성원 화면=시스템관리자 전용) | `Admin.tsx` + RLS | 0030(role 부여 정책 완화) |
+| B3 | **ACC 파일관리자 보강**: 이동(move)·새 버전 업로드 UI + **라이브 검증**(폴더 쓰기권한 후 실제 PUT/CORS/item) | `AccBrowser.tsx`·`api/aps-*`·`lib/aps.ts` | 없음 |
+| B4 | **비-3D 뷰어 quick wins**: pptx 뷰어 + PDF 상단 페이지 네비 | 문서 뷰어 컴포넌트 | 없음 |
+
+### 🚧 병렬 충돌 회피 규칙 (양쪽 세션 필독)
+- **파일 분리**: A=`IfcViewer.ts`·`Workspace.tsx`·`apsMapping.ts`·`AccModels.tsx`(뷰어) /
+  B=`Admin.tsx`·포털 페이지·`AccBrowser.tsx`·문서뷰어. 교차 거의 없음.
+- **공유 위험 파일**: `useProjectRole.ts`(B 주도, A는 읽기만) · `lib/aps.ts`(B3 주도) ·
+  `index.css`(섹션 분리해 추가) · **`STATUS.md`/`ROADMAP.md`(양쪽 수정 → 각자 자기 섹션만,
+  사소한 머지 충돌은 감수)**.
+- **마이그레이션**: A=0024~, B=0030~ (번호 사전 배정, 기존 파일 수정 금지).
+- **병합 리듬**: 작은 Track B부터 자주 main 병합 → Track A는 수시로 main rebase로 따라가기.
+
+### 열린 결정(기획자 추적)
+1. **간섭 방식**(S52): Model Coordination vs fragment+BVH(스파이크 후).
+2. **ACC 미보유 프로젝트**: 병행 결정상 IFC 백업 경로 유지(모든 프로젝트 ACC 강제 보류).
+3. **S43 CDE 고도화**(승인·transmittal·검색)는 ACC 메타(0022) 위에서 재설계 — S47과 통합 검토.
+
 ## 0. 현재 위치 (요약)
 - ✅ Phase 0 인증/권한(RLS)/저장 · Phase 1 3D IFC 뷰어 · Phase 2 4D 시뮬레이션(S4).
 - 스택: Vite+React+TS / Three.js + web-ifc(WASM) **+ APS Viewer/ACC(S46)** / Supabase / Vercel.

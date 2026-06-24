@@ -75,6 +75,25 @@ export async function accFileBlobUrl(project: string, item: string): Promise<str
   return URL.createObjectURL(blob);
 }
 
+/**
+ * 외부 렌더러(예: Office Online)가 직접 가져갈 수 있는 'Autodesk 단기 서명 URL'.
+ * 우리 세션 토큰은 헤더로만 보내고 노출되지 않는다. pptx 등 자체 렌더가 어려운
+ * 포맷을 Office Online 임베드로 띄울 때 사용.
+ */
+/**
+ * 외부 렌더러(Office Online)용 공개 서명 URL. Autodesk 단기 서명 URL(공개)이라
+ * Microsoft 서버가 직접 가져갈 수 있고, name 을 주면 response-content-disposition
+ * 으로 실제 파일명이 URL에 구워져 Office 가 이름을 올바로 표시한다. 우리 세션
+ * 토큰은 헤더로만 보내고 노출되지 않는다.
+ */
+export async function accFileSignedUrl(project: string, item: string, name?: string): Promise<string> {
+  const q = name ? `&name=${encodeURIComponent(name)}` : '';
+  const res = await fetch(`${accFileBase(project, item)}&mode=signed${q}`, { headers: await authHeader() });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.url) throw new Error(body.error ?? `서명 URL 실패(${res.status})`);
+  return body.url as string;
+}
+
 /** ACC 원본 파일을 디스크로 저장(다운로드 — 실무자 이상 UI 에서만 호출). */
 export async function downloadAccItem(project: string, item: string, fileName: string): Promise<void> {
   const res = await fetch(accFileBase(project, item), { headers: await authHeader() });
@@ -175,13 +194,15 @@ export async function uploadToAcc(
   project: string,
   folder: string,
   file: File,
-  opts?: { itemId?: string; onProgress?: ProgressFn; mirProject?: string },
+  opts?: { itemId?: string; fileName?: string; onProgress?: ProgressFn; mirProject?: string },
 ): Promise<AccUploadResult> {
   const mirProject = opts?.mirProject;
+  // 새 버전(itemId)일 때는 원본 아이템 이름을 유지해 파일 정체성을 보존한다.
+  const fileName = opts?.fileName ?? file.name;
   const begin = (await apsUpload('begin', {
     project,
     folder,
-    fileName: file.name,
+    fileName,
     mirProject,
   })) as BeginResult;
 
@@ -191,7 +212,7 @@ export async function uploadToAcc(
   return (await apsUpload('complete', {
     project,
     folder,
-    fileName: file.name,
+    fileName,
     mirProject,
     bucket: begin.bucket,
     object: begin.object,

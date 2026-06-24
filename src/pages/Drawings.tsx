@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import * as pdfjsLib from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { useAuth } from '../auth/AuthProvider';
+import { useProjectRole } from '../auth/useProjectRole';
 import { errMessage } from '../lib/errors';
 import {
   listDrawings,
@@ -23,7 +24,8 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 export function Drawings() {
   const { projectId = '' } = useParams();
   const { profile } = useAuth();
-  const isAdmin = !!profile?.is_admin;
+  // 도면 업로드·삭제·핀 작성 = 실무자(editor) 이상. RLS(0023)와 일치.
+  const { canEdit } = useProjectRole(projectId);
   const authorName = profile?.full_name ?? profile?.username ?? null;
 
   const [list, setList] = useState<Drawing[]>([]);
@@ -105,7 +107,7 @@ export function Drawings() {
 
       <div className="draw-layout">
         <aside className="draw-list">
-          {isAdmin && (
+          {canEdit && (
             <div className="draw-list-head">
               <input
                 ref={fileRef}
@@ -125,7 +127,7 @@ export function Drawings() {
           )}
           {list.length === 0 ? (
             <p className="muted draw-list-empty">
-              등록된 도면이 없습니다.{isAdmin ? ' 상단에서 PDF/DXF를 업로드하세요.' : ''}
+              등록된 도면이 없습니다.{canEdit ? ' 상단에서 PDF/DXF를 업로드하세요.' : ''}
             </p>
           ) : (
             <ul className="draw-list-items">
@@ -140,7 +142,7 @@ export function Drawings() {
                     {d.name}
                   </span>
                   <span className="draw-list-date muted">{formatDate(d.created_at)}</span>
-                  {isAdmin && (
+                  {canEdit && (
                     <button
                       className="draw-list-del"
                       onClick={(e) => {
@@ -164,7 +166,7 @@ export function Drawings() {
               key={sel.id}
               drawing={sel}
               projectId={projectId}
-              isAdmin={isAdmin}
+              canEdit={canEdit}
               authorName={authorName}
             />
           ) : (

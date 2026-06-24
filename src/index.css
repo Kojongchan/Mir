@@ -2544,9 +2544,9 @@ button.danger:hover:not(:disabled) {
   cursor: default;
 }
 .acc-doc-overlay {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: 5;
+  z-index: 500;
   background: var(--panel);
   display: flex;
   flex-direction: column;

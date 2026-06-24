@@ -27,12 +27,14 @@ import {
 import { listProjectMembers, type ProjectMember } from '../lib/members';
 import { formatDate } from '../lib/dashboard';
 import { Attachments } from '../components/Attachments';
+import { useProjectRole } from '../auth/useProjectRole';
 
 /** 협업 · 이슈/지적 관리 — 상태 워크플로우·담당자·마감 추적 트래커. */
 export function Issues() {
   const { projectId = '' } = useParams();
   const { profile, session } = useAuth();
-  const isAdmin = !!profile?.is_admin;
+  // 쓰기(이슈·코멘트·첨부 CRUD) = 실무자(editor) 이상. RLS(0023)와 일치.
+  const { canEdit } = useProjectRole(projectId);
   const myId = session?.user.id ?? null;
   const authorName = profile?.full_name ?? profile?.username ?? null;
 
@@ -57,7 +59,7 @@ export function Issues() {
 
   useEffect(() => {
     refresh();
-    if (isAdmin) listProjectMembers(projectId).then(setMembers).catch(() => setMembers([]));
+    if (canEdit) listProjectMembers(projectId).then(setMembers).catch(() => setMembers([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
@@ -127,7 +129,7 @@ export function Issues() {
     <div className="dash">
       <div className="dash-head">
         <h1 className="dash-h1">협업 · 이슈</h1>
-        {isAdmin && (
+        {canEdit && (
           <button className="primary" onClick={() => setShowForm((s) => !s)}>
             {showForm ? '취소' : '＋ 이슈 등록'}
           </button>
@@ -187,7 +189,7 @@ export function Issues() {
                   key={it.id}
                   issue={it}
                   open={openId === it.id}
-                  isAdmin={isAdmin}
+                  canEdit={canEdit}
                   myId={myId}
                   members={members}
                   authorName={authorName}
@@ -227,7 +229,7 @@ function DueCell({ issue }: { issue: Issue }) {
 function IssueRow({
   issue,
   open,
-  isAdmin,
+  canEdit,
   myId,
   members,
   authorName,
@@ -238,7 +240,7 @@ function IssueRow({
 }: {
   issue: Issue;
   open: boolean;
-  isAdmin: boolean;
+  canEdit: boolean;
   myId: string | null;
   members: ProjectMember[];
   authorName: string | null;
@@ -248,7 +250,7 @@ function IssueRow({
   onDelete: (id: string) => void;
 }) {
   // 담당자 본인도 자기 이슈의 상태를 변경할 수 있다(S30 결정).
-  const canStatus = isAdmin || (!!myId && issue.assignee_id === myId);
+  const canStatus = canEdit || (!!myId && issue.assignee_id === myId);
   return (
     <>
       <tr>
@@ -267,7 +269,7 @@ function IssueRow({
           ) : (
             <span className="muted">—</span>
           )}
-          {isAdmin && <button className="danger" onClick={() => onDelete(issue.id)}>삭제</button>}
+          {canEdit && <button className="danger" onClick={() => onDelete(issue.id)}>삭제</button>}
         </td>
       </tr>
       {open && (
@@ -275,7 +277,7 @@ function IssueRow({
           <td colSpan={6}>
             <IssueDetail
               issue={issue}
-              isAdmin={isAdmin}
+              canEdit={canEdit}
               members={members}
               authorName={authorName}
               onAssign={onAssign}
@@ -289,13 +291,13 @@ function IssueRow({
 
 function IssueDetail({
   issue,
-  isAdmin,
+  canEdit,
   members,
   authorName,
   onAssign,
 }: {
   issue: Issue;
-  isAdmin: boolean;
+  canEdit: boolean;
   members: ProjectMember[];
   authorName: string | null;
   onAssign: (issue: Issue, assigneeId: string) => void;
@@ -325,7 +327,7 @@ function IssueDetail({
         등록 {issue.created_by_name || '—'} · {formatDate(issue.created_at.slice(0, 10))}
       </p>
 
-      {isAdmin && (
+      {canEdit && (
         <div className="issue-assign-row">
           <label>담당자 배정
             <select value={issue.assignee_id ?? ''} onChange={(e) => onAssign(issue, e.target.value)}>
@@ -380,7 +382,7 @@ function IssueDetail({
         projectId={issue.project_id}
         targetType="issue"
         targetId={issue.id}
-        isAdmin={isAdmin}
+        canEdit={canEdit}
         label="첨부 문서·사진"
       />
 
@@ -395,7 +397,7 @@ function IssueDetail({
         ))}
         {comments.length === 0 && <p className="muted">코멘트가 없습니다.</p>}
       </div>
-      {isAdmin && (
+      {canEdit && (
         <div className="issue-comment-add">
           <input value={body} placeholder="코멘트 입력" onChange={(e) => setBody(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && onAdd()} />
           <button onClick={onAdd}>등록</button>

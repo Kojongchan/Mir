@@ -101,7 +101,7 @@ export default async function handler(req: Request): Promise<Response> {
     const bucket = m[1];
     const object = m[2];
 
-    // 2) S3 서명 다운로드 URL.
+    // 2) S3 서명 다운로드 URL(공개 — Office Online·미디어가 직접 가져감).
     const signRes = await fetch(
       `${APS}/oss/v2/buckets/${encodeURIComponent(bucket)}/objects/${encodeURIComponent(object)}/signeds3download`,
       { headers: auth },
@@ -114,6 +114,15 @@ export default async function handler(req: Request): Promise<Response> {
     // 영상/오디오 등 — 직접 스트리밍(서버 부담 회피).
     if (mode === 'redirect') {
       return new Response(null, { status: 302, headers: { location: dl } });
+    }
+
+    // Office Online 등 외부 렌더러가 직접 가져갈 수 있도록 '서명 다운로드 URL'만
+    // JSON 으로 반환(우리 세션 토큰은 노출되지 않음 — Autodesk 단기 서명 URL).
+    if (mode === 'signed') {
+      return new Response(JSON.stringify({ url: dl, name }), {
+        status: 200,
+        headers: { 'content-type': 'application/json', 'cache-control': 'private, max-age=60' },
+      });
     }
 
     // 문서 — 바이트를 같은 출처로 프록시(CORS 회피).

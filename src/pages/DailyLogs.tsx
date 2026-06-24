@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { errMessage } from '../lib/errors';
-import { useAuth } from '../auth/AuthProvider';
+import { useProjectRole } from '../auth/useProjectRole';
 import {
   addDailyLog,
   deleteDailyLog,
@@ -15,8 +15,8 @@ import { Attachments } from '../components/Attachments';
 /** 공사일보 — daily site log CRUD. Powers the dashboard 인력/장비/일지 figures. */
 export function DailyLogs() {
   const { projectId = '' } = useParams();
-  const { profile } = useAuth();
-  const isAdmin = !!profile?.is_admin;
+  // 일보 등록·삭제·첨부 = 실무자(editor) 이상. RLS(0023)와 일치.
+  const { canEdit } = useProjectRole(projectId);
   const [logs, setLogs] = useState<DailyLog[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [msg, setMsg] = useState('');
@@ -64,8 +64,8 @@ export function DailyLogs() {
         <h1 className="dash-h1">공사일보</h1>
       </div>
 
-      {!isAdmin && <p className="muted dash-msg">읽기 전용입니다. 입력·수정은 관리자만 가능합니다.</p>}
-      {isAdmin && (
+      {!canEdit && <p className="muted dash-msg">읽기 전용입니다. 입력·수정은 실무자 이상만 가능합니다.</p>}
+      {canEdit && (
       <section className="card dash-edit">
         <h3>일보 등록</h3>
         <div className="dash-edit-row">
@@ -107,13 +107,13 @@ export function DailyLogs() {
                       <button onClick={() => setOpenId(openId === l.id ? null : l.id)}>
                         {openId === l.id ? '사진 ▾' : '사진 ▸'}
                       </button>
-                      {isAdmin && <button className="danger" onClick={() => onDelete(l.id)}>삭제</button>}
+                      {canEdit && <button className="danger" onClick={() => onDelete(l.id)}>삭제</button>}
                     </td>
                   </tr>
                   {openId === l.id && (
                     <tr className="issue-detail-row">
                       <td colSpan={6}>
-                        <Attachments projectId={projectId} targetType="daily_log" targetId={l.id} isAdmin={isAdmin} label="현장 사진" />
+                        <Attachments projectId={projectId} targetType="daily_log" targetId={l.id} canEdit={canEdit} label="현장 사진" />
                       </td>
                     </tr>
                   )}

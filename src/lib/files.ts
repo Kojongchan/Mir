@@ -92,10 +92,12 @@ export async function downloadFileBytes(storagePath: string): Promise<Uint8Array
  * Mint a short-lived signed URL for the stored object. Supabase authorises
  * this against the bucket's SELECT policy, so a non-member cannot get one.
  */
-export async function signedFileUrl(storagePath: string): Promise<string> {
+export async function signedFileUrl(storagePath: string, downloadName?: string): Promise<string> {
+  // downloadName: Content-Disposition 파일명 지정(Office Online 이 UUID 대신
+  // 실제 이름을 표시하도록). 저장 경로가 <uuid>.<ext> 라서 필요.
   const { data, error } = await supabase.storage
     .from(BUCKET)
-    .createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS);
+    .createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS, downloadName ? { download: downloadName } : undefined);
   if (error) throw error;
   return data.signedUrl;
 }
@@ -110,14 +112,15 @@ export type ViewerKind =
   | 'video'
   | 'audio'
   | 'sheet'
-  | 'docx'
+  | 'office'
   | 'text'
   | 'unsupported';
 
 const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg']);
 const VIDEO_EXT = new Set(['mp4', 'webm', 'ogv', 'ogg', 'mov']);
 const AUDIO_EXT = new Set(['mp3', 'wav', 'm4a', 'aac', 'flac']);
-const SHEET_EXT = new Set(['xlsx', 'xlsm', 'xls', 'csv']);
+// Office 포맷(워드/엑셀/파워포인트, 레거시 포함) = Office Online 임베드로 고화질 렌더.
+const OFFICE_EXT = new Set(['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'xlsm']);
 const TEXT_EXT = new Set(['txt', 'md', 'json', 'csv', 'log', 'xml', 'yml', 'yaml']);
 
 export function extensionOf(name: string): string {
@@ -128,9 +131,8 @@ export function extensionOf(name: string): string {
 
 /**
  * Decide which viewer to use. Extension is the primary signal (most reliable
- * across browsers); MIME is a secondary hint. Anything we can't render in the
- * browser today (avi, pptx, doc, hwp, …) falls back to download — never a
- * dead end.
+ * across browsers); MIME is a secondary hint. Office 포맷은 Office Online,
+ * csv 는 표 뷰어, 나머지 미지원(avi, hwp …)은 다운로드 폴백 — never a dead end.
  */
 export function viewerKindFor(name: string, mime?: string | null): ViewerKind {
   const ext = extensionOf(name);
@@ -140,9 +142,9 @@ export function viewerKindFor(name: string, mime?: string | null): ViewerKind {
   if (ext === 'pdf' || m === 'application/pdf') return 'pdf';
   if (VIDEO_EXT.has(ext) || m.startsWith('video/')) return 'video';
   if (AUDIO_EXT.has(ext) || m.startsWith('audio/')) return 'audio';
-  // .csv is handled by the sheet viewer (SheetJS parses it too).
-  if (SHEET_EXT.has(ext)) return 'sheet';
-  if (ext === 'docx') return 'docx';
+  if (OFFICE_EXT.has(ext)) return 'office';
+  // csv 는 자체 표 뷰어(SheetJS)로(오프라인·간단).
+  if (ext === 'csv') return 'sheet';
   if (TEXT_EXT.has(ext) || m.startsWith('text/')) return 'text';
   return 'unsupported';
 }
