@@ -87,6 +87,19 @@ export async function accFileSignedUrl(project: string, item: string): Promise<s
   return body.url as string;
 }
 
+/**
+ * Office Online 임베드용 src URL. 경로 끝에 실제 파일명이 들어간 단기 capability
+ * URL(우리 세션 토큰 미포함)이라 Office 가 파일명을 올바로 표시한다.
+ */
+export async function accOfficeSrc(project: string, item: string, name: string): Promise<string> {
+  const res = await fetch(`${accFileBase(project, item)}&mode=officesrc&name=${encodeURIComponent(name)}`, {
+    headers: await authHeader(),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.url) throw new Error(body.error ?? `오피스 URL 실패(${res.status})`);
+  return body.url as string;
+}
+
 /** ACC 원본 파일을 디스크로 저장(다운로드 — 실무자 이상 UI 에서만 호출). */
 export async function downloadAccItem(project: string, item: string, fileName: string): Promise<void> {
   const res = await fetch(accFileBase(project, item), { headers: await authHeader() });

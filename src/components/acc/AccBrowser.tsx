@@ -4,7 +4,7 @@ import {
   accFetch,
   accFileBlobUrl,
   accFileRedirectUrl,
-  accFileSignedUrl,
+  accOfficeSrc,
   accItemVersions,
   deleteAccItem,
   downloadAccItem,
@@ -250,9 +250,9 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
     setStatus(`${it.name} 여는 중…`);
     try {
       if (kind === 'office') {
-        // Office Online 이 직접 가져갈 수 있는 공개 서명 URL(blob 아님).
+        // Office Online 임베드 — 파일명이 경로 끝에 들어간 공개 capability URL.
         clearDoc();
-        setDocView({ url: await accFileSignedUrl(accProject, it.id), name: it.name, kind });
+        setDocView({ url: await accOfficeSrc(accProject, it.id, it.name), name: it.name, kind });
       } else if (kind === 'video' || kind === 'audio' || kind === 'unsupported') {
         clearDoc();
         setDocView({ url: await accFileRedirectUrl(accProject, it.id), name: it.name, kind });

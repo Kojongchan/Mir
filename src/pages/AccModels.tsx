@@ -300,10 +300,12 @@ export function AccModels() {
       const tok = data.session?.access_token ?? '';
       const base = `/api/aps-file?project=${encodeURIComponent(project)}&item=${encodeURIComponent(it.id)}`;
       if (kind === 'office') {
-        // Office Online 이 직접 가져갈 공개 서명 URL(우리 토큰 미포함, JSON 으로 수령).
-        const res = await fetch(`${base}&mode=signed`, { headers: { authorization: `Bearer ${tok}` } });
+        // Office Online 임베드 — 파일명이 경로 끝에 들어간 공개 capability URL.
+        const res = await fetch(`${base}&mode=officesrc&name=${encodeURIComponent(it.name)}`, {
+          headers: { authorization: `Bearer ${tok}` },
+        });
         const body = await res.json().catch(() => ({}));
-        if (!res.ok || !body.url) throw new Error(body.error ?? `서명 URL 실패(${res.status})`);
+        if (!res.ok || !body.url) throw new Error(body.error ?? `오피스 URL 실패(${res.status})`);
         clearDoc();
         setDocView({ url: body.url as string, name: it.name, kind });
       } else if (kind === 'video' || kind === 'audio' || kind === 'unsupported') {

@@ -58,6 +58,13 @@ async function mintToken(): Promise<string> {
   return d.access_token;
 }
 
+async function hmacHex(key: string, msg: string): Promise<string> {
+  const enc = new TextEncoder();
+  const k = await crypto.subtle.importKey('raw', enc.encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', k, enc.encode(msg));
+  return Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 export default async function handler(req: Request): Promise<Response> {
   if (!APS_CLIENT_ID || !APS_CLIENT_SECRET) return err('APS 환경변수 미설정', 500);
 
@@ -79,6 +86,22 @@ export default async function handler(req: Request): Promise<Response> {
   const item = url.searchParams.get('item') ?? '';
   const mode = url.searchParams.get('mode') ?? 'proxy';
   if (!project || !item) return err('project/item 필요', 400);
+
+  // Office Online 용 capability URL 발급(Autodesk 호출 없이) — 경로 끝에 실제
+  // 파일명을 둬 Office 가 이름을 올바로 표시. 서명은 HMAC(서버 시크릿)으로.
+  if (mode === 'officesrc') {
+    const name = url.searchParams.get('name') || 'file';
+    const exp = String(Date.now() + 10 * 60 * 1000); // 10분
+    const sig = await hmacHex(APS_CLIENT_SECRET, `${project}\n${item}\n${exp}`);
+    const host = req.headers.get('host') ?? '';
+    const proto = req.headers.get('x-forwarded-proto') ?? 'https';
+    const qs = `project=${encodeURIComponent(project)}&item=${encodeURIComponent(item)}&exp=${exp}&sig=${sig}`;
+    const src = `${proto}://${host}/api/office-file/${encodeURIComponent(name)}?${qs}`;
+    return new Response(JSON.stringify({ url: src, name }), {
+      status: 200,
+      headers: { 'content-type': 'application/json', 'cache-control': 'private, max-age=60' },
+    });
+  }
 
   try {
     const token = await mintToken();

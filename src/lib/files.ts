@@ -92,10 +92,12 @@ export async function downloadFileBytes(storagePath: string): Promise<Uint8Array
  * Mint a short-lived signed URL for the stored object. Supabase authorises
  * this against the bucket's SELECT policy, so a non-member cannot get one.
  */
-export async function signedFileUrl(storagePath: string): Promise<string> {
+export async function signedFileUrl(storagePath: string, downloadName?: string): Promise<string> {
+  // downloadName: Content-Disposition 파일명 지정(Office Online 이 UUID 대신
+  // 실제 이름을 표시하도록). 저장 경로가 <uuid>.<ext> 라서 필요.
   const { data, error } = await supabase.storage
     .from(BUCKET)
-    .createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS);
+    .createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS, downloadName ? { download: downloadName } : undefined);
   if (error) throw error;
   return data.signedUrl;
 }
