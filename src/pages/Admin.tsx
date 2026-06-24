@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { listProjects, type Project } from '../lib/api';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { BrandLogo } from '../components/BrandLogo';
+import { ROLE_LABEL } from '../auth/useProjectRole';
 import {
   MEMBER_ROLES,
   createProject,
@@ -416,7 +417,7 @@ function MembersTab({
           ))}
         </select>
         <select value={addRole} onChange={(e) => setAddRole(e.target.value as MemberRole)}>
-          {MEMBER_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+          {MEMBER_ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
         </select>
         <button onClick={add} disabled={!addUserId}>배정</button>
       </div>
@@ -435,7 +436,7 @@ function MembersTab({
                   <td className="muted">{u?.full_name ?? '—'}</td>
                   <td>
                     <select value={m.role} onChange={(e) => changeRole(m.user_id, e.target.value as MemberRole)}>
-                      {MEMBER_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                      {MEMBER_ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
                     </select>
                   </td>
                   <td className="right">
@@ -451,8 +452,9 @@ function MembersTab({
         </table>
       </div>
       <p className="muted admin-hint">
-        관리자(<code>관리자 ✓</code>)는 배정과 무관하게 모든 프로젝트를 봅니다. 역할: viewer(보기) ·
-        editor(업로드) · admin(프로젝트 관리, 추후 확장).
+        시스템 관리자(<code>관리자 ✓</code>)는 배정과 무관하게 모든 프로젝트를 관리합니다. 역할:
+        <strong> 뷰어</strong>=열람·미리보기만(다운로드 없음) · <strong>실무자</strong>=업로드·수정·삭제·버전 등
+        콘텐츠 작업 전부 · <strong>관리자</strong>=실무자 + 프로젝트 설정·역할 부여.
       </p>
     </section>
   );
