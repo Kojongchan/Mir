@@ -26,6 +26,9 @@ const SheetViewer = lazy(() =>
 const DocxViewer = lazy(() =>
   import('../components/viewers/DocxViewer').then((m) => ({ default: m.DocxViewer })),
 );
+const PptxViewer = lazy(() =>
+  import('../components/viewers/PptxViewer').then((m) => ({ default: m.PptxViewer })),
+);
 
 type State =
   | { phase: 'loading' }
@@ -112,6 +115,8 @@ function Dispatch({ file, url }: { file: FileRecord; url: string }) {
       return <SheetViewer file={file} url={url} />;
     case 'docx':
       return <DocxViewer file={file} url={url} />;
+    case 'pptx':
+      return <PptxViewer file={file} url={url} />;
     case 'text':
       return <TextViewer file={file} url={url} />;
     default:

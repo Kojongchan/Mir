@@ -111,6 +111,7 @@ export type ViewerKind =
   | 'audio'
   | 'sheet'
   | 'docx'
+  | 'pptx'
   | 'text'
   | 'unsupported';
 
@@ -129,7 +130,7 @@ export function extensionOf(name: string): string {
 /**
  * Decide which viewer to use. Extension is the primary signal (most reliable
  * across browsers); MIME is a secondary hint. Anything we can't render in the
- * browser today (avi, pptx, doc, hwp, …) falls back to download — never a
+ * browser today (avi, doc, hwp, …) falls back to download — never a
  * dead end.
  */
 export function viewerKindFor(name: string, mime?: string | null): ViewerKind {
@@ -143,6 +144,7 @@ export function viewerKindFor(name: string, mime?: string | null): ViewerKind {
   // .csv is handled by the sheet viewer (SheetJS parses it too).
   if (SHEET_EXT.has(ext)) return 'sheet';
   if (ext === 'docx') return 'docx';
+  if (ext === 'pptx') return 'pptx';
   if (TEXT_EXT.has(ext) || m.startsWith('text/')) return 'text';
   return 'unsupported';
 }

@@ -27,6 +27,7 @@ import { DownloadFallback } from '../viewers/DownloadFallback';
 import { PdfViewer } from '../viewers/PdfViewer';
 import { SheetViewer } from '../viewers/SheetViewer';
 import { DocxViewer } from '../viewers/DocxViewer';
+import { PptxViewer } from '../viewers/PptxViewer';
 
 const fakeFile = (name: string) => ({ name, size_bytes: null, mime_type: null }) as unknown as FileRecord;
 const fmtDate = (s?: string | null) =>
@@ -413,6 +414,7 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
       case 'audio': return <AudioViewer url={d.url} file={f} />;
       case 'sheet': return <SheetViewer url={d.url} file={f} />;
       case 'docx': return <DocxViewer url={d.url} file={f} />;
+      case 'pptx': return <PptxViewer url={d.url} file={f} />;
       case 'text': return <TextViewer url={d.url} file={f} />;
       default: return <DownloadFallback url={d.url} file={f} />;
     }
