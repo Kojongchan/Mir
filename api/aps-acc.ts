@@ -115,10 +115,28 @@ export default async function handler(req: Request): Promise<Response> {
             id: x.id,
             name: x.attributes?.displayName ?? x.attributes?.name,
             urn: tip ? toBase64Url(tip) : null,
+            lastModified: x.attributes?.lastModifiedTime ?? x.attributes?.createTime ?? null,
           };
         })
         .sort(byName);
       return json({ folders, items });
+    }
+    if (action === 'versions') {
+      const item = url.searchParams.get('item') ?? '';
+      const d = await dm(
+        `/data/v1/projects/${encodeURIComponent(project)}/items/${encodeURIComponent(item)}/versions`,
+        token,
+      );
+      const versions = (d.data ?? [])
+        .map((v: any) => ({
+          id: v.id,
+          versionNumber: v.attributes?.versionNumber ?? null,
+          name: v.attributes?.displayName ?? v.attributes?.name ?? null,
+          lastModified: v.attributes?.lastModifiedTime ?? v.attributes?.createTime ?? null,
+          urn: v.id ? toBase64Url(v.id) : null,
+        }))
+        .sort((a: any, b: any) => (b.versionNumber ?? 0) - (a.versionNumber ?? 0));
+      return json({ versions });
     }
     return json({ error: 'unknown action' }, 400);
   } catch (e) {

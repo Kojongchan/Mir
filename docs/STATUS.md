@@ -2,6 +2,63 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
+## S48 결과 (branch: claude/funny-bardeen-d9s1af) — 권한 4단계(RBAC) + 자료관리 ACC 단독·파일관리자 UI
+> 사용자 결정: ① 권한을 **뷰어/실무자(editor)/관리자(admin)/시스템 관리자** 4단계로(전 모듈). ② 자료관리는
+> **ACC 단독**(Supabase '앱 저장소' 탭 제거). ③ ACC를 ACC식 파일관리자 UI로 재구성. typecheck·build 통과.
+- ✅ **Phase 1 — RBAC 백본(`0023_rbac.sql` + 전 모듈 RLS)**: `is_editor(p)`/`is_project_admin(p)`/
+  `user_is_system_admin()` 헬퍼. `project_members.role`(0001부터 존재: viewer/editor/admin) + `profiles.is_admin`.
+  전 콘텐츠 테이블 쓰기 RLS를 `is_editor`로, 설정·역할은 `is_project_admin`/시스템관리자로. **D11 폐기 → D20**.
+- ✅ **Phase 2 — 프론트 배선**: `src/auth/useProjectRole.ts`(role·canView·canEdit·canManage·isSystemAdmin).
+  관리자 콘솔에서 멤버별 역할 부여(한글 라벨 뷰어/실무자/관리자/시스템 관리자). 업로드/항목작업 서버 게이트도
+  `mirProject` 기준 editor 이상으로(0023).
+- ✅ **Phase 3 — ACC 파일관리자 UI(`components/acc/AccBrowser.tsx` 전면 재작성)**: **좌측 폴더트리 +
+  우측 파일표**(체크박스 다중선택·이름·상태뱃지·수정일·⋮ 메뉴) + **툴바**(브레드크럼·검색·⬆업로드·⟳) +
+  **일괄작업줄**(다운로드·삭제). 파일 분기 유지(모델=APS Viewer 페이지 / 문서=우리 뷰어 오버레이 / 미디어=서명URL).
+- ✅ **Phase 4 — ACC 항목 작업(`api/aps-item.ts` + `lib/aps.ts`)**: **이름변경**(PATCH displayName)·**삭제**
+  (Deleted 확장 버전=휴지통)·**이동**(PATCH parent, ACC 환경따라 미지원 가능)·**버전 이력**(읽기)·**다운로드**
+  (원본 바이트, 실무자+). `aps-acc` contents에 수정일 + `versions` 액션 추가. 모두 editor 게이트.
+- ✅ **권한별 UI**: 뷰어=탐색·미리보기만(업로드/다운로드/편집 버튼 숨김), 실무자+=전체 파일작업. 모델은 SVF2
+  스트리밍이라 원본 원천 차단, 문서는 다운로드 버튼 숨김(소프트, D20).
+- ✅ **자료관리 = ACC 단독**(`DocumentManager` 박형 래퍼로 축소). Supabase 문서/BIM 탭 제거.
+- ⚠️ **회귀 주의(사용자 인지)**: 통합모델(3D)/4D/간섭은 아직 Supabase BIM 파이프라인(lib/api·cde) 의존 →
+  **그 코드는 보존**. 단 자료관리에서 BIM(IFC) 업로드 UI가 사라져 **4D/간섭용 신규 BIM 업로드 경로는 일시
+  부재**(기존 모델은 동작). ACC 위로의 4D/간섭/이슈핀 이식은 후속(S50/S52).
+- ⚠️ **운영 적용**: `0023_rbac.sql` 적용(+ 멤버 role 부여) · `APS_CLIENT_ID/SECRET`(기존) · ACC 폴더에 통합 앱
+  **편집 권한**(업로드/이름변경/삭제/이동 전제) · `0022` 적용. ACC 쓰기(업로드·이동)는 **라이브 검증 필요**.
+- 📌 **다음/미해결**: ACC 업로드·이동 라이브 검증(폴더 권한 후) · 새 버전 업로드 UI · 트리 폭 리사이즈 ·
+  4D/간섭 BIM 소스를 ACC로 이식(S50/S52) · 모듈별 편집 UI가 canEdit 게이팅 빠짐없는지 점검.
+
+## S47 결과 (branch: claude/funny-bardeen-d9s1af) — 자료관리 ACC 일원화(업로드까지) + Supabase 읽기 공존
+> 신규 업로드 저장소를 ACC 로 일원화(업로드 = ACC Data Management write). 기존 Supabase docs 자료는 계속 열람.
+> 추가형 마이그레이션 **0022**. typecheck·build 통과. (※ 작업 브랜치는 세션 지정 `claude/funny-bardeen-d9s1af`
+> — 태스크 본문의 feature/acc-storage 대신 시스템 지정 브랜치 사용.)
+- ✅ **0단계 스파이크(코드 전)**: APS 업로드 = storage 생성 → S3 서명 업로드(브라우저 직접 PUT) → item(신규)/
+  version(기존) 생성. **결론(D19)**: **2-legged 로 가능** — 단, 커스텀 통합 앱(Client ID)이 대상 ACC 폴더에
+  **편집/업로드 권한**을 받아야 함(S46 은 읽기만 승인). 읽기는 검증됨. 쓰기는 **운영에서 폴더 권한 부여 후
+  실제 업로드 검증 필요** — item/version 이 403 이면 폴더 권한 미부여이거나 3-legged 필요(그때 사용자 보고·범위 재조정).
+- ✅ **`api/aps-upload.ts`**(2-legged 브로커, edge): `begin`(storage+서명URL) / `complete`(S3 확정 + item/version).
+  바이트는 우리 서버를 거치지 않고 S3 직행(대용량 모델 대비·진행률). 스코프 `data:read data:create data:write`.
+  호출 게이트 = 로그인 + **관리자(D11)**.
+- ✅ **`src/lib/aps.ts`**(공유 헬퍼): `getApsToken`·`accFetch`·`accFileBlobUrl/RedirectUrl`·`uploadToAcc`
+  (begin→S3 PUT XHR 진행률→complete)·`isAccModel`. S46 AccModels 의 토큰/프록시 로직을 재사용 가능한 모듈로.
+- ✅ **`components/acc/AccBrowser.tsx`**: 자료관리 안의 ACC 탐색기 — S46 펼침 트리(지연로드·자연정렬·시작폴더
+  고정) 재사용 + 파일 분기(모델→`/project/:id/acc?urn=` APS Viewer / 문서·이미지·오피스·텍스트→우리 뷰어 /
+  미디어→서명URL). 폴더별 **⬆ 업로드**(관리자) → ACC 쓰기 + 진행률 + 트리 자동 갱신 + '업로드됨(ACC)'.
+- ✅ **`DocumentManager`**: 상단 **저장소 탭(📁 앱 저장소 / 🅰 ACC 자료)**. 앱 저장소 = 기존 Supabase 문서/BIM
+  (회귀 없음·읽기 공존), ACC = AccBrowser. 신규 업로드는 ACC 로 유도.
+- ✅ **`0022_acc_storage.sql`**(추가형): `files.source`('supabase'|'acc', 기본 supabase) + `acc_item_urn`/
+  `acc_version_urn` + `storage_path` nullable + `(project_id,source)` 인덱스. `cde.ts`: `listCdeFiles` 가
+  source='supabase' 만(0022 미적용 시 필터 없이 폴백) + `recordAccUpload`(ACC 업로드 메타 행 — 상태/활동로그가
+  ACC 파일을 가리킴, 새 버전이면 갱신) + `listAccFileMeta`(ACC 아이템 URN→상태 뱃지). RLS=0009(쓰기 admin)/0014 상속.
+- ✅ 검증: `typecheck`·`build` 통과. 색은 토큰만(`--accent`/`--accent-fg`/`--panel-2`/`--muted`/`--border`).
+  setup_all.sql 을 0003~0022 로 보강(0020/0021 누락분 포함).
+- ⚠️ **운영 적용 필수**: ① Vercel env `APS_CLIENT_ID`/`APS_CLIENT_SECRET`(이미 S46). ② **ACC 대상 폴더에 통합 앱
+  쓰기 권한 부여**(없으면 업로드 403). ③ `0022_acc_storage.sql` 적용(미적용 시 ACC 업로드는 되지만 메타 행 미기록).
+- 📌 **다음/미해결**: ACC 직접 업로드 **라이브 검증**(폴더 권한 부여 후 실제 PUT/CORS·item 생성 확인) · ACC 새 버전
+  업로드 UI(현재 신규 업로드 위주) · CDE 상태/이슈첨부를 ACC 메타 행에 더 깊게 연결(S43/S49) · S3 PUT CORS 가
+  막히면 서버 청크 프록시 폴백 검토.
+
+## (이전) S46 APS/ACC 뷰어 전환 — 1단계(외부 계정 없이 ACC 모델 조회)
 **마지막 업데이트**: 2026-06-23 · **S46 APS/ACC 뷰어 전환 — 1단계**(외부 계정 없이 ACC 모델 조회).
 - **배경/결정(D18)**: 자체 ThatOpen 뷰어로는 텍스처·대용량·rvt/nwd 네이티브를 무료로 풀기 어려움.
   사용자가 ACC 구독 보유 → **APS Viewer + ACC(2-legged) 임베드**로 전환 확정. **추가 비용 0**

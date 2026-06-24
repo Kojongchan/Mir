@@ -146,27 +146,38 @@ async function adminFn<T = unknown>(action: string, payload: Record<string, unkn
   return out as T;
 }
 
+/**
+ * Create a login account. `projectId`(+`role`) assigns the new user to a project
+ * on creation — required when called by a 프로젝트 관리자(server enforces scope).
+ * System admins may omit it. is_admin(시스템 관리자) is never set here (D21).
+ */
 export function createUserAccount(
   username: string,
   password: string,
   fullName: string,
-  isAdmin: boolean,
+  opts?: { projectId?: string; role?: string },
 ): Promise<{ ok: true; user: ProfileRow }> {
-  return adminFn('createUser', { username, password, fullName, isAdmin });
+  return adminFn('createUser', { username, password, fullName, ...(opts ?? {}) });
 }
 
 export function deleteUserAccount(userId: string): Promise<{ ok: true }> {
   return adminFn('deleteUser', { userId });
 }
 
-export function resetUserPassword(userId: string, password: string): Promise<{ ok: true }> {
-  return adminFn('resetPassword', { userId, password });
+export function resetUserPassword(userId: string, password: string, projectId?: string): Promise<{ ok: true }> {
+  return adminFn('resetPassword', { userId, password, projectId });
 }
 
 /** Change a user's login username (and the internal auth e-mail it maps to). */
 export function renameUserAccount(
   userId: string,
   username: string,
+  projectId?: string,
 ): Promise<{ ok: true; user: { id: string; username: string } }> {
-  return adminFn('renameUser', { userId, username });
+  return adminFn('renameUser', { userId, username, projectId });
+}
+
+/** Users a (project or system) admin may assign as members — server-gated. */
+export function listAssignableUsers(projectId: string): Promise<{ users: ProfileRow[] }> {
+  return adminFn('listAssignableUsers', { projectId });
 }

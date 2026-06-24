@@ -16,6 +16,7 @@ import { DocumentManager } from './pages/DocumentManager';
 import { Drawings } from './pages/Drawings';
 import { Quantities } from './pages/Quantities';
 import { Admin } from './pages/Admin';
+import { ProjectMembers } from './pages/ProjectMembers';
 import { FileViewer } from './pages/FileViewer';
 import { AccModels } from './pages/AccModels';
 
@@ -87,7 +88,7 @@ export default function App() {
             <Route path="quantities" element={<Quantities />} />
             <Route path="drawings" element={<Drawings />} />
             <Route path="docs" element={<DocumentManager />} />
-            <Route path="members" element={<AdminOnly><Admin embedded /></AdminOnly>} />
+            <Route path="members" element={<ProjectMembers />} />
           </Route>
           <Route
             path="/admin"
