@@ -221,7 +221,10 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
     setProgress(0);
     setStatus(`ACC 업로드 중: ${file.name}`);
     try {
-      const res = await uploadToAcc(accProject, folderId, file, { onProgress: setProgress });
+      const res = await uploadToAcc(accProject, folderId, file, {
+        onProgress: setProgress,
+        mirProject: projectId,
+      });
       // CDE 상태·활동로그가 ACC 파일을 가리키게 메타 행 기록(0022 미적용이면 무시됨).
       if (res.itemUrn) {
         await recordAccUpload(projectId, null, file.name, res.itemUrn, res.versionUrn, file.size);

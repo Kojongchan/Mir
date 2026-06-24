@@ -75,21 +75,6 @@ export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
   if (!APS_CLIENT_ID || !APS_CLIENT_SECRET) return json({ error: 'APS 환경변수 미설정' }, 500);
 
-  // 로그인 + 관리자만(D11 — 쓰기는 admin). service role 로 검증.
-  if (SUPABASE_URL && SERVICE_ROLE) {
-    const bearer = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
-    if (!bearer) return json({ error: 'missing bearer token' }, 401);
-    const supa = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
-    const { data, error } = await supa.auth.getUser(bearer);
-    if (error || !data?.user) return json({ error: 'invalid session' }, 401);
-    const { data: prof } = await supa
-      .from('profiles')
-      .select('is_admin')
-      .eq('id', data.user.id)
-      .single();
-    if (!prof?.is_admin) return json({ error: '업로드 권한이 없습니다(관리자 전용).' }, 403);
-  }
-
   let body: any;
   try {
     body = await req.json();
@@ -97,8 +82,29 @@ export default async function handler(req: Request): Promise<Response> {
     return json({ error: 'invalid body' }, 400);
   }
 
-  const { action, project, folder, fileName } = body ?? {};
+  const { action, project, folder, fileName, mirProject } = body ?? {};
   if (!project || !fileName) return json({ error: 'project/fileName 필요' }, 400);
+
+  // 로그인 + 실무자(editor) 이상만 쓰기(RBAC, 0023). mirProject = MIR 프로젝트 id.
+  if (SUPABASE_URL && SERVICE_ROLE) {
+    const bearer = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+    if (!bearer) return json({ error: 'missing bearer token' }, 401);
+    const supa = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
+    const { data, error } = await supa.auth.getUser(bearer);
+    if (error || !data?.user) return json({ error: 'invalid session' }, 401);
+    const { data: prof } = await supa.from('profiles').select('is_admin').eq('id', data.user.id).single();
+    let allowed = !!prof?.is_admin; // 시스템 관리자
+    if (!allowed && mirProject) {
+      const { data: mem } = await supa
+        .from('project_members')
+        .select('role')
+        .eq('project_id', mirProject)
+        .eq('user_id', data.user.id)
+        .maybeSingle();
+      allowed = mem?.role === 'editor' || mem?.role === 'admin';
+    }
+    if (!allowed) return json({ error: '업로드 권한이 없습니다(실무자 이상).' }, 403);
+  }
 
   try {
     const token = await mintToken();

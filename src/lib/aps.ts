@@ -121,12 +121,14 @@ export async function uploadToAcc(
   project: string,
   folder: string,
   file: File,
-  opts?: { itemId?: string; onProgress?: ProgressFn },
+  opts?: { itemId?: string; onProgress?: ProgressFn; mirProject?: string },
 ): Promise<AccUploadResult> {
+  const mirProject = opts?.mirProject;
   const begin = (await apsUpload('begin', {
     project,
     folder,
     fileName: file.name,
+    mirProject,
   })) as BeginResult;
 
   await putToS3(begin.signedUrl, file, opts?.onProgress);
@@ -136,6 +138,7 @@ export async function uploadToAcc(
     project,
     folder,
     fileName: file.name,
+    mirProject,
     bucket: begin.bucket,
     object: begin.object,
     uploadKey: begin.uploadKey,
