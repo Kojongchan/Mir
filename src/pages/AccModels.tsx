@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthProvider';
 import { getProjectAcc, setProjectAcc } from '../lib/api';
@@ -140,6 +140,7 @@ function updateFolder(nodes: FolderNode[], id: string, fn: (n: FolderNode) => Fo
 
 export function AccModels() {
   const { projectId = '' } = useParams();
+  const navigate = useNavigate();
   const { profile } = useAuth();
   const isAdmin = !!profile?.is_admin;
   const [params] = useSearchParams();
@@ -629,6 +630,11 @@ export function AccModels() {
         {isAdmin && urn && (
           <button onClick={() => void setAsDefault()} style={btnStyle} title="이 모델을 자동으로 열리게 지정">
             ⭐ 기본 모델로 지정
+          </button>
+        )}
+        {urn && (
+          <button onClick={() => navigate(`/project/${projectId}/docs`)} style={btnStyle} title="모델 보기를 닫고 자료관리로">
+            ✕ 닫기
           </button>
         )}
         <span style={{ fontSize: 12, color: 'var(--muted)', maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

@@ -1,51 +1,24 @@
-import { useEffect, useRef, useState } from 'react';
-import { init } from 'pptx-preview';
 import type { FileRecord } from '../../lib/files';
 
 /**
- * PowerPoint .pptx 미리보기 — pptx-preview 로 슬라이드를 순수 프론트엔드 렌더.
- * 파일 바이트(blob URL)를 ArrayBuffer 로 읽어 컨테이너에 슬라이드를 쌓는다.
- * 외부 서비스로 파일을 보내지 않는다(사내 문서 보호).
+ * PowerPoint .pptx 미리보기 — Microsoft Office Online 임베드 뷰어.
+ * ACC 내장 뷰어와 동일한 고화질 렌더. Office Online 서버가 `url` 을 직접
+ * 가져가므로 `url` 은 **공개 접근 가능한 절대 URL**(우리 세션 토큰 미포함)이어야
+ * 한다 — ACC=Autodesk 단기 서명 URL, Supabase=서명 URL.
  */
-export function PptxViewer({ url }: { url: string; file: FileRecord }) {
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    const wrap = wrapRef.current;
-    if (!wrap) return;
-    setError(null);
-    setLoading(true);
-    wrap.innerHTML = '';
-    (async () => {
-      try {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const buf = await res.arrayBuffer();
-        if (cancelled) return;
-        const width = Math.max(480, Math.min(1280, wrap.clientWidth || 960));
-        const previewer = init(wrap, { width, height: Math.round((width * 9) / 16) });
-        previewer.preview(buf);
-        if (!cancelled) setLoading(false);
-      } catch (e) {
-        if (!cancelled) {
-          setError((e as Error).message);
-          setLoading(false);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [url]);
-
+export function PptxViewer({ url, file }: { url: string; file: FileRecord }) {
+  const src = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(url)}`;
   return (
-    <div className="doc-stage doc-stage--scroll">
-      {error && <p className="doc-error">프레젠테이션을 열 수 없습니다: {error}</p>}
-      {loading && !error && <p className="muted doc-loading">슬라이드 불러오는 중…</p>}
-      <div ref={wrapRef} className="doc-pptx" style={{ display: error ? 'none' : 'block' }} />
+    <div className="doc-stage" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <iframe
+        title={file.name}
+        src={src}
+        style={{ flex: 1, width: '100%', border: 0 }}
+        allowFullScreen
+      />
+      <div className="muted" style={{ fontSize: 12, padding: '4px 10px', borderTop: '1px solid var(--border)' }}>
+        Microsoft Office Online 미리보기 · 안 보이면 <a href={url} download={file.name}>원본 다운로드</a>
+      </div>
     </div>
   );
 }

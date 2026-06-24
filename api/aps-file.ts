@@ -116,6 +116,15 @@ export default async function handler(req: Request): Promise<Response> {
       return new Response(null, { status: 302, headers: { location: dl } });
     }
 
+    // Office Online 등 외부 렌더러가 직접 가져갈 수 있도록 '서명 다운로드 URL'만
+    // JSON 으로 반환(우리 세션 토큰은 노출되지 않음 — Autodesk 단기 서명 URL).
+    if (mode === 'signed') {
+      return new Response(JSON.stringify({ url: dl, name }), {
+        status: 200,
+        headers: { 'content-type': 'application/json', 'cache-control': 'private, max-age=60' },
+      });
+    }
+
     // 문서 — 바이트를 같은 출처로 프록시(CORS 회피).
     const fileRes = await fetch(dl);
     if (!fileRes.ok || !fileRes.body) return err('파일 다운로드 실패');

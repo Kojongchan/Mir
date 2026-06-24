@@ -75,6 +75,18 @@ export async function accFileBlobUrl(project: string, item: string): Promise<str
   return URL.createObjectURL(blob);
 }
 
+/**
+ * 외부 렌더러(예: Office Online)가 직접 가져갈 수 있는 'Autodesk 단기 서명 URL'.
+ * 우리 세션 토큰은 헤더로만 보내고 노출되지 않는다. pptx 등 자체 렌더가 어려운
+ * 포맷을 Office Online 임베드로 띄울 때 사용.
+ */
+export async function accFileSignedUrl(project: string, item: string): Promise<string> {
+  const res = await fetch(`${accFileBase(project, item)}&mode=signed`, { headers: await authHeader() });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.url) throw new Error(body.error ?? `서명 URL 실패(${res.status})`);
+  return body.url as string;
+}
+
 /** ACC 원본 파일을 디스크로 저장(다운로드 — 실무자 이상 UI 에서만 호출). */
 export async function downloadAccItem(project: string, item: string, fileName: string): Promise<void> {
   const res = await fetch(accFileBase(project, item), { headers: await authHeader() });
