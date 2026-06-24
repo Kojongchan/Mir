@@ -305,16 +305,21 @@ function UsersTab({
                 <td>{u.is_admin ? <span className="tag tag-sysadmin">시스템 관리자</span> : '—'}</td>
                 <td className="right nowrap">
                   {u.is_admin ? (
-                    u.id === currentUserId ? (
-                      // 본인(시스템 관리자)은 자기 아이디·비번을 직접 변경 가능. 삭제·권한해제는 Supabase.
-                      <>
-                        <button onClick={() => rename(u)}>아이디 변경</button>
-                        <button onClick={() => resetPw(u)}>비번 변경</button>
-                        <span className="muted" title="시스템 관리자 해제·삭제는 Supabase에서만">🔒</span>
-                      </>
-                    ) : (
-                      <span className="muted" title="다른 시스템 관리자 계정은 Supabase에서만 관리합니다.">🔒 Supabase에서 관리</span>
-                    )
+                    // 시스템 관리자(최상위)는 앱에서 관리 불가 — 본인만 아이디·비번 변경,
+                    // 타인의 시스템 관리자 계정·삭제·권한해제는 모두 비활성(Supabase 에서만).
+                    <>
+                      <button
+                        onClick={() => rename(u)}
+                        disabled={u.id !== currentUserId}
+                        title={u.id !== currentUserId ? '시스템 관리자는 Supabase에서만 관리' : undefined}
+                      >아이디 변경</button>
+                      <button
+                        onClick={() => resetPw(u)}
+                        disabled={u.id !== currentUserId}
+                        title={u.id !== currentUserId ? '시스템 관리자는 Supabase에서만 관리' : undefined}
+                      >비번 변경</button>
+                      <button className="danger" disabled title="시스템 관리자 삭제는 Supabase에서만">삭제</button>
+                    </>
                   ) : (
                     <>
                       <button onClick={() => rename(u)}>아이디 변경</button>
