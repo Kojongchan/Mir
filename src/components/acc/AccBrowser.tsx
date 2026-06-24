@@ -56,7 +56,7 @@ function updateFolder(nodes: FolderNode[], id: string, fn: (n: FolderNode) => Fo
  * 업로드(관리자)는 2-legged 브로커(/api/aps-upload)로 ACC 폴더에 쓰고, `files`
  * 메타 행(source='acc')을 남겨 CDE 상태·활동로그가 ACC 파일을 가리키게 한다.
  */
-export function AccBrowser({ projectId, isAdmin }: { projectId: string; isAdmin: boolean }) {
+export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit: boolean }) {
   const navigate = useNavigate();
   const [accProject, setAccProject] = useState('');
   const [pinned, setPinned] = useState(false);
@@ -93,7 +93,7 @@ export function AccBrowser({ projectId, isAdmin }: { projectId: string; isAdmin:
         if (!acc.acc_hub_id || !acc.acc_project_id) {
           setPinned(false);
           setStatus(
-            isAdmin
+            canEdit
               ? "‘🅰 ACC 모델’ 메뉴에서 ACC 프로젝트를 먼저 고정하세요."
               : '관리자가 ACC 프로젝트를 아직 지정하지 않았습니다.',
           );
@@ -266,7 +266,7 @@ export function AccBrowser({ projectId, isAdmin }: { projectId: string; isAdmin:
           <span className="acc-caret">{node.loading ? '⏳' : node.expanded ? '▾' : '▸'}</span>
           📂 {node.name}
         </button>
-        {isAdmin && (
+        {canEdit && (
           <button className="acc-row-act" title={`'${node.name}'에 업로드`} onClick={() => triggerUpload(node.id)}>
             ⬆
           </button>
@@ -302,7 +302,7 @@ export function AccBrowser({ projectId, isAdmin }: { projectId: string; isAdmin:
     <section className="cde-content acc-browser">
       <div className="cde-toolbar">
         <strong style={{ fontSize: 13 }}>🅰 ACC 자료 (Autodesk)</strong>
-        {isAdmin && pinned && (
+        {canEdit && pinned && (
           <button
             className="primary"
             disabled={!sel || progress != null}

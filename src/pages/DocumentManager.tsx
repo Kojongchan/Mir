@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
+import { useProjectRole } from '../auth/useProjectRole';
 import { FolderTree } from '../components/cde/FolderTree';
 import { StatusBadge } from '../components/cde/StatusBadge';
 import { VersionHistory } from '../components/cde/VersionHistory';
@@ -38,9 +39,10 @@ import {
 export function DocumentManager() {
   const { projectId = '' } = useParams();
   const { profile } = useAuth();
-  const isAdmin = !!profile?.is_admin;
-  // D12: 문서 삭제는 D11(admin) 예외 — 업로더 본인도 가능. profile.id 는 auth uid.
-  const canDelete = (f: CdeFile) => isAdmin || (!!f.uploaded_by && f.uploaded_by === profile?.id);
+  // RBAC(0023): 실무자(editor) 이상이 콘텐츠 쓰기. 시스템 관리자는 자동 관리자.
+  const { canEdit } = useProjectRole(projectId);
+  // 삭제는 실무자 이상 또는 업로더 본인(D12/D14).
+  const canDelete = (f: CdeFile) => canEdit || (!!f.uploaded_by && f.uploaded_by === profile?.id);
 
   // 저장소 전환: 앱(Supabase docs — 기존 자료 읽기 공존) ↔ ACC(신규 업로드 일원화).
   const [store, setStore] = useState<'supabase' | 'acc'>('supabase');
@@ -63,7 +65,7 @@ export function DocumentManager() {
   useEffect(() => {
     // 'BIM 데이터' 최상위 폴더가 없으면 만들고(관리자), 폴더 목록을 읽는다.
     (async () => {
-      if (isAdmin) await ensureBimRoot(projectId).catch(() => {});
+      if (canEdit) await ensureBimRoot(projectId).catch(() => {});
       await refreshFolders();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -238,13 +240,13 @@ export function DocumentManager() {
         </span>
       </div>
       {store === 'acc' ? (
-        <AccBrowser projectId={projectId} isAdmin={isAdmin} />
+        <AccBrowser projectId={projectId} canEdit={canEdit} />
       ) : (
       <div className="cde-embed cde-embed-fill">
         <aside className="cde-side">
           <div className="sidebar-head">
             <h2>폴더</h2>
-            {isAdmin && <button onClick={onNewFolder}>＋ 폴더</button>}
+            {canEdit && <button onClick={onNewFolder}>＋ 폴더</button>}
           </div>
           <div className="cde-tree-wrap">
             <div className="cde-tree-section-label">📄 문서</div>
@@ -262,7 +264,7 @@ export function DocumentManager() {
               showRoot={false}
             />
           </div>
-          {isAdmin && selectedFolder && (
+          {canEdit && selectedFolder && (
             <div className="cde-side-actions">
               <button onClick={onRenameFolder}>이름 변경</button>
               <button className="danger" onClick={onDeleteFolder}>폴더 삭제</button>
@@ -301,7 +303,7 @@ export function DocumentManager() {
               onChange={onUploadNew}
             />
             <input ref={versionInput} type="file" style={{ display: 'none' }} onChange={onUploadVersion} />
-            {isAdmin && (
+            {canEdit && (
               <button className="primary" onClick={() => newFileInput.current?.click()} disabled={busy}>
                 {busy ? '처리 중…' : inBim ? 'BIM 업로드(IFC)' : '문서 업로드'}
               </button>
@@ -330,7 +332,7 @@ export function DocumentManager() {
                     <td>
                       <div className="cde-status-cell">
                         <StatusBadge status={f.status} />
-                        {isAdmin && (
+                        {canEdit && (
                           <select
                             value={f.status}
                             onChange={(e) => onChangeStatus(f, e.target.value as FileStatus)}
@@ -347,7 +349,7 @@ export function DocumentManager() {
                     <td className="nowrap">{new Date(f.created_at).toLocaleDateString('ko-KR')}</td>
                     <td className="right nowrap">
                       <button onClick={() => setHistoryFor(f)}>이력</button>
-                      {isAdmin && (
+                      {canEdit && (
                         <button onClick={() => triggerNewVersion(f)} disabled={busy}>새 버전</button>
                       )}
                       {canDelete(f) && (

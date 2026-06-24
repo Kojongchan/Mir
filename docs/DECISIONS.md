@@ -31,5 +31,7 @@
 
 | D19 | **ACC 쓰기(업로드)는 2-legged(client_credentials) 브로커로 수행** — 별도 사용자 OAuth(3-legged) 도입 없이 우리 서버(`api/aps-upload.ts`)가 storage 생성→S3 서명 업로드(브라우저 직접 PUT, 진행률)→item/version 생성을 처리. **전제**: 커스텀 통합 앱(Client ID)이 대상 ACC 폴더에 **편집/업로드 권한**을 부여받아야 함(S46 은 읽기만 승인 → 운영에서 폴더 쓰기 권한 추가 필요). 스코프 `data:read data:create data:write`. **S47** | D18 의 "2-legged 토큰 브로커, 외부인 오토데스크 계정 불필요" 연장선. 읽기는 S46 에서 검증됨. 쓰기는 폴더 권한 부여 후 운영 검증 필요 — item/version 생성이 403 이면 폴더 권한 미부여이거나 3-legged 필요(그 경우 S47 범위 재조정, 사용자 합의 후 이 결정 갱신) |
 
+| D20 | **권한 4단계(RBAC)로 전환** — D11(쓰기=시스템관리자만)을 폐기하고 `project_members.role`(0001부터 존재: viewer/editor/admin) + `profiles.is_admin` 으로 프로젝트별 역할을 강제. **뷰어(viewer)**=읽기·미리보기만(다운로드 UI 숨김), **실무자(editor)**=콘텐츠 쓰기 전부(업로드·수정·삭제·버전), **관리자(admin, 프로젝트)**=실무자+프로젝트 설정+역할 부여(단 시스템 관리자 멤버 보호), **시스템 관리자(is_admin)**=최상위. DB: `0023_rbac.sql` 의 `is_editor(p)`/`is_project_admin(p)`/`user_is_system_admin(uid)` 헬퍼로 전 콘텐츠 테이블 쓰기 RLS를 `is_editor(project_id)`, 설정·역할을 `is_project_admin`/`is_admin` 으로. 프론트 `useProjectRole`. **전 모듈 적용**(사용자 결정). **S48** | 현장관리자·실무자에게 프로젝트 단위로 권한을 나눠주려면 글로벌 admin 단일 권한(D11)으론 부족. ACC editor/뷰어 모델을 단순화해 차용. 다운로드 차단은 모델(SVF2 스트리밍)은 원천 차단, 문서(미리보기 바이트 노출)는 '다운로드 버튼 숨김' 소프트 차단 |
+
 ## 우선순위 (사용자 확정 · 갱신)
 뷰어 → 4D → 충돌검사 → CDE/PMIS 포털 → 리뷰도구 → **장비운용(강점)은 기획안 최후로 연기**(S16, 사용자 결정) → VR. 포맷은 **IFC**.
