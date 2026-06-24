@@ -11,7 +11,7 @@ import { TextViewer } from '../components/viewers/TextViewer';
 import { DownloadFallback } from '../components/viewers/DownloadFallback';
 import { PdfViewer } from '../components/viewers/PdfViewer';
 import { SheetViewer } from '../components/viewers/SheetViewer';
-import { DocxViewer } from '../components/viewers/DocxViewer';
+import { OfficeViewer } from '../components/viewers/OfficeViewer';
 
 // APS Viewer 로 띄울 모델/도면 확장자(나머지 중 우리가 렌더 가능한 건 자체 뷰어).
 const MODEL_EXT = new Set([
@@ -299,7 +299,14 @@ export function AccModels() {
       const { data } = await supabase.auth.getSession();
       const tok = data.session?.access_token ?? '';
       const base = `/api/aps-file?project=${encodeURIComponent(project)}&item=${encodeURIComponent(it.id)}`;
-      if (kind === 'video' || kind === 'audio' || kind === 'unsupported') {
+      if (kind === 'office') {
+        // Office Online 이 직접 가져갈 공개 서명 URL(우리 토큰 미포함, JSON 으로 수령).
+        const res = await fetch(`${base}&mode=signed`, { headers: { authorization: `Bearer ${tok}` } });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || !body.url) throw new Error(body.error ?? `서명 URL 실패(${res.status})`);
+        clearDoc();
+        setDocView({ url: body.url as string, name: it.name, kind });
+      } else if (kind === 'video' || kind === 'audio' || kind === 'unsupported') {
         // 미디어/대용량/다운로드 — 서명 URL로 직접(토큰은 쿼리로).
         clearDoc();
         setDocView({ url: `${base}&mode=redirect&token=${encodeURIComponent(tok)}`, name: it.name, kind });
@@ -332,8 +339,8 @@ export function AccModels() {
         return <AudioViewer url={d.url} file={f} />;
       case 'sheet':
         return <SheetViewer url={d.url} file={f} />;
-      case 'docx':
-        return <DocxViewer url={d.url} file={f} />;
+      case 'office':
+        return <OfficeViewer url={d.url} file={f} />;
       case 'text':
         return <TextViewer url={d.url} file={f} />;
       default:

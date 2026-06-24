@@ -27,8 +27,7 @@ import { TextViewer } from '../viewers/TextViewer';
 import { DownloadFallback } from '../viewers/DownloadFallback';
 import { PdfViewer } from '../viewers/PdfViewer';
 import { SheetViewer } from '../viewers/SheetViewer';
-import { DocxViewer } from '../viewers/DocxViewer';
-import { PptxViewer } from '../viewers/PptxViewer';
+import { OfficeViewer } from '../viewers/OfficeViewer';
 
 const fakeFile = (name: string) => ({ name, size_bytes: null, mime_type: null }) as unknown as FileRecord;
 const fmtDate = (s?: string | null) =>
@@ -250,7 +249,7 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
   const openDocument = async (it: AccItem, kind: ViewerKind) => {
     setStatus(`${it.name} 여는 중…`);
     try {
-      if (kind === 'pptx') {
+      if (kind === 'office') {
         // Office Online 이 직접 가져갈 수 있는 공개 서명 URL(blob 아님).
         clearDoc();
         setDocView({ url: await accFileSignedUrl(accProject, it.id), name: it.name, kind });
@@ -418,8 +417,7 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
       case 'video': return <VideoViewer url={d.url} file={f} />;
       case 'audio': return <AudioViewer url={d.url} file={f} />;
       case 'sheet': return <SheetViewer url={d.url} file={f} />;
-      case 'docx': return <DocxViewer url={d.url} file={f} />;
-      case 'pptx': return <PptxViewer url={d.url} file={f} />;
+      case 'office': return <OfficeViewer url={d.url} file={f} />;
       case 'text': return <TextViewer url={d.url} file={f} />;
       default: return <DownloadFallback url={d.url} file={f} />;
     }

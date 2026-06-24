@@ -23,11 +23,8 @@ const PdfViewer = lazy(() =>
 const SheetViewer = lazy(() =>
   import('../components/viewers/SheetViewer').then((m) => ({ default: m.SheetViewer })),
 );
-const DocxViewer = lazy(() =>
-  import('../components/viewers/DocxViewer').then((m) => ({ default: m.DocxViewer })),
-);
-const PptxViewer = lazy(() =>
-  import('../components/viewers/PptxViewer').then((m) => ({ default: m.PptxViewer })),
+const OfficeViewer = lazy(() =>
+  import('../components/viewers/OfficeViewer').then((m) => ({ default: m.OfficeViewer })),
 );
 
 type State =
@@ -113,10 +110,8 @@ function Dispatch({ file, url }: { file: FileRecord; url: string }) {
       return <AudioViewer file={file} url={url} />;
     case 'sheet':
       return <SheetViewer file={file} url={url} />;
-    case 'docx':
-      return <DocxViewer file={file} url={url} />;
-    case 'pptx':
-      return <PptxViewer file={file} url={url} />;
+    case 'office':
+      return <OfficeViewer file={file} url={url} />;
     case 'text':
       return <TextViewer file={file} url={url} />;
     default:
