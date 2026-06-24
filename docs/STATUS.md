@@ -16,6 +16,16 @@
   기존 유지.
 - ✅ **B4 — pptx 미리보기 뷰어**: PptxViewer(pptx-preview, 순수 프론트·외부전송 없음) 추가, ViewerKind+매핑,
   AccBrowser·FileViewer 배선. **PDF 페이지 네비/점프/썸네일은 이미 완비**라 그대로 둠.
+- ✅ **B4 후속(리뷰 반영) — 문서 뷰어 Office Online 일원화**: pptx-preview 화질이 ACC 대비 떨어져, 사용자
+  결정으로 **Office 포맷 전부(doc·docx·ppt·pptx·xls·xlsx·xlsm)를 Microsoft Office Online 전체 뷰어
+  (view.aspx)로** 통일(`OfficeViewer`, pptx-preview 제거). **풀스크린 인라인**(문서 오버레이 `fixed inset:0
+  z-index:500`)으로 ACC와 동일한 풀 메뉴바·슬라이드쇼. csv만 자체 표 뷰어 유지. 공개 Autodesk/Supabase 서명
+  URL만 Office에 전달(우리 JWT 미노출).
+- ✅ **ACC 모델 뷰어 ✕ 닫기** 추가(DWG 등 모델 열람 후 자료관리로 복귀). 폴더트리 정리는 Track A 영역.
+- ⚠️ **Office 뷰어 파일명(UUID) 한계**: Office Online 은 src URL 마지막 경로(=Autodesk 저장소 UUID)를 이름으로
+  표시. (1) 우리 도메인 경유 capability URL = Vercel **프리뷰 SSO 보호**로 외부(MS) 접근 불가, (2)
+  response-content-disposition 주입 = Office 가 렌더 거부 → **프리뷰에서 안전 수정 불가**. 실제 파일명은 우리
+  오버레이 헤더+다운로드 링크로 표시. **프로덕션(SSO 없음)에선 capability 방식이 동작할 수 있어 병합 후 재시도 여지**.
 - ⚠️ **인계(라이브 검증 필요)**: B3의 ACC 새 버전·이동 실제 쓰기(S3 PUT/CORS/version 생성)는 **운영에서 폴더
   편집권한 부여 후 검증** 필요(기존 코드도 동일 주의). Quantities.tsx의 proposeBilling 게이트는 Track A S51
   영역이라 system-admin 유지(인계).
