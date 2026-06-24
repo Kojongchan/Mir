@@ -101,16 +101,9 @@ export default async function handler(req: Request): Promise<Response> {
     const bucket = m[1];
     const object = m[2];
 
-    // 2) S3 서명 다운로드 URL. Office Online(mode=signed) 은 파일명을 표시하므로
-    //    response-content-disposition 에 실제 파일명을 실어 URL에 굽는다(공개 URL).
-    const dispoName = url.searchParams.get('name') || name;
-    // Office Online 은 응답이 attachment 면 렌더를 거부 → inline 으로(파일명만 전달).
-    const signParams =
-      mode === 'signed'
-        ? `?response-content-disposition=${encodeURIComponent(`inline; filename*=UTF-8''${encodeURIComponent(dispoName)}`)}`
-        : '';
+    // 2) S3 서명 다운로드 URL(공개 — Office Online·미디어가 직접 가져감).
     const signRes = await fetch(
-      `${APS}/oss/v2/buckets/${encodeURIComponent(bucket)}/objects/${encodeURIComponent(object)}/signeds3download${signParams}`,
+      `${APS}/oss/v2/buckets/${encodeURIComponent(bucket)}/objects/${encodeURIComponent(object)}/signeds3download`,
       { headers: auth },
     );
     const sign = await signRes.json();
