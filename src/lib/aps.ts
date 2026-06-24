@@ -80,23 +80,17 @@ export async function accFileBlobUrl(project: string, item: string): Promise<str
  * 우리 세션 토큰은 헤더로만 보내고 노출되지 않는다. pptx 등 자체 렌더가 어려운
  * 포맷을 Office Online 임베드로 띄울 때 사용.
  */
-export async function accFileSignedUrl(project: string, item: string): Promise<string> {
-  const res = await fetch(`${accFileBase(project, item)}&mode=signed`, { headers: await authHeader() });
+/**
+ * 외부 렌더러(Office Online)용 공개 서명 URL. Autodesk 단기 서명 URL(공개)이라
+ * Microsoft 서버가 직접 가져갈 수 있고, name 을 주면 response-content-disposition
+ * 으로 실제 파일명이 URL에 구워져 Office 가 이름을 올바로 표시한다. 우리 세션
+ * 토큰은 헤더로만 보내고 노출되지 않는다.
+ */
+export async function accFileSignedUrl(project: string, item: string, name?: string): Promise<string> {
+  const q = name ? `&name=${encodeURIComponent(name)}` : '';
+  const res = await fetch(`${accFileBase(project, item)}&mode=signed${q}`, { headers: await authHeader() });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || !body.url) throw new Error(body.error ?? `서명 URL 실패(${res.status})`);
-  return body.url as string;
-}
-
-/**
- * Office Online 임베드용 src URL. 경로 끝에 실제 파일명이 들어간 단기 capability
- * URL(우리 세션 토큰 미포함)이라 Office 가 파일명을 올바로 표시한다.
- */
-export async function accOfficeSrc(project: string, item: string, name: string): Promise<string> {
-  const res = await fetch(`${accFileBase(project, item)}&mode=officesrc&name=${encodeURIComponent(name)}`, {
-    headers: await authHeader(),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok || !body.url) throw new Error(body.error ?? `오피스 URL 실패(${res.status})`);
   return body.url as string;
 }
 
