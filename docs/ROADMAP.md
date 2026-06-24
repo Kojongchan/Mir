@@ -92,10 +92,25 @@ VR 검토까지. 다중 사용자가 **본인 배정 프로젝트(공구)** 만 
 | S44 | 통합모델(3D) 뷰 환경·탐색 UX ✅ | (youthful-meitner) | 시작카메라·홈뷰·좌표HUD·격자/원점·이슈핀 비주얼·트리정리 + 좌표/Y-up 보정 | 뷰어 |
 | S45 | 뷰어 고급기능 + CDE↔BIM 연동 ✅ | (cde-bim·viewer-adv) | 스냅·측정확장·공간트리·버전diff·CDE BIM폴더↔통합모델 미러·버전전환/중첩(0019) | S44 |
 | **S46** | **APS/ACC 뷰어 전환 ✅ (PR #87)** | `feature/aps-viewer` | **APS Viewer 임베드 + ACC 2-legged 탐색·고정(0020·0021) + 파일 종류별 분기(모델=APS/문서=우리뷰어) + PDF 썸네일.** 위 '전략 전환' 참조 | S45 |
+| **S47** | 자료관리 ACC 일원화(업로드까지) ✅ | (funny-bardeen) | ACC 쓰기=2-legged(D19) + Supabase 읽기 공존. 0022. **미병합** | S46 |
+| **S48** | 4단계 RBAC + ACC 단독 파일관리자 ✅ | (funny-bardeen) | 뷰어/실무자/관리자/시스템관리자(0023·D20) + ACC식 파일관리자 UI(이름변경·삭제·이동·버전·다운로드). **미병합** | S47 |
+| **선결** | **S47/S48 main 병합** 🔶 | — | 두 트랙(A·B) 분기 전제. 미병합 시 병렬 분기하면 RBAC·ACC 저장소 부재로 양쪽 깨짐 | S48 |
+| **S49** | 🅰 매핑 레이어 + 4D/간섭 ACC 소스화 + 이슈핀 이식 | `feature/aps-mapping-pins` | dbId↔GlobalId↔expressID(apsMapping.ts) + **신규 BIM 업로드 경로 부재 해소** + 이슈핀 3D 앵커. 0024. **급소** | S48 |
+| S50 | 🅰 4D APS 이식 | `feature/aps-4d` | 일정↔GlobalId, themingColor/표시제어 타임라인 | S49 |
+| S51 | 🅰 물량(QTO) APS 이식 | `feature/aps-qto` | APS 속성DB 추출 또는 IFC 병행 | S49 |
+| S52 | 🅰 간섭 스파이크 → 이식 | `feature/aps-clash` | Model Coordination vs fragment+BVH 택1 | S49 |
+| S53 | 🅰 IfcViewer 은퇴 + IA 통합 | `feature/retire-ifcviewer` | 통합모델=ACC 모델. 패리티 증명 후 | S49~S52 |
+| B1 | 🅱 모듈별 canEdit 게이팅 점검·보강 | `feature/rbac-gating` | 이슈·공정·기성·게시판 등 뷰어/실무자 구분 누락 점검. 마이그레이션 없음 | S48 |
+| B2 | 🅱 프로젝트 관리자 역할 배정 권한 | `feature/admin-role-assign` | 구성원 화면(현재 시스템관리자 전용)을 프로젝트 관리자도. 0030 | S48 |
+| B3 | 🅱 ACC 파일관리자 보강 + 라이브 검증 | `feature/acc-browser-polish` | 이동·새 버전 업로드 UI + 실제 PUT/CORS/item 검증 | S48 |
+| B4 | 🅱 비-3D 뷰어 quick wins | `feature/viewer-quickwins` | pptx 뷰어 + PDF 상단 페이지 네비 | S46 |
 
-추천 순서(전환 후): **S46 ✅ → 다음: (a) 자료관리 ACC 일원화(업로드까지 ACC) · (b) 4D·간섭·이슈핀·물량을
-APS Viewer 위로 이식→IfcViewer 은퇴 · (c) PPT(pptx) 뷰어 보강 → S43(CDE 고도화는 ACC 일원화와 통합 검토)
-→ S38(간섭 보고서) · S15(속성색칠) → VR → S16 장비(최후)**
+추천 순서(전환 후): **S46·S47·S48 ✅ → [선결] S47/S48 main 병합 → 두 트랙 병렬**:
+**🅰 직렬(이어서)** S49(매핑+ACC소스+이슈핀) → S50(4D) → S51(물량) → S52(간섭 스파이크) → S53(은퇴) ·
+**🅱 분리(2nd 계정)** B1(게이팅)·B2(역할배정)·B3(ACC관리자)·B4(quick wins).
+이후 S43(CDE 고도화는 ACC 통합) · S38(간섭 보고서) · S15(속성색칠) → VR → S16 장비(최후).
+> 트랙 분리·충돌 회피 규칙·열린 결정은 **PLANNING §0-B** 참조. A=0024~ / B=0030~ 마이그레이션 사전 배정.
+> **자체 IfcViewer = 점진 이식·병행**(사용자 결정): APS 패리티 증명 전 은퇴 금지, IFC 백업 유지.
 > **세션 묶음 메모**: S14(CDE)에서 시작한 작업 브랜치(`claude/busy-lovelace-cj8adq`)가
 > PMIS 포털 전반(S21~S29)으로 확장됨. CDE/포털 1차 마무리. 다음 후보는 PLANNING 백로그 참조.
 > **세션번호 메모**: main 이 S12 를 브랜딩으로 선점 → 초기 기획의 S12(CDE)는 **S14** 로 이동.
