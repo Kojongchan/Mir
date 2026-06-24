@@ -106,8 +106,10 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
   const [docView, setDocView] = useState<{ url: string; name: string; kind: ViewerKind } | null>(null);
   const [versionsFor, setVersionsFor] = useState<{ item: AccItem; list: AccVersion[] } | null>(null);
   const [moveFor, setMoveFor] = useState<AccItem | null>(null);
+  const [versionTarget, setVersionTarget] = useState<AccItem | null>(null);
   const docBlobRef = useRef<string | null>(null);
   const uploadInput = useRef<HTMLInputElement>(null);
+  const versionInput = useRef<HTMLInputElement>(null);
   const clearDoc = () => {
     if (docBlobRef.current) {
       URL.revokeObjectURL(docBlobRef.current);
@@ -281,6 +283,45 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
     }
   };
 
+  // 기존 아이템의 새 버전 올리기: 대상 지정 후 파일 선택 트리거.
+  const startVersionUpload = (it: AccItem) => {
+    setMenuFor(null);
+    setVersionTarget(it);
+    versionInput.current?.click();
+  };
+  const onPickVersion = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const it = versionTarget;
+    const folder = selId; // 새 버전은 아이템이 속한 현재 폴더로 스토리지 생성
+    if (!file || !it || !folder) {
+      setVersionTarget(null);
+      if (versionInput.current) versionInput.current.value = '';
+      return;
+    }
+    setProgress(0);
+    setStatus(`새 버전 업로드 중: ${it.name}`);
+    try {
+      // 원본 아이템 이름을 유지해 같은 파일의 새 버전으로 등록.
+      const res = await uploadToAcc(accProject, folder, file, {
+        itemId: it.id,
+        fileName: it.name,
+        onProgress: setProgress,
+        mirProject: projectId,
+      });
+      if (res.itemUrn) await recordAccUpload(projectId, null, it.name, res.itemUrn, res.versionUrn, file.size);
+      await reloadFolder(folder);
+      await refreshMeta();
+      setStatus(`새 버전 등록됨: ${it.name}`);
+      if (versionsFor && versionsFor.item.id === it.id) await openVersions(it);
+    } catch (err) {
+      setStatus(`새 버전 실패: ${(err as Error).message}`);
+    } finally {
+      setProgress(null);
+      setVersionTarget(null);
+      if (versionInput.current) versionInput.current.value = '';
+    }
+  };
+
   // ---- 다운로드/이름변경/삭제/이동/버전 ----
   const onDownload = async (its: AccItem[]) => {
     setMenuFor(null);
@@ -389,6 +430,7 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
   return (
     <div className="acc-fm" onClick={() => menuFor && setMenuFor(null)}>
       <input ref={uploadInput} type="file" style={{ display: 'none' }} onChange={onUpload} />
+      <input ref={versionInput} type="file" style={{ display: 'none' }} onChange={onPickVersion} />
 
       {/* 좌측 폴더 트리 */}
       <aside className="acc-fm-tree">
@@ -503,6 +545,7 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
                         <div className="acc-menu" onClick={(e) => e.stopPropagation()}>
                           <button onClick={() => openItem(it)}>{model ? '3D 열기' : '미리보기'}</button>
                           <button onClick={() => openVersions(it)}>버전 이력</button>
+                          {canEdit && <button onClick={() => startVersionUpload(it)}>새 버전 올리기</button>}
                           {canEdit && <button onClick={() => onDownload([it])}>다운로드</button>}
                           {canEdit && <button onClick={() => onRename(it)}>이름 변경</button>}
                           {canEdit && <button onClick={() => { setMenuFor(null); setMoveFor(it); }}>이동</button>}
@@ -538,7 +581,12 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
       {versionsFor && (
         <div className="acc-modal-back" onClick={() => setVersionsFor(null)}>
           <div className="acc-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="acc-modal-head">📑 버전 이력 — {versionsFor.item.name}<div className="spacer" /><button onClick={() => setVersionsFor(null)}>✕</button></div>
+            <div className="acc-modal-head">📑 버전 이력 — {versionsFor.item.name}<div className="spacer" />
+              {canEdit && (
+                <button className="primary" disabled={progress != null || busy} onClick={() => startVersionUpload(versionsFor.item)}>＋ 새 버전 올리기</button>
+              )}
+              <button onClick={() => setVersionsFor(null)}>✕</button>
+            </div>
             <ul className="acc-ver-list">
               {versionsFor.list.length === 0 && <li className="muted">불러오는 중…</li>}
               {versionsFor.list.map((v) => (

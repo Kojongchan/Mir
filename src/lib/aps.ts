@@ -175,13 +175,15 @@ export async function uploadToAcc(
   project: string,
   folder: string,
   file: File,
-  opts?: { itemId?: string; onProgress?: ProgressFn; mirProject?: string },
+  opts?: { itemId?: string; fileName?: string; onProgress?: ProgressFn; mirProject?: string },
 ): Promise<AccUploadResult> {
   const mirProject = opts?.mirProject;
+  // 새 버전(itemId)일 때는 원본 아이템 이름을 유지해 파일 정체성을 보존한다.
+  const fileName = opts?.fileName ?? file.name;
   const begin = (await apsUpload('begin', {
     project,
     folder,
-    fileName: file.name,
+    fileName,
     mirProject,
   })) as BeginResult;
 
@@ -191,7 +193,7 @@ export async function uploadToAcc(
   return (await apsUpload('complete', {
     project,
     folder,
-    fileName: file.name,
+    fileName,
     mirProject,
     bucket: begin.bucket,
     object: begin.object,
