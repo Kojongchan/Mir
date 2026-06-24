@@ -243,7 +243,7 @@ function UsersTab({
   const toggleAdmin = async (u: ProfileRow) => {
     try {
       await setUserAdmin(u.id, !u.is_admin);
-      flash(`${u.username} 관리자 권한을 ${!u.is_admin ? '부여' : '해제'}했습니다.`);
+      flash(`${u.username} 시스템 관리자 권한을 ${!u.is_admin ? '부여' : '해제'}했습니다.`);
       onChange();
     } catch (e) {
       fail(e);
@@ -293,26 +293,31 @@ function UsersTab({
         <input placeholder="표시이름" value={fullName} onChange={(e) => setFullName(e.target.value)} />
         <input type="password" placeholder="비밀번호 (6자+)" value={password} onChange={(e) => setPassword(e.target.value)} />
         <label className="admin-check">
-          <input type="checkbox" checked={isAdmin} onChange={(e) => setIsAdmin(e.target.checked)} /> 관리자
+          <input type="checkbox" checked={isAdmin} onChange={(e) => setIsAdmin(e.target.checked)} /> 시스템 관리자
         </label>
         <button onClick={add} disabled={busy || !username.trim() || password.length < 6}>
           {busy ? '생성 중…' : '사용자 추가'}
         </button>
       </div>
 
+      <p className="muted admin-hint">
+        <strong>시스템 관리자</strong>는 사용자 생성·권한 부여 등 <strong>모든 것</strong>을 제어하고 전 프로젝트를 관리합니다.
+        프로젝트별 <strong>관리자/실무자/뷰어</strong>는 ‘구성원’ 탭에서 배정합니다(서로 다른 권한).
+      </p>
+
       <div className="admin-table-wrap">
         <table className="admin-table">
           <thead>
-            <tr><th>아이디</th><th>표시이름</th><th>관리자</th><th className="right">관리</th></tr>
+            <tr><th>아이디</th><th>표시이름</th><th>시스템 관리자</th><th className="right">관리</th></tr>
           </thead>
           <tbody>
             {users.map((u) => (
               <tr key={u.id}>
                 <td>{u.username}{u.id === currentUserId && <span className="tag">나</span>}</td>
                 <td className="muted">{u.full_name ?? '—'}</td>
-                <td>{u.is_admin ? '✓' : '—'}</td>
+                <td>{u.is_admin ? <span className="tag tag-sysadmin">시스템 관리자</span> : '—'}</td>
                 <td className="right nowrap">
-                  <button onClick={() => toggleAdmin(u)}>{u.is_admin ? '관리자 해제' : '관리자 지정'}</button>
+                  <button onClick={() => toggleAdmin(u)}>{u.is_admin ? '시스템관리자 해제' : '시스템관리자 지정'}</button>
                   <button onClick={() => rename(u)}>아이디 변경</button>
                   <button onClick={() => resetPw(u)}>비번 변경</button>
                   <button className="danger" onClick={() => remove(u)} disabled={u.id === currentUserId}>삭제</button>
@@ -432,12 +437,19 @@ function MembersTab({
               const u = usersById.get(m.user_id);
               return (
                 <tr key={m.user_id}>
-                  <td>{u?.username ?? m.user_id.slice(0, 8)}</td>
+                  <td>
+                    {u?.username ?? m.user_id.slice(0, 8)}
+                    {u?.is_admin && <span className="tag tag-sysadmin">시스템 관리자</span>}
+                  </td>
                   <td className="muted">{u?.full_name ?? '—'}</td>
                   <td>
-                    <select value={m.role} onChange={(e) => changeRole(m.user_id, e.target.value as MemberRole)}>
-                      {MEMBER_ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
-                    </select>
+                    {u?.is_admin ? (
+                      <span className="muted">전체 관리(시스템)</span>
+                    ) : (
+                      <select value={m.role} onChange={(e) => changeRole(m.user_id, e.target.value as MemberRole)}>
+                        {MEMBER_ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+                      </select>
+                    )}
                   </td>
                   <td className="right">
                     <button className="danger" onClick={() => remove(m.user_id)}>해제</button>
@@ -452,9 +464,10 @@ function MembersTab({
         </table>
       </div>
       <p className="muted admin-hint">
-        시스템 관리자(<code>관리자 ✓</code>)는 배정과 무관하게 모든 프로젝트를 관리합니다. 역할:
-        <strong> 뷰어</strong>=열람·미리보기만(다운로드 없음) · <strong>실무자</strong>=업로드·수정·삭제·버전 등
-        콘텐츠 작업 전부 · <strong>관리자</strong>=실무자 + 프로젝트 설정·역할 부여.
+        <strong>시스템 관리자</strong>는 ‘사용자’ 탭에서 지정하며, 배정과 무관하게 모든 프로젝트를 관리합니다.
+        아래 <strong>프로젝트 역할</strong> — <strong>뷰어</strong>=열람·미리보기만(다운로드 없음) ·
+        <strong> 실무자</strong>=업로드·수정·삭제·버전 등 콘텐츠 작업 전부 ·
+        <strong> 관리자</strong>=실무자 + 프로젝트 설정·역할 부여.
       </p>
     </section>
   );
