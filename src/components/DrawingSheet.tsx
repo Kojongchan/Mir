@@ -20,7 +20,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 interface Props {
   drawing: Drawing;
   projectId: string;
-  isAdmin: boolean;
+  canEdit: boolean;
   authorName: string | null;
 }
 
@@ -37,7 +37,7 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
  * 함께 CSS 변환(휠 줌·드래그 팬)한다. 핀은 캔버스 정규화 좌표(0..1)로 저장돼 줌/팬과
  * 무관하게 정합. admin 은 '핀 추가'로 좌표를 찍고 라벨/이슈를 연결할 수 있다(D11).
  */
-export function DrawingSheet({ drawing, projectId, isAdmin, authorName }: Props) {
+export function DrawingSheet({ drawing, projectId, canEdit, authorName }: Props) {
   const navigate = useNavigate();
   const viewportRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -167,7 +167,7 @@ export function DrawingSheet({ drawing, projectId, isAdmin, authorName }: Props)
 
   // 캔버스 위 클릭 → 정규화 좌표(줌/팬 무관, 캔버스 화면 사각형 기준).
   const onSheetClick = async (e: React.MouseEvent) => {
-    if (!addMode || !isAdmin) return;
+    if (!addMode || !canEdit) return;
     const cv = canvasRef.current;
     if (!cv) return;
     const r = cv.getBoundingClientRect();
@@ -248,7 +248,7 @@ export function DrawingSheet({ drawing, projectId, isAdmin, authorName }: Props)
         <button onClick={fit} title="화면에 맞춤">
           ⤢ 맞춤
         </button>
-        {isAdmin && (
+        {canEdit && (
           <button
             className={addMode ? 'primary' : ''}
             onClick={() => setAddMode((a) => !a)}
@@ -302,7 +302,7 @@ export function DrawingSheet({ drawing, projectId, isAdmin, authorName }: Props)
       {sel && (
         <PinEditor
           pin={sel}
-          isAdmin={isAdmin}
+          canEdit={canEdit}
           onClose={() => setSel(null)}
           onSaveLabel={onSaveLabel}
           onCreateIssue={onCreateIssue}
@@ -316,7 +316,7 @@ export function DrawingSheet({ drawing, projectId, isAdmin, authorName }: Props)
 
 function PinEditor({
   pin,
-  isAdmin,
+  canEdit,
   onClose,
   onSaveLabel,
   onCreateIssue,
@@ -324,7 +324,7 @@ function PinEditor({
   onGoIssue,
 }: {
   pin: DrawingPin;
-  isAdmin: boolean;
+  canEdit: boolean;
   onClose: () => void;
   onSaveLabel: (label: string) => void | Promise<void>;
   onCreateIssue: () => void | Promise<void>;
@@ -348,8 +348,8 @@ function PinEditor({
           value={label}
           onChange={(e) => setLabel(e.target.value)}
           placeholder="예: 슬리브 누락"
-          disabled={!isAdmin}
-          onBlur={() => isAdmin && void onSaveLabel(label)}
+          disabled={!canEdit}
+          onBlur={() => canEdit && void onSaveLabel(label)}
         />
       </label>
       <div className="draw-pin-actions">
@@ -358,13 +358,13 @@ function PinEditor({
             이슈로 이동 →
           </button>
         ) : (
-          isAdmin && (
+          canEdit && (
             <button className="primary" onClick={() => void onCreateIssue()}>
               이슈 생성
             </button>
           )
         )}
-        {isAdmin && (
+        {canEdit && (
           <button className="danger" onClick={() => void onDelete()}>
             핀 삭제
           </button>

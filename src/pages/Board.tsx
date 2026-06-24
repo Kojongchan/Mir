@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
+import { useProjectRole } from '../auth/useProjectRole';
 import { createPost, deletePost, listPosts, type Post } from '../lib/portal';
 import { formatDate } from '../lib/dashboard';
 import { Attachments } from '../components/Attachments';
@@ -10,7 +11,8 @@ import { Attachments } from '../components/Attachments';
 export function Board() {
   const { projectId = '' } = useParams();
   const { profile } = useAuth();
-  const isAdmin = !!profile?.is_admin;
+  // 게시글 작성·삭제·첨부 = 실무자(editor) 이상. RLS(0023)와 일치.
+  const { canEdit } = useProjectRole(projectId);
   const authorName = profile?.full_name ?? profile?.username ?? null;
 
   const [posts, setPosts] = useState<Post[]>([]);
@@ -52,7 +54,7 @@ export function Board() {
     <div className="dash">
       <div className="dash-head">
         <h1 className="dash-h1">게시판 · 공지</h1>
-        {isAdmin && <button className="primary" onClick={() => setShowForm((s) => !s)}>{showForm ? '취소' : '＋ 글쓰기'}</button>}
+        {canEdit && <button className="primary" onClick={() => setShowForm((s) => !s)}>{showForm ? '취소' : '＋ 글쓰기'}</button>}
       </div>
 
       {showForm && (
@@ -84,8 +86,8 @@ export function Board() {
             {open === p.id && (
               <div className="board-body">
                 {p.body ? <p>{p.body}</p> : <p className="muted">(내용 없음)</p>}
-                <Attachments projectId={projectId} targetType="post" targetId={p.id} isAdmin={isAdmin} label="첨부" />
-                {isAdmin && <button className="danger" onClick={() => onDelete(p.id)}>삭제</button>}
+                <Attachments projectId={projectId} targetType="post" targetId={p.id} canEdit={canEdit} label="첨부" />
+                {canEdit && <button className="danger" onClick={() => onDelete(p.id)}>삭제</button>}
               </div>
             )}
           </article>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { useAuth } from '../auth/AuthProvider';
+import { useProjectRole } from '../auth/useProjectRole';
 import { MiniChart } from '../components/MiniChart';
 import { errMessage } from '../lib/errors';
 import {
@@ -25,8 +25,8 @@ import {
 export function Schedule() {
   const { projectId = '' } = useParams();
   const navigate = useNavigate();
-  const { profile } = useAuth();
-  const isAdmin = !!profile?.is_admin;
+  // 공정(월별 실적) 입력·수정·삭제 = 실무자(editor) 이상. RLS(0023)와 일치.
+  const { canEdit } = useProjectRole(projectId);
   const [info, setInfo] = useState<ProjectInfo | null>(null);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
   const [monthly, setMonthly] = useState<MonthlyRecord[]>([]);
@@ -128,7 +128,7 @@ export function Schedule() {
           <span><i className="legend-swatch" style={{ background: 'var(--muted)' }} /> 계획</span>
           <span><i className="legend-swatch" style={{ background: 'var(--accent)' }} /> 실적</span>
         </div>
-        {isAdmin && (
+        {canEdit && (
           <div className="dash-edit-row" style={{ marginTop: 12 }}>
             <label>월(YYYY-MM)<input value={rec.ym} onChange={(e) => setRec({ ...rec, ym: e.target.value })} /></label>
             <label>계획(%)<input type="number" value={rec.planned_pct} onChange={(e) => setRec({ ...rec, planned_pct: Number(e.target.value) })} /></label>
@@ -140,7 +140,7 @@ export function Schedule() {
         {monthly.length > 0 ? (
           <div className="cde-table-wrap" style={{ padding: 0, marginTop: 12 }}>
             <table className="cde-table">
-              <thead><tr><th>월</th><th className="right">계획 %</th><th className="right">실적 %</th><th className="right">차이</th>{isAdmin && <th />}</tr></thead>
+              <thead><tr><th>월</th><th className="right">계획 %</th><th className="right">실적 %</th><th className="right">차이</th>{canEdit && <th />}</tr></thead>
               <tbody>
                 {monthly.map((m) => {
                   const diff = Number(m.actual_pct) - Number(m.planned_pct);
@@ -152,7 +152,7 @@ export function Schedule() {
                       <td className="right" style={{ color: diff < 0 ? 'var(--danger)' : 'var(--accent)' }}>
                         {diff > 0 ? '+' : ''}{diff.toFixed(1)}
                       </td>
-                      {isAdmin && (
+                      {canEdit && (
                         <td className="right">
                           <button onClick={() => setRec({ ym: m.ym, planned_pct: Number(m.planned_pct), actual_pct: Number(m.actual_pct), billing_amount: Number(m.billing_amount) })}>수정</button>
                           <button className="danger" onClick={() => deleteMonthlyRecord(m.id).then(refreshMonthly)}>삭제</button>
@@ -166,7 +166,7 @@ export function Schedule() {
           </div>
         ) : (
           <p className="muted" style={{ marginTop: 10 }}>
-            {isAdmin ? '위에서 월·계획%·실적%를 입력하면 곡선이 그려집니다.' : '아직 입력된 월별 계획·실적이 없습니다.'}
+            {canEdit ? '위에서 월·계획%·실적%를 입력하면 곡선이 그려집니다.' : '아직 입력된 월별 계획·실적이 없습니다.'}
           </p>
         )}
         {msg && <p className="muted dash-msg">{msg}</p>}

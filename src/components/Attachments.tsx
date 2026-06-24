@@ -14,16 +14,17 @@ interface Props {
   projectId: string;
   targetType: AttachTarget;
   targetId: string;
-  isAdmin: boolean;
+  /** 쓰기(업로드·삭제) 가능 여부 = 실무자(editor) 이상. RLS(0023)와 일치. */
+  canEdit: boolean;
   label?: string;
 }
 
 /**
  * Reusable attachment strip — image thumbnails + file chips for any entity
- * (공사일보·게시판·이슈). Members view; admins upload/delete (D11). Binaries
- * live in the `docs` bucket and are opened via short-lived signed URLs.
+ * (공사일보·게시판·이슈). Members view; 실무자 이상 upload/delete (D11·RBAC).
+ * Binaries live in the `docs` bucket and are opened via short-lived signed URLs.
  */
-export function Attachments({ projectId, targetType, targetId, isAdmin, label = '첨부' }: Props) {
+export function Attachments({ projectId, targetType, targetId, canEdit, label = '첨부' }: Props) {
   const [atts, setAtts] = useState<Attachment[]>([]);
   const [urls, setUrls] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -80,7 +81,7 @@ export function Attachments({ projectId, targetType, targetId, isAdmin, label = 
     <div className="attach">
       <div className="attach-head">
         <span className="attach-label">{label} {atts.length > 0 && `(${atts.length})`}</span>
-        {isAdmin && (
+        {canEdit && (
           <>
             <input ref={input} type="file" multiple style={{ display: 'none' }} onChange={onUpload} />
             <button onClick={() => input.current?.click()} disabled={busy}>
@@ -103,7 +104,7 @@ export function Attachments({ projectId, targetType, targetId, isAdmin, label = 
                   <span className="attach-file">📄 {a.name}</span>
                 )}
               </a>
-              {isAdmin && <button className="attach-del" onClick={() => onDelete(a)} title="삭제">×</button>}
+              {canEdit && <button className="attach-del" onClick={() => onDelete(a)} title="삭제">×</button>}
             </div>
           ))}
         </div>
