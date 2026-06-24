@@ -52,10 +52,9 @@ export function FileViewer() {
             setState({ phase: 'error', message: '파일을 찾을 수 없거나 접근 권한이 없습니다.' });
           return;
         }
-        // Office 문서는 Content-Disposition 파일명을 실어 Office Online 이 UUID
-        // 대신 실제 이름을 표시하게 한다.
-        const isOffice = viewerKindFor(file.name, file.mime_type) === 'office';
-        const url = await signedFileUrl(file.storage_path, isOffice ? file.name : undefined);
+        // 주의: Supabase download 옵션은 Content-Disposition: attachment 라
+        // Office Online 이 렌더를 거부한다 → office 라도 download 명을 쓰지 않는다.
+        const url = await signedFileUrl(file.storage_path);
         if (!cancelled) setState({ phase: 'ready', file, url });
       } catch (e) {
         if (!cancelled) setState({ phase: 'error', message: (e as Error).message });
