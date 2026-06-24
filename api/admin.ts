@@ -66,13 +66,13 @@ export default async function handler(req: Request): Promise<Response> {
   if (userErr || !userData?.user) return json({ error: 'invalid session' }, 401);
   const callerId = userData.user.id;
 
-  // 2) only admins may proceed
+  // 2) authz: 시스템 관리자 OR (요청 프로젝트의) 프로젝트 관리자
   const { data: prof } = await admin
     .from('profiles')
     .select('is_admin')
     .eq('id', callerId)
     .single();
-  if (!prof?.is_admin) return json({ error: '관리자 권한이 필요합니다.' }, 403);
+  const isSystemAdmin = !!prof?.is_admin;
 
   let body: Record<string, unknown>;
   try {
@@ -81,15 +81,44 @@ export default async function handler(req: Request): Promise<Response> {
     return json({ error: 'invalid json body' }, 400);
   }
   const action = body.action;
+  const scopeProjectId = String(body.projectId ?? '');
 
-  // 다른 시스템 관리자(is_admin) 계정은 앱에서 변경 불가 — Supabase 에서만 관리(보안 결정).
-  // 단 본인(callerId) 계정은 앱에서 직접 비번/아이디를 바꿀 수 있다.
+  // 호출자가 해당 프로젝트의 '관리자(admin) 역할'인지.
+  async function callerAdminsProject(pid: string): Promise<boolean> {
+    if (!pid) return false;
+    const { data } = await admin
+      .from('project_members')
+      .select('role')
+      .eq('project_id', pid)
+      .eq('user_id', callerId)
+      .maybeSingle();
+    return data?.role === 'admin';
+  }
+  const isProjectAdmin = !isSystemAdmin && (await callerAdminsProject(scopeProjectId));
+  if (!isSystemAdmin && !isProjectAdmin) {
+    return json({ error: '권한이 필요합니다(시스템 관리자 또는 프로젝트 관리자).' }, 403);
+  }
+
+  // 대상 사용자가 시스템 관리자인지(다른 시스템 관리자는 앱에서 변경 불가 — D21).
   async function targetIsSystemAdmin(userId: string): Promise<boolean> {
     if (!userId) return false;
     const { data } = await admin.from('profiles').select('is_admin').eq('id', userId).single();
     return !!data?.is_admin;
   }
+  // 프로젝트 관리자는 자기 프로젝트(scopeProjectId) 멤버 + 본인만 대상으로(시스템 관리자는 전체).
+  async function targetInScope(userId: string): Promise<boolean> {
+    if (isSystemAdmin) return true;
+    if (userId === callerId) return true;
+    const { data } = await admin
+      .from('project_members')
+      .select('user_id')
+      .eq('project_id', scopeProjectId)
+      .eq('user_id', userId)
+      .maybeSingle();
+    return !!data;
+  }
   const SYSADMIN_LOCKED = '다른 시스템 관리자 계정은 앱에서 변경할 수 없습니다. Supabase에서 관리하세요.';
+  const OUT_OF_SCOPE = '이 프로젝트의 멤버만 관리할 수 있습니다.';
 
   try {
     if (action === 'createUser') {
@@ -100,6 +129,8 @@ export default async function handler(req: Request): Promise<Response> {
       const isAdmin = false;
       if (!username) return json({ error: '아이디를 입력하세요.' }, 400);
       if (password.length < 6) return json({ error: '비밀번호는 6자 이상이어야 합니다.' }, 400);
+      // 프로젝트 관리자는 반드시 자기 프로젝트에 배정하면서 생성한다.
+      if (isProjectAdmin && !scopeProjectId) return json({ error: 'projectId 필요' }, 400);
 
       const email = usernameToEmail(username);
       const { data: created, error } = await admin.auth.admin.createUser({
@@ -118,6 +149,14 @@ export default async function handler(req: Request): Promise<Response> {
         .update({ username, full_name: fullName, is_admin: isAdmin })
         .eq('id', created.user.id);
 
+      // 프로젝트에 멤버로 배정(projectId 가 오면 — 프로젝트 관리자는 필수, 시스템 관리자는 선택).
+      const newRole = ['viewer', 'editor', 'admin'].includes(String(body.role)) ? String(body.role) : 'viewer';
+      if (scopeProjectId) {
+        await admin
+          .from('project_members')
+          .upsert({ project_id: scopeProjectId, user_id: created.user.id, role: newRole }, { onConflict: 'project_id,user_id' });
+      }
+
       return json({ ok: true, user: { id: created.user.id, username, full_name: fullName, is_admin: isAdmin } });
     }
 
@@ -127,6 +166,7 @@ export default async function handler(req: Request): Promise<Response> {
       if (!userId) return json({ error: 'userId required' }, 400);
       if (!username) return json({ error: '새 아이디를 입력하세요.' }, 400);
       if (userId !== callerId && (await targetIsSystemAdmin(userId))) return json({ error: SYSADMIN_LOCKED }, 403);
+      if (!(await targetInScope(userId))) return json({ error: OUT_OF_SCOPE }, 403);
 
       // The login username also drives the internal auth e-mail (D4), so
       // both must change together. Guard against collisions up-front: the
@@ -165,21 +205,35 @@ export default async function handler(req: Request): Promise<Response> {
       if (!userId) return json({ error: 'userId required' }, 400);
       if (password.length < 6) return json({ error: '비밀번호는 6자 이상이어야 합니다.' }, 400);
       if (userId !== callerId && (await targetIsSystemAdmin(userId))) return json({ error: SYSADMIN_LOCKED }, 403);
+      if (!(await targetInScope(userId))) return json({ error: OUT_OF_SCOPE }, 403);
       const { error } = await admin.auth.admin.updateUserById(userId, { password });
       if (error) return json({ error: error.message }, 400);
       return json({ ok: true });
     }
 
     if (action === 'deleteUser') {
+      // 계정(로그인) 삭제는 시스템 관리자만. 프로젝트 관리자는 '멤버 해제'(project_members 삭제)로.
+      if (!isSystemAdmin) {
+        return json({ error: '계정 삭제는 시스템 관리자만 가능합니다. (프로젝트에서 빼려면 멤버 해제를 사용하세요)' }, 403);
+      }
       const userId = String(body.userId ?? '');
       if (!userId) return json({ error: 'userId required' }, 400);
       if (userId === callerId) return json({ error: '자기 자신은 삭제할 수 없습니다.' }, 400);
-      if (userId !== callerId && (await targetIsSystemAdmin(userId))) return json({ error: SYSADMIN_LOCKED }, 403);
+      if (await targetIsSystemAdmin(userId)) return json({ error: SYSADMIN_LOCKED }, 403);
       // detach uploaded models first (FK) so the delete doesn't fail
       await admin.from('models').update({ uploaded_by: null }).eq('uploaded_by', userId);
       const { error } = await admin.auth.admin.deleteUser(userId);
       if (error) return json({ error: error.message }, 400);
       return json({ ok: true });
+    }
+
+    if (action === 'listAssignableUsers') {
+      // 멤버 추가용 후보 — 프로젝트 관리자도 사용자 목록을 볼 수 있어야 기존 사용자를 배정.
+      const { data } = await admin
+        .from('profiles')
+        .select('id, username, full_name, is_admin')
+        .order('username');
+      return json({ users: data ?? [] });
     }
 
     return json({ error: `알 수 없는 작업: ${String(action)}` }, 400);

@@ -1,18 +1,19 @@
 import { NavLink, useParams } from 'react-router-dom';
-import { useAuth } from '../auth/AuthProvider';
+import { useProjectRole } from '../auth/useProjectRole';
 
 interface Item {
   to: string;
   icon: string;
   label: string;
   end?: boolean;
-  adminOnly?: boolean;
+  /** 보임 조건: 멤버·역할 관리 권한(프로젝트 관리자 또는 시스템 관리자). */
+  manageOnly?: boolean;
 }
 
 /** Left module rail for the project portal (PMIS-style navigation). */
 export function ProjectNav() {
   const { projectId = '' } = useParams();
-  const { profile } = useAuth();
+  const { canManage } = useProjectRole(projectId);
   const base = `/project/${projectId}`;
 
   const items: Item[] = [
@@ -30,13 +31,13 @@ export function ProjectNav() {
     { to: `${base}/subcontracts`, icon: '🤝', label: '하도급내역' },
     { to: `${base}/board`, icon: '📢', label: '게시판' },
     { to: `${base}/docs`, icon: '🗂', label: '자료 관리' },
-    { to: `${base}/members`, icon: '👥', label: '구성원·권한', adminOnly: true },
+    { to: `${base}/members`, icon: '👥', label: '구성원·권한', manageOnly: true },
   ];
 
   return (
     <nav className="portal-nav">
       {items
-        .filter((it) => !it.adminOnly || profile?.is_admin)
+        .filter((it) => !it.manageOnly || canManage)
         .map((it) => (
           <NavLink
             key={it.to}

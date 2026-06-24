@@ -1399,3 +1399,10 @@ create trigger trg_guard_is_admin
   for each row execute function public.guard_is_admin();
 
 notify pgrst, 'reload schema';
+
+-- ===================== 0025_project_settings_sysadmin.sql =====================
+drop policy if exists projects_update on public.projects;
+create policy projects_update on public.projects
+  for update using (public.is_admin()) with check (public.is_admin());
+
+notify pgrst, 'reload schema';

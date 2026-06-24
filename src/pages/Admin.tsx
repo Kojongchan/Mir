@@ -225,7 +225,7 @@ function UsersTab({
     setBusy(true);
     try {
       // 시스템 관리자는 앱에서 만들 수 없다(Supabase 에서만) → 항상 일반 계정.
-      await createUserAccount(username.trim(), password, fullName.trim() || username.trim(), false);
+      await createUserAccount(username.trim(), password, fullName.trim() || username.trim());
       setUsername('');
       setFullName('');
       setPassword('');
