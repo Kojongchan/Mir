@@ -8,7 +8,14 @@
 import { supabase } from './supabase';
 
 export type AccNamed = { id: string; name: string };
-export type AccItem = { id: string; name: string; urn: string | null };
+export type AccItem = { id: string; name: string; urn: string | null; lastModified?: string | null };
+export type AccVersion = {
+  id: string;
+  versionNumber: number | null;
+  name: string | null;
+  lastModified: string | null;
+  urn: string | null;
+};
 
 // APS Viewer 로 띄울 모델/도면 확장자(나머지 렌더 가능한 건 우리 자체 뷰어).
 const MODEL_EXT = new Set([
@@ -66,6 +73,53 @@ export async function accFileBlobUrl(project: string, item: string): Promise<str
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `열기 실패(${res.status})`);
   const blob = await res.blob();
   return URL.createObjectURL(blob);
+}
+
+/** ACC 원본 파일을 디스크로 저장(다운로드 — 실무자 이상 UI 에서만 호출). */
+export async function downloadAccItem(project: string, item: string, fileName: string): Promise<void> {
+  const res = await fetch(accFileBase(project, item), { headers: await authHeader() });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `다운로드 실패(${res.status})`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+/** ACC 아이템의 버전 이력. */
+export async function accItemVersions(project: string, item: string): Promise<AccVersion[]> {
+  const { versions } = await accFetch({ action: 'versions', project, item });
+  return (versions ?? []) as AccVersion[];
+}
+
+async function apsItem(action: string, payload: Record<string, unknown>): Promise<any> {
+  const res = await fetch('/api/aps-item', {
+    method: 'POST',
+    headers: { ...(await authHeader()), 'content-type': 'application/json' },
+    body: JSON.stringify({ action, ...payload }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `작업 오류(${res.status})`);
+  return body;
+}
+
+/** ACC 아이템 이름 변경(실무자 이상). */
+export function renameAccItem(project: string, item: string, name: string, mirProject: string): Promise<any> {
+  return apsItem('rename', { project, item, name, mirProject });
+}
+
+/** ACC 아이템 삭제(휴지통 — 실무자 이상). */
+export function deleteAccItem(project: string, item: string, mirProject: string): Promise<any> {
+  return apsItem('delete', { project, item, mirProject });
+}
+
+/** ACC 아이템을 다른 폴더로 이동(실무자 이상 · ACC 환경에 따라 미지원일 수 있음). */
+export function moveAccItem(project: string, item: string, folder: string, mirProject: string): Promise<any> {
+  return apsItem('move', { project, item, folder, mirProject });
 }
 
 export type ProgressFn = (fraction: number) => void;
