@@ -65,6 +65,8 @@ export function AccBrowser({ projectId, isAdmin }: { projectId: string; isAdmin:
   const [status, setStatus] = useState('ACC 불러오는 중…');
   const [openId, setOpenId] = useState('');
   const [progress, setProgress] = useState<number | null>(null);
+  // 업로드 대상 폴더(폴더를 클릭하면 선택됨). 시작 폴더가 있으면 기본 선택.
+  const [sel, setSel] = useState<{ id: string; name: string } | null>(null);
 
   // 문서 미리보기 오버레이.
   const [docView, setDocView] = useState<{ url: string; name: string; kind: ViewerKind } | null>(null);
@@ -100,8 +102,10 @@ export function AccBrowser({ projectId, isAdmin }: { projectId: string; isAdmin:
         setPinned(true);
         setAccProject(acc.acc_project_id);
         if (acc.acc_root_folder_id) {
-          const root = mkFolder(acc.acc_root_folder_id, acc.acc_root_folder_name ?? '시작 폴더');
+          const rootName = acc.acc_root_folder_name ?? '시작 폴더';
+          const root = mkFolder(acc.acc_root_folder_id, rootName);
           setRoots([root]);
+          setSel({ id: acc.acc_root_folder_id, name: rootName }); // 기본 업로드 대상
           void toggleFolder(root, acc.acc_project_id);
         } else {
           const { folders } = await accFetch({ action: 'topFolders', hub: acc.acc_hub_id, project: acc.acc_project_id });
@@ -251,12 +255,19 @@ export function AccBrowser({ projectId, isAdmin }: { projectId: string; isAdmin:
   const renderFolder = (node: FolderNode, depth: number): React.ReactElement => (
     <li key={node.id}>
       <div className="acc-row" style={{ paddingLeft: depth * 12 }}>
-        <button className="acc-row-btn" onClick={() => void toggleFolder(node)}>
+        <button
+          className="acc-row-btn"
+          onClick={() => {
+            setSel({ id: node.id, name: node.name }); // 업로드 대상으로 선택
+            void toggleFolder(node);
+          }}
+          style={{ fontWeight: sel?.id === node.id ? 700 : 400, color: sel?.id === node.id ? 'var(--accent)' : 'var(--text)' }}
+        >
           <span className="acc-caret">{node.loading ? '⏳' : node.expanded ? '▾' : '▸'}</span>
           📂 {node.name}
         </button>
         {isAdmin && (
-          <button className="acc-row-act" title="이 폴더에 업로드" onClick={() => triggerUpload(node.id)}>
+          <button className="acc-row-act" title={`'${node.name}'에 업로드`} onClick={() => triggerUpload(node.id)}>
             ⬆
           </button>
         )}
@@ -291,6 +302,16 @@ export function AccBrowser({ projectId, isAdmin }: { projectId: string; isAdmin:
     <section className="cde-content acc-browser">
       <div className="cde-toolbar">
         <strong style={{ fontSize: 13 }}>🅰 ACC 자료 (Autodesk)</strong>
+        {isAdmin && pinned && (
+          <button
+            className="primary"
+            disabled={!sel || progress != null}
+            title={sel ? `'${sel.name}' 폴더에 업로드` : '먼저 폴더를 선택하세요'}
+            onClick={() => sel && triggerUpload(sel.id)}
+          >
+            {progress != null ? '업로드 중…' : sel ? `⬆ 업로드 → ${sel.name}` : '⬆ 업로드 (폴더 선택)'}
+          </button>
+        )}
         <div className="spacer" />
         <span className="muted" style={{ fontSize: 12 }}>{status}</span>
       </div>
