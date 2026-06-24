@@ -2,6 +2,28 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
+**[2nd 계정·병렬] 2026-06-24 · S47/S48 main 병합 + Track B 전부 완료** (branch `claude/affectionate-babbage-qxs2ry`)
+- ✅ **선결 — S47/S48 main 병합 (PR #89, merge `5de0d40`)**. funny-bardeen이 main의 fast-forward라 충돌 0,
+  CI(typecheck·build) 통과 후 병합. 이제 두 트랙 모두 현재 main에서 분기 가능. (마이그레이션 0024·0025는 S48이
+  이미 사용 → Track A는 0026~, Track B는 0030~ 권장.)
+- ✅ **B1 — 모듈별 편집 게이팅 정정**: 이슈·공정·일보·기성·하도급·게시판·도면의 쓰기 UI가 글로벌 `is_admin`
+  (시스템관리자)에 묶여 실무자/프로젝트관리자가 편집 불가하던 회귀 수정 → `useProjectRole().canEdit`(RLS 0023
+  `is_editor`와 일치). 공유 컴포넌트 Attachments·DrawingSheet prop `isAdmin`→`canEdit` 명칭 정정.
+- ✅ **B2 — 이미 완료 확인(작업 불필요)**: ProjectMembers.tsx가 `canManage`(프로젝트관리자+시스템관리자) 게이팅,
+  RLS 0023 `members_*`가 `is_project_admin` 허용, ProjectNav 링크도 `manageOnly`. S48 9a2166c에서 구현됨.
+- ✅ **B3 — ACC 새 버전 올리기 UI**: lib·서버는 이미 `itemId`로 버전 생성 지원했으나 진입점이 없었음 → ⋮메뉴 +
+  버전이력 모달에 '새 버전 올리기'(canEdit). `uploadToAcc(fileName 오버라이드)`로 원본 이름 유지. 이동·버전이력은
+  기존 유지.
+- ✅ **B4 — pptx 미리보기 뷰어**: PptxViewer(pptx-preview, 순수 프론트·외부전송 없음) 추가, ViewerKind+매핑,
+  AccBrowser·FileViewer 배선. **PDF 페이지 네비/점프/썸네일은 이미 완비**라 그대로 둠.
+- ⚠️ **인계(라이브 검증 필요)**: B3의 ACC 새 버전·이동 실제 쓰기(S3 PUT/CORS/version 생성)는 **운영에서 폴더
+  편집권한 부여 후 검증** 필요(기존 코드도 동일 주의). Quantities.tsx의 proposeBilling 게이트는 Track A S51
+  영역이라 system-admin 유지(인계).
+- **인수인계 한 줄**: → 2nd 계정 Track B(B1~B4) 완료·푸시. 메인 계정은 S49부터 직렬 진행. 운영: 0022·0023·
+  0024·0025 적용 + 멤버 role 부여 + ACC 폴더 편집권한 부여.
+
+---
+
 **[기획세션] 2026-06-24 · 전환 후 로드맵 직렬/병렬 분리** (branch `claude/magical-curie-d4relv`,
 S47/S48 위에 기획만 추가). 토큰 분산용 **2nd 계정 병렬 가동** 대비, 남은 일을 두 트랙으로 분리 → **PLANNING §0-B**.
 - **선결(1회)**: **S47/S48을 main에 병합** 후 두 트랙 분기(지금 main은 S46까지라 미병합 시 양쪽 깨짐).

@@ -94,16 +94,16 @@ VR 검토까지. 다중 사용자가 **본인 배정 프로젝트(공구)** 만 
 | **S46** | **APS/ACC 뷰어 전환 ✅ (PR #87)** | `feature/aps-viewer` | **APS Viewer 임베드 + ACC 2-legged 탐색·고정(0020·0021) + 파일 종류별 분기(모델=APS/문서=우리뷰어) + PDF 썸네일.** 위 '전략 전환' 참조 | S45 |
 | **S47** | 자료관리 ACC 일원화(업로드까지) ✅ | (funny-bardeen) | ACC 쓰기=2-legged(D19) + Supabase 읽기 공존. 0022. **미병합** | S46 |
 | **S48** | 4단계 RBAC + ACC 단독 파일관리자 ✅ | (funny-bardeen) | 뷰어/실무자/관리자/시스템관리자(0023·D20) + ACC식 파일관리자 UI(이름변경·삭제·이동·버전·다운로드). **미병합** | S47 |
-| **선결** | **S47/S48 main 병합** 🔶 | — | 두 트랙(A·B) 분기 전제. 미병합 시 병렬 분기하면 RBAC·ACC 저장소 부재로 양쪽 깨짐 | S48 |
+| **선결** | **S47/S48 main 병합** ✅ | PR #89(`5de0d40`) | 두 트랙(A·B) 분기 전제. FF 병합·CI 통과 | S48 |
 | **S49** | 🅰 매핑 레이어 + 4D/간섭 ACC 소스화 + 이슈핀 이식 | `feature/aps-mapping-pins` | dbId↔GlobalId↔expressID(apsMapping.ts) + **신규 BIM 업로드 경로 부재 해소** + 이슈핀 3D 앵커. 0024. **급소** | S48 |
 | S50 | 🅰 4D APS 이식 | `feature/aps-4d` | 일정↔GlobalId, themingColor/표시제어 타임라인 | S49 |
 | S51 | 🅰 물량(QTO) APS 이식 | `feature/aps-qto` | APS 속성DB 추출 또는 IFC 병행 | S49 |
 | S52 | 🅰 간섭 스파이크 → 이식 | `feature/aps-clash` | Model Coordination vs fragment+BVH 택1 | S49 |
 | S53 | 🅰 IfcViewer 은퇴 + IA 통합 | `feature/retire-ifcviewer` | 통합모델=ACC 모델. 패리티 증명 후 | S49~S52 |
-| B1 | 🅱 모듈별 canEdit 게이팅 점검·보강 | `feature/rbac-gating` | 이슈·공정·기성·게시판 등 뷰어/실무자 구분 누락 점검. 마이그레이션 없음 | S48 |
-| B2 | 🅱 프로젝트 관리자 역할 배정 권한 | `feature/admin-role-assign` | 구성원 화면(현재 시스템관리자 전용)을 프로젝트 관리자도. 0030 | S48 |
-| B3 | 🅱 ACC 파일관리자 보강 + 라이브 검증 | `feature/acc-browser-polish` | 이동·새 버전 업로드 UI + 실제 PUT/CORS/item 검증 | S48 |
-| B4 | 🅱 비-3D 뷰어 quick wins | `feature/viewer-quickwins` | pptx 뷰어 + PDF 상단 페이지 네비 | S46 |
+| B1 | 🅱 모듈별 canEdit 게이팅 점검·보강 ✅ | (affectionate-babbage) | is_admin→useProjectRole().canEdit (이슈·공정·일보·기성·하도급·게시판·도면). Quantities는 A S51로 인계. 마이그레이션 없음 | S48 |
+| B2 | 🅱 프로젝트 관리자 역할 배정 권한 ✅ | (S48 완료) | ProjectMembers=canManage 게이팅 + RLS members_*=is_project_admin. S48 9a2166c에서 이미 구현(추가작업 없음) | S48 |
+| B3 | 🅱 ACC 파일관리자 보강 + 라이브 검증 ✅ | (affectionate-babbage) | '새 버전 올리기' UI(⋮·버전모달). 이동·버전이력 기존 유지. 실 PUT/CORS는 운영 라이브검증 인계 | S48 |
+| B4 | 🅱 비-3D 뷰어 quick wins ✅ | (affectionate-babbage) | pptx 뷰어(pptx-preview) 추가. PDF 페이지 네비는 기존 완비 | S46 |
 
 추천 순서(전환 후): **S46·S47·S48 ✅ → [선결] S47/S48 main 병합 → 두 트랙 병렬**:
 **🅰 직렬(이어서)** S49(매핑+ACC소스+이슈핀) → S50(4D) → S51(물량) → S52(간섭 스파이크) → S53(은퇴) ·
