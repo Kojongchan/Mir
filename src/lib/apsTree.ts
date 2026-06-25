@@ -67,24 +67,20 @@ export function collectLeaves(model: ApsModel, dbId: number): number[] {
   return out;
 }
 
-/** leaf(또는 임의 노드)의 최상위 파일 조상 dbId(결과 격리/시각화용). */
+/** leaf(또는 임의 노드)의 최상위 파일 조상 dbId — rootChildren(파일 목록) 집합까지 상승.
+ *  topLevelFileIds 와 같은 기준이라 '간섭 파일 keep / 나머지 파일 hide' 가 정확히 일치한다. */
 export function topLevelAncestor(model: ApsModel, dbId: number): number {
   const it = tree(model);
   if (!it) return dbId;
-  const root = it.getRootId();
-  // 루트가 모델명 1개만 감싸면 그 노드를 실질 루트로 본다.
-  let pseudoRoot = root;
-  const rk: number[] = [];
-  it.enumNodeChildren(root, (c: number) => rk.push(c));
-  if (rk.length === 1) pseudoRoot = rk[0];
-
+  const top = new Set(rootChildren(model).map((n) => n.dbId));
   let cur = dbId;
-  let parent = it.getNodeParent?.(cur);
-  while (typeof parent === 'number' && parent !== pseudoRoot && parent !== root && parent >= 0) {
-    cur = parent;
-    parent = it.getNodeParent?.(cur);
+  let guard = 0;
+  while (cur >= 0 && !top.has(cur) && guard++ < 200) {
+    const p = it.getNodeParent?.(cur);
+    if (typeof p !== 'number' || p < 0) break;
+    cur = p;
   }
-  return cur;
+  return top.has(cur) ? cur : dbId;
 }
 
 /** 노드 이름. */

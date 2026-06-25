@@ -9,7 +9,6 @@ import { isolateAndFit, showApsClash } from '../lib/apsClashView';
 import { listIssues, createIssue, STATUS_LABEL, type Issue } from '../lib/issues';
 import { ApsClashPanel } from '../components/ApsClashPanel';
 import { ApsIssuePins } from '../components/ApsIssuePins';
-import { ApsClashDim, type ClashDim } from '../components/ApsClashDim';
 import { viewerKindFor, type ViewerKind, type FileRecord } from '../lib/files';
 import { ImageViewer } from '../components/viewers/ImageViewer';
 import { VideoViewer } from '../components/viewers/VideoViewer';
@@ -171,7 +170,6 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
   const [pinsOn, setPinsOn] = useState(true);
   const [popIssue, setPopIssue] = useState<Issue | null>(null);
   const [selDbId, setSelDbId] = useState<number | null>(null);
-  const [clashDim, setClashDim] = useState<ClashDim | null>(null); // 간섭 치수 라벨(아이디어 #3)
   const autoClashRef = useRef(autoClash);
   const reloadIssues = () => {
     listIssues(projectId).then(setIssues).catch(() => {});
@@ -848,10 +846,6 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
               onPinClick={(issue) => setPopIssue(issue)}
             />
           )}
-          {/* 간섭 치수 라벨(아이디어 #3) — 패널이 활성 간섭을 전달하면 표시 */}
-          {clashDim && !!modelRef.current && (
-            <ApsClashDim viewer={viewerRef.current} dim={clashDim} />
-          )}
           {/* 핀 클릭 팝업(기존 이슈 데이터 재사용) */}
           {popIssue && (
             <div
@@ -908,11 +902,7 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
               projectId={projectId}
               canEdit={canEdit}
               onIssueCreated={reloadIssues}
-              onActiveDim={setClashDim}
-              onClose={() => {
-                setClashDim(null);
-                setClashOpen(false);
-              }}
+              onClose={() => setClashOpen(false)}
             />
           )}
           {docView && (

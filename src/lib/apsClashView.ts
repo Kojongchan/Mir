@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { computeDbIdWorldBox } from './apsClash';
-import { topLevelAncestor } from './apsTree';
+import { topLevelAncestor, topLevelFileIds } from './apsTree';
 
 // =====================================================================
 // APS 간섭 시각화 — S49. 결과 리뷰의 3가지 표시 상태:
@@ -36,9 +36,12 @@ function fitPair(viewer: ApsViewer, model: ApsModel, aDbId: number, bDbId: numbe
 }
 
 /**
- * 기본(결과 클릭): 간섭 부재의 **상위 파일만 보이고 나머지는 완전 숨김**(반투명 아님).
- * 핵심: setGhosting(false) 면 격리 시 비격리 객체가 ghost 가 아니라 **invisible** 이 된다.
- * 상위 파일은 솔리드, 그 안의 간섭 부재는 A초록/B빨강. 두 부재로 줌.
+ * 기본(결과 클릭): 간섭 부재(BODY)는 솔리드 A초록/B빨강, **같은 파일의 나머지는 반투명**,
+ * **다른 파일(dwg·rvt·nwd)은 완전 숨김**. 두 부재로 줌.
+ *   - setGhosting(true): isolate 의 '나머지'는 반투명 ghost 로 보인다.
+ *   - isolate([부재]): 부재 솔리드, 그 외 전부(같은 파일+다른 파일) 반투명.
+ *   - hide(다른 파일): 명시적 hide 는 ghosting 과 무관하게 '완전 숨김'(모델 브라우저 눈과 동일)
+ *     → 같은 파일의 나머지는 반투명으로 남고, 다른 파일만 사라진다.
  */
 export function showApsClash(
   viewer: ApsViewer,
@@ -49,12 +52,15 @@ export function showApsClash(
   if (!viewer) return;
   try {
     viewer.clearThemingColors?.(model);
-    viewer.setGhosting?.(false); // 비격리 = 완전 숨김(반투명 X)
+    viewer.setGhosting?.(true); // 격리의 '나머지' = 반투명
+    const bodies = [aDbId, bDbId].filter((d) => d >= 0);
+    if (bodies.length) viewer.isolate?.(bodies, model); // 부재 솔리드, 그 외 반투명
+    // 간섭 부재의 상위 파일만 남기고 무관 파일은 완전 숨김.
     const ancA = aDbId >= 0 ? topLevelAncestor(model, aDbId) : -1;
     const ancB = bDbId >= 0 ? topLevelAncestor(model, bDbId) : -1;
-    const keep = [...new Set([ancA, ancB].filter((d) => d >= 0))];
-    if (keep.length) viewer.isolate?.(keep, model); // 상위 파일만 표시, 나머지 숨김
-    else viewer.showAll?.();
+    const keep = new Set([ancA, ancB].filter((d) => d >= 0));
+    const others = topLevelFileIds(model).filter((f) => !keep.has(f));
+    if (others.length) viewer.hide?.(others, model);
     paint(viewer, model, aDbId, bDbId);
     fitPair(viewer, model, aDbId, bDbId);
   } catch {
