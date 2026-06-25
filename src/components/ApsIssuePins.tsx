@@ -32,7 +32,8 @@ interface PinPos {
 }
 
 const OPEN = new Set(['open', 'in_progress']);
-const REF_DIST = 30; // 이 거리에서 기본 크기. 가까우면 커지고 멀면 작아짐(원근감).
+const REF_DIST = 60; // 이 거리에서 기본 크기. 가까우면 커지고 멀면 작아짐(원근감).
+const PIN_BASE = 38; // 핀 기본 크기(px) — 대형 모델에서도 잘 보이게.
 
 export function ApsIssuePins({ viewer, model, mapping, issues, onPinClick }: Props) {
   const [pins, setPins] = useState<PinPos[]>([]);
@@ -80,7 +81,7 @@ export function ApsIssuePins({ viewer, model, mapping, issues, onPinClick }: Pro
         const pt = viewer.worldToClient(a.center.clone());
         if (!pt || Number.isNaN(pt.x) || Number.isNaN(pt.y)) continue;
         const dist = camPos ? camPos.distanceTo(a.center) : REF_DIST;
-        const scale = Math.max(0.6, Math.min(1.8, REF_DIST / Math.max(1, dist)));
+        const scale = Math.max(0.9, Math.min(1.5, REF_DIST / Math.max(1, dist)));
         out.push({ issue: a.issue, x: pt.x, y: pt.y, idx: a.idx, scale });
       } catch {
         /* 변환 실패 무시 */
@@ -122,8 +123,8 @@ export function ApsIssuePins({ viewer, model, mapping, issues, onPinClick }: Pro
       {pins.map((p) => {
         const open = OPEN.has(p.issue.status);
         const color = open ? '#dc2626' : '#16a34a';
-        const w = Math.round(26 * p.scale);
-        const h = Math.round((26 * 34) / 26 * p.scale); // 26:34 비율 핀
+        const w = Math.round(PIN_BASE * p.scale);
+        const h = Math.round((PIN_BASE * 34) / 26 * p.scale); // 26:34 비율 핀
         return (
           <svg
             key={p.issue.id}

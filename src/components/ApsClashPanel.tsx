@@ -26,6 +26,7 @@ import {
 import { runApsClashDetection, targetKey, type ApsMetaResolver } from '../lib/apsClash';
 import { showApsClash, showAllWithColors, showTranslucentClash, clearApsClashView } from '../lib/apsClashView';
 import { rootChildren, childrenOf, collectLeaves, nodeName, parentName, type ApsTreeNode } from '../lib/apsTree';
+import { ApsClashDim } from './ApsClashDim';
 import { apsClashesToCsv, buildApsClashReport, downloadReport, captureClashAngles, dataUrlToFile } from '../lib/apsReport';
 import { downloadCsv } from '../lib/clash';
 import { uploadAttachment } from '../lib/attachments';
@@ -131,6 +132,7 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
   const [issueFor, setIssueFor] = useState<ClashRow | null>(null);
   const [reportBusy, setReportBusy] = useState(false);
   const [saveName, setSaveName] = useState('');
+  const [dimOn, setDimOn] = useState(false); // 치수 표시(아이디어 #3, 기본 OFF)
 
   // 결과가 생기면 저장 제목 기본값(날짜·시간)을 채운다(#3, 사용자가 목적 덧붙이기 좋게).
   useEffect(() => {
@@ -434,6 +436,7 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
         <span style={{ flex: 1 }} />
         <button onClick={showAll} style={{ ...btn, fontSize: 11 }} title="모든 파일 표시(색 유지)">전체 표시</button>
         <button onClick={showTrans} disabled={!activeRow} style={{ ...btn, fontSize: 11 }} title="간섭 부재만 솔리드, 나머지 반투명">반투명</button>
+        <button onClick={() => setDimOn((v) => !v)} style={{ ...btn, fontSize: 11, ...(dimOn ? { background: 'var(--accent)', color: 'var(--accent-fg)', borderColor: 'var(--accent)' } : {}) }} title="간섭 치수(관통/이격) 표시">📏 치수</button>
         <button onClick={onClose} style={btn}>✕</button>
       </div>
 
@@ -605,11 +608,21 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
 
       <div onMouseDown={startDrag('resize')} style={{ position: 'absolute', right: 0, bottom: 0, width: 16, height: 16, cursor: 'nwse-resize' }} />
 
+      {/* 간섭 치수 라벨(아이디어 #3) — 활성 결과 + 토글 ON 일 때 */}
+      {dimOn && activeRow && (
+        <ApsClashDim
+          viewer={viewer}
+          point={activeRow.point}
+          color={type === 'hard' ? '#dc2626' : '#2563eb'}
+          label={`${type === 'hard' ? '관통' : '이격'} ${activeRow.depth.toFixed(3)} m`}
+        />
+      )}
+
       {/* 캡처 중 화면 전환 깜빡임을 가리는 마스크(#7). 스냅샷은 캔버스에서 찍혀 영향 없음. */}
       {(issueCapturing || reportBusy) && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 590, background: 'rgba(15,20,30,0.78)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff', pointerEvents: 'all' }}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>📸 스냅샷 캡처 중…</div>
-          <div style={{ fontSize: 12, marginTop: 6, opacity: 0.85 }}>화면이 잠시 자동으로 전환됩니다. 오류가 아니니 잠시만 기다려 주세요.</div>
+          <div style={{ fontSize: 12, marginTop: 6, opacity: 0.85 }}>화면이 잠시 자동으로 전환됩니다. 잠시만 기다려 주세요.</div>
         </div>
       )}
     </div>

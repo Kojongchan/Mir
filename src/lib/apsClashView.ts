@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { computeDbIdWorldBox } from './apsClash';
-import { topLevelAncestor, topLevelFileIds } from './apsTree';
+import { topLevelAncestor } from './apsTree';
 
 // =====================================================================
 // APS 간섭 시각화 — S49. 결과 리뷰의 3가지 표시 상태:
@@ -36,9 +36,9 @@ function fitPair(viewer: ApsViewer, model: ApsModel, aDbId: number, bDbId: numbe
 }
 
 /**
- * 기본(결과 클릭, #2): 간섭 부재의 **상위 파일만** 보이고 다른 파일은 숨긴다.
- * 상위 파일은 솔리드 그대로, 간섭 부재는 A초록/B빨강 솔리드(#1). 두 부재로 줌.
- * ⚠️ isolate([]) 는 '아무것도 격리'=전체 ghost 가 되므로 절대 쓰지 않는다.
+ * 기본(결과 클릭, #1/#2): 간섭 부재의 **상위 파일만** 보이고 다른 파일은 **완전 숨김**
+ * (반투명 아님). 핵심: setGhosting(false) 로 두면 격리 시 비격리 객체가 ghost 가
+ * 아니라 hidden 이 된다. 간섭 부재는 A초록/B빨강 솔리드. 두 부재로 줌.
  */
 export function showApsClash(
   viewer: ApsViewer,
@@ -49,13 +49,12 @@ export function showApsClash(
   if (!viewer) return;
   try {
     viewer.clearThemingColors?.(model);
-    viewer.showAll?.(); // 격리/숨김 초기화(전체 솔리드)
-    // 간섭 부재의 상위 파일만 남기고 나머지 파일은 숨김(ghost 아님, 완전 숨김).
+    viewer.setGhosting?.(false); // 비격리 = 숨김(반투명 X)
     const ancA = aDbId >= 0 ? topLevelAncestor(model, aDbId) : -1;
     const ancB = bDbId >= 0 ? topLevelAncestor(model, bDbId) : -1;
-    const keep = new Set([ancA, ancB].filter((d) => d >= 0));
-    const others = topLevelFileIds(model).filter((f) => !keep.has(f));
-    if (others.length) viewer.hide?.(others, model);
+    const keep = [ancA, ancB].filter((d) => d >= 0);
+    if (keep.length) viewer.isolate?.(keep, model); // 상위 파일만 표시(나머지 숨김)
+    else viewer.showAll?.();
     paint(viewer, model, aDbId, bDbId);
     fitPair(viewer, model, aDbId, bDbId);
   } catch {
@@ -63,11 +62,12 @@ export function showApsClash(
   }
 }
 
-/** 전체 표시(#6): 모든 파일 솔리드(숨김 해제, 색 유지). */
+/** 전체 표시(#6): 모든 파일 솔리드(숨김·격리 해제, 색 유지). */
 export function showAllWithColors(viewer: ApsViewer): void {
   if (!viewer) return;
   try {
-    viewer.showAll?.(); // 숨김/격리 해제, 테마색은 유지
+    viewer.setGhosting?.(true);
+    viewer.showAll?.(); // 숨김/격리 해제(전체 솔리드로 복원)
   } catch {
     /* 무시 */
   }
@@ -82,9 +82,10 @@ export function showTranslucentClash(
 ): void {
   if (!viewer) return;
   try {
-    viewer.showAll?.(); // 숨긴 파일 먼저 복원
+    viewer.setGhosting?.(true); // 비격리 = 반투명(ghost)
+    viewer.showAll?.();
     const ids = [aDbId, bDbId].filter((d) => d >= 0);
-    if (ids.length) viewer.isolate?.(ids, model); // 비어있지 않은 격리 → 나머지 ghost
+    if (ids.length) viewer.isolate?.(ids, model);
   } catch {
     /* 무시 */
   }
@@ -94,6 +95,7 @@ export function showTranslucentClash(
 export function clearApsClashView(viewer: ApsViewer, model?: ApsModel): void {
   if (!viewer) return;
   try {
+    viewer.setGhosting?.(true);
     viewer.clearThemingColors?.(model);
     viewer.clearThemingColors?.();
     viewer.showAll?.();
@@ -102,12 +104,12 @@ export function clearApsClashView(viewer: ApsViewer, model?: ApsModel): void {
   }
 }
 
-/** GlobalId 한 개(이슈 위치보기 등)에 카메라를 맞추고 격리(나머지 ghost). */
+/** GlobalId 한 개(이슈 위치보기 등)에 카메라를 맞추고 격리(나머지 숨김). */
 export function isolateAndFit(viewer: ApsViewer, model: ApsModel, dbId: number): void {
   if (!viewer || typeof dbId !== 'number' || dbId < 0) return;
   try {
     viewer.clearThemingColors?.(model);
-    viewer.showAll?.();
+    viewer.setGhosting?.(false);
     viewer.isolate?.([dbId], model);
     viewer.fitToView?.([dbId], model);
   } catch {
