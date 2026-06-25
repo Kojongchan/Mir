@@ -7,7 +7,7 @@ import { getProjectAcc, setProjectAcc } from '../lib/api';
 import { buildApsMapping, type ApsMapping } from '../lib/apsMapping';
 import { isolateAndFit } from '../lib/apsClashView';
 import { listIssues, createIssue, STATUS_LABEL, type Issue } from '../lib/issues';
-import { ApsClashPanel, type ClashModel } from '../components/ApsClashPanel';
+import { ApsClashPanel } from '../components/ApsClashPanel';
 import { ApsIssuePins } from '../components/ApsIssuePins';
 import { viewerKindFor, type ViewerKind, type FileRecord } from '../lib/files';
 import { ImageViewer } from '../components/viewers/ImageViewer';
@@ -168,11 +168,6 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
   const [pinsOn, setPinsOn] = useState(true);
   const [popIssue, setPopIssue] = useState<Issue | null>(null);
   const [selDbId, setSelDbId] = useState<number | null>(null);
-  // 간섭 대상으로 로드된 모델들(겹쳐 로드 = 방법2). primary(고정 모델)은 이슈 핀 앵커.
-  const [clashModels, setClashModels] = useState<ClashModel[]>([]);
-  const pendingNameRef = useRef<string>(''); // 다음 로드될 모델의 표시 이름
-  const clashModelsCountRef = useRef(0);
-  const [addMode, setAddMode] = useState(false); // 트리 클릭이 겹쳐로드(간섭 대상 추가)인지
   const autoClashRef = useRef(autoClash);
   const reloadIssues = () => {
     listIssues(projectId).then(setIssues).catch(() => {});
@@ -294,22 +289,10 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
   };
 
   const pickItem = (it: Item) => {
-    const ext = extOf(it.name);
-    const kind = viewerKindFor(it.name);
-
-    // 간섭 대상 추가 모드(방법2): 모델이면 겹쳐 로드, 아니면 무시.
-    if (addMode && kind === 'unsupported' && MODEL_EXT.has(ext)) {
-      if (!it.urn) {
-        setStatus(`${it.name}: 변환된 3D 뷰가 없습니다.`);
-        return;
-      }
-      setOpenId(it.id);
-      void overlayModel(it.urn, it.name);
-      return;
-    }
-
     setOpenId(it.id);
     setOpenName(it.name);
+    const ext = extOf(it.name);
+    const kind = viewerKindFor(it.name);
 
     // 우리가 직접 렌더 가능한 문서/미디어 → 자체 뷰어(ACC 원본 바이트).
     if (kind !== 'unsupported') {
@@ -323,7 +306,6 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
         setStatus(`${it.name}: 변환된 3D 뷰가 없습니다(ACC에서 처리 중일 수 있음).`);
         return;
       }
-      pendingNameRef.current = it.name;
       setUrn(it.urn);
       void openModel(it.urn);
       return;
@@ -481,20 +463,6 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
     }
   };
 
-  // 간섭 대상 추가 모드 토글(방법2): 폴더에서 모델 클릭 시 겹쳐 로드.
-  const toggleAddModels = () => {
-    setAddMode((v) => {
-      const next = !v;
-      if (next) {
-        setShowBrowser(true);
-        setStatus('폴더에서 비교할 모델을 클릭하면 겹쳐 로드됩니다(간섭 대상 추가). 끝나면 버튼을 다시 누르세요.');
-      } else {
-        setStatus('간섭 대상 추가 모드 종료.');
-      }
-      return next;
-    });
-  };
-
   // 이슈 핀 클릭 → 그 객체 위치로 이동(격리+줌).
   const focusIssue = (issue: Issue) => {
     const m = modelRef.current as any;
@@ -558,10 +526,8 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
     const Autodesk = (window as unknown as { Autodesk?: any }).Autodesk;
     const viewer = viewerRef.current as any;
     if (!Autodesk || !viewer || !rawUrn) return;
-    // 교체 로드 — 기존 간섭 대상/매핑/이슈핀 앵커를 초기화(트리 생성 시 재구성).
+    // 교체 로드 — 기존 매핑/이슈핀 앵커를 초기화(트리 생성 시 재구성).
     modelRef.current = null;
-    clashModelsCountRef.current = 0;
-    setClashModels([]);
     setMapping(null);
     const docId = rawUrn.startsWith('urn:') ? rawUrn : `urn:${rawUrn}`;
     setStatus('모델 불러오는 중…');
@@ -587,26 +553,6 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
         }
       },
       (code: unknown, msg: unknown) => setStatus(`문서 로드 실패: ${msg ?? code} (URN/권한 확인)`),
-    );
-  };
-
-  // 겹쳐 로드(방법2) — 기존 모델을 유지한 채 비교 대상 모델을 추가(aggregate).
-  const overlayModel = async (rawUrn: string, name: string) => {
-    const Autodesk = (window as unknown as { Autodesk?: any }).Autodesk;
-    const viewer = viewerRef.current as any;
-    if (!Autodesk || !viewer || !rawUrn) return;
-    const docId = rawUrn.startsWith('urn:') ? rawUrn : `urn:${rawUrn}`;
-    pendingNameRef.current = name;
-    setStatus(`비교 대상 추가: ${name} …`);
-    Autodesk.Viewing.Document.load(
-      docId,
-      (doc: any) => {
-        const node = doc.getRoot().getDefaultGeometry();
-        // keepCurrentModels: 기존 모델을 유지(겹쳐 표시) — 모델간 간섭용.
-        viewer.loadDocumentNode(doc, node, { keepCurrentModels: true });
-        setStatus(`비교 대상 추가됨: ${name}`);
-      },
-      (code: unknown, msg: unknown) => setStatus(`추가 로드 실패: ${msg ?? code}`),
     );
   };
 
@@ -655,33 +601,21 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
         resizeObsRef.current = ro;
         viewerRef.current = viewer;
 
-        // 모델(객체 트리) 준비 시 dbId↔GlobalId 매핑 구축 + 간섭 대상 등록 + 이슈 핀(S49).
-        // 겹쳐 로드(방법2) 때는 이벤트의 해당 모델을 쓴다(viewer.model 은 마지막 모델).
+        // 모델(객체 트리) 준비 시 dbId↔GlobalId 매핑 구축 + 이슈 핀 로드(S49).
         viewer.addEventListener(Autodesk.Viewing.OBJECT_TREE_CREATED_EVENT, async (e: any) => {
           const m = e?.model ?? viewer.model;
-          const isPrimary = modelRef.current == null; // 교체 로드 후 첫 모델 = 기본
-          const name = pendingNameRef.current || (isPrimary ? '기본 모델' : `모델 ${clashModelsCountRef.current + 1}`);
-          pendingNameRef.current = '';
+          modelRef.current = m;
+          setMapping(null);
           try {
             const map = await buildApsMapping(m);
             if (cancelled) return;
-            // 간섭 대상 목록에 추가(중복 model.id 제외).
-            setClashModels((prev) => {
-              if (prev.some((cm) => cm.model.id === m.id)) return prev;
-              const next = [...prev, { model: m, name, mapping: map } as ClashModel];
-              clashModelsCountRef.current = next.length;
-              return next;
-            });
-            if (isPrimary) {
-              modelRef.current = m;
-              setMapping(map);
-              reloadIssues();
-              if (focusGlobalId) {
-                const dbId = map.globalIdToDbId.get(focusGlobalId);
-                if (typeof dbId === 'number') isolateAndFit(viewer, m, dbId);
-              }
-              if (autoClashRef.current) setClashOpen(true);
+            setMapping(map);
+            reloadIssues();
+            if (focusGlobalId) {
+              const dbId = map.globalIdToDbId.get(focusGlobalId);
+              if (typeof dbId === 'number') isolateAndFit(viewer, m, dbId);
             }
+            if (autoClashRef.current) setClashOpen(true);
           } catch (e2) {
             setStatus(`GlobalId 매핑 실패: ${(e2 as Error).message}`);
           }
@@ -719,7 +653,6 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
               setOpenName(acc.acc_default_name ?? '');
               setDefaultName(acc.acc_default_name ?? '');
               setShowBrowser(true);
-              pendingNameRef.current = acc.acc_default_name ?? '기본 모델';
               void openModel(acc.acc_default_urn);
             } else {
               setShowBrowser(true);
@@ -950,14 +883,14 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
               </div>
             </div>
           )}
-          {/* 간섭체크 패널(S49) — 멀티모델·트리 A/B 선택 */}
-          {clashOpen && clashModels.length > 0 && (
+          {/* 간섭체크 패널(S49) — 모델 트리 A/B 선택 */}
+          {clashOpen && mapping && !!modelRef.current && (
             <ApsClashPanel
               viewer={viewerRef.current}
-              models={clashModels}
+              model={modelRef.current}
+              mapping={mapping}
               projectId={projectId}
               canEdit={canEdit}
-              onAddModels={toggleAddModels}
               onClose={() => setClashOpen(false)}
             />
           )}

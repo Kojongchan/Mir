@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { computeDbIdWorldBox } from './apsClash';
+import { topLevelAncestor } from './apsTree';
 
 // =====================================================================
 // APS 간섭 시각화 — S49. 자체 IfcViewer.showClash(A 초록 / B 빨강 + 나머지 ghost +
-// 간섭부 줌)를 APS Viewer 의 setThemingColor / isolate / fitBounds 로 재현한다.
-// 모델간 간섭을 위해 A·B 가 서로 다른 모델일 수 있으므로 모델을 함께 받는다.
+// 간섭부 줌)를 APS Viewer 의 isolate / setThemingColor / fitBounds 로 재현한다.
+// 결과 리뷰 시 **간섭한 두 부재의 상위 파일만** 격리(나머지 반투명) + 부재 A초록/B빨강
+// + 그 쌍으로 줌. 모델간이면 A·B 가 서로 다른 모델일 수 있어 모델을 함께 받는다.
 // 색은 showClash 와 동일(초록 0x16a34a / 빨강 0xdc2626) — 3D 머티리얼 hex 예외.
 // =====================================================================
 
@@ -15,8 +17,8 @@ const GREEN = new THREE.Vector4(0x16 / 255, 0xa3 / 255, 0x4a / 255, 1); // A
 const RED = new THREE.Vector4(0xdc / 255, 0x26 / 255, 0x26 / 255, 1); // B
 
 /**
- * 간섭 한 건을 리뷰: 관여 모델만 A/B 요소로 격리(나머지 ghost), A=초록·B=빨강 칠한 뒤
- * 두 요소의 합집합 박스로 카메라를 맞춘다. 같은 모델이면 한 모델에 두 dbId 격리.
+ * 간섭 한 건을 리뷰: 간섭 부재의 **상위 파일** 노드만 격리(그 외 반투명), A=초록·
+ * B=빨강 으로 부재를 칠하고, 두 부재의 합집합 박스로 카메라를 맞춘다.
  */
 export function showApsClash(
   viewer: ApsViewer,
@@ -29,19 +31,22 @@ export function showApsClash(
   try {
     viewer.clearThemingColors?.(aModel);
     viewer.clearThemingColors?.(bModel);
-    // 모델별로 격리할 dbId 묶기(같은 모델이면 둘 다, 다르면 각자).
+
+    // 격리 대상 = 각 부재의 최상위 파일 조상(문맥 유지, 나머지 ghost).
     const sameModel = aModel === bModel;
+    const ancA = aDbId >= 0 ? topLevelAncestor(aModel, aDbId) : -1;
+    const ancB = bDbId >= 0 ? topLevelAncestor(bModel, bDbId) : -1;
     if (sameModel) {
-      const ids = [aDbId, bDbId].filter((d) => d >= 0);
-      viewer.isolate?.(ids, aModel);
+      const ids = [ancA, ancB].filter((d) => d >= 0);
+      viewer.isolate?.(ids.length ? ids : [], aModel);
     } else {
-      if (aDbId >= 0) viewer.isolate?.([aDbId], aModel);
-      if (bDbId >= 0) viewer.isolate?.([bDbId], bModel);
+      if (ancA >= 0) viewer.isolate?.([ancA], aModel);
+      if (ancB >= 0) viewer.isolate?.([ancB], bModel);
     }
     if (aDbId >= 0) viewer.setThemingColor?.(aDbId, GREEN, aModel, true);
     if (bDbId >= 0) viewer.setThemingColor?.(bDbId, RED, bModel, true);
 
-    // 합집합 박스로 줌(두 모델에 걸쳐도 정확).
+    // 두 부재의 합집합 박스로 줌(두 모델에 걸쳐도 정확).
     const box = new THREE.Box3();
     const ba = aDbId >= 0 ? computeDbIdWorldBox(aModel, aDbId) : null;
     const bb = bDbId >= 0 ? computeDbIdWorldBox(bModel, bDbId) : null;
@@ -56,8 +61,8 @@ export function showApsClash(
   }
 }
 
-/** showApsClash 가 바꾼 색/격리를 복원(관련 모델 전체 표시). */
-export function clearApsClashView(viewer: ApsViewer, models: ApsModel[] = []): void {
+/** 전체 표시(초기화) — 격리/색을 풀고 모든 부재를 솔리드로. */
+export function showAllAps(viewer: ApsViewer, models: ApsModel[] = []): void {
   if (!viewer) return;
   try {
     for (const m of models) {
@@ -65,10 +70,27 @@ export function clearApsClashView(viewer: ApsViewer, models: ApsModel[] = []): v
       viewer.isolate?.([], m);
     }
     viewer.clearThemingColors?.();
+    viewer.isolate?.([]);
     viewer.showAll?.();
   } catch {
     /* 무시 */
   }
+}
+
+/** 반투명 겹쳐보기 — 지정 노드만 솔리드로 격리하고 나머지는 반투명(APS ghost). */
+export function showContextAps(viewer: ApsViewer, model: ApsModel, dbIds: number[]): void {
+  if (!viewer) return;
+  try {
+    viewer.clearThemingColors?.(model);
+    viewer.isolate?.(dbIds.filter((d) => d >= 0), model);
+  } catch {
+    /* 무시 */
+  }
+}
+
+/** showApsClash 가 바꾼 색/격리를 복원(관련 모델 전체 표시). */
+export function clearApsClashView(viewer: ApsViewer, models: ApsModel[] = []): void {
+  showAllAps(viewer, models);
 }
 
 /** GlobalId 한 개(이슈 위치보기 등)에 카메라를 맞추고 격리(나머지 ghost). */
@@ -82,3 +104,4 @@ export function isolateAndFit(viewer: ApsViewer, model: ApsModel, dbId: number):
     /* 무시 */
   }
 }
+

@@ -25,46 +25,45 @@ import {
   linkClashIssue,
   type ClashTestMeta,
 } from '../lib/clashApi';
-import { runApsClashDetection, targetKey, type ApsClashTarget, type ApsMetaResolver } from '../lib/apsClash';
-import { showApsClash, clearApsClashView } from '../lib/apsClashView';
-import { enumerateApsElements, groupByCategory, type ApsElement } from '../lib/apsElements';
+import { runApsClashDetection, targetKey, type ApsMetaResolver } from '../lib/apsClash';
+import { showApsClash, showAllAps, showContextAps, clearApsClashView } from '../lib/apsClashView';
+import {
+  rootChildren,
+  childrenOf,
+  collectLeaves,
+  nodeName,
+  topLevelAncestor,
+  type ApsTreeNode,
+} from '../lib/apsTree';
 import { createIssue, ISSUE_PRIORITIES, PRIORITY_LABEL, type IssuePriority } from '../lib/issues';
 import type { ApsMapping } from '../lib/apsMapping';
 import { useAuth } from '../auth/AuthProvider';
 
-/** 간섭 대상으로 로드된 모델 한 개. */
-export interface ClashModel {
-  model: any;
-  name: string;
-  mapping: ApsMapping;
-}
-
 interface Props {
   viewer: any;
-  models: ClashModel[];
+  /** 열린 통합모델(보통 nwd). 하나의 인스턴스 트리. */
+  model: any;
+  mapping: ApsMapping;
   projectId: string;
   canEdit: boolean;
-  /** ACC 폴더에서 비교할 파일을 더 겹쳐 로드(방법 2). */
-  onAddModels?: () => void;
   onClose: () => void;
 }
 
-type SelRef = { modelId: number; cat: string }; // cat='all' = 모델 전체
-const eqSel = (x: SelRef | null, y: SelRef | null) =>
-  !!x && !!y && x.modelId === y.modelId && x.cat === y.cat;
+type SelNode = { dbId: number; name: string };
+const eqSel = (x: SelNode | null, d: number) => !!x && x.dbId === d;
 
 /**
- * APS 간섭체크 — 모델간/모델내(카테고리) 간섭. 대상 A/B 를 **ACC 모델 트리처럼**
- * (모델 → 카테고리) 계층에서 고른다. ① 현재 열린(고정) 모델에서 바로, ② ACC 폴더에서
- * 비교 파일을 겹쳐 로드해 그 파일들끼리. 검출은 apsClash(fragment+BVH), 시각화는
- * apsClashView(A초록/B빨강+ghost+줌), 저장키는 GlobalId. 그룹/정렬/CSV 는 clash.ts 재사용.
+ * APS 간섭체크 — ACC 통합모델(nwd)의 **인스턴스 트리(모델 트리) 그대로** 대상 A/B 를
+ * 고른다(구성요소 파일 → 하위 부재). 상위 노드 둘을 고르면 곧 모델/파일간 간섭.
+ * 검출은 apsClash(fragment+BVH), 결과 클릭 시 두 부재의 상위 파일만 격리(나머지 반투명)
+ * + A초록/B빨강 + 줌. 저장키는 GlobalId. 그룹/정렬/CSV 는 clash.ts 재사용.
  */
-export function ApsClashPanel({ viewer, models, projectId, canEdit, onAddModels, onClose }: Props) {
+export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onClose }: Props) {
   const { profile } = useAuth();
   const authorName = profile?.full_name ?? profile?.username ?? null;
 
   // 이동/크기 조절 창.
-  const [win, setWin] = useState({ x: 80, y: 64, w: 520, h: 620 });
+  const [win, setWin] = useState({ x: 80, y: 64, w: 520, h: 640 });
   const dragRef = useRef<{ mode: 'move' | 'resize'; sx: number; sy: number; ox: number; oy: number } | null>(null);
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -97,69 +96,29 @@ export function ApsClashPanel({ viewer, models, projectId, canEdit, onAddModels,
     };
   };
 
-  // 모델별 요소(지연 열거 캐시) — 트리 카테고리/대상 해석에 사용.
-  const elemCacheRef = useRef<Map<number, { elements: ApsElement[]; groups: Map<string, number[]> }>>(
-    new Map(),
-  );
-  const ensureElements = async (cm: ClashModel) => {
-    const id = cm.model.id as number;
-    const cached = elemCacheRef.current.get(id);
-    if (cached) return cached;
-    const elements = await enumerateApsElements(cm.model);
-    const v = { elements, groups: groupByCategory(elements) };
-    elemCacheRef.current.set(id, v);
-    return v;
-  };
-
-  // 트리 펼침/카테고리 표시.
+  // 인스턴스 트리(모델 트리) — 지연 펼침.
+  const roots = useMemo<ApsTreeNode[]>(() => rootChildren(model), [model]);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
-  const [cats, setCats] = useState<Map<number, { name: string; count: number }[]>>(new Map());
-  const [loadingModel, setLoadingModel] = useState<number | null>(null);
-  const [filter, setFilter] = useState('');
-
-  const modelsById = useMemo(() => {
-    const m = new Map<number, ClashModel>();
-    for (const cm of models) m.set(cm.model.id, cm);
-    return m;
-  }, [models]);
-
-  const toggleModel = async (cm: ClashModel) => {
-    const id = cm.model.id as number;
-    const isOpen = expanded.has(id);
+  const [childCache, setChildCache] = useState<Map<number, ApsTreeNode[]>>(new Map());
+  const toggleExpand = (node: ApsTreeNode) => {
+    if (!childCache.has(node.dbId)) {
+      setChildCache((prev) => new Map(prev).set(node.dbId, childrenOf(model, node.dbId)));
+    }
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (isOpen) next.delete(id);
-      else next.add(id);
+      if (next.has(node.dbId)) next.delete(node.dbId);
+      else next.add(node.dbId);
       return next;
     });
-    if (!isOpen && !cats.has(id)) {
-      setLoadingModel(id);
-      try {
-        const v = await ensureElements(cm);
-        const list = [...v.groups.entries()]
-          .map(([name, ids]) => ({ name, count: ids.length }))
-          .sort((a, b) => a.name.localeCompare(b.name));
-        setCats((prev) => new Map(prev).set(id, list));
-      } catch {
-        setCats((prev) => new Map(prev).set(id, []));
-      } finally {
-        setLoadingModel(null);
-      }
-    }
   };
 
   // 대상 선택.
-  const [aSel, setASel] = useState<SelRef | null>(null);
-  const [bSel, setBSel] = useState<SelRef | null>(null);
-  const assign = (side: 'A' | 'B', ref: SelRef) => {
-    if (side === 'A') setASel((cur) => (eqSel(cur, ref) ? null : ref));
-    else setBSel((cur) => (eqSel(cur, ref) ? null : ref));
-  };
-  const selLabel = (sel: SelRef | null) => {
-    if (!sel) return '미선택';
-    const cm = modelsById.get(sel.modelId);
-    const base = cm?.name ?? '모델';
-    return sel.cat === 'all' ? `${base} · 전체` : `${base} · ${sel.cat}`;
+  const [aSel, setASel] = useState<SelNode | null>(null);
+  const [bSel, setBSel] = useState<SelNode | null>(null);
+  const assign = (side: 'A' | 'B', node: ApsTreeNode) => {
+    const ref: SelNode = { dbId: node.dbId, name: node.name };
+    if (side === 'A') setASel((cur) => (cur?.dbId === node.dbId ? null : ref));
+    else setBSel((cur) => (cur?.dbId === node.dbId ? null : ref));
   };
 
   const [type, setType] = useState<ClashType>('hard');
@@ -184,27 +143,22 @@ export function ApsClashPanel({ viewer, models, projectId, canEdit, onAddModels,
 
   useEffect(() => {
     listClashTests(projectId).then(setTests).catch(() => {});
-    return () => clearApsClashView(viewer, models.map((m) => m.model));
+    return () => clearApsClashView(viewer, [model]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 선택 → 대상(모델,dbId) 목록 + 메타맵.
-  const resolveTargets = async (sel: SelRef): Promise<ApsClashTarget[]> => {
-    const cm = modelsById.get(sel.modelId);
-    if (!cm) return [];
-    const v = await ensureElements(cm);
-    const dbIds = sel.cat === 'all' ? v.elements.map((e) => e.dbId) : v.groups.get(sel.cat) ?? [];
-    return dbIds.map((dbId) => ({ model: cm.model, dbId }));
-  };
-  const buildMetaMap = async (sels: SelRef[]): Promise<ApsMetaResolver> => {
+  // 선택 노드 → leaf dbId + (modelId:dbId)→메타(이름·상위파일=카테고리).
+  const buildMeta = (leaves: number[]): ApsMetaResolver => {
     const map: ApsMetaResolver = new Map();
-    const seen = new Set<number>();
-    for (const s of sels) {
-      const cm = modelsById.get(s.modelId);
-      if (!cm || seen.has(s.modelId)) continue;
-      seen.add(s.modelId);
-      const v = await ensureElements(cm);
-      for (const e of v.elements) map.set(targetKey(cm.model.id, e.dbId), { name: e.name, category: e.category });
+    const ancName = new Map<number, string>();
+    for (const d of leaves) {
+      const anc = topLevelAncestor(model, d);
+      let cat = ancName.get(anc);
+      if (cat == null) {
+        cat = nodeName(model, anc);
+        ancName.set(anc, cat);
+      }
+      map.set(targetKey(model.id, d), { name: nodeName(model, d), category: cat });
     }
     return map;
   };
@@ -212,26 +166,24 @@ export function ApsClashPanel({ viewer, models, projectId, canEdit, onAddModels,
   const run = async () => {
     if (running) return;
     if (!aSel || !bSel) {
-      setStatus('대상 A·B 를 모두 선택하세요.');
+      setStatus('대상 A·B 를 모두 선택하세요(모델 트리에서 [A][B]).');
       return;
     }
     setRunning(true);
     cancelRef.current = false;
     setProgress({ ratio: 0, phase: '준비' });
     try {
-      const [itemsA, itemsB, metaMap] = await Promise.all([
-        resolveTargets(aSel),
-        resolveTargets(bSel),
-        buildMetaMap([aSel, bSel]),
-      ]);
-      if (!itemsA.length || !itemsB.length) {
-        setStatus('대상 집합이 비어 있습니다.');
+      const leavesA = collectLeaves(model, aSel.dbId);
+      const leavesB = collectLeaves(model, bSel.dbId);
+      if (!leavesA.length || !leavesB.length) {
+        setStatus('대상에 부재가 없습니다.');
         return;
       }
+      const metaMap = buildMeta([...new Set([...leavesA, ...leavesB])]);
       const hits = await runApsClashDetection({
         viewer,
-        itemsA,
-        itemsB,
+        itemsA: leavesA.map((dbId) => ({ model, dbId })),
+        itemsB: leavesB.map((dbId) => ({ model, dbId })),
         type,
         tolerance,
         metaMap,
@@ -255,16 +207,10 @@ export function ApsClashPanel({ viewer, models, projectId, canEdit, onAddModels,
 
   const onRowClick = (r: ClashRow) => {
     setActiveId(r.id);
-    const aModel = modelsById.get(r.a.modelID)?.model;
-    const bModel = modelsById.get(r.b.modelID)?.model;
-    showApsClash(viewer, aModel, r.a.expressID, bModel, r.b.expressID);
+    showApsClash(viewer, model, r.a.expressID, model, r.b.expressID);
   };
 
-  const mappingsMap = useMemo(() => {
-    const m = new Map<number, ApsMapping>();
-    for (const cm of models) m.set(cm.model.id, cm.mapping);
-    return m;
-  }, [models]);
+  const mappingsMap = useMemo(() => new Map([[model.id as number, mapping]]), [model, mapping]);
 
   const save = async () => {
     if (!rows.length) return;
@@ -273,8 +219,8 @@ export function ApsClashPanel({ viewer, models, projectId, canEdit, onAddModels,
       const id = await saveApsClashTest({
         projectId,
         name: `간섭 ${new Date().toLocaleString('ko-KR')}`,
-        setA: selLabel(aSel),
-        setB: selLabel(bSel),
+        setA: aSel?.name ?? '',
+        setB: bSel?.name ?? '',
         type,
         tolerance,
         rows,
@@ -295,7 +241,7 @@ export function ApsClashPanel({ viewer, models, projectId, canEdit, onAddModels,
     setStatus('불러오는 중…');
     try {
       const loaded = await loadApsClashes(testId);
-      setRows(loadedApsToRows(loaded, models.map((m) => m.mapping)));
+      setRows(loadedApsToRows(loaded, [mapping]));
       setDbBacked(true);
       setActiveId(null);
       setStatus(`불러옴 ${loaded.length}건`);
@@ -330,6 +276,13 @@ export function ApsClashPanel({ viewer, models, projectId, canEdit, onAddModels,
     }
   };
 
+  // 표시 옵션(투트랙 대체): 전체 표시 / 반투명 겹쳐보기.
+  const showAll = () => showAllAps(viewer, [model]);
+  const showTranslucent = () => {
+    const ids = [aSel?.dbId, bSel?.dbId].filter((d): d is number => typeof d === 'number');
+    showContextAps(viewer, model, ids.length ? ids : roots.map((n) => n.dbId));
+  };
+
   const [issueTitle, setIssueTitle] = useState('');
   const [issueDesc, setIssueDesc] = useState('');
   const [issuePriority, setIssuePriority] = useState<IssuePriority>('high');
@@ -344,7 +297,7 @@ export function ApsClashPanel({ viewer, models, projectId, canEdit, onAddModels,
   const submitIssue = async () => {
     const r = issueFor;
     if (!r) return;
-    const globalId = mappingsMap.get(r.a.modelID)?.dbIdToGlobalId.get(r.a.expressID) ?? null;
+    const globalId = mapping.dbIdToGlobalId.get(r.a.expressID) ?? null;
     try {
       const issueId = await createIssue(
         projectId,
@@ -381,25 +334,39 @@ export function ApsClashPanel({ viewer, models, projectId, canEdit, onAddModels,
       return next;
     });
 
-  // 트리 한 줄: [A][B] 토글 + 라벨.
-  const ABButtons = (ref: SelRef) => (
-    <span style={{ display: 'inline-flex', gap: 4, marginRight: 6 }}>
-      <button
-        onClick={() => assign('A', ref)}
-        title="대상 A 로"
-        style={{ ...abBtn, ...(eqSel(aSel, ref) ? abA : {}) }}
-      >
-        A
-      </button>
-      <button
-        onClick={() => assign('B', ref)}
-        title="대상 B 로"
-        style={{ ...abBtn, ...(eqSel(bSel, ref) ? abB : {}) }}
-      >
-        B
-      </button>
-    </span>
-  );
+  // 트리 노드 한 줄: [A][B] + 펼침 + 이름. 재귀.
+  const renderNode = (node: ApsTreeNode, depth: number): React.ReactNode => {
+    const open = expanded.has(node.dbId);
+    const kids = childCache.get(node.dbId) ?? [];
+    return (
+      <div key={node.dbId}>
+        <div style={{ display: 'flex', alignItems: 'center', padding: '2px 6px', paddingLeft: 6 + depth * 12 }}>
+          <button
+            onClick={() => node.hasChildren && toggleExpand(node)}
+            style={{ ...rowBtn, width: 14, visibility: node.hasChildren ? 'visible' : 'hidden' }}
+          >
+            {open ? '▾' : '▸'}
+          </button>
+          <span style={{ display: 'inline-flex', gap: 4, marginRight: 6 }}>
+            <button onClick={() => assign('A', node)} title="대상 A 로" style={{ ...abBtn, ...(eqSel(aSel, node.dbId) ? abA : {}) }}>
+              A
+            </button>
+            <button onClick={() => assign('B', node)} title="대상 B 로" style={{ ...abBtn, ...(eqSel(bSel, node.dbId) ? abB : {}) }}>
+              B
+            </button>
+          </span>
+          <span
+            onClick={() => node.hasChildren && toggleExpand(node)}
+            style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: node.hasChildren ? 'pointer' : 'default' }}
+            title={node.name}
+          >
+            {node.hasChildren ? '📁' : '🔹'} {node.name}
+          </span>
+        </div>
+        {open && kids.map((k) => renderNode(k, depth + 1))}
+      </div>
+    );
+  };
 
   let globalIdx = 0;
 
@@ -428,68 +395,34 @@ export function ApsClashPanel({ viewer, models, projectId, canEdit, onAddModels,
       >
         <strong style={{ fontSize: 13 }}>🔍 간섭체크</strong>
         <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-          {rows.length ? `총 ${rows.length} · 미해결 ${openCount}` : `모델 ${models.length}`}
+          {rows.length ? `총 ${rows.length} · 미해결 ${openCount}` : ''}
         </span>
         <span style={{ flex: 1 }} />
+        <button onClick={showAll} style={{ ...btn, fontSize: 11 }} title="전체 표시(초기화)">
+          전체 표시
+        </button>
+        <button onClick={showTranslucent} style={{ ...btn, fontSize: 11 }} title="선택 대상만 솔리드, 나머지 반투명">
+          반투명
+        </button>
         <button onClick={onClose} style={btn}>
           ✕
         </button>
       </div>
 
       <div style={{ padding: 10, overflowY: 'auto', flex: 1 }}>
-        {/* 대상 트리(모델 → 카테고리) */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <strong style={{ fontSize: 12 }}>대상 선택</strong>
-          <span style={{ flex: 1 }} />
-          {onAddModels && (
-            <button onClick={onAddModels} style={{ ...btn, fontSize: 11 }} title="ACC 폴더에서 비교할 파일 겹쳐 로드">
-              ＋ 파일 추가
-            </button>
+        {/* 대상 트리(모델 트리 그대로 — 파일 → 부재) */}
+        <strong style={{ fontSize: 12 }}>대상 선택 (모델 트리)</strong>
+        <div style={{ border: '1px solid var(--border)', borderRadius: 6, marginTop: 6, maxHeight: 220, overflowY: 'auto' }}>
+          {roots.length ? roots.map((n) => renderNode(n, 0)) : (
+            <div style={{ padding: 8, fontSize: 12, color: 'var(--muted)' }}>모델 트리를 읽는 중…</div>
           )}
-        </div>
-        <input
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder="카테고리 검색…"
-          style={{ ...sel, marginTop: 6 }}
-        />
-        <div style={{ border: '1px solid var(--border)', borderRadius: 6, marginTop: 6, maxHeight: 200, overflowY: 'auto' }}>
-          {models.map((cm) => {
-            const id = cm.model.id as number;
-            const open = expanded.has(id);
-            const list = (cats.get(id) ?? []).filter(
-              (c) => !filter || c.name.toLowerCase().includes(filter.toLowerCase()),
-            );
-            return (
-              <div key={id} style={{ borderBottom: '1px solid var(--border)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', padding: '4px 6px' }}>
-                  <button onClick={() => void toggleModel(cm)} style={{ ...rowBtn, width: 16 }}>
-                    {loadingModel === id ? '⏳' : open ? '▾' : '▸'}
-                  </button>
-                  {ABButtons({ modelId: id, cat: 'all' })}
-                  <span style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    🧱 {cm.name}
-                  </span>
-                </div>
-                {open &&
-                  list.map((c) => (
-                    <div key={c.name} style={{ display: 'flex', alignItems: 'center', padding: '2px 6px 2px 24px' }}>
-                      {ABButtons({ modelId: id, cat: c.name })}
-                      <span style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {c.name} <span style={{ color: 'var(--muted)' }}>({c.count})</span>
-                      </span>
-                    </div>
-                  ))}
-              </div>
-            );
-          })}
         </div>
         <div style={{ display: 'flex', gap: 10, marginTop: 6, fontSize: 11 }}>
           <span>
-            <b style={{ color: '#16a34a' }}>A</b> {selLabel(aSel)}
+            <b style={{ color: '#16a34a' }}>A</b> {aSel?.name ?? '미선택'}
           </span>
           <span>
-            <b style={{ color: '#dc2626' }}>B</b> {selLabel(bSel)}
+            <b style={{ color: '#dc2626' }}>B</b> {bSel?.name ?? '미선택'}
           </span>
         </div>
 
