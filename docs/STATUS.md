@@ -2,6 +2,36 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
+**[S49] 2026-06-25 · 간섭·이슈를 APS Viewer 위로 이식 — 무비용 자체구현** (branch `claude/blissful-mccarthy-mebctq`)
+> 우선순위 간섭 > 이슈핀 > 이슈. ACC가 브라우저에 로드한 fragment 지오·dbId·externalId 만으로
+> 자체 구현(비용 0). 식별키는 **GlobalId(=externalId)** 로 통일. **마이그레이션 0024·0025는 S48이
+> 선점 → 본 세션은 0026·0027 사용.** typecheck·build 통과.
+- ✅ **선결(Step 0) — `lib/apsMapping.ts`**: APS `getExternalIdMapping()`(+instanceTree/bulkProperties
+  폴백)로 **dbId↔GlobalId 양방향 인덱스** 비동기 구축·모델별 캐시. 이후 전 단계가 의존.
+- ✅ **Step 1 간섭(최우선) — `lib/apsClash.ts`**: fragment(LMV 인터리브 VB)를 월드행렬 적용해 읽어
+  **dbId별 MeshBVH** 구축 → 광역(AABB 후보)·협역(BVH 교차·관통깊이). 출력은 `clash.ts ClashHit`
+  호환(**expressID 슬롯에 dbId**) → groupClashes/정렬/CSV/ClashPanel 패턴 그대로. 시각화
+  `lib/apsClashView.ts`(showClash A초록/B빨강+ghost+줌을 setThemingColor/isolate/fitToView 로 1:1).
+  영속화 `clashApi.saveApsClashTest/loadApsClashes/loadedApsToRows`(저장키=GlobalId, 0027 a/b 컬럼).
+  UI `components/ApsClashPanel.tsx`(카테고리 2단계 선택·검사·저장/불러오기·상태·간섭→이슈).
+  요소 열거 `lib/apsElements.ts`.
+- ✅ **Step 2 이슈 핀 — `components/ApsIssuePins.tsx`**: global_id 앵커 → dbId bbox중심 → `worldToClient`
+  HTML 마커(카메라 이동 rAF 재계산) + 클릭 팝업(기존 이슈 데이터 재사용). AccModels 에 매핑 구축·
+  이슈 로드·선택 dbId→GlobalId '＋이슈' 생성·핀/간섭 토글 배선. (0026 `issues.global_id`)
+- ✅ **Step 3 위치 보기 — `Issues.tsx`**: global_id 이슈에 '위치 보기(ACC)' → `/acc?focusGlobalId=` 딥링크
+  → GlobalId→dbId **isolate+fitToView**. 기존 IFC(model_id/express_id) 위치보기 경로는 백업 유지.
+- ⚠️ **운영 적용**: 마이그레이션 **0026·0027** 적용 필요. APS_CLIENT_ID/SECRET·ACC 권한은 기존 전제.
+- ⚠️ **라이브 검증 필요(원격 egress 제약으로 미검증)**: 실제 ACC 모델에서 ① fragment VB 추출/BVH 교차가
+  맞는지(PoC: 교차 1건) ② getExternalIdMapping 의 externalId 가 IFC GlobalId/Revit UniqueId 로 잘
+  나오는지 ③ worldToClient 핀 좌표·setThemingColor/isolate/fitToView 동작. 막히면 즉시 공유 권장.
+- 📌 **다음/미해결**: ① **PoC 라이브 검증**(작은 ACC 모델 교차 1건) ② 간섭 스냅샷 첨부(S35 captureClashViews
+  의 APS 판) ③ 카테고리 추출 정교화(현재 Revit 'Category'·이름 추정 — IFC 타입 정확도 점검) ④ 모델 단위가
+  m 아닌 경우 tolerance 환산 ⑤ 자체 IfcViewer 은퇴는 패리티 증명 후(IFC 백업 유지).
+- **인수인계 한 줄**: → S49 간섭·이슈핀·위치보기 코드 이식 완료(0026·0027)·푸시. **다음 세션은 ACC 라이브에서
+  PoC(fragment BVH 교차 1건)부터 눈검증** 후 스냅샷 첨부·카테고리 정교화로 진행.
+
+---
+
 **[2nd 계정·병렬] 2026-06-24 · S47/S48 main 병합 + Track B 전부 완료** (branch `claude/affectionate-babbage-qxs2ry`)
 - ✅ **선결 — S47/S48 main 병합 (PR #89, merge `5de0d40`)**. funny-bardeen이 main의 fast-forward라 충돌 0,
   CI(typecheck·build) 통과 후 병합. 이제 두 트랙 모두 현재 main에서 분기 가능. (마이그레이션 0024·0025는 S48이
