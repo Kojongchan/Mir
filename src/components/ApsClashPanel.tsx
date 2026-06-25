@@ -26,7 +26,7 @@ import {
 import { runApsClashDetection, targetKey, type ApsMetaResolver } from '../lib/apsClash';
 import { showApsClash, showAllWithColors, showTranslucentClash, clearApsClashView } from '../lib/apsClashView';
 import { rootChildren, childrenOf, collectLeaves, nodeName, parentName, type ApsTreeNode } from '../lib/apsTree';
-import { ApsClashDim } from './ApsClashDim';
+import type { ClashDim } from './ApsClashDim';
 import { apsClashesToCsv, buildApsClashReport, downloadReport, captureClashAngles, dataUrlToFile } from '../lib/apsReport';
 import { downloadCsv } from '../lib/clash';
 import { uploadAttachment } from '../lib/attachments';
@@ -45,6 +45,8 @@ interface Props {
   onClose: () => void;
   /** 이슈 생성 시 부모(AccModels)의 이슈 목록·핀 갱신. */
   onIssueCreated?: () => void;
+  /** 치수 라벨을 부모(AccModels)의 뷰어 컨테이너에 렌더하도록 전달(null=숨김). */
+  onActiveDim?: (dim: ClashDim | null) => void;
 }
 
 type SelNode = { dbId: number; name: string };
@@ -55,7 +57,7 @@ type SelNode = { dbId: number; name: string };
  * 결과 클릭 시 두 부재의 상위 파일만 남기고(나머지 숨김) A초록/B빨강 + 반투명 + 줌.
  * 표시 옵션(전체/반투명), 저장(GlobalId)·CSV·이미지 보고서. 그룹/정렬/필터는 clash.ts.
  */
-export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, canEdit, onClose, onIssueCreated }: Props) {
+export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, canEdit, onClose, onIssueCreated, onActiveDim }: Props) {
   const { profile } = useAuth();
   const authorName = profile?.full_name ?? profile?.username ?? null;
 
@@ -204,6 +206,22 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
 
   // 표시 옵션(#6 전체 표시 / #7 반투명) — 활성 결과 기준.
   const activeRow = rows.find((r) => r.id === activeId) ?? null;
+
+  // 치수 라벨(아이디어 #3) — 부모(AccModels)가 뷰어 컨테이너에 렌더. 활성+토글 ON 일 때.
+  useEffect(() => {
+    if (!onActiveDim) return;
+    if (dimOn && activeRow) {
+      onActiveDim({
+        point: activeRow.point,
+        color: type === 'hard' ? '#dc2626' : '#2563eb',
+        label: `${type === 'hard' ? '관통' : '이격'} ${activeRow.depth.toFixed(3)} m`,
+      });
+    } else {
+      onActiveDim(null);
+    }
+    return () => onActiveDim?.(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dimOn, activeId, type, activeRow?.depth]);
   const showAll = () => showAllWithColors(viewer);
   const showTrans = () => {
     if (activeRow) showTranslucentClash(viewer, model, activeRow.a.expressID, activeRow.b.expressID);
@@ -617,16 +635,6 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
       )}
 
       <div onMouseDown={startDrag('resize')} style={{ position: 'absolute', right: 0, bottom: 0, width: 16, height: 16, cursor: 'nwse-resize' }} />
-
-      {/* 간섭 치수 라벨(아이디어 #3) — 활성 결과 + 토글 ON 일 때 */}
-      {dimOn && activeRow && (
-        <ApsClashDim
-          viewer={viewer}
-          point={activeRow.point}
-          color={type === 'hard' ? '#dc2626' : '#2563eb'}
-          label={`${type === 'hard' ? '관통' : '이격'} ${activeRow.depth.toFixed(3)} m`}
-        />
-      )}
 
       {/* 캡처 중 화면 전환 깜빡임을 가리는 마스크(#7). 스냅샷은 캔버스에서 찍혀 영향 없음. */}
       {(issueCapturing || reportBusy) && (
