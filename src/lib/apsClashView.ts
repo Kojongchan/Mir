@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { computeDbIdWorldBox } from './apsClash';
-import { topLevelAncestor } from './apsTree';
+import { topLevelAncestor, topLevelFileIds } from './apsTree';
 
 // =====================================================================
 // APS 간섭 시각화 — S49. 결과 리뷰의 3가지 표시 상태:
@@ -36,9 +36,10 @@ function fitPair(viewer: ApsViewer, model: ApsModel, aDbId: number, bDbId: numbe
 }
 
 /**
- * 기본(결과 클릭, #1/#2): 간섭 부재의 **상위 파일만** 보이고 다른 파일은 **완전 숨김**
- * (반투명 아님). 핵심: setGhosting(false) 로 두면 격리 시 비격리 객체가 ghost 가
- * 아니라 hidden 이 된다. 간섭 부재는 A초록/B빨강 솔리드. 두 부재로 줌.
+ * 기본(결과 클릭, #1/#2): 간섭 **부재(body)는 솔리드 A초록/B빨강**, 그 부재가 속한
+ * **상위 파일은 반투명(ghost)** 으로 같이 보여주고, **나머지 파일은 숨김**. 두 부재로 줌.
+ *   setGhosting(true) + isolate([bodyA,bodyB]) → 부재 솔리드·나머지 반투명,
+ *   그 뒤 hide(다른 상위 파일) → 상위 파일만 반투명으로 남고 무관 파일은 사라짐.
  */
 export function showApsClash(
   viewer: ApsViewer,
@@ -49,12 +50,15 @@ export function showApsClash(
   if (!viewer) return;
   try {
     viewer.clearThemingColors?.(model);
-    viewer.setGhosting?.(false); // 비격리 = 숨김(반투명 X)
+    viewer.setGhosting?.(true); // 비격리 = 반투명
+    const bodies = [aDbId, bDbId].filter((d) => d >= 0);
+    if (bodies.length) viewer.isolate?.(bodies, model); // 부재 솔리드, 나머지 반투명
+    // 간섭 부재의 상위 파일만 반투명 컨텍스트로 남기고 다른 파일은 숨김.
     const ancA = aDbId >= 0 ? topLevelAncestor(model, aDbId) : -1;
     const ancB = bDbId >= 0 ? topLevelAncestor(model, bDbId) : -1;
-    const keep = [ancA, ancB].filter((d) => d >= 0);
-    if (keep.length) viewer.isolate?.(keep, model); // 상위 파일만 표시(나머지 숨김)
-    else viewer.showAll?.();
+    const keep = new Set([ancA, ancB].filter((d) => d >= 0));
+    const others = topLevelFileIds(model).filter((f) => !keep.has(f));
+    if (others.length) viewer.hide?.(others, model);
     paint(viewer, model, aDbId, bDbId);
     fitPair(viewer, model, aDbId, bDbId);
   } catch {

@@ -33,7 +33,9 @@ export function ApsClashDim({ viewer, point, label, color }: Props) {
       }
       const pt = viewer.worldToClient(world.current.clone());
       if (!pt || Number.isNaN(pt.x)) return setPos(null);
-      setPos({ x: pt.x, y: pt.y });
+      // worldToClient 는 캔버스 기준 px → position:fixed(뷰포트) 보정용 offset 가산.
+      const rect = viewer.container?.getBoundingClientRect?.() ?? viewer.canvas?.getBoundingClientRect?.();
+      setPos({ x: pt.x + (rect?.left ?? 0), y: pt.y + (rect?.top ?? 0) });
     } catch {
       setPos(null);
     }

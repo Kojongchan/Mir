@@ -436,7 +436,17 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
         <span style={{ flex: 1 }} />
         <button onClick={showAll} style={{ ...btn, fontSize: 11 }} title="모든 파일 표시(색 유지)">전체 표시</button>
         <button onClick={showTrans} disabled={!activeRow} style={{ ...btn, fontSize: 11 }} title="간섭 부재만 솔리드, 나머지 반투명">반투명</button>
-        <button onClick={() => setDimOn((v) => !v)} style={{ ...btn, fontSize: 11, ...(dimOn ? { background: 'var(--accent)', color: 'var(--accent-fg)', borderColor: 'var(--accent)' } : {}) }} title="간섭 치수(관통/이격) 표시">📏 치수</button>
+        <button
+          onClick={() => {
+            const next = !dimOn;
+            setDimOn(next);
+            if (next && !activeRow) setStatus('결과 항목을 클릭하면 그 위치에 관통/이격 치수가 표시됩니다.');
+          }}
+          style={{ ...btn, fontSize: 11, ...(dimOn ? { background: 'var(--accent)', color: 'var(--accent-fg)', borderColor: 'var(--accent)' } : {}) }}
+          title="간섭 치수(관통/이격) 표시 — 결과 클릭 시 그 위치에 표시"
+        >
+          📏 치수
+        </button>
         <button onClick={onClose} style={btn}>✕</button>
       </div>
 
