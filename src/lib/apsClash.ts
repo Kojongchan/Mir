@@ -33,19 +33,28 @@ export interface ApsClashGeom {
   bvh: MeshBVH;
 }
 
-export interface ApsClashInput {
-  /** 대상 뷰어. fragment 리스트/instanceTree 접근에 사용. */
-  viewer: ApsViewer;
-  /** 대상 모델(보통 viewer.model). */
+/** 간섭 대상 한 개 = (모델, dbId). 모델간 간섭을 위해 모델을 함께 들고 다닌다. */
+export interface ApsClashTarget {
   model: ApsModel;
-  /** 집합 A·B 의 dbId 들(카테고리/모델 등으로 미리 추린 결과). */
-  dbIdsA: number[];
-  dbIdsB: number[];
+  dbId: number;
+}
+
+/** (modelId, dbId) → 표시 메타. 키는 `${model.id}:${dbId}`. */
+export type ApsMetaResolver = Map<string, { name: string; category: string }>;
+
+export const targetKey = (modelId: number, dbId: number) => `${modelId}:${dbId}`;
+
+export interface ApsClashInput {
+  /** 대상 뷰어(시그니처 호환용). */
+  viewer: ApsViewer;
+  /** 집합 A·B 의 대상(모델+dbId). 같은 모델이면 자기/카테고리 간섭, 다르면 모델간. */
+  itemsA: ApsClashTarget[];
+  itemsB: ApsClashTarget[];
   type: ClashType;
   /** 허용오차(m, 모델 단위가 m 라는 전제 — ACC 변환 결과는 보통 m). */
   tolerance: number;
-  /** dbId → 표시 메타(이름·카테고리). 그룹화/표에 사용. 없으면 UNKNOWN. */
-  metaMap?: Map<number, { name: string; category: string }>;
+  /** (modelId:dbId) → 표시 메타. 그룹화/표에 사용. 없으면 UNKNOWN. */
+  metaMap?: ApsMetaResolver;
   onProgress?: (ratio: number, phase: string) => void;
   shouldCancel?: () => boolean;
 }
@@ -191,25 +200,25 @@ export function buildDbIdGeom(model: ApsModel, dbId: number): ApsClashGeom | nul
 
 let _seq = 0;
 function makeHit(
-  model: ApsModel,
-  metaMap: Map<number, { name: string; category: string }> | undefined,
-  aDbId: number,
-  bDbId: number,
+  metaMap: ApsMetaResolver | undefined,
+  ta: ApsClashTarget,
+  tb: ApsClashTarget,
   point: THREE.Vector3,
   depth: number,
 ): ClashHit {
-  const modelID = (model?.id ?? 0) as number;
-  const ma = metaMap?.get(aDbId);
-  const mb = metaMap?.get(bDbId);
+  const aModelId = (ta.model?.id ?? 0) as number;
+  const bModelId = (tb.model?.id ?? 0) as number;
+  const ma = metaMap?.get(targetKey(aModelId, ta.dbId));
+  const mb = metaMap?.get(targetKey(bModelId, tb.dbId));
   const a: ElementMeta = {
-    modelID,
-    expressID: aDbId, // APS: expressID 슬롯에 dbId
+    modelID: aModelId,
+    expressID: ta.dbId, // APS: expressID 슬롯에 dbId
     name: ma?.name ?? '',
     category: ma?.category ?? 'UNKNOWN',
   };
   const b: ElementMeta = {
-    modelID,
-    expressID: bDbId,
+    modelID: bModelId,
+    expressID: tb.dbId,
     name: mb?.name ?? '',
     category: mb?.category ?? 'UNKNOWN',
   };
@@ -222,36 +231,41 @@ function makeHit(
   };
 }
 
+const tkey = (t: ApsClashTarget) => targetKey((t.model?.id ?? 0) as number, t.dbId);
+
 /**
- * APS fragment 기반 간섭 검출. clash.ts(runClashDetection)의 APS 판으로,
- * 같은 dbId·중복쌍은 1회만. dbId 박스는 미리 계산(광역), BVH 는 후보만 지연 빌드.
+ * APS fragment 기반 간섭 검출(모델간 지원). clash.ts(runClashDetection)의 APS 판으로,
+ * 같은 대상(같은 모델·dbId)·중복쌍은 1회만. 박스는 미리 계산(광역), BVH 는 후보만 지연 빌드.
  */
 export async function runApsClashDetection(input: ApsClashInput): Promise<ClashHit[]> {
-  const { viewer, model, dbIdsA, dbIdsB, type, tolerance, metaMap, onProgress, shouldCancel } = input;
-  void viewer; // 시그니처 호환용(현재는 model 만으로 충분)
+  const { viewer, itemsA, itemsB, type, tolerance, metaMap, onProgress, shouldCancel } = input;
+  void viewer; // 시그니처 호환용
 
   const expand = Math.max(0, tolerance);
 
-  // ----- 광역단계 준비: 등장하는 모든 dbId 의 월드 박스 ------------------
-  const uniq = new Set<number>([...dbIdsA, ...dbIdsB]);
-  const boxes = new Map<number, THREE.Box3>();
-  const ids = [...uniq];
-  for (let i = 0; i < ids.length; i++) {
+  // ----- 광역단계 준비: 등장하는 모든 대상의 월드 박스(키=modelId:dbId) -------
+  const allTargets = new Map<string, ApsClashTarget>();
+  for (const t of [...itemsA, ...itemsB]) allTargets.set(tkey(t), t);
+  const boxes = new Map<string, THREE.Box3>();
+  const keys = [...allTargets.keys()];
+  for (let i = 0; i < keys.length; i++) {
     if (shouldCancel?.()) return [];
-    const box = computeDbIdWorldBox(model, ids[i]);
-    if (box) boxes.set(ids[i], box);
+    const t = allTargets.get(keys[i])!;
+    const box = computeDbIdWorldBox(t.model, t.dbId);
+    if (box) boxes.set(keys[i], box);
     if (i % 50 === 0) {
-      onProgress?.((i / Math.max(1, ids.length)) * 0.3, '경계상자 준비');
+      onProgress?.((i / Math.max(1, keys.length)) * 0.3, '경계상자 준비');
       await yieldToUi();
     }
   }
 
   // ----- 협역단계: 후보쌍만 BVH 교차 ---------------------------------
-  const geomCache = new Map<number, ApsClashGeom | null>();
-  const getGeom = (dbId: number): ApsClashGeom | null => {
-    if (geomCache.has(dbId)) return geomCache.get(dbId)!;
-    const g = buildDbIdGeom(model, dbId);
-    geomCache.set(dbId, g);
+  const geomCache = new Map<string, ApsClashGeom | null>();
+  const getGeom = (t: ApsClashTarget): ApsClashGeom | null => {
+    const k = tkey(t);
+    if (geomCache.has(k)) return geomCache.get(k)!;
+    const g = buildDbIdGeom(t.model, t.dbId);
+    geomCache.set(k, g);
     return g;
   };
 
@@ -264,22 +278,24 @@ export async function runApsClashDetection(input: ApsClashInput): Promise<ClashH
   const centerA = new THREE.Vector3();
   const centerB = new THREE.Vector3();
 
-  for (let ia = 0; ia < dbIdsA.length; ia++) {
+  for (let ia = 0; ia < itemsA.length; ia++) {
     if (shouldCancel?.()) return hits;
-    const da = dbIdsA[ia];
-    const rawA = boxes.get(da);
+    const ta = itemsA[ia];
+    const ka = tkey(ta);
+    const rawA = boxes.get(ka);
     if (rawA) {
       boxA.copy(rawA).expandByScalar(expand);
-      for (const db of dbIdsB) {
-        if (da === db) continue; // 자기 자신
-        const pairKey = da < db ? `${da}|${db}` : `${db}|${da}`;
+      for (const tb of itemsB) {
+        const kb = tkey(tb);
+        if (ka === kb) continue; // 자기 자신
+        const pairKey = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
         if (seenPair.has(pairKey)) continue;
-        const rawB = boxes.get(db);
+        const rawB = boxes.get(kb);
         if (!rawB || !boxA.intersectsBox(rawB)) continue; // 광역 탈락
         seenPair.add(pairKey);
 
-        const ga = getGeom(da);
-        const gb = getGeom(db);
+        const ga = getGeom(ta);
+        const gb = getGeom(tb);
         if (!ga || !gb) continue;
 
         const intersects = ga.bvh.intersectsGeometry(gb.geometry, identity);
@@ -289,13 +305,13 @@ export async function runApsClashDetection(input: ApsClashInput): Promise<ClashH
           if (overlap.isEmpty()) {
             ga.box.getCenter(centerA);
             gb.box.getCenter(centerB);
-            hits.push(makeHit(model, metaMap, da, db, centerA.clone().lerp(centerB, 0.5), 0));
+            hits.push(makeHit(metaMap, ta, tb, centerA.clone().lerp(centerB, 0.5), 0));
             continue;
           }
           overlap.getSize(size);
           const depth = Math.min(size.x, size.y, size.z);
           if (depth < tolerance) continue; // 허용오차보다 얕은 겹침 무시
-          hits.push(makeHit(model, metaMap, da, db, overlap.getCenter(new THREE.Vector3()), depth));
+          hits.push(makeHit(metaMap, ta, tb, overlap.getCenter(new THREE.Vector3()), depth));
         } else {
           // clearance: 겹침(거리 0) 또는 tolerance 이내 근접.
           if (intersects) {
@@ -303,18 +319,18 @@ export async function runApsClashDetection(input: ApsClashInput): Promise<ClashH
             const point = overlap.isEmpty()
               ? ga.box.getCenter(centerA).clone().lerp(gb.box.getCenter(centerB), 0.5)
               : overlap.getCenter(new THREE.Vector3());
-            hits.push(makeHit(model, metaMap, da, db, point, 0));
+            hits.push(makeHit(metaMap, ta, tb, point, 0));
           } else {
             ga.box.getCenter(centerA);
             gb.box.getCenter(centerB);
             const dist = centerA.distanceTo(centerB);
-            hits.push(makeHit(model, metaMap, da, db, centerA.clone().lerp(centerB, 0.5), dist));
+            hits.push(makeHit(metaMap, ta, tb, centerA.clone().lerp(centerB, 0.5), dist));
           }
         }
       }
     }
     if (ia % 3 === 0) {
-      onProgress?.(0.3 + (ia / Math.max(1, dbIdsA.length)) * 0.7, '간섭 검사');
+      onProgress?.(0.3 + (ia / Math.max(1, itemsA.length)) * 0.7, '간섭 검사');
       await yieldToUi();
     }
   }

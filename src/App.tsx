@@ -84,7 +84,8 @@ export default function App() {
             <Route path="acc" element={<AccModels />} />
             <Route path="model" element={<Workspace mode="integrated" />} />
             <Route path="viewer" element={<Workspace mode="4d" />} />
-            <Route path="clash" element={<Workspace mode="clash" />} />
+            {/* 간섭체크 = APS(ACC) 모델 위 간섭(S49). 구 IFC Workspace clash 는 백업으로 보존. */}
+            <Route path="clash" element={<AccModels autoClash />} />
             <Route path="quantities" element={<Quantities />} />
             <Route path="drawings" element={<Drawings />} />
             <Route path="docs" element={<DocumentManager />} />

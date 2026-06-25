@@ -148,8 +148,13 @@ export interface ApsClashSaveInput {
   type: ClashType;
   tolerance: number;
   rows: ClashRow[];
-  /** 현재 모델의 dbId↔GlobalId 매핑. row.a/b.expressID = dbId. */
-  mapping: ApsMapping;
+  /** 모델별 dbId↔GlobalId 매핑(model.id → mapping). row.a/b.modelID 로 선택. */
+  mappings: Map<number, ApsMapping>;
+}
+
+/** modelID·dbId(expressID 슬롯) → GlobalId 해석(해당 모델 매핑에서). */
+function gidOf(mappings: Map<number, ApsMapping>, modelID: number, dbId: number): string | null {
+  return mappings.get(modelID)?.dbIdToGlobalId.get(dbId) ?? null;
 }
 
 /** APS 간섭 결과를 GlobalId 키로 저장(0027). model_a/express_a 는 비운다. */
@@ -174,10 +179,10 @@ export async function saveApsClashTest(input: ApsClashSaveInput): Promise<string
   if (input.rows.length > 0) {
     const payload = input.rows.map((r) => ({
       test_id: testId,
-      global_id_a: input.mapping.dbIdToGlobalId.get(r.a.expressID) ?? null,
+      global_id_a: gidOf(input.mappings, r.a.modelID, r.a.expressID),
       name_a: r.a.name || null,
       category_a: r.a.category,
-      global_id_b: input.mapping.dbIdToGlobalId.get(r.b.expressID) ?? null,
+      global_id_b: gidOf(input.mappings, r.b.modelID, r.b.expressID),
       name_b: r.b.name || null,
       category_b: r.b.category,
       point_x: r.point.x,
@@ -222,22 +227,38 @@ export async function loadApsClashes(testId: string): Promise<LoadedApsClash[]> 
   return (data ?? []) as LoadedApsClash[];
 }
 
+/** 여러 매핑에서 GlobalId 를 가진 첫 모델의 {modelID, dbId} 를 찾는다. */
+function resolveGid(
+  mappings: ApsMapping[],
+  globalId: string | null,
+): { modelID: number; dbId: number } {
+  if (globalId) {
+    for (const m of mappings) {
+      const dbId = m.globalIdToDbId.get(globalId);
+      if (typeof dbId === 'number') return { modelID: (m.model?.id ?? 0) as number, dbId };
+    }
+  }
+  return { modelID: (mappings[0]?.model?.id ?? 0) as number, dbId: -1 };
+}
+
 /**
- * 불러온 APS 간섭을 런타임 ClashRow 로 재구성. GlobalId → dbId(현재 모델) 로
- * 해석해 expressID 슬롯에 담는다. 현재 모델에 없는 GlobalId 는 dbId=-1(표시만).
+ * 불러온 APS 간섭을 런타임 ClashRow 로 재구성. GlobalId → (model, dbId) 로 해석해
+ * expressID 슬롯에 dbId·modelID 슬롯에 model.id 를 담는다(여러 로드 모델 검색).
+ * 어디에도 없는 GlobalId 는 dbId=-1(표시만, 클릭 불가).
  */
-export function loadedApsToRows(loaded: LoadedApsClash[], mapping: ApsMapping): ClashRow[] {
-  const modelID = (mapping.model?.id ?? 0) as number;
+export function loadedApsToRows(loaded: LoadedApsClash[], mappings: ApsMapping[]): ClashRow[] {
   return loaded.map((c) => {
+    const ra = resolveGid(mappings, c.global_id_a);
+    const rb = resolveGid(mappings, c.global_id_b);
     const aMeta: ElementMeta = {
-      modelID,
-      expressID: (c.global_id_a ? mapping.globalIdToDbId.get(c.global_id_a) : undefined) ?? -1,
+      modelID: ra.modelID,
+      expressID: ra.dbId,
       name: c.name_a ?? '',
       category: c.category_a ?? 'UNKNOWN',
     };
     const bMeta: ElementMeta = {
-      modelID,
-      expressID: (c.global_id_b ? mapping.globalIdToDbId.get(c.global_id_b) : undefined) ?? -1,
+      modelID: rb.modelID,
+      expressID: rb.dbId,
       name: c.name_b ?? '',
       category: c.category_b ?? 'UNKNOWN',
     };

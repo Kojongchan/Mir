@@ -25,34 +25,46 @@ import {
   linkClashIssue,
   type ClashTestMeta,
 } from '../lib/clashApi';
-import { runApsClashDetection } from '../lib/apsClash';
+import { runApsClashDetection, targetKey, type ApsClashTarget, type ApsMetaResolver } from '../lib/apsClash';
 import { showApsClash, clearApsClashView } from '../lib/apsClashView';
-import { enumerateApsElements, elementMetaMap, groupByCategory, type ApsElement } from '../lib/apsElements';
+import { enumerateApsElements, groupByCategory, type ApsElement } from '../lib/apsElements';
 import { createIssue, ISSUE_PRIORITIES, PRIORITY_LABEL, type IssuePriority } from '../lib/issues';
 import type { ApsMapping } from '../lib/apsMapping';
 import { useAuth } from '../auth/AuthProvider';
 
+/** 간섭 대상으로 로드된 모델 한 개. */
+export interface ClashModel {
+  model: any;
+  name: string;
+  mapping: ApsMapping;
+}
+
 interface Props {
   viewer: any;
-  model: any;
-  mapping: ApsMapping;
+  models: ClashModel[];
   projectId: string;
   canEdit: boolean;
+  /** ACC 폴더에서 비교할 파일을 더 겹쳐 로드(방법 2). */
+  onAddModels?: () => void;
   onClose: () => void;
 }
 
+type SelRef = { modelId: number; cat: string }; // cat='all' = 모델 전체
+const eqSel = (x: SelRef | null, y: SelRef | null) =>
+  !!x && !!y && x.modelId === y.modelId && x.cat === y.cat;
+
 /**
- * APS 간섭체크 결과 — ClashPanel(IfcViewer)의 APS 판. 대상 A/B 를 카테고리로
- * 선택(모델 1개)하고 허용오차로 Hard/Clearance 간섭을 검출(apsClash). 행 클릭 시
- * A=초록/B=빨강 + 나머지 ghost + 줌(apsClashView). 결과는 GlobalId 로 저장/불러오기.
- * 간섭 → 이슈(GlobalId 앵커). 그룹화·정렬·상태필터·CSV 는 clash.ts 순수함수 재사용.
+ * APS 간섭체크 — 모델간/모델내(카테고리) 간섭. 대상 A/B 를 **ACC 모델 트리처럼**
+ * (모델 → 카테고리) 계층에서 고른다. ① 현재 열린(고정) 모델에서 바로, ② ACC 폴더에서
+ * 비교 파일을 겹쳐 로드해 그 파일들끼리. 검출은 apsClash(fragment+BVH), 시각화는
+ * apsClashView(A초록/B빨강+ghost+줌), 저장키는 GlobalId. 그룹/정렬/CSV 는 clash.ts 재사용.
  */
-export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onClose }: Props) {
+export function ApsClashPanel({ viewer, models, projectId, canEdit, onAddModels, onClose }: Props) {
   const { profile } = useAuth();
   const authorName = profile?.full_name ?? profile?.username ?? null;
 
-  // 이동/크기 조절 창(ClashPanel 과 동일 패턴).
-  const [win, setWin] = useState({ x: 96, y: 72, w: 480, h: 560 });
+  // 이동/크기 조절 창.
+  const [win, setWin] = useState({ x: 80, y: 64, w: 520, h: 620 });
   const dragRef = useRef<{ mode: 'move' | 'resize'; sx: number; sy: number; ox: number; oy: number } | null>(null);
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -63,7 +75,7 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
       setWin((w) =>
         d.mode === 'move'
           ? { ...w, x: Math.max(0, d.ox + dx), y: Math.max(0, d.oy + dy) }
-          : { ...w, w: Math.max(340, d.ox + dx), h: Math.max(280, d.oy + dy) },
+          : { ...w, w: Math.max(360, d.ox + dx), h: Math.max(300, d.oy + dy) },
       );
     };
     const onUp = () => (dragRef.current = null);
@@ -85,13 +97,73 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
     };
   };
 
-  // 요소/카테고리(집합 선택용).
-  const [elements, setElements] = useState<ApsElement[]>([]);
-  const [aCat, setACat] = useState('all');
-  const [bCat, setBCat] = useState('all');
+  // 모델별 요소(지연 열거 캐시) — 트리 카테고리/대상 해석에 사용.
+  const elemCacheRef = useRef<Map<number, { elements: ApsElement[]; groups: Map<string, number[]> }>>(
+    new Map(),
+  );
+  const ensureElements = async (cm: ClashModel) => {
+    const id = cm.model.id as number;
+    const cached = elemCacheRef.current.get(id);
+    if (cached) return cached;
+    const elements = await enumerateApsElements(cm.model);
+    const v = { elements, groups: groupByCategory(elements) };
+    elemCacheRef.current.set(id, v);
+    return v;
+  };
+
+  // 트리 펼침/카테고리 표시.
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [cats, setCats] = useState<Map<number, { name: string; count: number }[]>>(new Map());
+  const [loadingModel, setLoadingModel] = useState<number | null>(null);
+  const [filter, setFilter] = useState('');
+
+  const modelsById = useMemo(() => {
+    const m = new Map<number, ClashModel>();
+    for (const cm of models) m.set(cm.model.id, cm);
+    return m;
+  }, [models]);
+
+  const toggleModel = async (cm: ClashModel) => {
+    const id = cm.model.id as number;
+    const isOpen = expanded.has(id);
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (isOpen) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    if (!isOpen && !cats.has(id)) {
+      setLoadingModel(id);
+      try {
+        const v = await ensureElements(cm);
+        const list = [...v.groups.entries()]
+          .map(([name, ids]) => ({ name, count: ids.length }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setCats((prev) => new Map(prev).set(id, list));
+      } catch {
+        setCats((prev) => new Map(prev).set(id, []));
+      } finally {
+        setLoadingModel(null);
+      }
+    }
+  };
+
+  // 대상 선택.
+  const [aSel, setASel] = useState<SelRef | null>(null);
+  const [bSel, setBSel] = useState<SelRef | null>(null);
+  const assign = (side: 'A' | 'B', ref: SelRef) => {
+    if (side === 'A') setASel((cur) => (eqSel(cur, ref) ? null : ref));
+    else setBSel((cur) => (eqSel(cur, ref) ? null : ref));
+  };
+  const selLabel = (sel: SelRef | null) => {
+    if (!sel) return '미선택';
+    const cm = modelsById.get(sel.modelId);
+    const base = cm?.name ?? '모델';
+    return sel.cat === 'all' ? `${base} · 전체` : `${base} · ${sel.cat}`;
+  };
+
   const [type, setType] = useState<ClashType>('hard');
   const [tolerance, setTolerance] = useState(0.01);
-
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<{ ratio: number; phase: string } | null>(null);
   const cancelRef = useRef(false);
@@ -108,59 +180,58 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
 
   const [tests, setTests] = useState<ClashTestMeta[]>([]);
   const [selTest, setSelTest] = useState('');
-
   const [issueFor, setIssueFor] = useState<ClashRow | null>(null);
 
-  const groups = useMemo(() => groupByCategory(elements), [elements]);
-  const metaMap = useMemo(() => elementMetaMap(elements), [elements]);
-  const catNames = useMemo(
-    () => [...groups.keys()].sort((a, b) => a.localeCompare(b)),
-    [groups],
-  );
-
-  // 모델 요소를 한 번 열거(이름·카테고리).
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setStatus('요소 분석 중…');
-      try {
-        const els = await enumerateApsElements(model);
-        if (!cancelled) {
-          setElements(els);
-          setStatus(`요소 ${els.length}개`);
-        }
-      } catch (e) {
-        if (!cancelled) setStatus(`요소 분석 실패: ${(e as Error).message}`);
-      }
-    })();
     listClashTests(projectId).then(setTests).catch(() => {});
-    return () => {
-      cancelled = true;
-      clearApsClashView(viewer, model);
-    };
+    return () => clearApsClashView(viewer, models.map((m) => m.model));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const dbIdsFor = (cat: string): number[] =>
-    cat === 'all' ? elements.map((e) => e.dbId) : groups.get(cat) ?? [];
+  // 선택 → 대상(모델,dbId) 목록 + 메타맵.
+  const resolveTargets = async (sel: SelRef): Promise<ApsClashTarget[]> => {
+    const cm = modelsById.get(sel.modelId);
+    if (!cm) return [];
+    const v = await ensureElements(cm);
+    const dbIds = sel.cat === 'all' ? v.elements.map((e) => e.dbId) : v.groups.get(sel.cat) ?? [];
+    return dbIds.map((dbId) => ({ model: cm.model, dbId }));
+  };
+  const buildMetaMap = async (sels: SelRef[]): Promise<ApsMetaResolver> => {
+    const map: ApsMetaResolver = new Map();
+    const seen = new Set<number>();
+    for (const s of sels) {
+      const cm = modelsById.get(s.modelId);
+      if (!cm || seen.has(s.modelId)) continue;
+      seen.add(s.modelId);
+      const v = await ensureElements(cm);
+      for (const e of v.elements) map.set(targetKey(cm.model.id, e.dbId), { name: e.name, category: e.category });
+    }
+    return map;
+  };
 
   const run = async () => {
     if (running) return;
-    const A = dbIdsFor(aCat);
-    const B = dbIdsFor(bCat);
-    if (!A.length || !B.length) {
-      setStatus('대상 집합이 비어 있습니다.');
+    if (!aSel || !bSel) {
+      setStatus('대상 A·B 를 모두 선택하세요.');
       return;
     }
     setRunning(true);
     cancelRef.current = false;
     setProgress({ ratio: 0, phase: '준비' });
     try {
+      const [itemsA, itemsB, metaMap] = await Promise.all([
+        resolveTargets(aSel),
+        resolveTargets(bSel),
+        buildMetaMap([aSel, bSel]),
+      ]);
+      if (!itemsA.length || !itemsB.length) {
+        setStatus('대상 집합이 비어 있습니다.');
+        return;
+      }
       const hits = await runApsClashDetection({
         viewer,
-        model,
-        dbIdsA: A,
-        dbIdsB: B,
+        itemsA,
+        itemsB,
         type,
         tolerance,
         metaMap,
@@ -173,9 +244,7 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
       setDbBacked(false);
       setSelTest('');
       setActiveId(null);
-      setStatus(
-        `간섭 ${next.length}건${inherited ? ` (상태 승계 ${inherited}건)` : ''}`,
-      );
+      setStatus(`간섭 ${next.length}건${inherited ? ` (상태 승계 ${inherited}건)` : ''}`);
     } catch (e) {
       setStatus(`검사 실패: ${(e as Error).message}`);
     } finally {
@@ -186,23 +255,30 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
 
   const onRowClick = (r: ClashRow) => {
     setActiveId(r.id);
-    showApsClash(viewer, model, r.a.expressID, r.b.expressID);
+    const aModel = modelsById.get(r.a.modelID)?.model;
+    const bModel = modelsById.get(r.b.modelID)?.model;
+    showApsClash(viewer, aModel, r.a.expressID, bModel, r.b.expressID);
   };
+
+  const mappingsMap = useMemo(() => {
+    const m = new Map<number, ApsMapping>();
+    for (const cm of models) m.set(cm.model.id, cm.mapping);
+    return m;
+  }, [models]);
 
   const save = async () => {
     if (!rows.length) return;
-    const name = `간섭 ${new Date().toLocaleString('ko-KR')}`;
     setStatus('저장 중…');
     try {
       const id = await saveApsClashTest({
         projectId,
-        name,
-        setA: aCat === 'all' ? '전체' : aCat,
-        setB: bCat === 'all' ? '전체' : bCat,
+        name: `간섭 ${new Date().toLocaleString('ko-KR')}`,
+        setA: selLabel(aSel),
+        setB: selLabel(bSel),
         type,
         tolerance,
         rows,
-        mapping,
+        mappings: mappingsMap,
       });
       setDbBacked(true);
       setSelTest(id);
@@ -219,7 +295,7 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
     setStatus('불러오는 중…');
     try {
       const loaded = await loadApsClashes(testId);
-      setRows(loadedApsToRows(loaded, mapping));
+      setRows(loadedApsToRows(loaded, models.map((m) => m.mapping)));
       setDbBacked(true);
       setActiveId(null);
       setStatus(`불러옴 ${loaded.length}건`);
@@ -254,7 +330,6 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
     }
   };
 
-  // 간섭 → 이슈(요소 A 의 GlobalId 를 앵커로).
   const [issueTitle, setIssueTitle] = useState('');
   const [issueDesc, setIssueDesc] = useState('');
   const [issuePriority, setIssuePriority] = useState<IssuePriority>('high');
@@ -269,7 +344,7 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
   const submitIssue = async () => {
     const r = issueFor;
     if (!r) return;
-    const globalId = mapping.dbIdToGlobalId.get(r.a.expressID) ?? null;
+    const globalId = mappingsMap.get(r.a.modelID)?.dbIdToGlobalId.get(r.a.expressID) ?? null;
     try {
       const issueId = await createIssue(
         projectId,
@@ -287,14 +362,8 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
     }
   };
 
-  const visibleRows = useMemo(
-    () => rows.filter((r) => statusFilter.has(r.status)),
-    [rows, statusFilter],
-  );
-  const grouped = useMemo(
-    () => groupClashes(visibleRows, groupBy, sortBy),
-    [visibleRows, groupBy, sortBy],
-  );
+  const visibleRows = useMemo(() => rows.filter((r) => statusFilter.has(r.status)), [rows, statusFilter]);
+  const grouped = useMemo(() => groupClashes(visibleRows, groupBy, sortBy), [visibleRows, groupBy, sortBy]);
   const openCount = rows.filter((r) => OPEN_CLASH_STATUSES.includes(r.status)).length;
 
   const toggleStatusFilter = (s: ClashStatus) =>
@@ -311,6 +380,26 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
       else next.add(key);
       return next;
     });
+
+  // 트리 한 줄: [A][B] 토글 + 라벨.
+  const ABButtons = (ref: SelRef) => (
+    <span style={{ display: 'inline-flex', gap: 4, marginRight: 6 }}>
+      <button
+        onClick={() => assign('A', ref)}
+        title="대상 A 로"
+        style={{ ...abBtn, ...(eqSel(aSel, ref) ? abA : {}) }}
+      >
+        A
+      </button>
+      <button
+        onClick={() => assign('B', ref)}
+        title="대상 B 로"
+        style={{ ...abBtn, ...(eqSel(bSel, ref) ? abB : {}) }}
+      >
+        B
+      </button>
+    </span>
+  );
 
   let globalIdx = 0;
 
@@ -333,21 +422,13 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
         boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
       }}
     >
-      {/* 헤더(드래그 이동) */}
       <div
         onMouseDown={startDrag('move')}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '8px 10px',
-          borderBottom: '1px solid var(--border)',
-          cursor: 'move',
-        }}
+        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderBottom: '1px solid var(--border)', cursor: 'move' }}
       >
-        <strong style={{ fontSize: 13 }}>🔍 간섭체크 (ACC)</strong>
+        <strong style={{ fontSize: 13 }}>🔍 간섭체크</strong>
         <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-          {rows.length ? `총 ${rows.length} · 미해결 ${openCount}` : ''}
+          {rows.length ? `총 ${rows.length} · 미해결 ${openCount}` : `모델 ${models.length}`}
         </span>
         <span style={{ flex: 1 }} />
         <button onClick={onClose} style={btn}>
@@ -356,32 +437,63 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
       </div>
 
       <div style={{ padding: 10, overflowY: 'auto', flex: 1 }}>
-        {/* 집합 선택(카테고리) */}
-        <div style={{ display: 'flex', gap: 8 }}>
-          <div style={{ flex: 1 }}>
-            <label style={lbl}>대상 A</label>
-            <select value={aCat} onChange={(e) => setACat(e.target.value)} style={sel}>
-              <option value="all">전체 ({elements.length})</option>
-              {catNames.map((c) => (
-                <option key={c} value={c}>
-                  {c} ({groups.get(c)?.length ?? 0})
-                </option>
-              ))}
-            </select>
-          </div>
-          <div style={{ flex: 1 }}>
-            <label style={lbl}>대상 B</label>
-            <select value={bCat} onChange={(e) => setBCat(e.target.value)} style={sel}>
-              <option value="all">전체 ({elements.length})</option>
-              {catNames.map((c) => (
-                <option key={c} value={c}>
-                  {c} ({groups.get(c)?.length ?? 0})
-                </option>
-              ))}
-            </select>
-          </div>
+        {/* 대상 트리(모델 → 카테고리) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <strong style={{ fontSize: 12 }}>대상 선택</strong>
+          <span style={{ flex: 1 }} />
+          {onAddModels && (
+            <button onClick={onAddModels} style={{ ...btn, fontSize: 11 }} title="ACC 폴더에서 비교할 파일 겹쳐 로드">
+              ＋ 파일 추가
+            </button>
+          )}
+        </div>
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="카테고리 검색…"
+          style={{ ...sel, marginTop: 6 }}
+        />
+        <div style={{ border: '1px solid var(--border)', borderRadius: 6, marginTop: 6, maxHeight: 200, overflowY: 'auto' }}>
+          {models.map((cm) => {
+            const id = cm.model.id as number;
+            const open = expanded.has(id);
+            const list = (cats.get(id) ?? []).filter(
+              (c) => !filter || c.name.toLowerCase().includes(filter.toLowerCase()),
+            );
+            return (
+              <div key={id} style={{ borderBottom: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', padding: '4px 6px' }}>
+                  <button onClick={() => void toggleModel(cm)} style={{ ...rowBtn, width: 16 }}>
+                    {loadingModel === id ? '⏳' : open ? '▾' : '▸'}
+                  </button>
+                  {ABButtons({ modelId: id, cat: 'all' })}
+                  <span style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    🧱 {cm.name}
+                  </span>
+                </div>
+                {open &&
+                  list.map((c) => (
+                    <div key={c.name} style={{ display: 'flex', alignItems: 'center', padding: '2px 6px 2px 24px' }}>
+                      {ABButtons({ modelId: id, cat: c.name })}
+                      <span style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {c.name} <span style={{ color: 'var(--muted)' }}>({c.count})</span>
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display: 'flex', gap: 10, marginTop: 6, fontSize: 11 }}>
+          <span>
+            <b style={{ color: '#16a34a' }}>A</b> {selLabel(aSel)}
+          </span>
+          <span>
+            <b style={{ color: '#dc2626' }}>B</b> {selLabel(bSel)}
+          </span>
         </div>
 
+        {/* 검사 옵션 */}
         <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'flex-end' }}>
           <div>
             <label style={lbl}>유형</label>
@@ -400,7 +512,7 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
               style={{ ...sel, width: 90 }}
             />
           </div>
-          <button onClick={() => void run()} disabled={running} style={{ ...btnPrimary, flex: 1 }}>
+          <button onClick={() => void run()} disabled={running || !aSel || !bSel} style={{ ...btnPrimary, flex: 1 }}>
             {running ? '검사 중…' : '간섭 검사'}
           </button>
           {running && (
@@ -409,7 +521,6 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
             </button>
           )}
         </div>
-
         {progress && (
           <div style={{ marginTop: 6, fontSize: 12, color: 'var(--muted)' }}>
             {progress.phase} · {Math.round(progress.ratio * 100)}%
@@ -462,11 +573,7 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
               const n = rows.filter((r) => r.status === s).length;
               const on = statusFilter.has(s);
               return (
-                <button
-                  key={s}
-                  onClick={() => toggleStatusFilter(s)}
-                  style={{ ...chip, opacity: on ? 1 : 0.4 }}
-                >
+                <button key={s} onClick={() => toggleStatusFilter(s)} style={{ ...chip, opacity: on ? 1 : 0.4 }}>
                   {CLASH_STATUS_LABEL[s]} {n}
                 </button>
               );
@@ -479,10 +586,7 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
           {grouped.map((g) => (
             <div key={g.key} style={{ marginBottom: 8 }}>
               {groupBy !== 'none' && (
-                <button
-                  onClick={() => toggleCollapse(g.key)}
-                  style={{ ...groupHeader }}
-                >
+                <button onClick={() => toggleCollapse(g.key)} style={groupHeader}>
                   {collapsed.has(g.key) ? '▸' : '▾'} {g.label} · 미해결 {g.open}/{g.rows.length}
                 </button>
               )}
@@ -494,18 +598,9 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
                   return (
                     <div
                       key={r.id}
-                      style={{
-                        border: '1px solid var(--border)',
-                        borderRadius: 6,
-                        padding: 8,
-                        marginTop: 6,
-                        background: active ? 'var(--panel-2)' : 'transparent',
-                      }}
+                      style={{ border: '1px solid var(--border)', borderRadius: 6, padding: 8, marginTop: 6, background: active ? 'var(--panel-2)' : 'transparent' }}
                     >
-                      <div
-                        onClick={() => onRowClick(r)}
-                        style={{ cursor: 'pointer', fontSize: 12, display: 'flex', gap: 6 }}
-                      >
+                      <div onClick={() => onRowClick(r)} style={{ cursor: 'pointer', fontSize: 12, display: 'flex', gap: 6 }}>
                         <span style={{ color: 'var(--muted)' }}>#{idx}</span>
                         <span style={{ flex: 1 }}>
                           <span style={{ color: '#16a34a' }}>A</span> {r.a.name || r.a.category}
@@ -547,29 +642,14 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
         <div style={{ marginTop: 8, fontSize: 12, color: 'var(--muted)' }}>{status}</div>
       </div>
 
-      {/* 간섭 → 이슈 모달 */}
       {issueFor && (
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            background: 'rgba(0,0,0,0.4)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderRadius: 8,
-          }}
-        >
+        <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8 }}>
           <div style={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, width: '88%' }}>
             <strong style={{ fontSize: 13 }}>간섭 → 이슈</strong>
             <label style={lbl}>제목</label>
             <input value={issueTitle} onChange={(e) => setIssueTitle(e.target.value)} style={sel} />
             <label style={lbl}>내용</label>
-            <textarea
-              value={issueDesc}
-              onChange={(e) => setIssueDesc(e.target.value)}
-              style={{ ...sel, height: 80, resize: 'vertical' }}
-            />
+            <textarea value={issueDesc} onChange={(e) => setIssueDesc(e.target.value)} style={{ ...sel, height: 80, resize: 'vertical' }} />
             <label style={lbl}>우선순위</label>
             <select value={issuePriority} onChange={(e) => setIssuePriority(e.target.value as IssuePriority)} style={sel}>
               {ISSUE_PRIORITIES.map((p) => (
@@ -590,11 +670,7 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, canEdit, onCl
         </div>
       )}
 
-      {/* 크기조절 핸들 */}
-      <div
-        onMouseDown={startDrag('resize')}
-        style={{ position: 'absolute', right: 0, bottom: 0, width: 16, height: 16, cursor: 'nwse-resize' }}
-      />
+      <div onMouseDown={startDrag('resize')} style={{ position: 'absolute', right: 0, bottom: 0, width: 16, height: 16, cursor: 'nwse-resize' }} />
     </div>
   );
 }
@@ -617,17 +693,24 @@ const btn: React.CSSProperties = {
   color: 'var(--text)',
   cursor: 'pointer',
 };
-const btnPrimary: React.CSSProperties = {
-  ...btn,
-  background: 'var(--accent)',
-  color: 'var(--accent-fg)',
-  border: '1px solid var(--accent)',
+const btnPrimary: React.CSSProperties = { ...btn, background: 'var(--accent)', color: 'var(--accent-fg)', border: '1px solid var(--accent)' };
+const chip: React.CSSProperties = { ...btn, fontSize: 11, padding: '2px 8px' };
+const rowBtn: React.CSSProperties = { background: 'transparent', border: 'none', color: 'var(--muted)', cursor: 'pointer', padding: 0 };
+const abBtn: React.CSSProperties = {
+  width: 18,
+  height: 18,
+  fontSize: 10,
+  fontWeight: 700,
+  borderRadius: 4,
+  border: '1px solid var(--border)',
+  background: 'var(--bg)',
+  color: 'var(--muted)',
+  cursor: 'pointer',
+  lineHeight: '16px',
+  padding: 0,
 };
-const chip: React.CSSProperties = {
-  ...btn,
-  fontSize: 11,
-  padding: '2px 8px',
-};
+const abA: React.CSSProperties = { background: '#16a34a', color: '#fff', border: '1px solid #16a34a' };
+const abB: React.CSSProperties = { background: '#dc2626', color: '#fff', border: '1px solid #dc2626' };
 const groupHeader: React.CSSProperties = {
   width: '100%',
   textAlign: 'left',
