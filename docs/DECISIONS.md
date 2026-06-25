@@ -13,7 +13,7 @@
 | D7 | DB 변경은 **추가형 마이그레이션** (`000N_*.sql`) | 세션 간 충돌·이력 관리 |
 | D8 | 제품명 **MIR SMART** (쌍용건설 스마트 건설기술 플랫폼). 구 명칭 MIR_VDC | 사명(쌍용건설/Ssangyong E&C) 브랜딩에 맞춤 |
 | D9 | 세션 시작 **SessionStart 훅**(동기)으로 `npm install` + wasm 복사 | 세션마다 즉시 개발 가능 |
-| D10 | 문서 뷰어 충실도: **단기=무료 클라 라이브러리 업그레이드**(Word `docx-preview` 등) **+ 장기=서버 변환→PDF**(LibreOffice/Gotenberg 로 PPT·HWP·구포맷까지). **MS/Google 온라인 임베드는 비채택** | 클라만으론 오피스 100% 재현 불가. 서버 변환이 완성도·포맷 커버리지 최선. 외부 임베드는 **기밀 도면이 MS/Google 서버로 전송**돼 부적합 |
+| D10 | 문서 뷰어 충실도: **Office 포맷(doc·docx·ppt·pptx·xls·xlsx·xlsm)은 Microsoft Office Online 임베드 채택**(`OfficeViewer`, view.officeapps.live.com, 풀스크린 인라인). 공개 Autodesk/Supabase **단기 서명 URL**만 전달(우리 세션 JWT 미노출). 그 외(csv=자체 표뷰어, pdf=pdf.js, 이미지/영상=자체). ~~단기=무료 클라 라이브러리~~/~~장기=서버 변환~~ 경로는 보류. **개정 2026-06(사용자 확정)**: 구 결정 "MS/Google 온라인 임베드 비채택(기밀 도면 외부 전송 우려)" → **채택**. 기밀 도면 포함 허용 | ACC 자체가 ISO19650 준수 인증을 받았고 우리는 그 흐름을 따른다 → 외부 임베드 우려가 해소됨. 사용자 우선순위 = "잘 보이는 것"(pptx-preview 등 자체 렌더는 화질이 ACC 대비 떨어짐). **트레이드오프**: Office 문서가 view.officeapps.live.com 로 감 → **후속 점검 = 서명 URL 만료를 짧게**(노출 창 최소화) |
 
 | D11 | **포털/CDE 쓰기는 관리자(admin)만, 멤버는 읽기 전용** (`0009_admin_writes.sql` + UI 가드). 모델·문서 업로드, 대시보드/공정/일보/이슈/기성/하도급/게시판 입력·수정·삭제 전부 admin | 사용자 결정 "모든 건 admin 계정이 진행". RLS로 강제 + 비-admin 에는 편집 UI 숨김. 특정 모듈을 멤버 협업으로 풀려면 해당 테이블 정책만 `is_member` 로 완화 |
 | D12 | **CDE 문서 삭제는 D11 예외 — 업로더 본인 + 관리자** (`files`·`storage.objects` 삭제 정책을 `uploaded_by = auth.uid() or is_admin()` 로 완화). **S31** 에서 적용 | 사용자 결정: 본인이 올린 문서는 본인이 지울 수 있어야 함. 발행(Published) 상태 가드는 후속 검토 |
