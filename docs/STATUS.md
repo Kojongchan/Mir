@@ -2,6 +2,26 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
+**[S49-b] 2026-06-25 · 간섭체크 메뉴화 + 모델간 간섭(멀티모델) + 트리 A/B 선택** (branch `claude/blissful-mccarthy-mebctq`)
+> 사용자 라이브 검증 결과 **PoC OK**("잘 작동함!! 아주 좋음", 단일 모델 카테고리 간섭 3건 검출·시각화 확인).
+> 이후 요청 반영. typecheck·build 통과.
+- ✅ **간섭체크 좌측 메뉴(`/clash`) → APS(ACC) 뷰어 clash 모드**(`AccModels autoClash`). 구 IFC Workspace
+  clash 는 라우트만 교체하고 코드는 백업 보존(패리티 전 은퇴 금지).
+- ✅ **2가지 방법**: ① 고정(열린) 모델에서 바로 간섭, ② **'＋ 파일 추가'**로 ACC 폴더의 비교 파일을 **겹쳐
+  로드**(`loadDocumentNode keepCurrentModels`)해 **모델간 간섭**.
+- ✅ **대상 A/B 를 ACC 모델 트리처럼 (모델 → 카테고리) 계층**에서 [A][B] 토글로 선택 + 카테고리 검색.
+- ✅ **엔진/뷰/영속화 멀티모델 확장**: apsClash 대상=`(model,dbId)`(키 modelId:dbId)·apsClashView
+  `showApsClash(aModel/bModel)` 모델별 격리+합집합 fitBounds·clashApi 저장 `mappings(model.id→mapping)`
+  GlobalId 해석/로드 다중매핑 검색. AccModels `clashModels` 누적(트리생성 이벤트 모델별 매핑·요소),
+  primary 모델은 이슈핀 앵커 유지.
+- 📌 **다음/미해결(라이브 확인 권장)**: ① 모델간 겹쳐 로드(aggregate)·`keepCurrentModels` 실동작 ②
+  모델간 간섭 시각화(서로 다른 모델 isolate/theming) ③ 대용량(예: 122k 요소) 카테고리 열거 성능(현재
+  지연 열거) ④ 간섭 스냅샷 첨부(S35 APS판) ⑤ 카테고리 추출 정교화 ⑥ 단위 m 가정 tolerance.
+- **인수인계 한 줄**: → 간섭체크 메뉴=APS, 모델간 간섭·트리 선택 구현·푸시. 다음 세션은 **모델간 겹쳐 로드/
+  시각화 라이브 검증**부터.
+
+---
+
 **[S49] 2026-06-25 · 간섭·이슈를 APS Viewer 위로 이식 — 무비용 자체구현** (branch `claude/blissful-mccarthy-mebctq`)
 > 우선순위 간섭 > 이슈핀 > 이슈. ACC가 브라우저에 로드한 fragment 지오·dbId·externalId 만으로
 > 자체 구현(비용 0). 식별키는 **GlobalId(=externalId)** 로 통일. **마이그레이션 0024·0025는 S48이
