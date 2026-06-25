@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
@@ -124,6 +124,14 @@ export function Issues() {
   };
 
   const shown = filter === 'all' ? issues : issues.filter((i) => i.status === filter);
+  // 생성 순(오래된→최신) 순차 번호 — 간섭 저장 순서와 무관(#5).
+  const numberOf = useMemo(() => {
+    const m = new Map<string, number>();
+    [...issues]
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .forEach((it, i) => m.set(it.id, i + 1));
+    return m;
+  }, [issues]);
 
   return (
     <div className="dash">
@@ -175,6 +183,7 @@ export function Issues() {
           <table className="cde-table">
             <thead>
               <tr>
+                <th style={{ width: 48 }}>번호</th>
                 <th>제목</th>
                 <th>상태</th>
                 <th>우선순위</th>
@@ -187,6 +196,7 @@ export function Issues() {
               {shown.map((it) => (
                 <IssueRow
                   key={it.id}
+                  num={numberOf.get(it.id) ?? 0}
                   issue={it}
                   open={openId === it.id}
                   canEdit={canEdit}
@@ -200,7 +210,7 @@ export function Issues() {
                 />
               ))}
               {shown.length === 0 && (
-                <tr><td colSpan={6} className="muted empty">이슈가 없습니다.</td></tr>
+                <tr><td colSpan={7} className="muted empty">이슈가 없습니다.</td></tr>
               )}
             </tbody>
           </table>
@@ -227,6 +237,7 @@ function DueCell({ issue }: { issue: Issue }) {
 }
 
 function IssueRow({
+  num,
   issue,
   open,
   canEdit,
@@ -238,6 +249,7 @@ function IssueRow({
   onAssign,
   onDelete,
 }: {
+  num: number;
   issue: Issue;
   open: boolean;
   canEdit: boolean;
@@ -254,6 +266,7 @@ function IssueRow({
   return (
     <>
       <tr>
+        <td className="nowrap" style={{ color: 'var(--muted)', textAlign: 'center' }}>#{num}</td>
         <td className="cde-fname">
           <button className="cde-link" onClick={onToggle}>{open ? '▾ ' : '▸ '}{issue.title}</button>
         </td>
@@ -274,7 +287,7 @@ function IssueRow({
       </tr>
       {open && (
         <tr className="issue-detail-row">
-          <td colSpan={6}>
+          <td colSpan={7}>
             <IssueDetail
               issue={issue}
               canEdit={canEdit}
@@ -307,6 +320,7 @@ function IssueDetail({
   const [events, setEvents] = useState<IssueEvent[]>([]);
   const [body, setBody] = useState('');
   const hasLocation = !!issue.model_id && issue.express_id != null;
+  const hasGlobal = !!issue.global_id; // APS/ACC 앵커(S49) — GlobalId→dbId 위치보기
 
   useEffect(() => {
     listComments(issue.id).then(setComments).catch(() => setComments([]));
@@ -338,8 +352,21 @@ function IssueDetail({
         </div>
       )}
 
-      {(hasLocation || issue.viewpoint_id) && (
+      {(hasLocation || hasGlobal || issue.viewpoint_id) && (
         <p style={{ margin: '0 0 10px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {hasGlobal && (
+            <button
+              onClick={() =>
+                navigate(
+                  issue.global_id_b
+                    ? `/project/${issue.project_id}/clash?focusClashA=${encodeURIComponent(issue.global_id!)}&focusClashB=${encodeURIComponent(issue.global_id_b)}`
+                    : `/project/${issue.project_id}/acc?focusGlobalId=${encodeURIComponent(issue.global_id!)}`,
+                )
+              }
+            >
+              📍 위치 보기 {issue.global_id_b ? '(간섭 뷰)' : '(ACC 모델)'}
+            </button>
+          )}
           {hasLocation && (
             <button
               onClick={() =>

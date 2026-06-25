@@ -2,6 +2,90 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
+---
+## 📋 [기획자 전달] S49 종합 — APS(ACC) 위 간섭체크 · 이슈 이식 (2026-06-26)
+> branch `claude/blissful-mccarthy-mebctq` (main 대비 14커밋, 충돌 0 · FF 가능). typecheck·build 통과.
+> **요지**: ACC 통합모델(nwd) 위에서 우리 고유기능(간섭·이슈)을 **추가 비용 0**으로 자체 구현 완료.
+> 식별키를 web-ifc expressID → **GlobalId(=APS externalId)** 로 통일.
+
+### ✅ 완성된 기능
+1. **간섭체크(좌측 메뉴 = APS)**: ACC 통합모델 트리에서 **대상 A·B 를 각각 트리로 선택**(파일→부재) →
+   fragment+MeshBVH 로 Hard/Clearance 간섭 검출(무료). 결과 목록·그룹(없음/카테고리/모델/상태)·정렬·
+   상태칩 필터. **관통깊이는 실측**(상대 솔리드 내부 침투 최대거리, 면접촉≈0은 허용오차로 제외).
+2. **결과 시각화**: 행 클릭 시 **간섭 파일만 솔리드(부재 A초록/B빨강) + 다른 파일 완전 숨김**. 툴바
+   `전체 표시`/`반투명` 전환.
+3. **저장/내보내기**: GlobalId 키로 DB 저장(제목 입력)·불러오기·상태변경 · **CSV(모델=상위 파일명)** ·
+   **이미지 포함 HTML 간섭 보고서**(각 간섭 스냅샷 자동 캡처·검토개요/요약표/항목별 상세표).
+4. **간섭 → 이슈**: 결과에서 이슈 생성(4컷 자동 캡처 → 원하는 뷰 선택 첨부). 이슈에 A·B 양쪽 앵커 저장.
+5. **이슈 핀(3D)**: GlobalId 앵커 → 3D에 SVG 핀(생성순 번호·거리 원근 스케일·켜기/끄기). 클릭 팝업.
+6. **위치 보기**: 이슈에서 '위치 보기' → 간섭 이슈는 간섭체크 메뉴로 이동해 **그 간섭뷰(A↔B) 복원**,
+   일반 이슈는 해당 객체 isolate+줌. 이슈 탭에 **순차 번호** 표시.
+
+### ⚠️ 운영 적용 필수
+- **마이그레이션 0026·0027·0028** 적용(issues.global_id/global_id_b, clashes.global_id_a/b).
+- 기존 전제(APS_CLIENT_ID/SECRET·ACC 권한)는 그대로.
+
+### 🔭 남은 일 / 미해결 (기획 판단 필요)
+- **결과뷰 '이상안'(상위 파일 반투명 + 다른 파일 숨김 동시)**: APS ghosting이 **전역 설정**이라 표준
+  API로는 불가 → 현재 '상위 파일 솔리드 + 다른 파일 숨김'(옵션1)로 적용. per-object 투명 머티리얼
+  (저수준 API) 검토는 후속 과제.
+- **관통깊이 정밀 시각화**(겹침 부피 하이라이트/관통 화살표): 단순 라벨은 부실해 **보류**(제거함).
+- **라이브 검증 필요**(원격 환경에서 ACC 미검증): 대형 모델 카테고리 열거 성능 · getScreenShot 캡처 ·
+  단위 m 가정 tolerance · 모델간(다른 파일 A/B) 간섭.
+- 자체 IfcViewer 은퇴는 패리티 증명 후(IFC 백업 유지).
+
+---
+
+**[S49-b] 2026-06-25 · 간섭체크 메뉴화 + 모델간 간섭(멀티모델) + 트리 A/B 선택** (branch `claude/blissful-mccarthy-mebctq`)
+> 사용자 라이브 검증 결과 **PoC OK**("잘 작동함!! 아주 좋음", 단일 모델 카테고리 간섭 3건 검출·시각화 확인).
+> 이후 요청 반영. typecheck·build 통과.
+- ✅ **간섭체크 좌측 메뉴(`/clash`) → APS(ACC) 뷰어 clash 모드**(`AccModels autoClash`). 구 IFC Workspace
+  clash 는 라우트만 교체하고 코드는 백업 보존(패리티 전 은퇴 금지).
+- ✅ **2가지 방법**: ① 고정(열린) 모델에서 바로 간섭, ② **'＋ 파일 추가'**로 ACC 폴더의 비교 파일을 **겹쳐
+  로드**(`loadDocumentNode keepCurrentModels`)해 **모델간 간섭**.
+- ✅ **대상 A/B 를 ACC 모델 트리처럼 (모델 → 카테고리) 계층**에서 [A][B] 토글로 선택 + 카테고리 검색.
+- ✅ **엔진/뷰/영속화 멀티모델 확장**: apsClash 대상=`(model,dbId)`(키 modelId:dbId)·apsClashView
+  `showApsClash(aModel/bModel)` 모델별 격리+합집합 fitBounds·clashApi 저장 `mappings(model.id→mapping)`
+  GlobalId 해석/로드 다중매핑 검색. AccModels `clashModels` 누적(트리생성 이벤트 모델별 매핑·요소),
+  primary 모델은 이슈핀 앵커 유지.
+- 📌 **다음/미해결(라이브 확인 권장)**: ① 모델간 겹쳐 로드(aggregate)·`keepCurrentModels` 실동작 ②
+  모델간 간섭 시각화(서로 다른 모델 isolate/theming) ③ 대용량(예: 122k 요소) 카테고리 열거 성능(현재
+  지연 열거) ④ 간섭 스냅샷 첨부(S35 APS판) ⑤ 카테고리 추출 정교화 ⑥ 단위 m 가정 tolerance.
+- **인수인계 한 줄**: → 간섭체크 메뉴=APS, 모델간 간섭·트리 선택 구현·푸시. 다음 세션은 **모델간 겹쳐 로드/
+  시각화 라이브 검증**부터.
+
+---
+
+**[S49] 2026-06-25 · 간섭·이슈를 APS Viewer 위로 이식 — 무비용 자체구현** (branch `claude/blissful-mccarthy-mebctq`)
+> 우선순위 간섭 > 이슈핀 > 이슈. ACC가 브라우저에 로드한 fragment 지오·dbId·externalId 만으로
+> 자체 구현(비용 0). 식별키는 **GlobalId(=externalId)** 로 통일. **마이그레이션 0024·0025는 S48이
+> 선점 → 본 세션은 0026·0027 사용.** typecheck·build 통과.
+- ✅ **선결(Step 0) — `lib/apsMapping.ts`**: APS `getExternalIdMapping()`(+instanceTree/bulkProperties
+  폴백)로 **dbId↔GlobalId 양방향 인덱스** 비동기 구축·모델별 캐시. 이후 전 단계가 의존.
+- ✅ **Step 1 간섭(최우선) — `lib/apsClash.ts`**: fragment(LMV 인터리브 VB)를 월드행렬 적용해 읽어
+  **dbId별 MeshBVH** 구축 → 광역(AABB 후보)·협역(BVH 교차·관통깊이). 출력은 `clash.ts ClashHit`
+  호환(**expressID 슬롯에 dbId**) → groupClashes/정렬/CSV/ClashPanel 패턴 그대로. 시각화
+  `lib/apsClashView.ts`(showClash A초록/B빨강+ghost+줌을 setThemingColor/isolate/fitToView 로 1:1).
+  영속화 `clashApi.saveApsClashTest/loadApsClashes/loadedApsToRows`(저장키=GlobalId, 0027 a/b 컬럼).
+  UI `components/ApsClashPanel.tsx`(카테고리 2단계 선택·검사·저장/불러오기·상태·간섭→이슈).
+  요소 열거 `lib/apsElements.ts`.
+- ✅ **Step 2 이슈 핀 — `components/ApsIssuePins.tsx`**: global_id 앵커 → dbId bbox중심 → `worldToClient`
+  HTML 마커(카메라 이동 rAF 재계산) + 클릭 팝업(기존 이슈 데이터 재사용). AccModels 에 매핑 구축·
+  이슈 로드·선택 dbId→GlobalId '＋이슈' 생성·핀/간섭 토글 배선. (0026 `issues.global_id`)
+- ✅ **Step 3 위치 보기 — `Issues.tsx`**: global_id 이슈에 '위치 보기(ACC)' → `/acc?focusGlobalId=` 딥링크
+  → GlobalId→dbId **isolate+fitToView**. 기존 IFC(model_id/express_id) 위치보기 경로는 백업 유지.
+- ⚠️ **운영 적용**: 마이그레이션 **0026·0027** 적용 필요. APS_CLIENT_ID/SECRET·ACC 권한은 기존 전제.
+- ⚠️ **라이브 검증 필요(원격 egress 제약으로 미검증)**: 실제 ACC 모델에서 ① fragment VB 추출/BVH 교차가
+  맞는지(PoC: 교차 1건) ② getExternalIdMapping 의 externalId 가 IFC GlobalId/Revit UniqueId 로 잘
+  나오는지 ③ worldToClient 핀 좌표·setThemingColor/isolate/fitToView 동작. 막히면 즉시 공유 권장.
+- 📌 **다음/미해결**: ① **PoC 라이브 검증**(작은 ACC 모델 교차 1건) ② 간섭 스냅샷 첨부(S35 captureClashViews
+  의 APS 판) ③ 카테고리 추출 정교화(현재 Revit 'Category'·이름 추정 — IFC 타입 정확도 점검) ④ 모델 단위가
+  m 아닌 경우 tolerance 환산 ⑤ 자체 IfcViewer 은퇴는 패리티 증명 후(IFC 백업 유지).
+- **인수인계 한 줄**: → S49 간섭·이슈핀·위치보기 코드 이식 완료(0026·0027)·푸시. **다음 세션은 ACC 라이브에서
+  PoC(fragment BVH 교차 1건)부터 눈검증** 후 스냅샷 첨부·카테고리 정교화로 진행.
+
+---
+
 **[2nd 계정·병렬] 2026-06-24 · S47/S48 main 병합 + Track B 전부 완료** (branch `claude/affectionate-babbage-qxs2ry`)
 - ✅ **선결 — S47/S48 main 병합 (PR #89, merge `5de0d40`)**. funny-bardeen이 main의 fast-forward라 충돌 0,
   CI(typecheck·build) 통과 후 병합. 이제 두 트랙 모두 현재 main에서 분기 가능. (마이그레이션 0024·0025는 S48이

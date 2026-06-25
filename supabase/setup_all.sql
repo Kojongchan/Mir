@@ -1406,3 +1406,27 @@ create policy projects_update on public.projects
   for update using (public.is_admin()) with check (public.is_admin());
 
 notify pgrst, 'reload schema';
+
+-- ===================== 0026_issue_global_id.sql =====================
+alter table public.issues
+  add column if not exists global_id text;
+create index if not exists issues_global_id_idx
+  on public.issues (project_id, global_id);
+
+notify pgrst, 'reload schema';
+
+-- ===================== 0027_clash_global_id.sql =====================
+alter table public.clashes
+  add column if not exists global_id_a text;
+alter table public.clashes
+  add column if not exists global_id_b text;
+create index if not exists clashes_global_id_idx
+  on public.clashes (global_id_a, global_id_b);
+
+notify pgrst, 'reload schema';
+
+-- ===================== 0028_issue_clash_anchor.sql =====================
+alter table public.issues
+  add column if not exists global_id_b text;
+
+notify pgrst, 'reload schema';
