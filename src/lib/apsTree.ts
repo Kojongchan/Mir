@@ -91,3 +91,18 @@ export function topLevelAncestor(model: ApsModel, dbId: number): number {
 export function nodeName(model: ApsModel, dbId: number): string {
   return tree(model)?.getNodeName?.(dbId) ?? `#${dbId}`;
 }
+
+/** 직계 부모의 이름(없으면 빈 문자열). 결과 '카테고리'(그룹) 표시용. */
+export function parentName(model: ApsModel, dbId: number): string {
+  const it = tree(model);
+  if (!it) return '';
+  const p = it.getNodeParent?.(dbId);
+  if (typeof p !== 'number' || p < 0) return '';
+  return it.getNodeName?.(p) ?? '';
+}
+
+/** 최상위 파일 노드들의 dbId(결과 시각화: 다른 파일 숨김용). */
+export function topLevelFileIds(model: ApsModel): number[] {
+  return rootChildren(model).map((n) => n.dbId);
+}
+

@@ -190,8 +190,8 @@ export type ClashSortBy = 'index' | 'depthDesc' | 'depthAsc' | 'status';
 
 export const GROUP_BY_LABEL: Record<ClashGroupBy, string> = {
   none: '그룹 없음',
-  catpair: '카테고리 쌍',
-  elementA: '요소 A',
+  catpair: '카테고리',
+  elementA: '모델',
   status: '상태',
 };
 

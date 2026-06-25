@@ -58,7 +58,7 @@ export function ApsIssuePins({ viewer, model, mapping, issues, onPinClick }: Pro
     for (const a of anchorsRef.current) {
       try {
         const pt = viewer.worldToClient(a.center.clone());
-        // worldToClient 는 컨테이너 기준 CSS px. 음수/과대값(화면 밖)은 가장자리에 둠.
+        if (!pt || Number.isNaN(pt.x) || Number.isNaN(pt.y)) continue;
         out.push({ issue: a.issue, x: pt.x, y: pt.y, idx: a.idx });
       } catch {
         /* 변환 실패 무시 */
@@ -66,6 +66,13 @@ export function ApsIssuePins({ viewer, model, mapping, issues, onPinClick }: Pro
     }
     setPins(out);
   };
+
+  // 마운트/모델 준비 직후 카메라가 잡히면 한 번 더 계산(첫 프레임 누락 방지).
+  useEffect(() => {
+    const t = setTimeout(() => recompute(), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anchorsRef.current.length]);
 
   // 카메라 이동/리사이즈 시 rAF 스로틀 재계산.
   useEffect(() => {
@@ -89,7 +96,7 @@ export function ApsIssuePins({ viewer, model, mapping, issues, onPinClick }: Pro
   }, [viewer]);
 
   return (
-    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden' }}>
+    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 20 }}>
       {pins.map((p) => {
         const color = OPEN.has(p.issue.status) ? '#dc2626' : '#16a34a';
         return (

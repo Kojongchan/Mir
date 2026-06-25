@@ -198,6 +198,61 @@ export function buildDbIdGeom(model: ApsModel, dbId: number): ApsClashGeom | nul
   return { dbId, geometry, box, bvh };
 }
 
+// ----- 관통깊이(실측) -------------------------------------------------
+// AABB 겹침 최소변은 비스듬한/긴 선형요소에서 과대평가된다(면접촉도 수 m). 대신
+// 한 솔리드의 정점이 다른 솔리드 표면에서 **내부로** 얼마나 들어갔는지(closestPoint
+// + 법선 내적 부호)를 측정해 최대 침투거리를 깊이로 쓴다. 면끼리만 닿으면 ≈0.
+const _pa = new THREE.Vector3();
+const _pb = new THREE.Vector3();
+const _pc = new THREE.Vector3();
+const _pn = new THREE.Vector3();
+const _pd = new THREE.Vector3();
+const _pv = new THREE.Vector3();
+
+function triNormal(pos: ArrayLike<number>, faceIndex: number, out: THREE.Vector3): void {
+  const i = faceIndex * 9; // non-indexed: 삼각형당 정점 3개 × 좌표 3개
+  _pa.set(pos[i], pos[i + 1], pos[i + 2]);
+  _pb.set(pos[i + 3], pos[i + 4], pos[i + 5]).sub(_pa);
+  _pc.set(pos[i + 6], pos[i + 7], pos[i + 8]).sub(_pa);
+  out.crossVectors(_pb, _pc).normalize();
+}
+
+/** fromGeom 정점들이 intoBvh 솔리드 내부로 파고든 최대 깊이(overlap 박스 내 표본). */
+function maxPenetration(fromGeom: THREE.BufferGeometry, intoGeom: THREE.BufferGeometry, intoBvh: MeshBVH, box: THREE.Box3): number {
+  const pos = (fromGeom.getAttribute('position') as THREE.BufferAttribute).array as ArrayLike<number>;
+  const intoPos = (intoGeom.getAttribute('position') as THREE.BufferAttribute).array as ArrayLike<number>;
+  const count = pos.length / 3;
+  const stride = Math.max(1, Math.floor(count / 1200)); // 표본 ≤ ~1200정점
+  const target: { point: THREE.Vector3; distance: number; faceIndex: number } = {
+    point: new THREE.Vector3(),
+    distance: 0,
+    faceIndex: 0,
+  };
+  let max = 0;
+  for (let i = 0; i < count; i += stride) {
+    _pv.set(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
+    if (!box.containsPoint(_pv)) continue;
+    const hit = (intoBvh as any).closestPointToPoint(_pv, target);
+    if (!hit) continue;
+    triNormal(intoPos, hit.faceIndex, _pn);
+    _pd.copy(_pv).sub(hit.point);
+    if (_pd.dot(_pn) < 0 && hit.distance > max) max = hit.distance; // 내부(법선 반대) = 관통
+  }
+  return max;
+}
+
+function penetrationDepth(ga: ApsClashGeom, gb: ApsClashGeom, overlap: THREE.Box3): number {
+  if (overlap.isEmpty()) return 0;
+  try {
+    const a = maxPenetration(ga.geometry, gb.geometry, gb.bvh, overlap);
+    const b = maxPenetration(gb.geometry, ga.geometry, ga.bvh, overlap);
+    return Math.max(a, b);
+  } catch {
+    overlap.getSize(_pv);
+    return Math.min(_pv.x, _pv.y, _pv.z); // 폴백
+  }
+}
+
 let _seq = 0;
 function makeHit(
   metaMap: ApsMetaResolver | undefined,
@@ -274,7 +329,6 @@ export async function runApsClashDetection(input: ApsClashInput): Promise<ClashH
   const identity = new THREE.Matrix4();
   const boxA = new THREE.Box3();
   const overlap = new THREE.Box3();
-  const size = new THREE.Vector3();
   const centerA = new THREE.Vector3();
   const centerB = new THREE.Vector3();
 
@@ -302,16 +356,14 @@ export async function runApsClashDetection(input: ApsClashInput): Promise<ClashH
         if (type === 'hard') {
           if (!intersects) continue;
           overlap.copy(ga.box).intersect(gb.box);
-          if (overlap.isEmpty()) {
-            ga.box.getCenter(centerA);
-            gb.box.getCenter(centerB);
-            hits.push(makeHit(metaMap, ta, tb, centerA.clone().lerp(centerB, 0.5), 0));
-            continue;
-          }
-          overlap.getSize(size);
-          const depth = Math.min(size.x, size.y, size.z);
-          if (depth < tolerance) continue; // 허용오차보다 얕은 겹침 무시
-          hits.push(makeHit(metaMap, ta, tb, overlap.getCenter(new THREE.Vector3()), depth));
+          // 관통깊이 = 한쪽 솔리드로 파고든 상대 정점의 최대 침투거리(실측).
+          // 면끼리만 닿으면(=관통 0) 허용오차로 걸러져 선형구조 접합부가 제외된다.
+          const depth = penetrationDepth(ga, gb, overlap);
+          if (depth < tolerance) continue;
+          const point = overlap.isEmpty()
+            ? ga.box.getCenter(centerA).clone().lerp(gb.box.getCenter(centerB), 0.5)
+            : overlap.getCenter(new THREE.Vector3());
+          hits.push(makeHit(metaMap, ta, tb, point, depth));
         } else {
           // clearance: 겹침(거리 0) 또는 tolerance 이내 근접.
           if (intersects) {

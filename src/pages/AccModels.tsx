@@ -707,25 +707,14 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
           alignItems: 'center',
         }}
       >
-        <strong style={{ fontSize: 13 }}>🅰 ACC 모델</strong>
-        <button onClick={() => setShowBrowser((s) => !s)} style={btnStyle}>
-          {showBrowser ? '◀ 폴더 닫기' : '폴더 펼치기 ▶'}
-        </button>
-        {defaultName && (
-          <span style={{ fontSize: 12, color: 'var(--muted)' }}>기본: {defaultName}</span>
-        )}
-        <span style={{ flex: 1 }} />
-        {/* 고유기능 이식(S49): 매핑 준비되면 간섭·이슈 핀 도구 노출 */}
+        <strong style={{ fontSize: 13 }}>{autoClash ? '🔍 간섭체크' : '🅰 ACC 모델'}</strong>
+        {/* 간섭 도구를 좌측에(#5). clash 모드에서는 폴더트리를 숨긴다(#1). */}
         {mapping && (
           <>
-            <button onClick={() => setClashOpen(true)} style={btnStyle} title="ACC 모델에서 간섭 검사">
+            <button onClick={() => setClashOpen(true)} style={{ ...btnStyle, fontWeight: 700 }} title="간섭 검토 팝업 열기">
               🔍 간섭
             </button>
-            <button
-              onClick={() => setPinsOn((v) => !v)}
-              style={btnStyle}
-              title="이슈 핀 표시/숨김"
-            >
+            <button onClick={() => setPinsOn((v) => !v)} style={btnStyle} title="이슈 핀 표시/숨김">
               {pinsOn ? '📍 핀 켜짐' : '📍 핀 꺼짐'}
             </button>
             {canEdit && selDbId != null && (
@@ -735,7 +724,14 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
             )}
           </>
         )}
-        {isAdmin && urn && (
+        {!autoClash && (
+          <button onClick={() => setShowBrowser((s) => !s)} style={btnStyle}>
+            {showBrowser ? '◀ 폴더 닫기' : '폴더 펼치기 ▶'}
+          </button>
+        )}
+        {defaultName && <span style={{ fontSize: 12, color: 'var(--muted)' }}>기본: {defaultName}</span>}
+        <span style={{ flex: 1 }} />
+        {isAdmin && !autoClash && urn && (
           <button onClick={() => void setAsDefault()} style={btnStyle} title="이 모델을 자동으로 열리게 지정">
             ⭐ 기본 모델로 지정
           </button>
@@ -750,7 +746,7 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
         </span>
       </div>
       <div style={{ position: 'relative', flex: 1, display: 'flex' }}>
-        {showBrowser && (
+        {showBrowser && !autoClash && (
           <div
             style={{
               width: panelW,
@@ -891,6 +887,7 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
               mapping={mapping}
               projectId={projectId}
               canEdit={canEdit}
+              onIssueCreated={reloadIssues}
               onClose={() => setClashOpen(false)}
             />
           )}
