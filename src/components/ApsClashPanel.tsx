@@ -202,7 +202,7 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
 
   // 표시 옵션(#6 전체 표시 / #7 반투명) — 활성 결과 기준.
   const activeRow = rows.find((r) => r.id === activeId) ?? null;
-  const showAll = () => showAllWithColors(viewer, model);
+  const showAll = () => showAllWithColors(viewer);
   const showTrans = () => {
     if (activeRow) showTranslucentClash(viewer, model, activeRow.a.expressID, activeRow.b.expressID);
   };
@@ -604,6 +604,14 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
       )}
 
       <div onMouseDown={startDrag('resize')} style={{ position: 'absolute', right: 0, bottom: 0, width: 16, height: 16, cursor: 'nwse-resize' }} />
+
+      {/* 캡처 중 화면 전환 깜빡임을 가리는 마스크(#7). 스냅샷은 캔버스에서 찍혀 영향 없음. */}
+      {(issueCapturing || reportBusy) && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 590, background: 'rgba(15,20,30,0.78)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff', pointerEvents: 'all' }}>
+          <div style={{ fontSize: 15, fontWeight: 700 }}>📸 스냅샷 캡처 중…</div>
+          <div style={{ fontSize: 12, marginTop: 6, opacity: 0.85 }}>화면이 잠시 자동으로 전환됩니다. 오류가 아니니 잠시만 기다려 주세요.</div>
+        </div>
+      )}
     </div>
   );
 }

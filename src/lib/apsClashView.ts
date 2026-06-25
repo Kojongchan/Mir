@@ -36,8 +36,9 @@ function fitPair(viewer: ApsViewer, model: ApsModel, aDbId: number, bDbId: numbe
 }
 
 /**
- * 기본(결과 클릭, #2): 간섭 부재의 **상위 파일만** 가시화하고 다른 파일은 숨긴다.
- * 상위 파일은 솔리드로 그대로 보이고, 간섭 부재는 A초록/B빨강 솔리드(#1). 두 부재로 줌.
+ * 기본(결과 클릭, #2): 간섭 부재의 **상위 파일만** 보이고 다른 파일은 숨긴다.
+ * 상위 파일은 솔리드 그대로, 간섭 부재는 A초록/B빨강 솔리드(#1). 두 부재로 줌.
+ * ⚠️ isolate([]) 는 '아무것도 격리'=전체 ghost 가 되므로 절대 쓰지 않는다.
  */
 export function showApsClash(
   viewer: ApsViewer,
@@ -48,9 +49,8 @@ export function showApsClash(
   if (!viewer) return;
   try {
     viewer.clearThemingColors?.(model);
-    viewer.isolate?.([], model); // ghost 해제
-    viewer.showAll?.(); // 가시성 초기화
-    // 간섭 부재의 상위 파일만 남기고 나머지 파일은 숨김.
+    viewer.showAll?.(); // 격리/숨김 초기화(전체 솔리드)
+    // 간섭 부재의 상위 파일만 남기고 나머지 파일은 숨김(ghost 아님, 완전 숨김).
     const ancA = aDbId >= 0 ? topLevelAncestor(model, aDbId) : -1;
     const ancB = bDbId >= 0 ? topLevelAncestor(model, bDbId) : -1;
     const keep = new Set([ancA, ancB].filter((d) => d >= 0));
@@ -63,18 +63,17 @@ export function showApsClash(
   }
 }
 
-/** 전체 표시(#6): 모든 파일 솔리드로(색 유지). */
-export function showAllWithColors(viewer: ApsViewer, model: ApsModel): void {
+/** 전체 표시(#6): 모든 파일 솔리드(숨김 해제, 색 유지). */
+export function showAllWithColors(viewer: ApsViewer): void {
   if (!viewer) return;
   try {
-    viewer.isolate?.([], model); // ghost 해제
-    viewer.showAll?.(); // 숨긴 파일 복원
+    viewer.showAll?.(); // 숨김/격리 해제, 테마색은 유지
   } catch {
     /* 무시 */
   }
 }
 
-/** 반투명(#7): 간섭 부재만 솔리드, 나머지 전부 반투명(파일 숨김 없이·색 유지). */
+/** 반투명(#7): 간섭 부재만 솔리드, 나머지 전부 반투명(색 유지). */
 export function showTranslucentClash(
   viewer: ApsViewer,
   model: ApsModel,
@@ -84,7 +83,8 @@ export function showTranslucentClash(
   if (!viewer) return;
   try {
     viewer.showAll?.(); // 숨긴 파일 먼저 복원
-    viewer.isolate?.([aDbId, bDbId].filter((d) => d >= 0), model); // 나머지 ghost
+    const ids = [aDbId, bDbId].filter((d) => d >= 0);
+    if (ids.length) viewer.isolate?.(ids, model); // 비어있지 않은 격리 → 나머지 ghost
   } catch {
     /* 무시 */
   }
@@ -96,7 +96,6 @@ export function clearApsClashView(viewer: ApsViewer, model?: ApsModel): void {
   try {
     viewer.clearThemingColors?.(model);
     viewer.clearThemingColors?.();
-    viewer.isolate?.([], model);
     viewer.showAll?.();
   } catch {
     /* 무시 */

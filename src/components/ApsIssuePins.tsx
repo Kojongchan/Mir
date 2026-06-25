@@ -120,38 +120,41 @@ export function ApsIssuePins({ viewer, model, mapping, issues, onPinClick }: Pro
   return (
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 20 }}>
       {pins.map((p) => {
-        const color = OPEN.has(p.issue.status) ? '#dc2626' : '#16a34a';
-        const sz = Math.round(24 * p.scale);
+        const open = OPEN.has(p.issue.status);
+        const color = open ? '#dc2626' : '#16a34a';
+        const w = Math.round(26 * p.scale);
+        const h = Math.round((26 * 34) / 26 * p.scale); // 26:34 비율 핀
         return (
-          <button
+          <svg
             key={p.issue.id}
+            width={w}
+            height={h}
+            viewBox="0 0 26 34"
             onClick={() => onPinClick(p.issue)}
-            title={p.issue.title}
             style={{
               position: 'absolute',
               left: p.x,
               top: p.y,
-              transform: 'translate(-50%, -100%)',
+              transform: 'translate(-50%, -100%)', // 핀 끝(아래)이 객체를 가리키도록
               pointerEvents: 'auto',
-              width: sz,
-              height: sz,
-              borderRadius: '50% 50% 50% 0',
-              transformOrigin: 'center',
-              rotate: '-45deg',
-              background: `radial-gradient(circle at 35% 30%, ${color}, ${color} 60%, rgba(0,0,0,0.35))`,
-              border: '2px solid #fff',
-              color: '#fff',
-              fontSize: Math.round(11 * p.scale),
-              fontWeight: 700,
               cursor: 'pointer',
-              boxShadow: '0 3px 8px rgba(0,0,0,0.5)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
+              filter: 'drop-shadow(0 2px 3px rgba(0,0,0,0.55))',
             }}
           >
-            <span style={{ rotate: '45deg' }}>{p.idx}</span>
-          </button>
+            <title>{p.issue.title}</title>
+            {/* 물방울 핀 본체 */}
+            <path
+              d="M13 1C6.4 1 1 6.4 1 13c0 8.4 12 20 12 20s12-11.6 12-20C25 6.4 19.6 1 13 1z"
+              fill={color}
+              stroke="#fff"
+              strokeWidth="1.6"
+            />
+            {/* 안쪽 하이라이트(입체감) */}
+            <circle cx="13" cy="13" r="8" fill="rgba(255,255,255,0.18)" />
+            <text x="13" y="17.5" textAnchor="middle" fontSize="11" fontWeight="700" fill="#fff">
+              {p.idx}
+            </text>
+          </svg>
         );
       })}
     </div>
