@@ -48,6 +48,8 @@ export interface Issue {
   express_id: number | null;
   /** APS GlobalId(=externalId) 앵커 — ACC 모델 3D 위치(0026). expressID 대체. */
   global_id: string | null;
+  /** 간섭 이슈의 상대측(B) GlobalId — 위치보기에서 간섭뷰 복원(0028). */
+  global_id_b: string | null;
   viewpoint_id: string | null;
   created_by: string | null;
   created_by_name: string | null;
@@ -75,7 +77,7 @@ export interface IssueEvent {
 }
 
 const COLS =
-  'id, project_id, title, description, status, priority, assignee_id, assignee_name, due_date, model_id, express_id, global_id, viewpoint_id, created_by, created_by_name, created_at, updated_at';
+  'id, project_id, title, description, status, priority, assignee_id, assignee_name, due_date, model_id, express_id, global_id, global_id_b, viewpoint_id, created_by, created_by_name, created_at, updated_at';
 
 export async function listIssues(projectId: string): Promise<Issue[]> {
   const { data, error } = await supabase
@@ -110,6 +112,7 @@ export async function createIssue(
     model_id?: string | null;
     express_id?: number | null;
     global_id?: string | null;
+    global_id_b?: string | null;
     viewpoint_id?: string | null;
   },
   authorName: string | null,
@@ -132,6 +135,8 @@ export async function createIssue(
   if (input.viewpoint_id) payload.viewpoint_id = input.viewpoint_id;
   // global_id 는 0026(APS 앵커) — 값이 있을 때만 포함(미적용 폴백).
   if (input.global_id) payload.global_id = input.global_id;
+  // global_id_b 는 0028(간섭 이슈 B측) — 값이 있을 때만 포함.
+  if (input.global_id_b) payload.global_id_b = input.global_id_b;
   const { data, error } = await supabase.from('issues').insert(payload).select('id').single();
   if (error) throw error;
 

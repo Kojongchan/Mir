@@ -26,8 +26,9 @@ import {
 import { runApsClashDetection, targetKey, type ApsMetaResolver } from '../lib/apsClash';
 import { showApsClash, showAllWithColors, showTranslucentClash, clearApsClashView } from '../lib/apsClashView';
 import { rootChildren, childrenOf, collectLeaves, nodeName, parentName, type ApsTreeNode } from '../lib/apsTree';
-import { apsClashesToCsv, buildApsClashReport, downloadReport } from '../lib/apsReport';
+import { apsClashesToCsv, buildApsClashReport, downloadReport, captureClashAngles, dataUrlToFile } from '../lib/apsReport';
 import { downloadCsv } from '../lib/clash';
+import { uploadAttachment } from '../lib/attachments';
 import { createIssue, ISSUE_PRIORITIES, PRIORITY_LABEL, type IssuePriority } from '../lib/issues';
 import type { ApsMapping } from '../lib/apsMapping';
 import { useAuth } from '../auth/AuthProvider';
@@ -129,6 +130,13 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
   const [selTest, setSelTest] = useState('');
   const [issueFor, setIssueFor] = useState<ClashRow | null>(null);
   const [reportBusy, setReportBusy] = useState(false);
+  const [saveName, setSaveName] = useState('');
+
+  // 결과가 생기면 저장 제목 기본값(날짜·시간)을 채운다(#3, 사용자가 목적 덧붙이기 좋게).
+  useEffect(() => {
+    if (rows.length && !saveName) setSaveName(`간섭 ${new Date().toLocaleString('ko-KR')}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows.length]);
 
   useEffect(() => {
     listClashTests(projectId).then(setTests).catch(() => {});
@@ -207,7 +215,7 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
     try {
       const id = await saveApsClashTest({
         projectId,
-        name: `간섭 ${new Date().toLocaleString('ko-KR')}`,
+        name: saveName.trim() || `간섭 ${new Date().toLocaleString('ko-KR')}`,
         setA: aSel?.name ?? '',
         setB: bSel?.name ?? '',
         type,
@@ -288,33 +296,69 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
   const [issueTitle, setIssueTitle] = useState('');
   const [issueDesc, setIssueDesc] = useState('');
   const [issuePriority, setIssuePriority] = useState<IssuePriority>('high');
-  const openIssue = (r: ClashRow) => {
+  const [issueShots, setIssueShots] = useState<string[]>([]);
+  const [issueShotSel, setIssueShotSel] = useState<Set<number>>(new Set());
+  const [issueCapturing, setIssueCapturing] = useState(false);
+  const [issueSaving, setIssueSaving] = useState(false);
+
+  const openIssue = async (r: ClashRow) => {
     setIssueFor(r);
     setIssueTitle(`간섭: ${r.a.name || r.a.category} ↔ ${r.b.name || r.b.category}`);
     setIssueDesc(`간섭 검출 (관통깊이 ${r.depth.toFixed(3)}m)\nA: ${r.a.name || r.a.category}\nB: ${r.b.name || r.b.category}`);
     setIssuePriority('high');
+    // 4컷 캡처(#7) — 사용자가 원하는 뷰를 골라 이슈에 첨부.
+    setIssueShots([]);
+    setIssueShotSel(new Set());
+    setIssueCapturing(true);
+    try {
+      const shots = (await captureClashAngles(viewer, model, r.a.expressID, r.b.expressID, 4)).filter(Boolean);
+      setIssueShots(shots);
+      setIssueShotSel(new Set(shots.map((_, i) => i)));
+    } catch {
+      /* 캡처 실패 무시 */
+    } finally {
+      setIssueCapturing(false);
+    }
   };
   const submitIssue = async () => {
     const r = issueFor;
-    if (!r) return;
+    if (!r || issueSaving) return;
+    setIssueSaving(true);
     const globalId = mapping.dbIdToGlobalId.get(r.a.expressID) ?? null;
+    const globalIdB = mapping.dbIdToGlobalId.get(r.b.expressID) ?? null;
     try {
       const issueId = await createIssue(
         projectId,
-        { title: issueTitle, description: issueDesc, priority: issuePriority, global_id: globalId },
+        { title: issueTitle, description: issueDesc, priority: issuePriority, global_id: globalId, global_id_b: globalIdB },
         authorName,
       );
+      // 선택한 스냅샷을 이슈 첨부로 업로드(#7).
+      const chosen = issueShots.filter((_, i) => issueShotSel.has(i));
+      for (let i = 0; i < chosen.length; i++) {
+        const file = dataUrlToFile(chosen[i], `clash-${Date.now()}-${i + 1}.png`);
+        if (file) await uploadAttachment(projectId, 'issue', issueId, file).catch(() => {});
+      }
       if (dbBacked) {
         await linkClashIssue(r.id, issueId);
         setRows((rs) => rs.map((x) => (x.id === r.id ? { ...x, issueId } : x)));
       }
       setIssueFor(null);
+      setIssueShots([]);
       onIssueCreated?.();
-      setStatus('이슈 생성됨(핀 표시)');
+      setStatus(`이슈 생성됨${chosen.length ? ` · 사진 ${chosen.length}장 첨부` : ''}`);
     } catch (e) {
       setStatus(`이슈 생성 실패: ${(e as Error).message}`);
+    } finally {
+      setIssueSaving(false);
     }
   };
+  const toggleShot = (i: number) =>
+    setIssueShotSel((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
 
   const visibleRows = useMemo(() => rows.filter((r) => statusFilter.has(r.status)), [rows, statusFilter]);
   const grouped = useMemo(() => groupClashes(visibleRows, groupBy, sortBy), [visibleRows, groupBy, sortBy]);
@@ -420,8 +464,17 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
         </div>
         {progress && <div style={{ marginTop: 6, fontSize: 12, color: 'var(--muted)' }}>{progress.phase} · {Math.round(progress.ratio * 100)}%</div>}
 
+        {/* 저장 제목(#3) — 날짜·시간 기본 + 검토 목적 덧붙이기 */}
+        {rows.length > 0 && canEdit && (
+          <input
+            value={saveName}
+            onChange={(e) => setSaveName(e.target.value)}
+            placeholder="저장 제목(예: 2층 배관 vs 구조 간섭 검토)"
+            style={{ ...sel, marginTop: 10 }}
+          />
+        )}
         {/* 저장/불러오기 (#3 순서: 저장된 테스트 → 🗑 → 💾 → CSV → 보고서) */}
-        <div style={{ display: 'flex', gap: 6, marginTop: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center', flexWrap: 'wrap' }}>
           <select value={selTest} onChange={(e) => void loadTest(e.target.value)} style={{ ...sel, flex: 1, minWidth: 120 }}>
             <option value="">저장된 테스트…</option>
             {tests.map((t) => (
@@ -520,9 +573,31 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
                 <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>
               ))}
             </select>
+            {/* 4컷 스냅샷(#7) — 첨부할 뷰 선택 */}
+            <label style={lbl}>첨부 사진 {issueCapturing ? '(캡처 중…)' : `(${issueShotSel.size}/${issueShots.length} 선택)`}</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 4 }}>
+              {issueShots.map((s, i) => (
+                <button
+                  key={i}
+                  onClick={() => toggleShot(i)}
+                  style={{ padding: 0, border: issueShotSel.has(i) ? '2px solid var(--accent)' : '2px solid var(--border)', borderRadius: 6, background: 'transparent', cursor: 'pointer', position: 'relative' }}
+                  title={issueShotSel.has(i) ? '첨부됨(클릭 해제)' : '클릭해 첨부'}
+                >
+                  <img src={s} alt={`view ${i + 1}`} style={{ width: '100%', display: 'block', borderRadius: 4, opacity: issueShotSel.has(i) ? 1 : 0.5 }} />
+                  {issueShotSel.has(i) && (
+                    <span style={{ position: 'absolute', top: 2, right: 4, color: 'var(--accent)', fontWeight: 700, fontSize: 12 }}>✓</span>
+                  )}
+                </button>
+              ))}
+              {!issueCapturing && issueShots.length === 0 && (
+                <span style={{ fontSize: 11, color: 'var(--muted)', gridColumn: '1 / -1' }}>스냅샷 없음(캡처 실패)</span>
+              )}
+            </div>
             <div style={{ display: 'flex', gap: 8, marginTop: 10, justifyContent: 'flex-end' }}>
               <button onClick={() => setIssueFor(null)} style={btn}>취소</button>
-              <button onClick={() => void submitIssue()} disabled={!issueTitle.trim()} style={btnPrimary}>생성</button>
+              <button onClick={() => void submitIssue()} disabled={!issueTitle.trim() || issueSaving} style={btnPrimary}>
+                {issueSaving ? '생성 중…' : '생성'}
+              </button>
             </div>
           </div>
         </div>

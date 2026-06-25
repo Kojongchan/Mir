@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import type { ClashRow } from './clash';
 import { CLASH_STATUS_LABEL } from './clash';
 import { nodeName, topLevelAncestor } from './apsTree';
@@ -82,6 +83,64 @@ function captureScreenshot(viewer: ApsViewer, w: number, h: number): Promise<str
   });
 }
 
+/**
+ * 한 간섭을 4각도(상위 파일만 보이는 상태)로 캡처해 dataURL 배열로 반환(#7).
+ * showApsClash 로 격리·색·줌을 잡은 뒤 클래시 중심을 축으로 카메라를 회전한다.
+ */
+export async function captureClashAngles(
+  viewer: ApsViewer,
+  model: ApsModel,
+  aDbId: number,
+  bDbId: number,
+  count = 4,
+): Promise<string[]> {
+  const shots: string[] = [];
+  try {
+    showApsClash(viewer, model, aDbId, bDbId);
+    await wait(350);
+    const nav = viewer.navigation;
+    const center = nav.getTarget().clone();
+    const pos0 = nav.getPosition().clone();
+    const up: THREE.Vector3 = (nav.getWorldUpVector?.() ?? new THREE.Vector3(0, 0, 1)).clone().normalize();
+    const offset = pos0.clone().sub(center);
+    for (let i = 0; i < count; i++) {
+      const ang = (i / count) * Math.PI * 2;
+      const rot = new THREE.Matrix4().makeRotationAxis(up, ang);
+      const eye = center.clone().add(offset.clone().applyMatrix4(rot));
+      try {
+        nav.setView(eye, center);
+        nav.setCameraUpVector?.(up);
+      } catch {
+        /* 무시 */
+      }
+      await wait(300);
+      shots.push(await captureScreenshot(viewer, 720, 460));
+    }
+    try {
+      nav.setView(pos0, center); // 원위치 복귀
+    } catch {
+      /* 무시 */
+    }
+  } catch {
+    /* 무시 */
+  }
+  return shots;
+}
+
+/** dataURL → File(이슈 첨부 업로드용). */
+export function dataUrlToFile(dataUrl: string, name: string): File | null {
+  try {
+    const [meta, b64] = dataUrl.split(',');
+    const mime = /data:(.*?);/.exec(meta)?.[1] ?? 'image/png';
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new File([arr], name, { type: mime });
+  } catch {
+    return null;
+  }
+}
+
 function esc(s: string): string {
   return s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
 }
@@ -123,51 +182,80 @@ export async function buildApsClashReport(
 
   const now = new Date().toLocaleString('ko-KR');
   const open = rows.filter((r) => r.status === 'new' || r.status === 'reviewing').length;
+
+  // 검토사항 요약 — 모델(상위 파일) 쌍별 건수(첨부 양식의 '구분/검토결과' 표처럼).
+  const byPair = new Map<string, number>();
+  for (const r of rows) {
+    const fa = modelNameOf(model, r.a.expressID);
+    const fb = modelNameOf(model, r.b.expressID);
+    const key = [fa, fb].sort().join(' ↔ ');
+    byPair.set(key, (byPair.get(key) ?? 0) + 1);
+  }
+  const summaryRows = [...byPair.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(
+      ([k, n], i) =>
+        `<tr><td style="${td}">${i + 1}</td><td style="${td};text-align:left">${esc(k)}</td><td style="${td}">${n} 건</td></tr>`,
+    )
+    .join('');
+
+  // 항목별 상세 — 첨부 보고서의 1건당 표(분야/항목/관련 모델/BIM 모델 사진/검토내용).
   const sections = rows
     .map((r, i) => {
+      const fa = modelNameOf(model, r.a.expressID);
+      const fb = modelNameOf(model, r.b.expressID);
       const img = shots[r.id]
-        ? `<img src="${shots[r.id]}" alt="간섭 ${i + 1}" style="max-width:100%;border:1px solid #ccc;border-radius:6px" />`
-        : `<div style="color:#888;font-size:12px">(이미지 없음 — ${i < max ? '캡처 실패' : '캡처 생략'})</div>`;
+        ? `<img src="${shots[r.id]}" alt="간섭 ${i + 1}" style="max-width:100%;border:1px solid #bbb" />`
+        : `<div style="color:#888;font-size:12px;padding:20px;text-align:center">(이미지 없음 — ${i < max ? '캡처 실패' : '캡처 생략'})</div>`;
+      const review = `${esc(fa)}의 「${esc(r.a.name || r.a.category)}」와(과) ${esc(fb)}의 「${esc(r.b.name || r.b.category)}」가 간섭(관통깊이 ${r.depth.toFixed(3)} m). 설계 협의·도면 수정 검토 필요.`;
       return `
-      <div style="page-break-inside:avoid;margin:18px 0;padding:12px;border:1px solid #ddd;border-radius:8px">
-        <h3 style="margin:0 0 8px">간섭 #${i + 1} · 관통깊이 ${r.depth.toFixed(3)} m · ${esc(CLASH_STATUS_LABEL[r.status])}</h3>
-        <table style="border-collapse:collapse;font-size:13px;margin-bottom:8px">
-          <tr><td style="padding:2px 8px;color:#16a34a;font-weight:700">대상 A</td>
-              <td style="padding:2px 8px">${esc(modelNameOf(model, r.a.expressID))}</td>
-              <td style="padding:2px 8px;color:#555">${esc(r.a.category)}</td>
-              <td style="padding:2px 8px;color:#555">${esc(r.a.name || '')}</td></tr>
-          <tr><td style="padding:2px 8px;color:#dc2626;font-weight:700">대상 B</td>
-              <td style="padding:2px 8px">${esc(modelNameOf(model, r.b.expressID))}</td>
-              <td style="padding:2px 8px;color:#555">${esc(r.b.category)}</td>
-              <td style="padding:2px 8px;color:#555">${esc(r.b.name || '')}</td></tr>
-          <tr><td style="padding:2px 8px;color:#555">위치</td>
-              <td style="padding:2px 8px" colspan="3">X ${r.point.x.toFixed(3)} · Y ${r.point.y.toFixed(3)} · Z ${r.point.z.toFixed(3)}</td></tr>
+      <div style="page-break-inside:avoid;margin:14px 0">
+        <h3 style="margin:0 0 6px;font-size:15px">(${i + 1}) ${esc(fa)} ↔ ${esc(fb)} 간섭</h3>
+        <table style="border-collapse:collapse;width:100%;font-size:12.5px">
+          <tr><th style="${th};width:90px">분야</th><td style="${td};text-align:left">${esc(fa)}</td>
+              <th style="${th};width:70px">구분</th><td style="${td};text-align:left">간섭</td></tr>
+          <tr><th style="${th}">항목</th><td style="${td};text-align:left" colspan="3">
+              <span style="color:#16a34a;font-weight:700">A</span> ${esc(r.a.name || r.a.category)}
+              &nbsp;↔&nbsp; <span style="color:#dc2626;font-weight:700">B</span> ${esc(r.b.name || r.b.category)}</td></tr>
+          <tr><th style="${th}">관련 모델</th><td style="${td};text-align:left" colspan="3">A: ${esc(fa)} · ${esc(r.a.category)}<br/>B: ${esc(fb)} · ${esc(r.b.category)}</td></tr>
+          <tr><th style="${th}">BIM 모델</th><td style="${td}" colspan="3">${img}</td></tr>
+          <tr><th style="${th}">간섭 위치</th><td style="${td};text-align:left" colspan="3">
+              X ${r.point.x.toFixed(3)} · Y ${r.point.y.toFixed(3)} · Z ${r.point.z.toFixed(3)} &nbsp; / &nbsp; 관통깊이 ${r.depth.toFixed(3)} m &nbsp; / &nbsp; 상태 ${esc(CLASH_STATUS_LABEL[r.status])}</td></tr>
+          <tr><th style="${th}">검토내용</th><td style="${td};text-align:left" colspan="3">${review}</td></tr>
         </table>
-        ${img}
       </div>`;
     })
     .join('');
 
-  return `<!doctype html><html lang="ko"><head><meta charset="utf-8" />
-<title>간섭 보고서</title></head>
-<body style="font-family:'Malgun Gothic',sans-serif;max-width:900px;margin:24px auto;color:#222;padding:0 16px">
-  <h1 style="margin:0 0 4px">간섭 검토 보고서</h1>
-  <div style="color:#666;font-size:13px;margin-bottom:16px">
-    ${opts.projectName ? `프로젝트: ${esc(opts.projectName)} · ` : ''}생성: ${esc(now)}
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8" /><title>간섭 검토 보고서</title></head>
+<body style="font-family:'Malgun Gothic','맑은 고딕',sans-serif;max-width:920px;margin:24px auto;color:#222;padding:0 18px;line-height:1.5">
+  <h1 style="margin:0 0 2px;font-size:22px;border-bottom:3px solid #1f3b66;padding-bottom:6px">BIM 간섭 검토 결과</h1>
+  <div style="color:#666;font-size:12.5px;margin:8px 0 18px">
+    ${opts.projectName ? `프로젝트: ${esc(opts.projectName)} &nbsp;·&nbsp; ` : ''}작성일: ${esc(now)}
   </div>
-  <table style="border-collapse:collapse;font-size:14px;margin-bottom:8px">
-    <tr><td style="padding:3px 10px;color:#555">대상 A</td><td style="padding:3px 10px">${esc(opts.setA ?? '-')}</td></tr>
-    <tr><td style="padding:3px 10px;color:#555">대상 B</td><td style="padding:3px 10px">${esc(opts.setB ?? '-')}</td></tr>
-    <tr><td style="padding:3px 10px;color:#555">총 간섭</td><td style="padding:3px 10px">${rows.length} 건 (미해결 ${open} 건)</td></tr>
-  </table>
-  <p style="font-size:13px;color:#444;line-height:1.6">
-    본 보고서는 ACC 통합모델에 대해 자동 간섭 검토를 수행한 결과입니다. 각 간섭은 대상 A(초록)·
-    B(빨강) 부재로 강조되어 있으며, 관통깊이는 한 부재가 다른 부재 내부로 파고든 최대 거리입니다.
-    면접촉(관통깊이 ≈ 0)은 허용오차로 제외됩니다.
+
+  <h2 style="font-size:16px;margin:18px 0 6px">1. 검토 개요</h2>
+  <p style="font-size:13px;color:#333">
+    ACC 통합모델을 대상으로 부재 간 간섭(Hard Clash)을 자동 검출하였다. 대상 A(${esc(opts.setA ?? '-')})와
+    대상 B(${esc(opts.setB ?? '-')}) 사이에서 <b>총 ${rows.length}건</b>(미해결 ${open}건)의 간섭이 확인되었다.
+    관통깊이는 한 부재가 상대 부재 내부로 파고든 최대 거리이며, 면접촉(≈0)은 허용오차로 제외하였다.
   </p>
+
+  <h2 style="font-size:16px;margin:18px 0 6px">2. 검토 사항 (요약)</h2>
+  <table style="border-collapse:collapse;width:100%;font-size:13px">
+    <tr><th style="${th};width:50px">No</th><th style="${th}">대상(모델 쌍)</th><th style="${th};width:90px">건수</th></tr>
+    ${summaryRows || `<tr><td style="${td}" colspan="3">간섭 없음</td></tr>`}
+  </table>
+
+  <h2 style="font-size:16px;margin:22px 0 6px">3. 간섭 상세</h2>
   ${sections}
+
+  <p style="margin-top:24px;font-size:11px;color:#999">※ 본 보고서 양식은 임시안이며, 표준 양식 제공 시 반영합니다.</p>
 </body></html>`;
 }
+
+const th = 'border:1px solid #999;background:#eef1f6;padding:5px 8px;text-align:center;font-weight:700;color:#1f3b66';
+const td = 'border:1px solid #999;padding:5px 8px;text-align:center;color:#222';
 
 /** HTML 문자열을 .html 파일로 다운로드. */
 export function downloadReport(filename: string, html: string): void {

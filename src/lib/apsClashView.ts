@@ -36,8 +36,8 @@ function fitPair(viewer: ApsViewer, model: ApsModel, aDbId: number, bDbId: numbe
 }
 
 /**
- * 기본(결과 클릭, #8): 간섭 부재의 상위 파일만 남기고 다른 파일은 숨김. 간섭 부재만
- * 솔리드(A초록/B빨강), 두 파일의 나머지는 반투명. 두 부재로 줌.
+ * 기본(결과 클릭, #2): 간섭 부재의 **상위 파일만** 가시화하고 다른 파일은 숨긴다.
+ * 상위 파일은 솔리드로 그대로 보이고, 간섭 부재는 A초록/B빨강 솔리드(#1). 두 부재로 줌.
  */
 export function showApsClash(
   viewer: ApsViewer,
@@ -48,9 +48,9 @@ export function showApsClash(
   if (!viewer) return;
   try {
     viewer.clearThemingColors?.(model);
-    // 간섭 부재만 격리 → 나머지는 ghost(반투명).
-    viewer.isolate?.([aDbId, bDbId].filter((d) => d >= 0), model);
-    // 다른 파일(상위)은 아예 숨김 — 검토에 불필요한 파일 제거.
+    viewer.isolate?.([], model); // ghost 해제
+    viewer.showAll?.(); // 가시성 초기화
+    // 간섭 부재의 상위 파일만 남기고 나머지 파일은 숨김.
     const ancA = aDbId >= 0 ? topLevelAncestor(model, aDbId) : -1;
     const ancB = bDbId >= 0 ? topLevelAncestor(model, bDbId) : -1;
     const keep = new Set([ancA, ancB].filter((d) => d >= 0));

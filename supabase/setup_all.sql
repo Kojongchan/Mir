@@ -1424,3 +1424,9 @@ create index if not exists clashes_global_id_idx
   on public.clashes (global_id_a, global_id_b);
 
 notify pgrst, 'reload schema';
+
+-- ===================== 0028_issue_clash_anchor.sql =====================
+alter table public.issues
+  add column if not exists global_id_b text;
+
+notify pgrst, 'reload schema';

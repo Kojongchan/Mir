@@ -28,26 +28,33 @@ interface PinPos {
   x: number;
   y: number;
   idx: number;
+  scale: number;
 }
 
 const OPEN = new Set(['open', 'in_progress']);
+const REF_DIST = 30; // 이 거리에서 기본 크기. 가까우면 커지고 멀면 작아짐(원근감).
 
 export function ApsIssuePins({ viewer, model, mapping, issues, onPinClick }: Props) {
   const [pins, setPins] = useState<PinPos[]>([]);
   const rafRef = useRef<number | null>(null);
 
   // 앵커된 이슈(global_id 존재)만, 검출 가능한 dbId 의 월드 중심을 미리 캐시.
+  // 번호는 생성 순(오래된→최신)으로 부여 — 이슈 탭과 일치(#5).
   const anchorsRef = useRef<Array<{ issue: Issue; center: THREE.Vector3; idx: number }>>([]);
   useEffect(() => {
+    const order = new Map<string, number>();
+    [...issues]
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .forEach((it, i) => order.set(it.id, i + 1));
     const anchors: Array<{ issue: Issue; center: THREE.Vector3; idx: number }> = [];
-    issues.forEach((issue, i) => {
-      if (!issue.global_id) return;
+    for (const issue of issues) {
+      if (!issue.global_id) continue;
       const dbId = mapping.globalIdToDbId.get(issue.global_id);
-      if (typeof dbId !== 'number') return;
+      if (typeof dbId !== 'number') continue;
       const box = computeDbIdWorldBox(model, dbId);
-      if (!box || box.isEmpty()) return;
-      anchors.push({ issue, center: box.getCenter(new THREE.Vector3()), idx: i + 1 });
-    });
+      if (!box || box.isEmpty()) continue;
+      anchors.push({ issue, center: box.getCenter(new THREE.Vector3()), idx: order.get(issue.id) ?? 0 });
+    }
     anchorsRef.current = anchors;
     recompute();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -55,11 +62,26 @@ export function ApsIssuePins({ viewer, model, mapping, issues, onPinClick }: Pro
 
   const recompute = () => {
     const out: PinPos[] = [];
+    // 카메라 위치·시선으로 원근 스케일 + 뒤쪽 컬링(3D 느낌, #6).
+    let camPos: THREE.Vector3 | null = null;
+    let fwd: THREE.Vector3 | null = null;
+    try {
+      camPos = viewer.navigation.getPosition().clone();
+      fwd = viewer.navigation.getTarget().clone().sub(camPos).normalize();
+    } catch {
+      /* 일부 상태에서 미지원 */
+    }
     for (const a of anchorsRef.current) {
       try {
+        if (camPos && fwd) {
+          const toAnchor = a.center.clone().sub(camPos);
+          if (toAnchor.dot(fwd) <= 0) continue; // 카메라 뒤 → 숨김
+        }
         const pt = viewer.worldToClient(a.center.clone());
         if (!pt || Number.isNaN(pt.x) || Number.isNaN(pt.y)) continue;
-        out.push({ issue: a.issue, x: pt.x, y: pt.y, idx: a.idx });
+        const dist = camPos ? camPos.distanceTo(a.center) : REF_DIST;
+        const scale = Math.max(0.6, Math.min(1.8, REF_DIST / Math.max(1, dist)));
+        out.push({ issue: a.issue, x: pt.x, y: pt.y, idx: a.idx, scale });
       } catch {
         /* 변환 실패 무시 */
       }
@@ -99,6 +121,7 @@ export function ApsIssuePins({ viewer, model, mapping, issues, onPinClick }: Pro
     <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'hidden', zIndex: 20 }}>
       {pins.map((p) => {
         const color = OPEN.has(p.issue.status) ? '#dc2626' : '#16a34a';
+        const sz = Math.round(24 * p.scale);
         return (
           <button
             key={p.issue.id}
@@ -110,18 +133,18 @@ export function ApsIssuePins({ viewer, model, mapping, issues, onPinClick }: Pro
               top: p.y,
               transform: 'translate(-50%, -100%)',
               pointerEvents: 'auto',
-              width: 22,
-              height: 22,
+              width: sz,
+              height: sz,
               borderRadius: '50% 50% 50% 0',
               transformOrigin: 'center',
               rotate: '-45deg',
-              background: color,
+              background: `radial-gradient(circle at 35% 30%, ${color}, ${color} 60%, rgba(0,0,0,0.35))`,
               border: '2px solid #fff',
               color: '#fff',
-              fontSize: 11,
+              fontSize: Math.round(11 * p.scale),
               fontWeight: 700,
               cursor: 'pointer',
-              boxShadow: '0 2px 6px rgba(0,0,0,0.4)',
+              boxShadow: '0 3px 8px rgba(0,0,0,0.5)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',

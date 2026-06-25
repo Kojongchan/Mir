@@ -5,7 +5,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { useProjectRole } from '../auth/useProjectRole';
 import { getProjectAcc, setProjectAcc } from '../lib/api';
 import { buildApsMapping, type ApsMapping } from '../lib/apsMapping';
-import { isolateAndFit } from '../lib/apsClashView';
+import { isolateAndFit, showApsClash } from '../lib/apsClashView';
 import { listIssues, createIssue, STATUS_LABEL, type Issue } from '../lib/issues';
 import { ApsClashPanel } from '../components/ApsClashPanel';
 import { ApsIssuePins } from '../components/ApsIssuePins';
@@ -154,6 +154,8 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
   const [params] = useSearchParams();
   const urnFromUrl = params.get('urn') ?? '';
   const focusGlobalId = params.get('focusGlobalId') ?? '';
+  const focusClashA = params.get('focusClashA') ?? ''; // 간섭 이슈 위치보기(A·B GlobalId)
+  const focusClashB = params.get('focusClashB') ?? '';
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<unknown>(null);
   const modelRef = useRef<unknown>(null);
@@ -463,13 +465,20 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
     }
   };
 
-  // 이슈 핀 클릭 → 그 객체 위치로 이동(격리+줌).
+  // 이슈 핀 클릭 → 위치 보기. 간섭 이슈(A·B)면 간섭뷰 복원(#9), 아니면 단일 격리+줌.
   const focusIssue = (issue: Issue) => {
     const m = modelRef.current as any;
     const viewer = viewerRef.current as any;
     if (!issue.global_id || !mapping || !m || !viewer) return;
-    const dbId = mapping.globalIdToDbId.get(issue.global_id);
-    if (typeof dbId === 'number') isolateAndFit(viewer, m, dbId);
+    const da = mapping.globalIdToDbId.get(issue.global_id);
+    if (issue.global_id_b) {
+      const db = mapping.globalIdToDbId.get(issue.global_id_b);
+      if (typeof da === 'number' && typeof db === 'number') {
+        showApsClash(viewer, m, da, db);
+        return;
+      }
+    }
+    if (typeof da === 'number') isolateAndFit(viewer, m, da);
   };
 
   // 트리 노드(폴더+하위)를 재귀 렌더. depth 로 들여쓰기.
@@ -611,7 +620,12 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
             if (cancelled) return;
             setMapping(map);
             reloadIssues();
-            if (focusGlobalId) {
+            // 간섭 이슈 위치보기: A·B GlobalId → 간섭뷰 복원(#8/#9).
+            if (focusClashA && focusClashB) {
+              const da = map.globalIdToDbId.get(focusClashA);
+              const db = map.globalIdToDbId.get(focusClashB);
+              if (typeof da === 'number' && typeof db === 'number') showApsClash(viewer, m, da, db);
+            } else if (focusGlobalId) {
               const dbId = map.globalIdToDbId.get(focusGlobalId);
               if (typeof dbId === 'number') isolateAndFit(viewer, m, dbId);
             }
