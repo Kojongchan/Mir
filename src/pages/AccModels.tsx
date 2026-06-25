@@ -2,7 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthProvider';
+import { useProjectRole } from '../auth/useProjectRole';
 import { getProjectAcc, setProjectAcc } from '../lib/api';
+import { buildApsMapping, type ApsMapping } from '../lib/apsMapping';
+import { isolateAndFit } from '../lib/apsClashView';
+import { listIssues, createIssue, STATUS_LABEL, type Issue } from '../lib/issues';
+import { ApsClashPanel } from '../components/ApsClashPanel';
+import { ApsIssuePins } from '../components/ApsIssuePins';
 import { viewerKindFor, type ViewerKind, type FileRecord } from '../lib/files';
 import { ImageViewer } from '../components/viewers/ImageViewer';
 import { VideoViewer } from '../components/viewers/VideoViewer';
@@ -143,13 +149,28 @@ export function AccModels() {
   const navigate = useNavigate();
   const { profile } = useAuth();
   const isAdmin = !!profile?.is_admin;
+  const { canEdit } = useProjectRole(projectId);
+  const authorName = profile?.full_name ?? profile?.username ?? null;
   const [params] = useSearchParams();
   const urnFromUrl = params.get('urn') ?? '';
+  const focusGlobalId = params.get('focusGlobalId') ?? '';
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<unknown>(null);
+  const modelRef = useRef<unknown>(null);
   const resizeObsRef = useRef<ResizeObserver | null>(null);
   const [urn, setUrn] = useState(urnFromUrl);
   const [status, setStatus] = useState('APS Viewer 준비…');
+
+  // 고유기능 이식(S49): dbId↔GlobalId 매핑 + 이슈 핀 + 간섭체크.
+  const [mapping, setMapping] = useState<ApsMapping | null>(null);
+  const [issues, setIssues] = useState<Issue[]>([]);
+  const [clashOpen, setClashOpen] = useState(false);
+  const [pinsOn, setPinsOn] = useState(true);
+  const [popIssue, setPopIssue] = useState<Issue | null>(null);
+  const [selDbId, setSelDbId] = useState<number | null>(null);
+  const reloadIssues = () => {
+    listIssues(projectId).then(setIssues).catch(() => {});
+  };
 
   // ACC 탐색 상태.
   const [showBrowser, setShowBrowser] = useState(!urnFromUrl);
@@ -421,6 +442,35 @@ export function AccModels() {
     }
   };
 
+  // 3D 에서 선택한 객체 위치에 이슈 생성(선택 dbId → GlobalId 앵커, S49 Step 2).
+  const createIssueHere = async () => {
+    const m = modelRef.current as any;
+    if (selDbId == null || !mapping || !m) return;
+    const gid = mapping.dbIdToGlobalId.get(selDbId);
+    if (!gid) {
+      setStatus('이 객체의 GlobalId 를 찾지 못했습니다.');
+      return;
+    }
+    const title = window.prompt('이슈 제목');
+    if (!title) return;
+    try {
+      await createIssue(projectId, { title, priority: 'normal', global_id: gid }, authorName);
+      reloadIssues();
+      setStatus('이슈 생성됨');
+    } catch (e) {
+      setStatus(`이슈 생성 실패: ${(e as Error).message}`);
+    }
+  };
+
+  // 이슈 핀 클릭 → 그 객체 위치로 이동(격리+줌).
+  const focusIssue = (issue: Issue) => {
+    const m = modelRef.current as any;
+    const viewer = viewerRef.current as any;
+    if (!issue.global_id || !mapping || !m || !viewer) return;
+    const dbId = mapping.globalIdToDbId.get(issue.global_id);
+    if (typeof dbId === 'number') isolateAndFit(viewer, m, dbId);
+  };
+
   // 트리 노드(폴더+하위)를 재귀 렌더. depth 로 들여쓰기.
   const renderFolder = (node: FolderNode, depth: number): React.ReactElement => (
     <li key={node.id}>
@@ -547,6 +597,31 @@ export function AccModels() {
         resizeObsRef.current = ro;
         viewerRef.current = viewer;
 
+        // 모델(객체 트리) 준비 시 dbId↔GlobalId 매핑 구축 + 이슈 핀 로드(S49).
+        viewer.addEventListener(Autodesk.Viewing.OBJECT_TREE_CREATED_EVENT, async () => {
+          const m = viewer.model;
+          modelRef.current = m;
+          setMapping(null);
+          try {
+            const map = await buildApsMapping(m);
+            if (cancelled) return;
+            setMapping(map);
+            reloadIssues();
+            // 딥링크: GlobalId 로 이슈/요소 위치 보기.
+            if (focusGlobalId) {
+              const dbId = map.globalIdToDbId.get(focusGlobalId);
+              if (typeof dbId === 'number') isolateAndFit(viewer, m, dbId);
+            }
+          } catch (e) {
+            setStatus(`GlobalId 매핑 실패: ${(e as Error).message}`);
+          }
+        });
+        // 선택 변경 → '이 위치에 이슈' 버튼 활성(선택 dbId 추적).
+        viewer.addEventListener(Autodesk.Viewing.SELECTION_CHANGED_EVENT, () => {
+          const sel = viewer.getSelection?.() ?? [];
+          setSelDbId(sel.length ? sel[0] : null);
+        });
+
         // URL 에 urn 이 직접 오면 그걸 우선(딥링크).
         if (urnFromUrl) {
           setStatus('URN 로딩…');
@@ -636,6 +711,26 @@ export function AccModels() {
           <span style={{ fontSize: 12, color: 'var(--muted)' }}>기본: {defaultName}</span>
         )}
         <span style={{ flex: 1 }} />
+        {/* 고유기능 이식(S49): 매핑 준비되면 간섭·이슈 핀 도구 노출 */}
+        {mapping && (
+          <>
+            <button onClick={() => setClashOpen(true)} style={btnStyle} title="ACC 모델에서 간섭 검사">
+              🔍 간섭
+            </button>
+            <button
+              onClick={() => setPinsOn((v) => !v)}
+              style={btnStyle}
+              title="이슈 핀 표시/숨김"
+            >
+              {pinsOn ? '📍 핀 켜짐' : '📍 핀 꺼짐'}
+            </button>
+            {canEdit && selDbId != null && (
+              <button onClick={() => void createIssueHere()} style={btnStyle} title="선택 객체 위치에 이슈 생성">
+                ＋ 이슈
+              </button>
+            )}
+          </>
+        )}
         {isAdmin && urn && (
           <button onClick={() => void setAsDefault()} style={btnStyle} title="이 모델을 자동으로 열리게 지정">
             ⭐ 기본 모델로 지정
@@ -727,6 +822,74 @@ export function AccModels() {
         )}
         <div style={{ position: 'relative', flex: 1 }}>
           <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
+          {/* 이슈 핀 오버레이(S49 Step 2) — GlobalId 앵커를 화면좌표 마커로 */}
+          {pinsOn && mapping && !!modelRef.current && (
+            <ApsIssuePins
+              viewer={viewerRef.current}
+              model={modelRef.current}
+              mapping={mapping}
+              issues={issues}
+              onPinClick={(issue) => setPopIssue(issue)}
+            />
+          )}
+          {/* 핀 클릭 팝업(기존 이슈 데이터 재사용) */}
+          {popIssue && (
+            <div
+              style={{
+                position: 'absolute',
+                left: 12,
+                bottom: 12,
+                width: 280,
+                zIndex: 550,
+                background: 'var(--panel)',
+                color: 'var(--text)',
+                border: '1px solid var(--border)',
+                borderRadius: 8,
+                padding: 12,
+                boxShadow: '0 6px 24px rgba(0,0,0,0.35)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <strong style={{ fontSize: 13, flex: 1 }}>{popIssue.title}</strong>
+                <button onClick={() => setPopIssue(null)} style={btnStyle}>
+                  ✕
+                </button>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+                상태: {STATUS_LABEL[popIssue.status]}
+                {popIssue.assignee_name ? ` · 담당 ${popIssue.assignee_name}` : ''}
+              </div>
+              {popIssue.description && (
+                <div style={{ fontSize: 12, marginTop: 6, maxHeight: 80, overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
+                  {popIssue.description}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+                <button onClick={() => focusIssue(popIssue)} style={btnStyle}>
+                  위치 보기
+                </button>
+                <button
+                  onClick={() =>
+                    navigate(`/project/${projectId}/issues`, { state: { focusIssueId: popIssue.id } })
+                  }
+                  style={btnStyle}
+                >
+                  이슈로 이동
+                </button>
+              </div>
+            </div>
+          )}
+          {/* 간섭체크 패널(S49 Step 1) */}
+          {clashOpen && mapping && !!modelRef.current && (
+            <ApsClashPanel
+              viewer={viewerRef.current}
+              model={modelRef.current}
+              mapping={mapping}
+              projectId={projectId}
+              canEdit={canEdit}
+              onClose={() => setClashOpen(false)}
+            />
+          )}
           {docView && (
             <div
               style={{

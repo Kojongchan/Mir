@@ -307,6 +307,7 @@ function IssueDetail({
   const [events, setEvents] = useState<IssueEvent[]>([]);
   const [body, setBody] = useState('');
   const hasLocation = !!issue.model_id && issue.express_id != null;
+  const hasGlobal = !!issue.global_id; // APS/ACC 앵커(S49) — GlobalId→dbId 위치보기
 
   useEffect(() => {
     listComments(issue.id).then(setComments).catch(() => setComments([]));
@@ -338,8 +339,19 @@ function IssueDetail({
         </div>
       )}
 
-      {(hasLocation || issue.viewpoint_id) && (
+      {(hasLocation || hasGlobal || issue.viewpoint_id) && (
         <p style={{ margin: '0 0 10px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {hasGlobal && (
+            <button
+              onClick={() =>
+                navigate(
+                  `/project/${issue.project_id}/acc?focusGlobalId=${encodeURIComponent(issue.global_id!)}`,
+                )
+              }
+            >
+              📍 위치 보기 (ACC 모델)
+            </button>
+          )}
           {hasLocation && (
             <button
               onClick={() =>
