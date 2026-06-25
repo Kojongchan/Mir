@@ -49,15 +49,23 @@ S48에서 자료관리가 ACC 단독이 되며 **Supabase BIM(IFC) 업로드 UI�
 
 ### 🅰 Track A — "이어서 해야 하는 것"(직렬·메인 세션): ACC 모델 위로 고유기능 이식
 > 모두 **APS Viewer + Workspace + 매핑 레이어**를 공유 → **서로 의존**하므로 한 세션이 직렬로.
-> 급소: APS는 `dbId`, 우리는 `expressID`/`GlobalId` → **S49에서 매핑 레이어를 먼저** 깔고 재사용.
+> 급소: APS는 `dbId`/`externalId(=IfcGUID/GlobalId)`, 우리 기존 코드는 `expressID` → **매핑 레이어를
+> 먼저** 깔고 그 위에 얹는다. **사용자 우선순위 확정(2026-06): 간섭체크 > 이슈 핀 > 이슈.**
+>
+> **재사용 판정(사용자 확정)**: 기존을 억지로 쓰는 게 아니라 **APS가 주는 자료만으로 무비용 신규
+> 구현**이 목표. 따라서 **web-ifc 지오메트리 배관(elementMeshes 등)은 폐기**, 다만 ① 알고리즘
+> 라이브러리 `three-mesh-bvh`(MIT·무료), ② 결과측 순수 로직 `lib/clash.ts`(그룹화·정렬·필터·
+> 상태승계, 뷰어 독립)·`ClashPanel` UI·영속화 스키마, ③ 이슈/워크플로우 모듈 본체는 **그대로 재사용**.
 
-| 세션 | 범위 | 의존 | 마이그레이션 |
+| 단계 | 범위 | 의존 | 마이그레이션 |
 |---|---|---|---|
-| **S49** | **dbId↔GlobalId↔expressID 매핑 레이어**(`src/viewer/apsMapping.ts`) + **4D·간섭의 BIM 소스를 ACC로**(신규 업로드 경로 부재 해소) + **이슈 핀 APS 이식** | S46/S48 | 0024(issues.global_id) |
-| S50 | **4D APS 이식**: 일정↔GlobalId, `setThemingColor`/`hide·show`로 타임라인 색·표시 | S49 | — |
-| S51 | **물량(QTO) APS 이식**: APS 속성DB(`getProperties`) 추출 또는 IFC 병행 산출 | S49 | — |
-| S52 | **간섭 스파이크 → 이식**: (A) ACC Model Coordination 결과 읽기 / (B) fragment 지오 추출+three-mesh-bvh 택1 | S49 | 미정 |
-| S53 | **IfcViewer 은퇴 + IA 통합**(통합모델=ACC 모델) — S49~S52 패리티 증명 후에만 | S49~S52 | 정리형 |
+| **S49 (선결)** | **dbId↔GlobalId 매핑 레이어**(`src/lib/apsMapping.ts`: `getExternalIdMapping`/property DB로 양방향 인덱스) + **4D·간섭의 BIM 소스를 ACC로**(신규 업로드 경로 부재 해소) | S46/S48 | 0024 |
+| **① 간섭 (최우선)** | **APS fragment 지오 추출 + `three-mesh-bvh` 직접 구현**(무비용 — Model Coordination **구독 없음**). 광역=dbId 월드 AABB / 협역=fragment BVH 교차·관입깊이 → **결과를 `ClashRow`로** 만들어 `clash.ts`·`ClashPanel`·`clashApi` 재사용. `showClash`(A초록/B빨강+ghost+줌)는 APS `setThemingColor`/`isolate`/`fitToView`로 재현. **저장키=GlobalId** | S49 | 0025(clashes.global_id) |
+| **② 이슈 핀** | issues를 **GlobalId 앵커**로 APS 오버레이에 핀 렌더(`worldToClient` HTML 마커 또는 overlay scene) + 클릭→기존 이슈 팝업. 3D 이슈생성=선택 dbId→GlobalId 저장 | S49 | 0024(issues.global_id) |
+| **③ 이슈 위치보기** | `Issues.tsx`의 "위치 보기"를 GlobalId→dbId `isolate`+`fitToView`로 재배선(이슈 모듈 본체는 무수정) | S49 | — |
+| S50 4D | 일정↔GlobalId, `setThemingColor`/`hide·show`로 타임라인 색·표시 | ①~③ | — |
+| S51 물량 | APS 속성DB(`getBulkProperties`)에서 수량셋 추출 또는 IFC 병행 산출 | S49 | — |
+| S53 은퇴 | **IfcViewer 은퇴 + IA 통합**(통합모델=ACC 모델) — 위 패리티 증명 후에만 | S49~S51 | 정리형 |
 
 ### 🅱 Track B — "분리해서 할 수 있는 것"(병렬·2nd 계정): 권한·관리·문서뷰어
 > 포털 페이지 / Admin / AccBrowser / 문서뷰어만 건드림 → **Track A의 3D 뷰어 코드와 파일이
@@ -80,7 +88,10 @@ S48에서 자료관리가 ACC 단독이 되며 **Supabase BIM(IFC) 업로드 UI�
 - **병합 리듬**: 작은 Track B부터 자주 main 병합 → Track A는 수시로 main rebase로 따라가기.
 
 ### 열린 결정(기획자 추적)
-1. **간섭 방식**(S52): Model Coordination vs fragment+BVH(스파이크 후).
+1. ~~**간섭 방식**(S52): Model Coordination vs fragment+BVH~~ → **확정(2026-06)**: **fragment+BVH 직접
+   구현**. 사용자가 **클라우드(ACC Model Coordination) 구독 미보유 + 무비용 목표** → APS가 주는 자료
+   (fragment 지오·dbId·externalId)만으로 자체 구현. 옛 expressID 기반 저장 데이터는 자동 복원 불가 →
+   **신규부터 GlobalId**, 기존분 마이그레이션은 필요 시 별도 협의(기본=신규 전용).
 2. **ACC 미보유 프로젝트**: 병행 결정상 IFC 백업 경로 유지(모든 프로젝트 ACC 강제 보류).
 3. **S43 CDE 고도화**(승인·transmittal·검색)는 ACC 메타(0022) 위에서 재설계 — S47과 통합 검토.
 

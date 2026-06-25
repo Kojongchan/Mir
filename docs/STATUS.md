@@ -2,6 +2,23 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
+**[기획자2 세션] 2026-06-25 · APS 고유기능 이식 기획 확정 + D10 개정** (branch `claude/nice-sagan-4abii9`)
+- ✅ **D10 개정(사용자 확정)**: Office Online 임베드 **채택**(기밀 도면 포함). 근거=ACC가 ISO19650 준수
+  인증 → 그 흐름을 따름. 트레이드오프=서명 URL 만료 단축(후속 점검). `docs/DECISIONS.md` 반영·커밋.
+- ✅ **간섭·이슈를 APS Viewer 위로 이식 기획 확정**. 핵심 진단: 기존 간섭/이슈/물량은 전부 web-ifc
+  **`expressID`** 에 묶임 → APS는 **`dbId`/`externalId(=IfcGUID/GlobalId)`** 사용 + 요소 메시 미제공(SVF2
+  fragment). **재사용 판정**: web-ifc 지오 배관 폐기 / `three-mesh-bvh`(MIT) + `clash.ts`(결과로직)·
+  `ClashPanel`·영속화 스키마 + 이슈 모듈 본체는 재사용.
+- ✅ **우선순위 확정(사용자)**: **간섭체크 > 이슈 핀 > 이슈**. 매핑 레이어(`lib/apsMapping.ts`)가 선결.
+- ✅ **간섭 방식 확정**: **무비용 자체구현** — ACC Model Coordination **구독 없음** → APS fragment 지오 +
+  three-mesh-bvh 브라우저 직접 구현. (PLANNING 열린결정 #1 종결, ROADMAP/PLANNING Track A 재정렬.)
+- ⚠️ **옛 데이터**: expressID 기반 저장 이슈/간섭은 APS 자동복원 불가 → **신규부터 GlobalId**, 기존분
+  마이그레이션은 필요 시 별도 협의(기본=신규 전용).
+- **인수인계 한 줄**: → 개발자에게 0번 `apsMapping.ts`(0024)부터 착수 지시. 순서 = 매핑→간섭(S52,
+  0025)→이슈핀/위치보기(S49b)→4D→물량→은퇴. 담당 개발자 전달 멘트 작성 완료(아래 대화).
+
+---
+
 **[2nd 계정·병렬] 2026-06-24 · S47/S48 main 병합 + Track B 전부 완료** (branch `claude/affectionate-babbage-qxs2ry`)
 - ✅ **선결 — S47/S48 main 병합 (PR #89, merge `5de0d40`)**. funny-bardeen이 main의 fast-forward라 충돌 0,
   CI(typecheck·build) 통과 후 병합. 이제 두 트랙 모두 현재 main에서 분기 가능. (마이그레이션 0024·0025는 S48이
