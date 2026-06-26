@@ -15,6 +15,7 @@ import { enumerateApsElements, type ApsElement } from '../lib/apsElements';
 import { createApsFourDViewer } from '../lib/apsFourdView';
 import { buildApsTaskMapping, collectPropertyNames } from '../lib/apsScheduleMapping';
 import { mappingStats } from '../lib/fourd';
+import { formatDate, DAY } from '../lib/schedule';
 import { viewerKindFor, type ViewerKind, type FileRecord } from '../lib/files';
 import { ImageViewer } from '../components/viewers/ImageViewer';
 import { VideoViewer } from '../components/viewers/VideoViewer';
@@ -979,6 +980,9 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
         )}
         <div style={{ position: 'relative', flex: 1 }}>
           <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
+          {/* 4D 시뮬레이션 날짜·진척 HUD(Navisworks/Forma 류) — 재생 중 모델 위에 현재
+              시점과 진행률을 띄운다. 모델 재로딩 없이 오버레이만 갱신. */}
+          {mode4d && <FourDHud />}
           {/* 이슈 핀 오버레이(S49 Step 2) — GlobalId 앵커를 화면좌표 마커로. 4D 모드에선 숨김. */}
           {!mode4d && pinsOn && mapping && !!modelRef.current && (
             <ApsIssuePins
@@ -1091,6 +1095,36 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 4D 시뮬레이션 HUD(Navisworks/Forma 4D 류). 재생 중 모델 위에 현재 시점·진행률·
+ * 진행 중 작업 수를 표시한다. 전역 fourd store 만 읽으므로 모델 재로딩과 무관하게
+ * 매 틱 가볍게 갱신된다. 4D 비활성/공정표 없음이면 렌더하지 않는다.
+ */
+function FourDHud() {
+  const { enabled, tasks, rangeStart, rangeEnd, currentTime } = useStore((s) => s.fourd);
+  if (!enabled || tasks.length === 0 || Number.isNaN(currentTime)) return null;
+  const span = Math.max(1, rangeEnd - rangeStart);
+  const pct = Math.round(((currentTime - rangeStart) / span) * 100);
+  const totalDays = Math.max(1, Math.round(span / DAY));
+  const curDay = Math.max(0, Math.min(totalDays, Math.round((currentTime - rangeStart) / DAY)));
+  const active = tasks.filter((t) => currentTime >= t.start && currentTime < t.end).length;
+  const done = tasks.filter((t) => currentTime >= t.end).length;
+  return (
+    <div className="fourd-hud" aria-live="polite">
+      <div className="fourd-hud-date">{formatDate(currentTime)}</div>
+      <div className="fourd-hud-meta">
+        D{curDay} / {totalDays} · {pct}%
+      </div>
+      <div className="fourd-hud-bar">
+        <span style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
+      </div>
+      <div className="fourd-hud-meta">
+        진행 {active} · 완료 {done} / {tasks.length}
       </div>
     </div>
   );

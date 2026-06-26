@@ -90,6 +90,34 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null }: Prop
 
   const fileInput = useRef<HTMLInputElement>(null);
   const [collapsed, setCollapsed] = useState(false);
+  // 패널 높이(드래그로 위아래 조절 — 사용자 요청). localStorage 에 기억.
+  const [panelH, setPanelH] = useState(() => {
+    const v = Number(localStorage.getItem('tl-panel-h'));
+    return v >= 160 && v <= 900 ? v : 340;
+  });
+  const resizeRef = useRef<{ startY: number; startH: number } | null>(null);
+  const onResizeDown = (e: React.PointerEvent) => {
+    resizeRef.current = { startY: e.clientY, startH: panelH };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    e.preventDefault();
+  };
+  const onResizeMove = (e: React.PointerEvent) => {
+    const st = resizeRef.current;
+    if (!st) return;
+    // 위로 드래그(클라이언트 Y 감소)하면 높이 증가.
+    const next = Math.min(Math.max(st.startH + (st.startY - e.clientY), 160), window.innerHeight - 140);
+    setPanelH(next);
+  };
+  const onResizeUp = (e: React.PointerEvent) => {
+    if (!resizeRef.current) return;
+    resizeRef.current = null;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+    try {
+      localStorage.setItem('tl-panel-h', String(panelH));
+    } catch {
+      /* ignore */
+    }
+  };
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(3);
   const [showSettings, setShowSettings] = useState(false);
@@ -434,7 +462,14 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null }: Prop
   }
 
   return (
-    <div className="timeline">
+    <div className="timeline" style={{ height: panelH }}>
+      <div
+        className="tl-resize"
+        onPointerDown={onResizeDown}
+        onPointerMove={onResizeMove}
+        onPointerUp={onResizeUp}
+        title="드래그하여 높이 조절"
+      />
       <div className="tl-controls">
         <button className="tl-toggle" onClick={() => setCollapsed(true)}>
           ▾
