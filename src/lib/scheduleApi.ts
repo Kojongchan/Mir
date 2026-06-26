@@ -10,6 +10,8 @@
 import { supabase } from './supabase';
 import type { ScheduleTask, TaskKind, ScheduleSource } from './schedule';
 import type { TaskMapping } from './fourd';
+import type { ApsMapping } from './apsMapping';
+import { globalIdOf, dbIdOf } from './apsMapping';
 
 export interface SavedScheduleMeta {
   id: string;
@@ -23,8 +25,10 @@ export interface SavedScheduleMeta {
 export interface LoadedSchedule {
   meta: SavedScheduleMeta;
   tasks: ScheduleTask[];
-  /** taskId(=DB task uuid) → [{ modelDbId, expressID }] */
+  /** taskId(=DB task uuid) → [{ modelDbId, expressID }] (express_id 행만, IFC 경로) */
   elements: Record<string, { modelDbId: string; expressID: number }[]>;
+  /** taskId(=DB task uuid) → [{ modelDbId, globalId }] (global_id 행만, APS 경로 — S50) */
+  globalElements: Record<string, { modelDbId: string; globalId: string }[]>;
 }
 
 /** 프로젝트의 저장된 일정 목록(최신순). */
@@ -111,6 +115,80 @@ export async function saveSchedule(params: {
   return scheduleId;
 }
 
+/**
+ * APS(ACC) 모델용 일정 저장 — S50. dbId 는 세션마다 휘발성이라 영속키로 쓸 수
+ * 없으므로 ApsMapping 으로 GlobalId 로 변환해 task_elements.global_id 에 저장한다
+ * (express_id 는 비워둠). 단일 활성 APS 모델 가정(현재 4D 모드는 모델 1개).
+ */
+export async function saveApsSchedule(params: {
+  projectId: string;
+  /** 저장할 APS 모델의 DB 모델 uuid(models.id). */
+  modelDbId: string | null;
+  /** 매핑의 ElementRef.modelID(런타임 model.id) → 그 모델의 dbId↔GlobalId 인덱스. */
+  apsMapping: ApsMapping;
+  name: string;
+  source: ScheduleSource;
+  tasks: ScheduleTask[];
+  /** ElementRef.expressID 슬롯에 APS dbId 가 담긴 매핑(S49 관례). */
+  mapping: TaskMapping;
+}): Promise<string> {
+  const { projectId, modelDbId, apsMapping, name, source, tasks, mapping } = params;
+  const scheduleId = crypto.randomUUID();
+  const { data: userData } = await supabase.auth.getUser();
+
+  const { error: sErr } = await supabase.from('schedules').insert({
+    id: scheduleId,
+    project_id: projectId,
+    model_id: modelDbId,
+    name,
+    source,
+    created_by: userData.user?.id ?? null,
+  });
+  if (sErr) throw sErr;
+
+  const dbTaskId = new Map<string, string>();
+  const taskRows = tasks.map((t, i) => {
+    const id = crypto.randomUUID();
+    dbTaskId.set(t.id, id);
+    return {
+      id,
+      schedule_id: scheduleId,
+      external_id: t.externalId,
+      name: t.name,
+      kind: t.type,
+      start_at: new Date(t.start).toISOString(),
+      end_at: new Date(t.end).toISOString(),
+      sort_order: i,
+    };
+  });
+  if (taskRows.length) {
+    const { error: tErr } = await supabase.from('schedule_tasks').insert(taskRows);
+    if (tErr) {
+      await supabase.from('schedules').delete().eq('id', scheduleId);
+      throw tErr;
+    }
+  }
+
+  if (modelDbId) {
+    const elemRows: { task_id: string; model_id: string; global_id: string }[] = [];
+    for (const [clientTaskId, refs] of Object.entries(mapping)) {
+      const taskRowId = dbTaskId.get(clientTaskId);
+      if (!taskRowId) continue;
+      for (const ref of refs) {
+        const gid = globalIdOf(apsMapping, ref.expressID);
+        if (!gid) continue; // 매핑 안 되는 dbId 는 건너뜀
+        elemRows.push({ task_id: taskRowId, model_id: modelDbId, global_id: gid });
+      }
+    }
+    if (elemRows.length) {
+      const { error: eErr } = await supabase.from('task_elements').insert(elemRows);
+      if (eErr) throw eErr;
+    }
+  }
+
+  return scheduleId;
+}
+
 /** 저장된 일정 + 요소 매핑을 불러온다(런타임 modelID 변환은 호출측 담당). */
 export async function loadSchedule(scheduleId: string): Promise<LoadedSchedule> {
   const { data: meta, error: mErr } = await supabase
@@ -144,22 +222,52 @@ export async function loadSchedule(scheduleId: string): Promise<LoadedSchedule> 
 
   const taskIds = tasks.map((t) => t.id);
   const elements: LoadedSchedule['elements'] = {};
+  const globalElements: LoadedSchedule['globalElements'] = {};
   if (taskIds.length) {
     const { data: elemRows, error: eErr } = await supabase
       .from('task_elements')
-      .select('task_id, model_id, express_id')
+      .select('task_id, model_id, express_id, global_id')
       .in('task_id', taskIds);
     if (eErr) throw eErr;
     for (const row of elemRows ?? []) {
       const tid = row.task_id as string;
-      (elements[tid] ??= []).push({
-        modelDbId: row.model_id as string,
-        expressID: Number(row.express_id),
-      });
+      if (row.global_id) {
+        (globalElements[tid] ??= []).push({
+          modelDbId: row.model_id as string,
+          globalId: row.global_id as string,
+        });
+      } else if (row.express_id !== null && row.express_id !== undefined) {
+        (elements[tid] ??= []).push({
+          modelDbId: row.model_id as string,
+          expressID: Number(row.express_id),
+        });
+      }
     }
   }
 
-  return { meta: meta as SavedScheduleMeta, tasks, elements };
+  return { meta: meta as SavedScheduleMeta, tasks, elements, globalElements };
+}
+
+/**
+ * loadSchedule 의 globalElements(taskId→{modelDbId,globalId}[]) 를, 현재 세션의
+ * (DB 모델 uuid → ApsMapping) 로 dbId 로 해석해 TaskMapping 으로 만든다.
+ * 해석 안 되는(모델 미로드·GlobalId 불일치) 항목은 건너뛴다.
+ */
+export function resolveApsTaskMapping(
+  loaded: LoadedSchedule,
+  apsMappingByModelDbId: Map<string, { runtimeModelId: number; mapping: ApsMapping }>,
+): TaskMapping {
+  const out: TaskMapping = {};
+  for (const [taskId, refs] of Object.entries(loaded.globalElements)) {
+    for (const ref of refs) {
+      const entry = apsMappingByModelDbId.get(ref.modelDbId);
+      if (!entry) continue;
+      const dbId = dbIdOf(entry.mapping, ref.globalId);
+      if (dbId === null) continue;
+      (out[taskId] ??= []).push({ modelID: entry.runtimeModelId, expressID: dbId });
+    }
+  }
+  return out;
 }
 
 /** 저장된 일정 삭제(연쇄로 작업/요소도 삭제됨). */
@@ -191,6 +299,23 @@ export async function saveActiveSchedule(params: {
     .eq('project_id', params.projectId)
     .eq('name', ACTIVE_SCHEDULE_NAME);
   await saveSchedule({ ...params, name: ACTIVE_SCHEDULE_NAME });
+}
+
+/** APS 모드용 활성 슬롯 저장(GlobalId 경로) — saveActiveSchedule 의 APS 대응. */
+export async function saveActiveApsSchedule(params: {
+  projectId: string;
+  modelDbId: string | null;
+  apsMapping: ApsMapping;
+  source: ScheduleSource;
+  tasks: ScheduleTask[];
+  mapping: TaskMapping;
+}): Promise<void> {
+  await supabase
+    .from('schedules')
+    .delete()
+    .eq('project_id', params.projectId)
+    .eq('name', ACTIVE_SCHEDULE_NAME);
+  await saveApsSchedule({ ...params, name: ACTIVE_SCHEDULE_NAME });
 }
 
 /** 프로젝트의 활성 슬롯을 불러온다(없으면 null). */

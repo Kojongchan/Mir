@@ -8,6 +8,7 @@
 // DB(추가형 마이그레이션) 기반 정밀 매핑은 설계만 잡아둔다(supabase/migrations).
 
 import type { ScheduleTask, TaskKind } from './schedule';
+import type { AppearanceSettings } from '../viewer/IfcViewer';
 
 /** 모델 내 한 요소를 가리키는 참조 */
 export interface ElementRef {
@@ -39,6 +40,20 @@ export type CellState =
   | 'active-temporary';
 
 export const elementKey = (e: ElementRef): string => `${e.modelID}:${e.expressID}`;
+
+/**
+ * Timeline.tsx 가 의존하는 최소 인터페이스. IfcViewer 가 이미 구조적으로 만족하며,
+ * APS 뷰어용 어댑터(lib/apsFourdView.ts 의 createApsFourDViewer)도 이를 구현해
+ * 같은 Timeline.tsx 를 엔진 무관하게 재사용한다.
+ */
+export interface FourDViewer {
+  getElementCatalog(): ElementInfo[];
+  applyConstruction(
+    states: Iterable<{ modelID: number; expressID: number; state: CellState }>,
+    opts: AppearanceSettings,
+  ): void;
+  clearConstruction(): void;
+}
 
 // --- 매핑 ----------------------------------------------------------------
 

@@ -3,6 +3,52 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 [기획자 전달] S50 PoC — 4D 시공 시뮬레이션을 APS(ACC) Viewer 위로 이식 (2026-06-26)
+> branch `claude/aps-4d-simulation-euzmdl`. typecheck·build 통과. **PoC 단계** — 작은 공정표로
+> "스크럽 → 색/표시 변경"까지 동작 확인 필요(라이브 미검증, 코드 리뷰 부탁).
+
+### ✅ 구현
+1. **재사용 원칙 유지**: `lib/schedule.ts`·`lib/fourd.ts`(computeStates 등)·`Timeline.tsx` 로직은 그대로.
+   단, Timeline.tsx 가 의존하는 뷰어 인터페이스를 `fourd.ts` 에 `FourDViewer`(getElementCatalog/
+   applyConstruction/clearConstruction) 로 추출해 **타입만** `IfcViewer` → `FourDViewer` 로 바꿈(동작 변화
+   없음, IfcViewer 는 구조적으로 그대로 만족). S49 관례대로 `ElementRef{modelID,expressID}` 의
+   expressID 슬롯에 APS dbId 를 그대로 담아 fourd.ts 무수정.
+2. **`lib/apsFourdView.ts`(신규)**: `createApsFourDViewer(viewer, model, elements)` — CellState→
+   `viewer.hide/show(dbId)`(전역 isolate 대신 **per-object**) + `setThemingColor`(시공중 초록/철거중
+   빨강/고스트 회색) 로 변환. 매 틱 `clearThemingColors` 후 재적용(공정표 규모 작아 비용 무시, 추후
+   diff 최적화 과제).
+3. **`lib/apsScheduleMapping.ts`(신규)**: 매칭 우선순위 ①속성(사용자가 드롭다운에서 매칭 속성 선택 →
+   `getBulkProperties2` 로 값 조회 → 공정표 `externalId`/`id`/`name` 후보와 매칭) ②이름(`mapByName`
+   재사용) ③순서(`mapSequential` 재사용) — ①이 0건이면 ②, ②도 0건이면 ③.
+4. **`AccModels` 에 `mode4d` prop 추가**(`autoClash` 와 동일 패턴) — `/viewer` 라우트를
+   `AccModels mode4d` 로 교체(구 `Workspace mode="4d"` 는 코드 보존, 라우트만 이동 — S49 clash 전례
+   동일). 헤더에 매칭속성 드롭다운 + "🔗 4D 매칭" 버튼, `Timeline` 을 APS 어댑터와 함께 마운트.
+5. **마이그레이션 0029(추가형)**: `task_elements.global_id` 컬럼 + 부분 unique 인덱스. `express_id`
+   를 nullable 로(GlobalId 전용 행 허용) + "express_id 또는 global_id 중 하나" 체크. 기존 0003 IFC
+   경로(express_id) 는 그대로 보존.
+6. **`lib/scheduleApi.ts` 추가형 확장**: `saveApsSchedule`/`saveActiveApsSchedule`(GlobalId 로 저장) +
+   `loadSchedule` 이 `global_id` 행도 함께 읽어 `LoadedSchedule.globalElements` 로 분리 + 신규
+   `resolveApsTaskMapping`(저장된 GlobalId → 현 세션 dbId 해석, ApsMapping 기반).
+
+### ⚠️ 미완(다음 세션)
+- **PoC 검증 안 됨**: 실제 ACC 모델에서 작은 공정표(3~5개) + 속성매칭 1건으로 스크럽 시 색/표시가
+  바뀌는지 라이브 확인 필요.
+- **APS 4D 모드의 자동저장/복원이 아직 `saveApsSchedule` 경로로 연결 안 됨** — 현재 `Timeline.tsx` 는
+  무수정 재사용이라 내부적으로 기존 express_id 경로(`saveSchedule`/`saveActiveSchedule`)를 그대로
+  호출한다(`modelIdMap` 을 빈 Map 으로 넘겨 요소 저장은 스킵 — 일정/작업만 저장됨). GlobalId 경로 자동
+  연동은 Timeline.tsx 를 손대지 않는 선에서 AccModels 쪽에 별도 저장 버튼/이펙트를 추가하는 식으로
+  다음 세션에 마무리 필요.
+- **수동 매핑(트리에서 dbId 선택→작업 배정)**: Timeline.tsx 의 기존 "선택 요소 매핑" UI가 이미 동작
+  하나, APS 트리 선택(`selDbId`)과의 연결은 미검증.
+- **getBulkProperties2 성능**: 대형 모델에서 `collectPropertyNames`/`bulkPropertyValues` 비용 미검증.
+- ghosting 전역 제약(S49 동일 메모)은 4D 에선 per-object hide/show 로 회피했으나 라이브에서
+  `viewer.hide`/`show` 동작 확인 필요.
+
+### 🤝 인수인계 한 줄
+→ PoC 코드(매핑엔진·뷰적용·라우팅·마이그레이션 0029) 작성·typecheck/build 통과·푸시 완료. 다음 세션은
+**실 ACC 모델로 작은 공정표 라이브 검증** 부터, 그다음 APS 경로 자동저장/복원 마무리.
+
+---
 ## 📋 [기획자 전달] S49 종합 — APS(ACC) 위 간섭체크 · 이슈 이식 (2026-06-26)
 > branch `claude/blissful-mccarthy-mebctq` (main 대비 14커밋, 충돌 0 · FF 가능). typecheck·build 통과.
 > **요지**: ACC 통합모델(nwd) 위에서 우리 고유기능(간섭·이슈)을 **추가 비용 0**으로 자체 구현 완료.

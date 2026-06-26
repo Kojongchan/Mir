@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { IfcViewer } from '../viewer/IfcViewer';
 import { useStore } from '../store/useStore';
 import {
   readCsv,
@@ -19,6 +18,7 @@ import {
   computeStates,
   type TaskMapping,
   type ElementRef,
+  type FourDViewer,
 } from '../lib/fourd';
 import {
   listSchedules,
@@ -34,7 +34,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { ColumnMapModal } from './ColumnMapModal';
 
 interface Props {
-  viewer: IfcViewer | null;
+  viewer: FourDViewer | null;
   projectId: string;
   /** 런타임 modelID → DB 모델 uuid (여러 모델을 동시에 로드 — 매핑 영속화·복원용). */
   modelIdMap: Map<number, string>;
