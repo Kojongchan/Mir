@@ -1052,16 +1052,6 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
               onClose={() => setClashOpen(false)}
             />
           )}
-          {mode4d && (
-            <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 560 }}>
-              <Timeline
-                viewer={apsFourDViewer}
-                projectId={projectId}
-                modelIdMap={EMPTY_MODEL_ID_MAP}
-                apsMode={{ modelDbId: apsDbModelId, apsMapping: mapping }}
-              />
-            </div>
-          )}
           {docView && (
             <div
               style={{
@@ -1096,6 +1086,16 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
           )}
         </div>
       </div>
+      {/* 타임라인은 뷰어 위에 덮는 오버레이가 아니라 컬럼 흐름의 형제로 둔다 —
+          접기/펴기/높이조절 시 위 3D 뷰(flex:1)가 동적으로 늘었다 줄어든다. */}
+      {mode4d && (
+        <Timeline
+          viewer={apsFourDViewer}
+          projectId={projectId}
+          modelIdMap={EMPTY_MODEL_ID_MAP}
+          apsMode={{ modelDbId: apsDbModelId, apsMapping: mapping }}
+        />
+      )}
     </div>
   );
 }
