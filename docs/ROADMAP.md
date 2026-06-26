@@ -95,15 +95,15 @@ VR 검토까지. 다중 사용자가 **본인 배정 프로젝트(공구)** 만 
 | **S47** | 자료관리 ACC 일원화(업로드까지) ✅ | (funny-bardeen) | ACC 쓰기=2-legged(D19) + Supabase 읽기 공존. 0022. **미병합** | S46 |
 | **S48** | 4단계 RBAC + ACC 단독 파일관리자 ✅ | (funny-bardeen) | 뷰어/실무자/관리자/시스템관리자(0023·D20) + ACC식 파일관리자 UI(이름변경·삭제·이동·버전·다운로드). **미병합** | S47 |
 | **선결** | **S47/S48 main 병합** ✅ | PR #89(`5de0d40`) | 두 트랙(A·B) 분기 전제. FF 병합·CI 통과 | S48 |
-| **S49** | 🅰 매핑 레이어 + 4D/간섭 ACC 소스화 (선결) | `feature/aps-mapping` | dbId↔GlobalId 매핑(`lib/apsMapping.ts`) + **신규 BIM 업로드 경로 부재 해소**. 0024. **급소(셋 다 의존)** | S48 |
-| **S52★** | 🅰 **간섭 APS 이식 (최우선)** | `feature/aps-clash` | **fragment 지오 추출 + three-mesh-bvh 직접 구현**(무비용·Model Coordination 미보유) → `clash.ts`·`ClashPanel`·`clashApi` 재사용, 저장키 GlobalId. 0025 | S49 |
-| **S49b** | 🅰 이슈 핀 + 위치보기 APS 이식 | `feature/aps-issues` | issues GlobalId 앵커 → APS 오버레이 핀·클릭 팝업 + "위치 보기" isolate/fit 재배선 | S49 |
-| S50 | 🅰 4D APS 이식 | `feature/aps-4d` | 일정↔GlobalId, themingColor/표시제어 타임라인 | S52·S49b |
-| S51 | 🅰 물량(QTO) APS 이식 | `feature/aps-qto` | APS 속성DB(getBulkProperties) 추출 또는 IFC 병행 | S49 |
+| **S49 ✅** | 🅰 매핑 레이어 + 4D/간섭 ACC 소스화 (선결) | PR #91(`3d3d46a`) | `lib/apsMapping.ts`(dbId↔GlobalId) + BIM 소스 ACC화. **main 병합** | S48 |
+| **S52★ ✅** | 🅰 **간섭 APS 이식 (최우선)** | PR #91 | `apsClash.ts`(fragment+three-mesh-bvh 무비용)·`ApsClashPanel`·`apsReport`. 저장키 GlobalId. PoC 라이브 OK. 0027 | S49 |
+| **S49b ✅** | 🅰 이슈 핀 + 위치보기 APS 이식 | PR #91 | `ApsIssuePins.tsx`(GlobalId 앵커·worldToClient 핀·클릭 팝업) + "위치 보기(ACC)" isolate/fit. 0026·0028 | S49 |
+| **S50 ◀다음** | 🅰 **4D 시공 시뮬 APS 이식** | `feature/aps-4d` | 공정표(Excel)↔객체 **속성기반 매칭(Navisworks식)** + 타임라인 themingColor/표시제어. `schedule.ts`·`fourd.ts`·`Timeline.tsx` 재사용 + `apsFourdView.ts` 신규. 저장키 GlobalId. 0029 | S49 |
+| S51 | 🅰 물량(QTO) APS 이식 | `feature/aps-qto` | 속성DB 수량셋 + 간섭 fragment 지오 부피적분 재사용. `quantities.ts` 집계 재사용 | S49 |
 | S53 | 🅰 IfcViewer 은퇴 + IA 통합 | `feature/retire-ifcviewer` | 통합모델=ACC 모델. 패리티 증명 후 | S49~S51 |
 
-> **우선순위 확정(2026-06)**: 사용자 = **간섭체크(S52) > 이슈 핀(S49b) > 이슈**. 매핑 레이어(S49)가
-> 선결. 간섭은 **무비용 자체구현**(클라우드 간섭 구독 없음) — APS fragment 지오 + three-mesh-bvh.
+> **진행(2026-06)**: S49(매핑)·간섭·이슈핀·위치보기 = **PR #91로 main 병합 완료**. **다음 = S50 4D**
+> (사용자 확정). nwd 위 4D는 Navisworks TimeLiner 로직(속성↔공정표 매칭) 그대로 → 속성기반 매칭 1순위.
 | B1 | 🅱 모듈별 canEdit 게이팅 점검·보강 ✅ | (affectionate-babbage) | is_admin→useProjectRole().canEdit (이슈·공정·일보·기성·하도급·게시판·도면). Quantities는 A S51로 인계. 마이그레이션 없음 | S48 |
 | B2 | 🅱 프로젝트 관리자 역할 배정 권한 ✅ | (S48 완료) | ProjectMembers=canManage 게이팅 + RLS members_*=is_project_admin. S48 9a2166c에서 이미 구현(추가작업 없음) | S48 |
 | B3 | 🅱 ACC 파일관리자 보강 + 라이브 검증 ✅ | (affectionate-babbage) | '새 버전 올리기' UI(⋮·버전모달). 이동·버전이력 기존 유지. 실 PUT/CORS는 운영 라이브검증 인계 | S48 |

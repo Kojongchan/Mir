@@ -2,6 +2,22 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
+**[기획자2 세션] 2026-06-26 · S49 병합 확인 + S50(4D) 기획 확정** (branch `claude/nice-sagan-4abii9`)
+- ✅ **S49 main 병합 확인(PR #91, `3d3d46a`)**: 간섭(`apsClash`/`ApsClashPanel`/`apsReport`)·이슈핀
+  (`ApsIssuePins`)·위치보기·매핑(`apsMapping`)·요소열거(`apsElements`) + 마이그레이션 0026·0027·0028
+  전부 병합. blissful 브랜치는 squash로 흡수(중복 — 정리 가능). 단일모델 PoC 라이브 OK.
+- ⚠️ **개발자 플래그(미검증·미해결)**: 모델간 간섭 라이브검증 · 카테고리(nwd/IFC 타입) 정확도 · 단위
+  tolerance(m 가정) · 대용량 카테고리 열거 성능 · 간섭 스냅샷 첨부(S35 APS판) · per-object 투명/관통깊이
+  시각화는 APS ghosting 전역제약으로 보류.
+- ✅ **다음 = S50 4D 확정(사용자)**. 통합모델 nwd 여도 가능 — **근거=Navisworks 자체가 "소스 속성정보 →
+  공정표(Excel) 매칭" 로직**. 재사용=`schedule.ts`·`fourd.ts computeStates`·`Timeline.tsx`·`enumerateApsElements`.
+  신규=**속성기반 매칭(getBulkProperties2, Navisworks rules식)**·`apsFourdView.ts`(CellState→theming/show·hide).
+  저장키 GlobalId(0029). 매칭 우선순위=속성>이름>순서.
+- **인수하 한 줄**: → ROADMAP/PLANNING Track A에 S49 ✅·S50 상세 반영. 개발자 전달 멘트 작성(아래 대화).
+  다음 개발자 작업 = `feature/aps-4d`, 0029.
+
+---
+
 **[기획자2 세션] 2026-06-25 · APS 고유기능 이식 기획 확정 + D10 개정** (branch `claude/nice-sagan-4abii9`)
 - ✅ **D10 개정(사용자 확정)**: Office Online 임베드 **채택**(기밀 도면 포함). 근거=ACC가 ISO19650 준수
   인증 → 그 흐름을 따름. 트레이드오프=서명 URL 만료 단축(후속 점검). `docs/DECISIONS.md` 반영·커밋.

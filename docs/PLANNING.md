@@ -59,13 +59,18 @@ S48에서 자료관리가 ACC 단독이 되며 **Supabase BIM(IFC) 업로드 UI�
 
 | 단계 | 범위 | 의존 | 마이그레이션 |
 |---|---|---|---|
-| **S49 (선결)** | **dbId↔GlobalId 매핑 레이어**(`src/lib/apsMapping.ts`: `getExternalIdMapping`/property DB로 양방향 인덱스) + **4D·간섭의 BIM 소스를 ACC로**(신규 업로드 경로 부재 해소) | S46/S48 | 0024 |
-| **① 간섭 (최우선)** | **APS fragment 지오 추출 + `three-mesh-bvh` 직접 구현**(무비용 — Model Coordination **구독 없음**). 광역=dbId 월드 AABB / 협역=fragment BVH 교차·관입깊이 → **결과를 `ClashRow`로** 만들어 `clash.ts`·`ClashPanel`·`clashApi` 재사용. `showClash`(A초록/B빨강+ghost+줌)는 APS `setThemingColor`/`isolate`/`fitToView`로 재현. **저장키=GlobalId** | S49 | 0025(clashes.global_id) |
-| **② 이슈 핀** | issues를 **GlobalId 앵커**로 APS 오버레이에 핀 렌더(`worldToClient` HTML 마커 또는 overlay scene) + 클릭→기존 이슈 팝업. 3D 이슈생성=선택 dbId→GlobalId 저장 | S49 | 0024(issues.global_id) |
-| **③ 이슈 위치보기** | `Issues.tsx`의 "위치 보기"를 GlobalId→dbId `isolate`+`fitToView`로 재배선(이슈 모듈 본체는 무수정) | S49 | — |
-| S50 4D | 일정↔GlobalId, `setThemingColor`/`hide·show`로 타임라인 색·표시 | ①~③ | — |
-| S51 물량 | APS 속성DB(`getBulkProperties`)에서 수량셋 추출 또는 IFC 병행 산출 | S49 | — |
+| **S49 (선결) ✅** | **dbId↔GlobalId 매핑 레이어**(`src/lib/apsMapping.ts`) + 4D·간섭 BIM 소스 ACC화. **main 병합(PR #91)** | S46/S48 | 0026~0028 |
+| **① 간섭 ✅** | `apsClash.ts`(fragment+MeshBVH 무비용)·`apsClashView.ts`·`ApsClashPanel.tsx`·`apsReport.ts`. 저장키 GlobalId. PoC 라이브 OK | S49 | 0027 |
+| **② 이슈 핀 ✅** | `ApsIssuePins.tsx`(GlobalId 앵커→`worldToClient` HTML 마커+클릭 팝업) | S49 | 0026 |
+| **③ 이슈 위치보기 ✅** | `Issues.tsx` "위치 보기(ACC)" → `/acc?focusGlobalId=` → isolate+fitToView | S49 | — |
+| **S50 4D ◀다음** | **공정표(Excel)↔객체 매칭 + 타임라인 시공 시뮬**. Navisworks TimeLiner 방식 = **속성기반 매칭 우선**. 재사용=`schedule.ts`(파싱·열매핑)·`fourd.ts computeStates`(생애주기 상태)·`Timeline.tsx`. 신규=`enumerateApsElements` 투입 + **속성매칭(getBulkProperties2: WBS/Zone/Phase↔작업코드)** + `apsFourdView.ts`(CellState→setThemingColor/show·hide). 저장키 GlobalId | ①~③ | 0029 |
+| S51 물량 | APS 속성DB(`getBulkProperties2`) 수량셋 + **간섭이 만든 fragment 지오 부피적분 재사용**(2단 폴백). `quantities.ts` 집계 재사용 → 기성 연계 | S49 | — |
 | S53 은퇴 | **IfcViewer 은퇴 + IA 통합**(통합모델=ACC 모델) — 위 패리티 증명 후에만 | S49~S51 | 정리형 |
+
+> **S50 4D 설계 메모(2026-06)**: 사용자 확정 — 통합모델이 **nwd**여도 4D 가능. **근거=Navisworks 자체가
+> "소스 포맷의 속성정보 → 공정표(Excel) 매칭" 로직**이라, nwd 위 4D는 원래 방식 그대로. 따라서 매핑은
+> **① 속성기반(Navisworks rules식, 사용자가 매칭 속성 선택)을 1순위**, ② 이름기반(`mapByName`), ③ 순서기반
+> (`mapSequential`) 폴백. 옛 express_id 일정은 APS 자동복원 불가 → **신규부터 GlobalId**.
 
 ### 🅱 Track B — "분리해서 할 수 있는 것"(병렬·2nd 계정): 권한·관리·문서뷰어
 > 포털 페이지 / Admin / AccBrowser / 문서뷰어만 건드림 → **Track A의 3D 뷰어 코드와 파일이
