@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { IfcViewer } from '../viewer/IfcViewer';
 import { useStore } from '../store/useStore';
 import {
   readCsv,
@@ -19,6 +18,7 @@ import {
   computeStates,
   type TaskMapping,
   type ElementRef,
+  type FourDViewer,
 } from '../lib/fourd';
 import {
   listSchedules,
@@ -34,7 +34,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { ColumnMapModal } from './ColumnMapModal';
 
 interface Props {
-  viewer: IfcViewer | null;
+  viewer: FourDViewer | null;
   projectId: string;
   /** 런타임 modelID → DB 모델 uuid (여러 모델을 동시에 로드 — 매핑 영속화·복원용). */
   modelIdMap: Map<number, string>;
@@ -540,6 +540,22 @@ function AppearancePanel() {
         />
       </label>
       <label className="tl-check">
+        빠른 시작(계획보다 앞당김)
+        <input
+          type="color"
+          value={appearance.colorEarly}
+          onChange={(e) => setAppearance({ colorEarly: e.target.value })}
+        />
+      </label>
+      <label className="tl-check">
+        늦은 시작(계획보다 지연)
+        <input
+          type="color"
+          value={appearance.colorLate}
+          onChange={(e) => setAppearance({ colorLate: e.target.value })}
+        />
+      </label>
+      <label className="tl-check">
         <input
           type="checkbox"
           checked={appearance.ghostFuture}
@@ -547,6 +563,9 @@ function AppearancePanel() {
         />
         미시공 반투명(ghost)
       </label>
+      <div className="muted" style={{ fontSize: 11 }}>
+        실제 시작(actualStart) 값이 있는 작업만 계획 대비 빠름/늦음으로 표시됩니다.
+      </div>
     </div>
   );
 }

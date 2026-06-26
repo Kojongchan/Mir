@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthProvider';
@@ -9,6 +9,12 @@ import { isolateAndFit, showApsClash } from '../lib/apsClashView';
 import { listIssues, createIssue, STATUS_LABEL, type Issue } from '../lib/issues';
 import { ApsClashPanel } from '../components/ApsClashPanel';
 import { ApsIssuePins } from '../components/ApsIssuePins';
+import { Timeline } from '../components/Timeline';
+import { useStore } from '../store/useStore';
+import { enumerateApsElements, type ApsElement } from '../lib/apsElements';
+import { createApsFourDViewer } from '../lib/apsFourdView';
+import { buildApsTaskMapping, collectPropertyNames } from '../lib/apsScheduleMapping';
+import { mappingStats } from '../lib/fourd';
 import { viewerKindFor, type ViewerKind, type FileRecord } from '../lib/files';
 import { ImageViewer } from '../components/viewers/ImageViewer';
 import { VideoViewer } from '../components/viewers/VideoViewer';
@@ -144,7 +150,7 @@ function updateFolder(nodes: FolderNode[], id: string, fn: (n: FolderNode) => Fo
   });
 }
 
-export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
+export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: boolean; mode4d?: boolean } = {}) {
   const { projectId = '' } = useParams();
   const navigate = useNavigate();
   const { profile } = useAuth();
@@ -173,6 +179,35 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
   const autoClashRef = useRef(autoClash);
   const reloadIssues = () => {
     listIssues(projectId).then(setIssues).catch(() => {});
+  };
+
+  // 4D 시공 시뮬레이션 이식(S50): APS 요소 열거 + 속성매칭 선택 + Timeline 어댑터.
+  const mode4dRef = useRef(mode4d);
+  const [apsElements, setApsElements] = useState<ApsElement[]>([]);
+  const [propertyOptions, setPropertyOptions] = useState<string[]>([]);
+  const [matchProperty, setMatchProperty] = useState<string>('');
+  const [matching4d, setMatching4d] = useState(false);
+  const fourd = useStore((s) => s.fourd);
+  const apsFourDViewer = useMemo(() => {
+    if (!mode4d || !viewerRef.current || !modelRef.current || !apsElements.length) return null;
+    return createApsFourDViewer(viewerRef.current, modelRef.current, apsElements);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode4d, apsElements, mapping]);
+
+  const runPropertyMatch = async () => {
+    const m = modelRef.current;
+    if (!m || !apsElements.length || !fourd.tasks.length) return;
+    setMatching4d(true);
+    try {
+      const taskMapping = await buildApsTaskMapping(m, apsElements, fourd.tasks, matchProperty || null);
+      const stats = mappingStats(taskMapping);
+      useStore.getState().fourd.setMapping(taskMapping, stats.tasks, stats.elements);
+      setStatus(`4D 매핑(${matchProperty || '이름/순서'}): ${stats.tasks}작업 · ${stats.elements}객체`);
+    } catch (e) {
+      setStatus(`4D 매핑 실패: ${(e as Error).message}`);
+    } finally {
+      setMatching4d(false);
+    }
   };
 
   // ACC 탐색 상태.
@@ -630,6 +665,18 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
               if (typeof dbId === 'number') isolateAndFit(viewer, m, dbId);
             }
             if (autoClashRef.current) setClashOpen(true);
+            if (mode4dRef.current) {
+              enumerateApsElements(m)
+                .then((els) => {
+                  if (cancelled) return;
+                  setApsElements(els);
+                  return collectPropertyNames(m, els.map((el) => el.dbId));
+                })
+                .then((names) => {
+                  if (!cancelled && names) setPropertyOptions(names);
+                })
+                .catch(() => {});
+            }
           } catch (e2) {
             setStatus(`GlobalId 매핑 실패: ${(e2 as Error).message}`);
           }
@@ -721,7 +768,22 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
           alignItems: 'center',
         }}
       >
-        <strong style={{ fontSize: 13 }}>{autoClash ? '🔍 간섭체크' : '🅰 ACC 모델'}</strong>
+        <strong style={{ fontSize: 13 }}>{autoClash ? '🔍 간섭체크' : mode4d ? '🏗 공정관리(4D)' : '🅰 ACC 모델'}</strong>
+        {mode4d && apsElements.length > 0 && (
+          <>
+            <select value={matchProperty} onChange={(e) => setMatchProperty(e.target.value)} style={{ ...selStyle, width: 160 }}>
+              <option value="">매칭 속성: 이름/순서</option>
+              {propertyOptions.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+            <button onClick={() => void runPropertyMatch()} disabled={matching4d || !fourd.tasks.length} style={btnStyle} title="선택한 속성으로 공정표↔객체 매칭">
+              {matching4d ? '매칭 중…' : '🔗 4D 매칭'}
+            </button>
+          </>
+        )}
         {/* 간섭 도구를 좌측에(#5). clash 모드에서는 폴더트리를 숨긴다(#1). */}
         {mapping && (
           <>
@@ -904,6 +966,9 @@ export function AccModels({ autoClash = false }: { autoClash?: boolean } = {}) {
               onIssueCreated={reloadIssues}
               onClose={() => setClashOpen(false)}
             />
+          )}
+          {mode4d && (
+            <Timeline viewer={apsFourDViewer} projectId={projectId} modelIdMap={new Map()} />
           )}
           {docView && (
             <div

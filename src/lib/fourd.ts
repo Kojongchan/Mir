@@ -8,6 +8,7 @@
 // DB(추가형 마이그레이션) 기반 정밀 매핑은 설계만 잡아둔다(supabase/migrations).
 
 import type { ScheduleTask, TaskKind } from './schedule';
+import type { AppearanceSettings } from '../viewer/IfcViewer';
 
 /** 모델 내 한 요소를 가리키는 참조 */
 export interface ElementRef {
@@ -36,9 +37,27 @@ export type CellState =
   | 'ghost'
   | 'active-construct'
   | 'active-demolish'
-  | 'active-temporary';
+  | 'active-temporary'
+  // 계획 대비 실제 시작 빠름/늦음(공정 지연 시각화) — 진행 중(construct/equipment/other)에만 적용.
+  // actualStart 가 없으면 절대 나오지 않으므로 기존 동작과 100% 하위호환.
+  | 'active-early'
+  | 'active-late';
 
 export const elementKey = (e: ElementRef): string => `${e.modelID}:${e.expressID}`;
+
+/**
+ * Timeline.tsx 가 의존하는 최소 인터페이스. IfcViewer 가 이미 구조적으로 만족하며,
+ * APS 뷰어용 어댑터(lib/apsFourdView.ts 의 createApsFourDViewer)도 이를 구현해
+ * 같은 Timeline.tsx 를 엔진 무관하게 재사용한다.
+ */
+export interface FourDViewer {
+  getElementCatalog(): ElementInfo[];
+  applyConstruction(
+    states: Iterable<{ modelID: number; expressID: number; state: CellState }>,
+    opts: AppearanceSettings,
+  ): void;
+  clearConstruction(): void;
+}
 
 // --- 매핑 ----------------------------------------------------------------
 
@@ -131,6 +150,9 @@ interface ElementEvent {
   start: number;
   end: number;
   kind: TaskKind;
+  /** 실제 시작/끝(epoch ms, 없으면 null) — 계획 대비 빠름/늦음 판정용. */
+  actualStart: number | null;
+  actualEnd: number | null;
 }
 
 // 작업 유형별 "진행 중" 색상 상태
@@ -138,6 +160,11 @@ function activeState(kind: TaskKind): CellState {
   if (kind === 'demolish') return 'active-demolish';
   if (kind === 'temporary') return 'active-temporary';
   return 'active-construct'; // construct/equipment/other
+}
+
+// construct/equipment/other 만 계획 대비 빠름/늦음 표시 대상(철거·임시는 기존 동작 유지).
+function varianceEligible(kind: TaskKind): boolean {
+  return kind === 'construct' || kind === 'equipment' || kind === 'other';
 }
 
 // 작업 유형별 "완료 후" 상태
@@ -165,7 +192,13 @@ export function computeStates(
   for (const [taskId, refs] of Object.entries(mapping)) {
     const task = byId.get(taskId);
     if (!task) continue;
-    const ev: ElementEvent = { start: task.start, end: task.end, kind: task.type };
+    const ev: ElementEvent = {
+      start: task.start,
+      end: task.end,
+      kind: task.type,
+      actualStart: task.actualStart,
+      actualEnd: task.actualEnd,
+    };
     for (const ref of refs) {
       const key = elementKey(ref);
       let entry = events.get(key);
@@ -183,8 +216,23 @@ export function computeStates(
     // 시작 전 상태: 첫 작업이 철거면 기존재(normal), 아니면 미시공(ghost)
     let state: CellState = list[0].kind === 'demolish' ? 'normal' : 'ghost';
     for (const ev of list) {
-      if (ev.start > now) continue; // 아직 시작 안 한 작업은 무시
-      state = now < ev.end ? activeState(ev.kind) : afterState(ev.kind);
+      // 진행 판정은 실제 날짜가 있으면 그걸 우선(없으면 계획과 동일 — 기존 동작 그대로).
+      const effStart = ev.actualStart ?? ev.start;
+      const effEnd = ev.actualEnd ?? ev.end;
+      if (effStart > now) continue; // 아직 시작 안 한 작업은 무시
+      if (now < effEnd) {
+        const variance =
+          varianceEligible(ev.kind) && ev.actualStart != null
+            ? ev.actualStart < ev.start
+              ? 'early'
+              : ev.actualStart > ev.start
+                ? 'late'
+                : null
+            : null;
+        state = variance === 'early' ? 'active-early' : variance === 'late' ? 'active-late' : activeState(ev.kind);
+      } else {
+        state = afterState(ev.kind);
+      }
     }
     result.set(key, { ref, state });
   }

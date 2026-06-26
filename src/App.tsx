@@ -83,7 +83,8 @@ export default function App() {
                 모델 세트만 보도록 mode 로 구분(S33). 'viewer' 는 4D 하위호환 별칭. */}
             <Route path="acc" element={<AccModels />} />
             <Route path="model" element={<Workspace mode="integrated" />} />
-            <Route path="viewer" element={<Workspace mode="4d" />} />
+            {/* 공정관리(4D) = APS(ACC) 모델 위 4D 시뮬(S50). 구 IFC Workspace 4D 는 백업으로 보존. */}
+            <Route path="viewer" element={<AccModels mode4d />} />
             {/* 간섭체크 = APS(ACC) 모델 위 간섭(S49). 구 IFC Workspace clash 는 백업으로 보존. */}
             <Route path="clash" element={<AccModels autoClash />} />
             <Route path="quantities" element={<Quantities />} />
