@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { COLUMN_ROLES, type ColumnMap, type CsvDoc } from '../lib/schedule';
 
 interface Props {
@@ -21,7 +22,7 @@ export function ColumnMapModal({ doc, onConfirm, onCancel }: Props) {
   const sample = doc.rows[0] ?? [];
   const missingRequired = COLUMN_ROLES.some((r) => r.required && map[r.key] < 0);
 
-  return (
+  return createPortal(
     <div className="modal-backdrop" onClick={onCancel}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
@@ -80,6 +81,7 @@ export function ColumnMapModal({ doc, onConfirm, onCancel }: Props) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

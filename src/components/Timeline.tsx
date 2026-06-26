@@ -23,21 +23,32 @@ import {
 import {
   listSchedules,
   saveSchedule,
+  saveApsSchedule,
   loadSchedule,
   deleteSchedule,
   saveActiveSchedule,
+  saveActiveApsSchedule,
   loadActiveSchedule,
+  resolveApsTaskMapping,
   ACTIVE_SCHEDULE_NAME,
   type SavedScheduleMeta,
+  type LoadedSchedule,
 } from '../lib/scheduleApi';
+import type { ApsMapping } from '../lib/apsMapping';
 import { useAuth } from '../auth/AuthProvider';
 import { ColumnMapModal } from './ColumnMapModal';
 
 interface Props {
   viewer: FourDViewer | null;
   projectId: string;
-  /** 런타임 modelID → DB 모델 uuid (여러 모델을 동시에 로드 — 매핑 영속화·복원용). */
+  /** 런타임 modelID → DB 모델 uuid (여러 모델을 동시에 로드 — 매핑 영속화·복원용). IFC 경로용. */
   modelIdMap: Map<number, string>;
+  /**
+   * APS(ACC) 모드: dbId 는 세션마다 휘발성이라 GlobalId 경로(task_elements.global_id)
+   * 로 영속화한다(S50). 지정 시 이름/순서 매핑 UI 는 숨기고(속성 매핑은 호출측 책임),
+   * 저장/복원도 이 경로를 쓴다. null/undefined 면 기존 IFC express_id 경로 사용.
+   */
+  apsMode?: { modelDbId: string | null; apsMapping: ApsMapping | null } | null;
 }
 
 /**
@@ -45,15 +56,21 @@ interface Props {
  * 타임슬라이더로 현재 시점을 옮기면 그 시점의 시공 상태(시공/철거/임시)를 유형별
  * 색상·반투명으로 뷰어에 반영한다. 작업 테이블(헤더/열)과 간트를 함께 표시.
  */
-export function Timeline({ viewer, projectId, modelIdMap }: Props) {
-  // DB 모델 uuid → 런타임 modelID (불러온 매핑을 현재 세션 모델로 재해석).
+export function Timeline({ viewer, projectId, modelIdMap, apsMode = null }: Props) {
+  // DB 모델 uuid → 런타임 modelID (불러온 매핑을 현재 세션 모델로 재해석). IFC 경로용.
   const dbToRuntime = useMemo(() => {
     const m = new Map<string, number>();
     for (const [rid, db] of modelIdMap.entries()) m.set(db, rid);
     return m;
   }, [modelIdMap]);
-  // 모든 모델이 로드됐는지 판별하는 키(자동복원 트리거).
+  // 자동복원 트리거 키: IFC 경로는 모델이 모두 로드됐는지, APS 경로는 모델 미러행+
+  // dbId↔GlobalId 매핑이 준비됐는지로 판단한다.
   const loadedKey = useMemo(() => [...modelIdMap.values()].sort().join('|'), [modelIdMap]);
+  const restoreKey = apsMode
+    ? apsMode.modelDbId && apsMode.apsMapping
+      ? apsMode.modelDbId
+      : ''
+    : loadedKey;
   const fourd = useStore((s) => s.fourd);
   const setStatus = useStore((s) => s.setStatus);
   const selected = useStore((s) => s.selected);
@@ -83,7 +100,20 @@ export function Timeline({ viewer, projectId, modelIdMap }: Props) {
   // 활성 슬롯에 즉시 저장(관리자, 모델 오픈 상태). 사용자 편집 직후 명시적으로 호출해
   // 프로그램적 복원(autoRestore)과의 경합을 피한다. fire-and-forget.
   const persistActive = (t: ScheduleTask[], m: TaskMapping, src: ScheduleSource = source ?? 'generic') => {
-    if (!isAdmin || !projectId || modelIdMap.size === 0 || t.length === 0) return;
+    if (!isAdmin || !projectId || t.length === 0) return;
+    if (apsMode) {
+      if (!apsMode.modelDbId || !apsMode.apsMapping) return;
+      void saveActiveApsSchedule({
+        projectId,
+        modelDbId: apsMode.modelDbId,
+        apsMapping: apsMode.apsMapping,
+        source: src,
+        tasks: t,
+        mapping: m,
+      }).catch(() => {});
+      return;
+    }
+    if (modelIdMap.size === 0) return;
     void saveActiveSchedule({ projectId, modelIdMap, source: src, tasks: t, mapping: m }).catch(() => {});
   };
 
@@ -204,14 +234,54 @@ export function Timeline({ viewer, projectId, modelIdMap }: Props) {
     if (!name) return;
     setDbBusy(true);
     try {
-      await saveSchedule({ projectId, modelIdMap, name, source: source ?? 'generic', tasks, mapping });
-      setStatus(`일정 저장 완료: ${name}${modelIdMap.size ? '' : ' (모델 매핑 제외 — 모델 미오픈)'}`);
+      if (apsMode) {
+        await saveApsSchedule({
+          projectId,
+          modelDbId: apsMode.modelDbId,
+          apsMapping: apsMode.apsMapping ?? { model: null, dbIdToGlobalId: new Map(), globalIdToDbId: new Map(), size: 0 },
+          name,
+          source: source ?? 'generic',
+          tasks,
+          mapping,
+        });
+        setStatus(`일정 저장 완료: ${name}${apsMode.modelDbId ? '' : ' (모델 매핑 제외 — 모델 미오픈)'}`);
+      } else {
+        await saveSchedule({ projectId, modelIdMap, name, source: source ?? 'generic', tasks, mapping });
+        setStatus(`일정 저장 완료: ${name}${modelIdMap.size ? '' : ' (모델 매핑 제외 — 모델 미오픈)'}`);
+      }
       await refreshSaved();
     } catch (e) {
       setStatus(`일정 저장 실패: ${(e as Error).message}`);
     } finally {
       setDbBusy(false);
     }
+  };
+
+  // 불러온 일정(LoadedSchedule)의 요소 매핑을 현재 세션 기준 TaskMapping 으로 해석.
+  // IFC 경로는 modelIdMap(express_id), APS 경로는 apsMode(global_id)로 분기.
+  const resolveLoadedMapping = (ls: LoadedSchedule): { mapping: TaskMapping; resolved: number; unresolved: number } => {
+    if (apsMode) {
+      if (!apsMode.modelDbId || !apsMode.apsMapping) return { mapping: {}, resolved: 0, unresolved: 0 };
+      const mapping = resolveApsTaskMapping(ls, new Map([[apsMode.modelDbId, { runtimeModelId: 0, mapping: apsMode.apsMapping }]]));
+      const resolved = Object.values(mapping).reduce((n, refs) => n + refs.length, 0);
+      const total = Object.values(ls.globalElements).reduce((n, refs) => n + refs.length, 0);
+      return { mapping, resolved, unresolved: total - resolved };
+    }
+    const nextMapping: TaskMapping = {};
+    let resolved = 0;
+    let unresolved = 0;
+    for (const [taskId, els] of Object.entries(ls.elements)) {
+      for (const el of els) {
+        const runtime = dbToRuntime.get(el.modelDbId);
+        if (runtime != null) {
+          (nextMapping[taskId] ??= []).push({ modelID: runtime, expressID: el.expressID });
+          resolved++;
+        } else {
+          unresolved++;
+        }
+      }
+    }
+    return { mapping: nextMapping, resolved, unresolved };
   };
 
   const onLoad = async () => {
@@ -231,20 +301,7 @@ export function Timeline({ viewer, projectId, modelIdMap }: Props) {
         start: Math.min(...starts),
         end: Math.max(...ends),
       });
-      const nextMapping: TaskMapping = {};
-      let resolved = 0;
-      let unresolved = 0;
-      for (const [taskId, els] of Object.entries(ls.elements)) {
-        for (const el of els) {
-          const runtime = dbToRuntime.get(el.modelDbId);
-          if (runtime != null) {
-            (nextMapping[taskId] ??= []).push({ modelID: runtime, expressID: el.expressID });
-            resolved++;
-          } else {
-            unresolved++;
-          }
-        }
-      }
+      const { mapping: nextMapping, resolved, unresolved } = resolveLoadedMapping(ls);
       const stats = mappingStats(nextMapping);
       fourd.setMapping(nextMapping, stats.tasks, stats.elements);
       setStatus(
@@ -260,7 +317,7 @@ export function Timeline({ viewer, projectId, modelIdMap }: Props) {
 
   // --- 활성 일정 자동 복원 (수동 저장 없이 유지) ---
   // 저장은 persistActive 로 사용자 편집 시 즉시 이뤄지고, 여기서는 모델이 열릴 때
-  // DB 활성 슬롯을 불러와 런타임 modelID 로 매핑을 다시 해석한다.
+  // DB 활성 슬롯을 불러와 현재 세션 기준으로 매핑을 다시 해석한다.
   const autoRestoredRef = useRef<string | null>(null);
 
   const autoRestore = async () => {
@@ -279,15 +336,7 @@ export function Timeline({ viewer, projectId, modelIdMap }: Props) {
         start: Math.min(...starts),
         end: Math.max(...ends),
       });
-      const nextMapping: TaskMapping = {};
-      for (const [taskId, els] of Object.entries(ls.elements)) {
-        for (const el of els) {
-          const runtime = dbToRuntime.get(el.modelDbId);
-          if (runtime != null) {
-            (nextMapping[taskId] ??= []).push({ modelID: runtime, expressID: el.expressID });
-          }
-        }
-      }
+      const { mapping: nextMapping } = resolveLoadedMapping(ls);
       const stats = mappingStats(nextMapping);
       fourd.setMapping(nextMapping, stats.tasks, stats.elements);
       setStatus(`공정표 자동 복원: ${ls.tasks.length}작업 · 매핑 ${stats.elements}객체`);
@@ -308,12 +357,12 @@ export function Timeline({ viewer, projectId, modelIdMap }: Props) {
   // 모델이 모두 로드되면(모드별 일괄 로드) 활성 슬롯을 1회 복원한다. 런타임 modelID 는
   // 로드 때마다 달라지므로 DB(model_id+expressID)에서 다시 해석해 매핑을 되살린다.
   useEffect(() => {
-    if (!loadedKey) return;
-    if (autoRestoredRef.current === loadedKey) return;
-    autoRestoredRef.current = loadedKey;
+    if (!restoreKey) return;
+    if (autoRestoredRef.current === restoreKey) return;
+    autoRestoredRef.current = restoreKey;
     void autoRestore();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadedKey]);
+  }, [restoreKey]);
 
   const onDelete = async () => {
     if (!savedId) return;
@@ -400,8 +449,12 @@ export function Timeline({ viewer, projectId, modelIdMap }: Props) {
               4D
             </label>
             <span className="tl-divider" />
-            <button onClick={() => runMapping('name')}>이름 매핑</button>
-            <button onClick={() => runMapping('sequential')}>순서 자동배정</button>
+            {!apsMode && (
+              <>
+                <button onClick={() => runMapping('name')}>이름 매핑</button>
+                <button onClick={() => runMapping('sequential')}>순서 자동배정</button>
+              </>
+            )}
             <span className="muted tl-stats">
               {mappedTasks > 0 ? `${mappedTasks}작업/${mappedElements}객체` : '미매핑'}
             </span>
