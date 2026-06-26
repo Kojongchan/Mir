@@ -540,6 +540,22 @@ function AppearancePanel() {
         />
       </label>
       <label className="tl-check">
+        빠른 시작(계획보다 앞당김)
+        <input
+          type="color"
+          value={appearance.colorEarly}
+          onChange={(e) => setAppearance({ colorEarly: e.target.value })}
+        />
+      </label>
+      <label className="tl-check">
+        늦은 시작(계획보다 지연)
+        <input
+          type="color"
+          value={appearance.colorLate}
+          onChange={(e) => setAppearance({ colorLate: e.target.value })}
+        />
+      </label>
+      <label className="tl-check">
         <input
           type="checkbox"
           checked={appearance.ghostFuture}
@@ -547,6 +563,9 @@ function AppearancePanel() {
         />
         미시공 반투명(ghost)
       </label>
+      <div className="muted" style={{ fontSize: 11 }}>
+        실제 시작(actualStart) 값이 있는 작업만 계획 대비 빠름/늦음으로 표시됩니다.
+      </div>
     </div>
   );
 }

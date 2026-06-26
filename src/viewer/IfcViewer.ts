@@ -172,7 +172,9 @@ export type CellState =
   | 'ghost'
   | 'active-construct'
   | 'active-demolish'
-  | 'active-temporary';
+  | 'active-temporary'
+  | 'active-early'
+  | 'active-late';
 
 /** What to do with not-yet-built elements: fully hide or show as a faint ghost. */
 export type FutureMode = 'hidden' | 'ghost';
@@ -185,6 +187,9 @@ export interface AppearanceSettings {
   colorConstruct: string;
   colorDemolish: string;
   colorTemporary: string;
+  /** 계획 대비 실제 시작이 빠름/늦음일 때(공정 지연 시각화) — 진행 중에만 적용 */
+  colorEarly: string;
+  colorLate: string;
   /** show not-yet-built elements as a faint ghost instead of hiding them */
   ghostFuture: boolean;
 }
@@ -194,6 +199,8 @@ export const DEFAULT_APPEARANCE: AppearanceSettings = {
   colorConstruct: '#22c55e', // green
   colorDemolish: '#ef4444', // red
   colorTemporary: '#eab308', // yellow
+  colorEarly: '#3b82f6', // blue — 계획보다 빠르게 시작
+  colorLate: '#f97316', // orange — 계획보다 늦게 시작
   ghostFuture: false,
 };
 
@@ -2113,6 +2120,14 @@ export class IfcViewer {
         break;
       case 'active-temporary':
         mesh.material = this.getColorMaterial(opts.colorTemporary, opts.activeOpacity);
+        mesh.visible = true;
+        break;
+      case 'active-early':
+        mesh.material = this.getColorMaterial(opts.colorEarly, opts.activeOpacity);
+        mesh.visible = true;
+        break;
+      case 'active-late':
+        mesh.material = this.getColorMaterial(opts.colorLate, opts.activeOpacity);
         mesh.visible = true;
         break;
     }

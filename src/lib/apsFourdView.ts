@@ -92,6 +92,14 @@ export function createApsFourDViewer(
               viewer.show?.(dbId);
               viewer.setThemingColor?.(dbId, hexToVec4(opts.colorTemporary, opts.activeOpacity), model, true);
               break;
+            case 'active-early':
+              viewer.show?.(dbId);
+              viewer.setThemingColor?.(dbId, hexToVec4(opts.colorEarly, opts.activeOpacity), model, true);
+              break;
+            case 'active-late':
+              viewer.show?.(dbId);
+              viewer.setThemingColor?.(dbId, hexToVec4(opts.colorLate, opts.activeOpacity), model, true);
+              break;
           }
         }
         hiddenDbIds = newHidden;

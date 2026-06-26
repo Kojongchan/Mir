@@ -30,6 +30,16 @@
    `loadSchedule` 이 `global_id` 행도 함께 읽어 `LoadedSchedule.globalElements` 로 분리 + 신규
    `resolveApsTaskMapping`(저장된 GlobalId → 현 세션 dbId 해석, ApsMapping 기반).
 
+### ➕ 추가: 계획 대비 실제 시작 빠름/늦음 시각화(공정 지연)
+나비스웍스 TimeLiner의 "초기/후기 모양" 참고해 추가. 작업의 `actualStart` 가 있을 때만(없으면
+기존 동작 100% 동일) 진행 중(시공/장비/기타, 철거·임시는 제외) 색이 계획보다 **빠르면 파랑
+(`active-early`)**, **늦으면 주황(`active-late`)** 으로 표시됩니다. `fourd.ts`(CellState 2종 추가 +
+computeStates 의 진행판정을 actualStart/actualEnd 우선으로) · `viewer/IfcViewer.ts`(AppearanceSettings
+colorEarly/colorLate + applyMeshState) · `lib/apsFourdView.ts` · `Timeline.tsx` 설정 패널(색상 픽커 2개)
+에 반영. 엑셀 등에서 가져온 실제 시작/끝 컬럼만 매핑되면 바로 동작(별도 작업 불필요).
+열 편집·수동 작업 CRUD·Gantt 인라인 끌어서 수정 등 나머지 TimeLiner 작업탭 기능은 "엑셀/P6/MS
+Project가 진실원본" 전제와 맞지 않아 **의도적으로 제외**.
+
 ### ⚠️ 미완(다음 세션)
 - **PoC 검증 안 됨**: 실제 ACC 모델에서 작은 공정표(3~5개) + 속성매칭 1건으로 스크럽 시 색/표시가
   바뀌는지 라이브 확인 필요.
