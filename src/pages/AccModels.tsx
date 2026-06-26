@@ -968,7 +968,9 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             />
           )}
           {mode4d && (
-            <Timeline viewer={apsFourDViewer} projectId={projectId} modelIdMap={new Map()} />
+            <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 560 }}>
+              <Timeline viewer={apsFourDViewer} projectId={projectId} modelIdMap={new Map()} />
+            </div>
           )}
           {docView && (
             <div
