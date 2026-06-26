@@ -71,11 +71,39 @@ export function collectPropertyNames(model: ApsModel, dbIds: number[], sampleSiz
   });
 }
 
-/** 속성값(정규화) ↔ 공정표 작업(externalId/id/name 후보)을 매칭. */
+/** UI 라벨용 가상 필드명 — 작업명/동기화ID 는 항상 비교 후보에 포함. */
+export const TASK_NAME_FIELD = '작업명';
+export const TASK_EXTERNAL_ID_FIELD = '동기화 ID/GUID';
+
+/**
+ * 공정표 작업의 비교 필드 목록(UI 선택용) — 나비스웍스 TimeLiner 규칙처럼 어떤
+ * 작업 열을 모델 속성과 비교할지 사용자가 직접 고른다. 작업명/동기화ID는 항상
+ * 포함하고, CSV 의 매핑되지 않은 나머지 열(custom) 이름들을 합집합으로 추가한다.
+ */
+export function collectTaskFields(tasks: ScheduleTask[]): string[] {
+  const names = new Set<string>([TASK_NAME_FIELD]);
+  if (tasks.some((t) => t.externalId)) names.add(TASK_EXTERNAL_ID_FIELD);
+  for (const t of tasks) for (const k of Object.keys(t.custom)) names.add(k);
+  return [...names];
+}
+
+/** 지정한 비교 필드에 대한 작업의 값(들)을 가져온다. 비어 있으면 작업명으로 폴백. */
+function taskFieldValue(task: ScheduleTask, field: string | null): string | null {
+  if (field === TASK_EXTERNAL_ID_FIELD) return task.externalId;
+  if (field && field !== TASK_NAME_FIELD) return task.custom[field] ?? null;
+  return task.name;
+}
+
+/**
+ * 속성값(정규화) ↔ 공정표 작업을 매칭. `taskField` 로 비교 기준 열을 지정하면
+ * (나비스웍스 "Column Name" 옵션처럼) 그 값만 비교하고, 지정하지 않으면 작업명→
+ * 동기화ID→작업ID 순으로 후보를 시도한다(기존 동작 유지).
+ */
 export function mapByProperty(
   tasks: ScheduleTask[],
   propValues: Map<number, string>,
   modelID: number,
+  taskField: string | null = null,
 ): TaskMapping {
   const byKey = new Map<string, number[]>();
   for (const [dbId, v] of propValues) {
@@ -88,7 +116,9 @@ export function mapByProperty(
 
   const mapping: TaskMapping = {};
   for (const task of tasks) {
-    const candidates = [task.externalId, task.id, task.name].filter((v): v is string => !!v);
+    const candidates = taskField
+      ? [taskFieldValue(task, taskField)].filter((v): v is string => !!v)
+      : [task.externalId, task.id, task.name].filter((v): v is string => !!v);
     for (const c of candidates) {
       const hits = byKey.get(normKey(c));
       if (hits?.length) {
@@ -109,6 +139,7 @@ export async function buildApsTaskMapping(
   elements: ApsElement[],
   tasks: ScheduleTask[],
   matchProperty: string | null,
+  matchTaskField: string | null = null,
 ): Promise<TaskMapping> {
   const modelID: number = model?.id ?? 0;
   const catalog: ElementInfo[] = elements.map((e) => ({ modelID, expressID: e.dbId, name: e.name }));
@@ -116,7 +147,7 @@ export async function buildApsTaskMapping(
   let mapping: TaskMapping = {};
   if (matchProperty) {
     const propValues = await bulkPropertyValues(model, elements.map((e) => e.dbId), matchProperty);
-    mapping = mapByProperty(tasks, propValues, modelID);
+    mapping = mapByProperty(tasks, propValues, modelID, matchTaskField);
   }
   if (Object.keys(mapping).length === 0) mapping = mapByName(tasks, catalog);
   if (Object.keys(mapping).length === 0) mapping = mapSequential(tasks, catalog);

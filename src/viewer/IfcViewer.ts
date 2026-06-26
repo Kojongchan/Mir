@@ -201,7 +201,9 @@ export const DEFAULT_APPEARANCE: AppearanceSettings = {
   colorTemporary: '#eab308', // yellow
   colorEarly: '#3b82f6', // blue — 계획보다 빠르게 시작
   colorLate: '#f97316', // orange — 계획보다 늦게 시작
-  ghostFuture: false,
+  // Navisworks TimeLiner/Forma 4D 류 기본 동작: 미시공 요소를 완전히 숨기지 않고
+  // 반투명 고스트로 남겨 "재생하면 객체가 사라진다"는 인상을 주지 않는다.
+  ghostFuture: true,
 };
 
 type SelectCallback = (props: ElementProperties | null) => void;

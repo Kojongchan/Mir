@@ -13,7 +13,7 @@ import { Timeline } from '../components/Timeline';
 import { useStore } from '../store/useStore';
 import { enumerateApsElements, type ApsElement } from '../lib/apsElements';
 import { createApsFourDViewer } from '../lib/apsFourdView';
-import { buildApsTaskMapping, collectPropertyNames } from '../lib/apsScheduleMapping';
+import { buildApsTaskMapping, collectPropertyNames, collectTaskFields } from '../lib/apsScheduleMapping';
 import { mappingStats } from '../lib/fourd';
 import { formatDate, DAY } from '../lib/schedule';
 import { viewerKindFor, type ViewerKind, type FileRecord } from '../lib/files';
@@ -191,6 +191,8 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   const [apsElements, setApsElements] = useState<ApsElement[]>([]);
   const [propertyOptions, setPropertyOptions] = useState<string[]>([]);
   const [matchProperty, setMatchProperty] = useState<string>('');
+  // 나비스웍스 TimeLiner "Column Name" 옵션처럼 공정표 쪽 비교 열도 고른다(#3 상세화).
+  const [matchTaskField, setMatchTaskField] = useState<string>('');
   const [matching4d, setMatching4d] = useState(false);
   const [apsDbModelId, setApsDbModelId] = useState<string | null>(null);
   const [openName, setOpenName] = useState('');
@@ -221,10 +223,18 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
     if (!m || !apsElements.length || !fourd.tasks.length) return;
     setMatching4d(true);
     try {
-      const taskMapping = await buildApsTaskMapping(m, apsElements, fourd.tasks, matchProperty || null);
+      const taskMapping = await buildApsTaskMapping(
+        m,
+        apsElements,
+        fourd.tasks,
+        matchProperty || null,
+        matchTaskField || null,
+      );
       const stats = mappingStats(taskMapping);
       useStore.getState().fourd.setMapping(taskMapping, stats.tasks, stats.elements);
-      setStatus(`4D 매핑(${matchProperty || '이름/순서'}): ${stats.tasks}작업 · ${stats.elements}객체`);
+      setStatus(
+        `4D 매핑(모델:${matchProperty || '이름/순서'}${matchTaskField ? ` ↔ 공정표:${matchTaskField}` : ''}): ${stats.tasks}작업 · ${stats.elements}객체`,
+      );
     } catch (e) {
       setStatus(`4D 매핑 실패: ${(e as Error).message}`);
     } finally {
@@ -822,14 +832,29 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
         <strong style={{ fontSize: 13 }}>{autoClash ? '🔍 간섭체크' : mode4d ? '🏗 공정관리(4D)' : '🅰 ACC 모델'}</strong>
         {mode4d && apsElements.length > 0 && (
           <>
-            <select value={matchProperty} onChange={(e) => setMatchProperty(e.target.value)} style={{ ...selStyle, width: 160 }}>
-              <option value="">매칭 속성: 이름/순서</option>
+            <select value={matchProperty} onChange={(e) => setMatchProperty(e.target.value)} style={{ ...selStyle, width: 150 }} title="모델 객체 속성(나비스웍스 'Find Items By' 와 동일)">
+              <option value="">모델 속성: 이름/순서</option>
               {propertyOptions.map((p) => (
                 <option key={p} value={p}>
                   {p}
                 </option>
               ))}
             </select>
+            {matchProperty && (
+              <select
+                value={matchTaskField}
+                onChange={(e) => setMatchTaskField(e.target.value)}
+                style={{ ...selStyle, width: 150 }}
+                title="공정표 비교 열(나비스웍스 'Column Name' 과 동일) — 비워두면 동기화ID→작업ID→작업명 순으로 자동 시도"
+              >
+                <option value="">공정표 비교 열: 자동</option>
+                {collectTaskFields(fourd.tasks).map((f) => (
+                  <option key={f} value={f}>
+                    {f}
+                  </option>
+                ))}
+              </select>
+            )}
             <button onClick={() => void runPropertyMatch()} disabled={matching4d || !fourd.tasks.length} style={btnStyle} title="선택한 속성으로 공정표↔객체 매칭">
               {matching4d ? '매칭 중…' : '🔗 4D 매칭'}
             </button>
