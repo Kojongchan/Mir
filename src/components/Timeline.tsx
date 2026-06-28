@@ -35,6 +35,11 @@ import {
   type LoadedSchedule,
 } from '../lib/scheduleApi';
 import type { ApsMapping } from '../lib/apsMapping';
+import {
+  saveLocalApsSchedule,
+  loadLocalApsSchedule,
+  resolveLocalMapping,
+} from '../lib/localSchedule';
 import { useAuth } from '../auth/AuthProvider';
 import { ColumnMapModal } from './ColumnMapModal';
 
@@ -128,9 +133,12 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null }: Prop
   // 활성 슬롯에 즉시 저장(관리자, 모델 오픈 상태). 사용자 편집 직후 명시적으로 호출해
   // 프로그램적 복원(autoRestore)과의 경합을 피한다. fire-and-forget.
   const persistActive = (t: ScheduleTask[], m: TaskMapping, src: ScheduleSource = source ?? 'generic') => {
-    if (!isAdmin || !projectId || t.length === 0) return;
+    if (!projectId || t.length === 0) return;
     if (apsMode) {
-      if (!apsMode.modelDbId || !apsMode.apsMapping) return;
+      // 로컬(브라우저) 영속화 — DB/관리자 권한·모델 로드와 무관하게 항상 저장해
+      // 메뉴 이동·새로고침 후에도 임포트한 공정표가 프로젝트별로 유지된다(#3).
+      saveLocalApsSchedule(projectId, t, src, m, apsMode.apsMapping);
+      if (!isAdmin || !apsMode.modelDbId || !apsMode.apsMapping) return;
       void saveActiveApsSchedule({
         projectId,
         modelDbId: apsMode.modelDbId,
@@ -141,7 +149,7 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null }: Prop
       }).catch(() => {});
       return;
     }
-    if (modelIdMap.size === 0) return;
+    if (!isAdmin || modelIdMap.size === 0) return;
     void saveActiveSchedule({ projectId, modelIdMap, source: src, tasks: t, mapping: m }).catch(() => {});
   };
 
@@ -290,7 +298,9 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null }: Prop
   const resolveLoadedMapping = (ls: LoadedSchedule): { mapping: TaskMapping; resolved: number; unresolved: number } => {
     if (apsMode) {
       if (!apsMode.modelDbId || !apsMode.apsMapping) return { mapping: {}, resolved: 0, unresolved: 0 };
-      const mapping = resolveApsTaskMapping(ls, new Map([[apsMode.modelDbId, { runtimeModelId: 0, mapping: apsMode.apsMapping }]]));
+      // 뷰어가 객체를 거르는 modelID = model.id 와 일치시킨다(0 이 아니라).
+      const runtimeModelId = (apsMode.apsMapping.model as { id?: number } | null)?.id ?? 0;
+      const mapping = resolveApsTaskMapping(ls, new Map([[apsMode.modelDbId, { runtimeModelId, mapping: apsMode.apsMapping }]]));
       const resolved = Object.values(mapping).reduce((n, refs) => n + refs.length, 0);
       const total = Object.values(ls.globalElements).reduce((n, refs) => n + refs.length, 0);
       return { mapping, resolved, unresolved: total - resolved };
@@ -348,29 +358,50 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null }: Prop
   // DB 활성 슬롯을 불러와 현재 세션 기준으로 매핑을 다시 해석한다.
   const autoRestoredRef = useRef<string | null>(null);
 
+  // 로컬(브라우저) 저장본 복원 — DB 가 비었거나 실패했을 때의 폴백(APS 전용).
+  const restoreFromLocal = (): boolean => {
+    if (!apsMode) return false;
+    const local = loadLocalApsSchedule(projectId);
+    if (!local || local.tasks.length === 0) return false;
+    const starts = local.tasks.map((t) => t.start);
+    const ends = local.tasks.map((t) => t.end);
+    fourd.loadSchedule({
+      tasks: local.tasks,
+      source: local.source,
+      start: Math.min(...starts),
+      end: Math.max(...ends),
+    });
+    const runtimeModelId = (apsMode.apsMapping?.model as { id?: number } | null)?.id ?? 0;
+    const mapping = resolveLocalMapping(local, apsMode.apsMapping ?? null, runtimeModelId);
+    const stats = mappingStats(mapping);
+    fourd.setMapping(mapping, stats.tasks, stats.elements);
+    setStatus(`공정표 복원(로컬): ${local.tasks.length}작업 · 매핑 ${stats.elements}객체`);
+    return true;
+  };
+
   const autoRestore = async () => {
     try {
       const ls = await loadActiveSchedule(projectId);
-      if (!ls || ls.tasks.length === 0) {
-        // 이 프로젝트엔 저장된 공정표가 없음 → 다른 프로젝트의 잔여 상태를 비운다.
-        fourd.clearSchedule();
+      if (ls && ls.tasks.length > 0) {
+        const starts = ls.tasks.map((t) => t.start);
+        const ends = ls.tasks.map((t) => t.end);
+        fourd.loadSchedule({
+          tasks: ls.tasks,
+          source: ls.meta.source,
+          start: Math.min(...starts),
+          end: Math.max(...ends),
+        });
+        const { mapping: nextMapping } = resolveLoadedMapping(ls);
+        const stats = mappingStats(nextMapping);
+        fourd.setMapping(nextMapping, stats.tasks, stats.elements);
+        setStatus(`공정표 자동 복원: ${ls.tasks.length}작업 · 매핑 ${stats.elements}객체`);
         return;
       }
-      const starts = ls.tasks.map((t) => t.start);
-      const ends = ls.tasks.map((t) => t.end);
-      fourd.loadSchedule({
-        tasks: ls.tasks,
-        source: ls.meta.source,
-        start: Math.min(...starts),
-        end: Math.max(...ends),
-      });
-      const { mapping: nextMapping } = resolveLoadedMapping(ls);
-      const stats = mappingStats(nextMapping);
-      fourd.setMapping(nextMapping, stats.tasks, stats.elements);
-      setStatus(`공정표 자동 복원: ${ls.tasks.length}작업 · 매핑 ${stats.elements}객체`);
     } catch {
-      /* 마이그레이션 미적용/권한 — 조용히 무시 */
+      /* 마이그레이션 미적용/권한 — 로컬 폴백으로 진행 */
     }
+    // DB 에 없으면 로컬 저장본으로 폴백. 그것도 없으면 잔여 상태를 비운다.
+    if (!restoreFromLocal()) fourd.clearSchedule();
   };
 
   // 프로젝트가 바뀌면 전역 4D store 에 남은 이전 프로젝트의 공정표/매핑을 비우고,

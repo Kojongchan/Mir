@@ -16,6 +16,7 @@ import { createApsFourDViewer } from '../lib/apsFourdView';
 import { buildApsTaskMapping, collectPropertyNames, collectTaskFields } from '../lib/apsScheduleMapping';
 import { mappingStats } from '../lib/fourd';
 import { formatDate, DAY } from '../lib/schedule';
+import { saveLocalApsSchedule } from '../lib/localSchedule';
 import { viewerKindFor, type ViewerKind, type FileRecord } from '../lib/files';
 import { ImageViewer } from '../components/viewers/ImageViewer';
 import { VideoViewer } from '../components/viewers/VideoViewer';
@@ -218,20 +219,46 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode4d, apsElements, mapping]);
 
+  // 요소 열거가 아직(또는 빈 결과로) 끝나지 않았어도 매칭 시점에 보장한다.
+  const ensureApsElements = async (m: any): Promise<ApsElement[]> => {
+    if (apsElements.length) return apsElements;
+    const els = await enumerateApsElements(m).catch(() => [] as ApsElement[]);
+    if (els.length) {
+      setApsElements(els);
+      if (!propertyOptions.length) {
+        collectPropertyNames(m, els.map((e) => e.dbId))
+          .then((n) => setPropertyOptions(n))
+          .catch(() => {});
+      }
+    }
+    return els;
+  };
+
   const runPropertyMatch = async () => {
     const m = modelRef.current;
-    if (!m || !apsElements.length || !fourd.tasks.length) return;
+    if (!m || !fourd.tasks.length) {
+      setStatus(m ? '먼저 공정표를 임포트하세요.' : '모델이 아직 로드되지 않았습니다.');
+      return;
+    }
     setMatching4d(true);
     try {
+      const els = await ensureApsElements(m);
+      if (!els.length) {
+        setStatus('모델에서 매칭할 객체를 찾지 못했습니다(요소 열거 0).');
+        return;
+      }
       const taskMapping = await buildApsTaskMapping(
         m,
-        apsElements,
+        els,
         fourd.tasks,
         matchProperty || null,
         matchTaskField || null,
       );
       const stats = mappingStats(taskMapping);
       useStore.getState().fourd.setMapping(taskMapping, stats.tasks, stats.elements);
+      // 매핑 결과를 로컬에 영속화(메뉴 이동 후에도 유지). DB 공유 저장은 Timeline 의
+      // 활성 슬롯 경로가 담당하지만, 매핑은 여기서 직접 갱신하므로 로컬도 직접 저장.
+      saveLocalApsSchedule(projectId, fourd.tasks, fourd.source ?? 'generic', taskMapping, mapping);
       setStatus(
         `4D 매핑(모델:${matchProperty || '이름/순서'}${matchTaskField ? ` ↔ 공정표:${matchTaskField}` : ''}): ${stats.tasks}작업 · ${stats.elements}객체`,
       );
@@ -718,6 +745,16 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             }
             if (autoClashRef.current) setClashOpen(true);
             if (mode4dRef.current) {
+              // 시뮬레이션 중 카메라 이동·객체 hide/show 시 프로그레시브 렌더로
+              // 객체가 잠깐 사라져 보이는 현상 방지: 한 프레임에 전체를 그리고
+              // 네비게이션 중 디테일 다운을 끈다. 고정 시뮬 뷰라 성능 트레이드오프
+              // 허용(Forma/Navisworks 류의 안정적 표시에 맞춤). 모델 재로딩 아님.
+              try {
+                viewer.setProgressiveRendering?.(false);
+                viewer.impl?.setOptimizeNavigation?.(false);
+              } catch {
+                /* 일부 뷰어 버전엔 없음 — 무시 */
+              }
               enumerateApsElements(m)
                 .then((els) => {
                   if (cancelled) return;
@@ -830,7 +867,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
         }}
       >
         <strong style={{ fontSize: 13 }}>{autoClash ? '🔍 간섭체크' : mode4d ? '🏗 공정관리(4D)' : '🅰 ACC 모델'}</strong>
-        {mode4d && apsElements.length > 0 && (
+        {mode4d && fourd.tasks.length > 0 && (
           <>
             <select value={matchProperty} onChange={(e) => setMatchProperty(e.target.value)} style={{ ...selStyle, width: 150 }} title="모델 객체 속성(나비스웍스 'Find Items By' 와 동일)">
               <option value="">모델 속성: 이름/순서</option>
