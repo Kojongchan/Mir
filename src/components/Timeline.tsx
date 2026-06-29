@@ -254,6 +254,16 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
     setStatus('작업의 매핑을 비웠습니다.');
   };
 
+  // 공정명 클릭 → 그 작업에 매핑된 객체로 카메라 이동(APS 어댑터만 지원).
+  const focusTask = (taskId: string) => {
+    const refs = mapping[taskId];
+    if (!refs?.length) {
+      setStatus('이 작업에 매핑된 객체가 없습니다.');
+      return;
+    }
+    viewer?.focusObjects?.(refs);
+  };
+
   // --- DB 저장/로드 ---
   const [saved, setSaved] = useState<SavedScheduleMeta[]>([]);
   const [savedId, setSavedId] = useState<string>('');
@@ -471,12 +481,6 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
     currentTimeRef.current = currentTime;
   }, [currentTime]);
 
-  // 재생 중에는 뷰어의 progressive 렌더를 꺼서 모델이 깜빡이지 않게 한다(#1).
-  useEffect(() => {
-    viewer?.setPlaybackActive?.(playing);
-    return () => viewer?.setPlaybackActive?.(false);
-  }, [viewer, playing]);
-
   useEffect(() => {
     if (!playing || !hasSchedule) return;
     const id = window.setInterval(() => {
@@ -643,6 +647,7 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
             canAssign={!!selectedRef}
             onAssign={assignSelected}
             onClear={clearTaskMapping}
+            onFocus={focusTask}
           />
         </>
       ) : (
@@ -796,6 +801,7 @@ function TaskTable({
   canAssign,
   onAssign,
   onClear,
+  onFocus,
 }: {
   tasks: ScheduleTask[];
   rangeStart: number;
@@ -806,6 +812,7 @@ function TaskTable({
   canAssign: boolean;
   onAssign: (taskId: string) => void;
   onClear: (taskId: string) => void;
+  onFocus: (taskId: string) => void;
 }) {
   const span = Math.max(1, rangeEnd - rangeStart);
   // 메타 열 폭 합 = 간트 커서 좌측 오프셋
@@ -848,7 +855,13 @@ function TaskTable({
           const count = mapping[t.id]?.length ?? 0;
           return (
             <div className="tr" key={t.id}>
-              <div className="td td-name" style={{ width: NAME_W }} title={t.name}>
+              <div
+                className="td td-name tl-focus"
+                style={{ width: NAME_W }}
+                title={`${t.name} — 클릭 시 해당 객체로 이동`}
+                role="button"
+                onClick={() => onFocus(t.id)}
+              >
                 {t.name}
               </div>
               <div className="td" style={{ width: 60 }}>

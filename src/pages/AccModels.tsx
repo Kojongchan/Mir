@@ -199,6 +199,20 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   const [ruleMsg, setRuleMsg] = useState<string>('');
   const [apsDbModelId, setApsDbModelId] = useState<string | null>(null);
   const [openName, setOpenName] = useState('');
+  // 이동 중 전체표시(progressive 끔): 선형 구조물이라 화면을 움직이며 봐야 하므로
+  // 기본 ON — 이동 중 객체가 사라지지 않는다(대신 fps↓). OFF면 부드럽지만 점진 표시.
+  const [fullDetailNav, setFullDetailNav] = useState(true);
+  const fullDetailNavRef = useRef(true);
+  useEffect(() => {
+    fullDetailNavRef.current = fullDetailNav;
+    const v = viewerRef.current as any;
+    try {
+      v?.setProgressiveRendering?.(!fullDetailNav);
+      v?.impl?.invalidate?.(true, true, false);
+    } catch {
+      /* 무시 */
+    }
+  }, [fullDetailNav]);
   const fourd = useStore((s) => s.fourd);
   // 4D 모드: APS 모델(URN)을 models 테이블에 미러링해 기존 IFC 영속화 경로
   // (task_elements.model_id FK)를 재사용 — 없으면 가져오기한 공정표/매핑이
@@ -236,36 +250,6 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
       }
     }
     return els;
-  };
-
-  // 4D 자체 뷰어 PoC 1단계: 모델 SVF 파생물 규모 측정(변환 가능성 판단).
-  const runDerivativePoc = async () => {
-    if (!urn) {
-      setStatus('먼저 4D 모델을 여세요.');
-      return;
-    }
-    setStatus('변환 규모 측정 중…');
-    try {
-      const { data } = await supabase.auth.getSession();
-      const res = await fetch(`/api/aps-derivative-info?urn=${encodeURIComponent(urn)}`, {
-        headers: data.session ? { authorization: `Bearer ${data.session.access_token}` } : {},
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error ?? `측정 실패(${res.status})`);
-      const lines = [
-        `[변환 PoC] 상태: ${body.status} (${body.progress})`,
-        `SVF 파생물: ${body.svfCount}개${body.svfKinds?.length ? ` (${body.svfKinds.join(', ')})` : ''} · 뷰어블 ${body.viewables}`,
-        `용량(manifest 보고분): SVF ${body.svfTotalMB}MB · 속성DB ${body.propDbMB}MB · 전체 ${body.totalDerivativeMB}MB`,
-        `판단: ${body.verdict}`,
-      ];
-      // eslint-disable-next-line no-console
-      console.log('aps-derivative-info', body);
-      setStatus(lines.join(' | '));
-      window.alert(lines.join('\n'));
-    } catch (e) {
-      setStatus(`변환 규모 측정 실패: ${(e as Error).message}`);
-      window.alert(`변환 규모 측정 실패: ${(e as Error).message}`);
-    }
   };
 
   // 검증용: 속성 매칭과 무관하게 객체를 공정 순서대로 임시 배정(시뮬이 보이는지 확인).
@@ -825,7 +809,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
                 viewer.setGroundShadow?.(false);
                 viewer.setGroundReflection?.(false);
                 viewer.setQualityLevel?.(false, false); // (SAO, 안티앨리어싱) 끔
-                viewer.setProgressiveRendering?.(true);
+                viewer.setProgressiveRendering?.(!fullDetailNavRef.current);
               } catch {
                 /* 일부 뷰어 버전엔 없음 — 무시 */
               }
@@ -947,6 +931,11 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             {matching4d ? '배정 중…' : '⚡ 순서 배정'}
           </button>
         )}
+        {mode4d && urn && (
+          <button onClick={() => setFullDetailNav((v) => !v)} style={btnStyle} title="이동 중 객체가 사라지지 않게 전체표시(기본) ↔ 부드러운 회전(점진 표시)">
+            {fullDetailNav ? '🐢 전체표시' : '🐇 부드럽게'}
+          </button>
+        )}
         {/* 간섭 도구를 좌측에(#5). clash 모드에서는 폴더트리를 숨긴다(#1). 공정관리(4D)
             화면에선 간섭·이슈핀을 보지 않는다는 요청에 따라 4D 모드에서는 숨김. */}
         {!mode4d && mapping && (
@@ -981,11 +970,6 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             title="ACC 폴더에서 4D 시뮬레이션용 모델을 선택"
           >
             🗂 4D 모델 지정
-          </button>
-        )}
-        {mode4d && urn && (
-          <button onClick={() => void runDerivativePoc()} style={btnStyle} title="자체 뷰어 PoC: 이 모델의 변환 규모(용량·SVF 수) 측정">
-            🧪 변환 PoC
           </button>
         )}
         {defaultName && <span style={{ fontSize: 12, color: 'var(--muted)' }}>{mode4d ? '4D 모델' : '기본'}: {defaultName}</span>}
