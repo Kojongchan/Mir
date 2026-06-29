@@ -214,7 +214,18 @@ async function main() {
   const scene = await reader.read({ log: () => process.stdout.write('.') });
   process.stdout.write('\n');
   const gltfDir = path.join(tmp, 'gltf');
-  const writer = new DbIdGLTFWriter({ deduplicate: false, skipUnusedUvs: true, center: true, log: console.log });
+  // 4D 시뮬은 솔리드 구조물만 필요 → DWG 언더레이의 선/점 지오메트리를 제외하고
+  // 중복 메시를 제거해 glTF 크기를 크게 줄인다(거대 모델의 JSON 직렬화 한계 회피).
+  // 선/점도 포함하려면 INCLUDE_LINES=1.
+  const includeLines = process.env.INCLUDE_LINES === '1';
+  const writer = new DbIdGLTFWriter({
+    deduplicate: true,
+    skipUnusedUvs: true,
+    ignoreLines: !includeLines,
+    ignorePoints: !includeLines,
+    center: true,
+    log: console.log,
+  });
   console.log(`[convert4d] glTF 쓰는 중…`);
   await writer.write(scene, gltfDir);
   console.log(`[convert4d] glTF 완료 (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
