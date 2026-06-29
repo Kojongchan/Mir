@@ -15,7 +15,7 @@ import { enumerateApsElements, type ApsElement } from '../lib/apsElements';
 import { createApsFourDViewer } from '../lib/apsFourdView';
 import { collectPropertyNames, collectTaskFields, applyApsRules, diagnoseRule, type ApsMatchRule } from '../lib/apsScheduleMapping';
 import { ApsRuleEditor } from '../components/ApsRuleEditor';
-import { mappingStats } from '../lib/fourd';
+import { mappingStats, mapSequential } from '../lib/fourd';
 import { formatDate, DAY } from '../lib/schedule';
 import { saveLocalApsSchedule } from '../lib/localSchedule';
 import { viewerKindFor, type ViewerKind, type FileRecord } from '../lib/files';
@@ -216,7 +216,9 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
     };
   }, [mode4d, urn, openName, projectId]);
   const apsFourDViewer = useMemo(() => {
-    if (!mode4d || !viewerRef.current || !modelRef.current || !apsElements.length) return null;
+    // apsElements(요소 열거)가 없어도 isolate 기반 4D 표현은 동작하므로 게이트에서 제외.
+    // 모델 로드 시 mapping 이 세팅되며 이 메모가 재계산된다(modelRef 준비 보장).
+    if (!mode4d || !viewerRef.current || !modelRef.current) return null;
     return createApsFourDViewer(viewerRef.current, modelRef.current, apsElements);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode4d, apsElements, mapping]);
@@ -263,6 +265,34 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
     } catch (e) {
       setStatus(`변환 규모 측정 실패: ${(e as Error).message}`);
       window.alert(`변환 규모 측정 실패: ${(e as Error).message}`);
+    }
+  };
+
+  // 검증용: 속성 매칭과 무관하게 객체를 공정 순서대로 임시 배정(시뮬이 보이는지 확인).
+  const autoAssign = async () => {
+    const m = modelRef.current;
+    if (!m || !fourd.tasks.length) {
+      setStatus(m ? '먼저 공정표를 임포트하세요.' : '모델이 아직 로드되지 않았습니다.');
+      return;
+    }
+    setMatching4d(true);
+    try {
+      const els = await ensureApsElements(m);
+      if (!els.length) {
+        setStatus('모델에서 객체를 찾지 못했습니다(요소 열거 0).');
+        return;
+      }
+      const mid = (m as { id?: number }).id ?? 0;
+      const catalog = els.map((e) => ({ modelID: mid, expressID: e.dbId, name: e.name }));
+      const taskMapping = mapSequential(fourd.tasks, catalog);
+      const stats = mappingStats(taskMapping);
+      useStore.getState().fourd.setMapping(taskMapping, stats.tasks, stats.elements);
+      saveLocalApsSchedule(projectId, fourd.tasks, fourd.source ?? 'generic', taskMapping, mapping);
+      setStatus(`순서 자동배정(검증용): ${stats.tasks}작업 · ${stats.elements}객체`);
+    } catch (e) {
+      setStatus(`자동배정 실패: ${(e as Error).message}`);
+    } finally {
+      setMatching4d(false);
     }
   };
 
@@ -912,6 +942,11 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
       >
         <strong style={{ fontSize: 13 }}>{autoClash ? '🔍 간섭체크' : mode4d ? '🏗 공정관리(4D)' : '🅰 ACC 모델'}</strong>
         {/* 4D 매칭(규칙 편집기)은 하단 타임라인의 "공정표 임포트" 옆 버튼으로 통합(#3b). */}
+        {mode4d && fourd.tasks.length > 0 && (
+          <button onClick={() => void autoAssign()} disabled={matching4d} style={btnStyle} title="속성 매칭 없이 객체를 공정 순서대로 임시 배정 — 시뮬 동작 확인용">
+            {matching4d ? '배정 중…' : '⚡ 순서 배정'}
+          </button>
+        )}
         {/* 간섭 도구를 좌측에(#5). clash 모드에서는 폴더트리를 숨긴다(#1). 공정관리(4D)
             화면에선 간섭·이슈핀을 보지 않는다는 요청에 따라 4D 모드에서는 숨김. */}
         {!mode4d && mapping && (

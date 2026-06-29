@@ -16,8 +16,6 @@ import type { ApsElement } from './apsElements';
 type ApsViewer = any;
 type ApsModel = any;
 
-const GHOST = new THREE.Vector4(0x6b / 255, 0x76 / 255, 0x86 / 255, 0.14);
-
 function hexToVec4(hex: string, alpha: number): THREE.Vector4 {
   const c = new THREE.Color(hex);
   return new THREE.Vector4(c.r, c.g, c.b, alpha);
@@ -33,16 +31,13 @@ export function createApsFourDViewer(
   elements: ApsElement[],
 ): FourDViewer {
   const modelID: number = model?.id ?? 0;
-  let hiddenDbIds = new Set<number>();
-  // 직전 틱의 (가시성·색) 시그니처. 매 틱 전체를 다시 칠하지 않고 바뀐 것만
-  // 갱신해 LMV 재렌더 부담을 줄인다(객체가 깜빡이며 사라지는 현상 완화).
-  let prevSig = new Map<number, string>();
-  const CLEAR = new THREE.Vector4(0, 0, 0, 0);
+  // 비어 있으면 모델 전체를 고스트로 만들기 위한 센티넬(존재하지 않는 dbId).
+  const GHOST_ALL = [2147483647];
+  let prevVisKey = '';
+  let prevColorKey = '';
 
   const colorFor = (state: CellState, opts: AppearanceSettings): THREE.Vector4 | null => {
     switch (state) {
-      case 'ghost':
-        return opts.ghostFuture ? GHOST : null;
       case 'active-construct':
         return hexToVec4(opts.colorConstruct, opts.activeOpacity);
       case 'active-demolish':
@@ -54,77 +49,46 @@ export function createApsFourDViewer(
       case 'active-late':
         return hexToVec4(opts.colorLate, opts.activeOpacity);
       default:
-        return null; // hidden/normal — 테마색 없음
+        return null; // ghost/hidden/normal — 활성 색 없음
     }
   };
-  const isHidden = (state: CellState, opts: AppearanceSettings): boolean =>
-    state === 'hidden' || (state === 'ghost' && !opts.ghostFuture);
 
   return {
     getElementCatalog(): ElementInfo[] {
       return elements.map((e) => ({ modelID, expressID: e.dbId, name: e.name }));
     },
 
+    // 나비스웍스 TimeLiner 식 표현: 매 시점에 "이미 시공됨(완료)+시공/철거 중" 객체만
+    // isolate 로 또렷이 보이게 하고, 나머지(미시공·미매핑)는 자동으로 반투명 고스트가
+    // 된다. 진행 중 객체는 유형별 색(생성/철거/임시/빠름/늦음)으로 칠한다.
     applyConstruction(
       states: Iterable<{ modelID: number; expressID: number; state: CellState }>,
       opts: AppearanceSettings,
     ) {
       if (!viewer) return;
-      const desired = new Map<number, CellState>();
+      const visible: number[] = []; // 완료(normal) + 진행중(active-*) → 또렷이
+      const colors: Array<[number, THREE.Vector4]> = [];
       for (const { modelID: m, expressID, state } of states) {
         if (m !== modelID) continue;
-        desired.set(expressID, state);
+        if (state === 'hidden' || state === 'ghost') continue; // 미시공/철거완료 → 고스트
+        visible.push(expressID);
+        const c = colorFor(state, opts);
+        if (c) colors.push([expressID, c]);
       }
-
       try {
-        const optSig = `${opts.activeOpacity}|${opts.colorConstruct}|${opts.colorDemolish}|${opts.colorTemporary}|${opts.colorEarly}|${opts.colorLate}|${opts.ghostFuture}`;
-        const nextSig = new Map<number, string>();
-        for (const [dbId, state] of desired) nextSig.set(dbId, `${state}|${optSig}`);
+        const visKey = visible.length ? visible.slice().sort((a, b) => a - b).join(',') : '∅';
+        const colorKey = `${opts.colorConstruct}|${opts.colorDemolish}|${opts.colorTemporary}|${opts.colorEarly}|${opts.colorLate}|${opts.activeOpacity}|` +
+          colors.map(([d]) => d).sort((a, b) => a - b).join(',');
+        if (visKey === prevVisKey && colorKey === prevColorKey) return; // 변화 없음
+        prevVisKey = visKey;
+        prevColorKey = colorKey;
 
-        // 변경이 전혀 없으면 아무 것도 하지 않는다(불필요한 재렌더 방지).
-        if (nextSig.size === prevSig.size) {
-          let same = true;
-          for (const [dbId, sig] of nextSig) {
-            if (prevSig.get(dbId) !== sig) {
-              same = false;
-              break;
-            }
-          }
-          if (same) return;
-        }
-
-        const newHidden = new Set<number>();
-        let changed = false;
-
-        // 1) 직전엔 제어했지만 이번엔 빠진(=normal 복귀) 객체: 보이게 + 테마 해제.
-        for (const [dbId] of prevSig) {
-          if (!nextSig.has(dbId)) {
-            viewer.show?.(dbId);
-            viewer.setThemingColor?.(dbId, CLEAR, model, true);
-            changed = true;
-          }
-        }
-
-        // 2) 이번 틱 객체: 시그니처가 바뀐 것만 가시성·색 갱신.
-        for (const [dbId, state] of desired) {
-          const sigChanged = prevSig.get(dbId) !== nextSig.get(dbId);
-          if (isHidden(state, opts)) {
-            viewer.hide?.(dbId);
-            newHidden.add(dbId);
-          } else {
-            if (hiddenDbIds.has(dbId)) viewer.show?.(dbId);
-            if (sigChanged) {
-              const color = colorFor(state, opts);
-              viewer.setThemingColor?.(dbId, color ?? CLEAR, model, true);
-            }
-          }
-          if (sigChanged) changed = true;
-        }
-
-        hiddenDbIds = newHidden;
-        prevSig = nextSig;
-        // needsClear=false 로 전체 클리어 없이 다시 그린다(깜빡임 완화).
-        if (changed) viewer.impl?.invalidate?.(false, true, false);
+        // isolate: 지정 객체만 또렷이, 나머지는 반투명 고스트(전체 베이스라인).
+        viewer.isolate?.(visible.length ? visible : GHOST_ALL, model);
+        // 활성 객체에 유형별 색.
+        viewer.clearThemingColors?.(model);
+        for (const [dbId, c] of colors) viewer.setThemingColor?.(dbId, c, model, true);
+        viewer.impl?.invalidate?.(true, true, true);
       } catch {
         /* 무시 */
       }
@@ -133,11 +97,12 @@ export function createApsFourDViewer(
     clearConstruction() {
       if (!viewer) return;
       try {
-        for (const dbId of hiddenDbIds) viewer.show?.(dbId);
-        hiddenDbIds = new Set();
-        prevSig = new Map();
+        prevVisKey = '';
+        prevColorKey = '';
         viewer.clearThemingColors?.(model);
-        viewer.impl?.invalidate?.(false, true, false);
+        viewer.isolate?.([], model); // 격리 해제 → 전체 정상 표시
+        viewer.showAll?.();
+        viewer.impl?.invalidate?.(true, true, true);
       } catch {
         /* 무시 */
       }

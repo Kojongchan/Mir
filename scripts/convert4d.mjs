@@ -21,21 +21,33 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createClient } from '@supabase/supabase-js';
-import { SVFReader, GLTFWriter, TwoLeggedAuthenticationProvider } from 'svf-utils';
+import { SVFReader } from 'svf-utils';
 import { AuthenticationClient, Scopes } from '@aps_sdk/authentication';
 import { ModelDerivativeClient } from '@aps_sdk/model-derivative';
-import gltfPipeline from 'gltf-pipeline';
+import AdmZip from 'adm-zip';
+import { buildMergedGlb } from './mergeGlb.mjs';
+
+const APS_BASE = 'https://developer.api.autodesk.com';
 
 const {
   APS_CLIENT_ID,
   APS_CLIENT_SECRET,
-  SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY,
   PROJECT_ID = '',
   URN: URN_ENV = '',
   APS_REGION = 'US',
   STORAGE_BUCKET = 'models4d',
 } = process.env;
+
+// SUPABASE_URL 정규화: 앞뒤 공백/따옴표 제거, 스킴 없으면 https:// 보정,
+// 끝 슬래시 제거. SUPABASE_URL 없으면 VITE_SUPABASE_URL 로 폴백.
+function cleanUrl(u) {
+  if (!u) return '';
+  let s = String(u).trim().replace(/^['"]+|['"]+$/g, '').trim();
+  if (s && !/^https?:\/\//i.test(s)) s = `https://${s}`;
+  return s.replace(/\/+$/, '');
+}
+const SUPABASE_URL = cleanUrl(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL);
 
 function need(name, v) {
   if (!v) throw new Error(`환경변수 누락: ${name}`);
@@ -65,13 +77,92 @@ async function getSvfDerivatives(urn) {
   return out;
 }
 
-// 각 노드 이름에 dbId 를 박아 런타임에서 객체별 통제가 가능하게 한다.
-class DbIdGLTFWriter extends GLTFWriter {
-  createNode(fragment, imf, outputUvs) {
-    const node = super.createNode(fragment, imf, outputUvs);
-    if (fragment && typeof fragment.dbid === 'number') node.name = `dbid:${fragment.dbid}`;
-    return node;
+// --- 직접 다운로더(레거시 derivativeservice) ---
+// svf-utils 내장 다운로더는 getDerivativeUrl(signedcookies, SDK 15초 타임아웃)에서
+// CI 환경에서 자주 끊긴다. 우리 인앱 뷰어가 쓰는 레거시 엔드포인트로 타임아웃 없이
+// 직접 받아 디스크에 저장한 뒤 SVFReader.FromFileSystem 으로 읽는다.
+async function mintApsToken() {
+  const basic = Buffer.from(`${APS_CLIENT_ID}:${APS_CLIENT_SECRET}`).toString('base64');
+  const res = await fetch(`${APS_BASE}/authentication/v2/token`, {
+    method: 'POST',
+    headers: { authorization: `Basic ${basic}`, 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'client_credentials', scope: 'data:read viewables:read' }),
+  });
+  const d = await res.json();
+  if (!res.ok || !d.access_token) throw new Error('APS 토큰 발급 실패');
+  return d.access_token;
+}
+
+async function fetchDerivativeBytes(token, derivativeUrn, tries = 5) {
+  const url = `${APS_BASE}/derivativeservice/v2/derivatives/${encodeURIComponent(derivativeUrn)}`;
+  let lastErr;
+  for (let i = 1; i <= tries; i++) {
+    try {
+      const headers = { authorization: `Bearer ${token}` };
+      if (APS_REGION && APS_REGION !== 'US') headers['region'] = APS_REGION;
+      const res = await fetch(url, { headers }); // fetch 는 기본 타임아웃 없음
+      if (!res.ok) {
+        const err = new Error(`derivative ${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
+      return Buffer.from(await res.arrayBuffer());
+    } catch (e) {
+      lastErr = e;
+      if (i < tries) await new Promise((r) => setTimeout(r, i * 3000));
+    }
   }
+  throw lastErr;
+}
+
+async function downloadSvfToDisk(derivative, outDir) {
+  let token = await mintApsToken();
+  const svfDerivUrn = derivative.urn;
+  if (!svfDerivUrn) throw new Error('SVF 파생물 urn 이 manifest 에 없습니다.');
+  fs.mkdirSync(outDir, { recursive: true });
+
+  const svfBytes = await fetchDerivativeBytes(token, svfDerivUrn);
+  const svfName = svfDerivUrn.substring(svfDerivUrn.lastIndexOf('/') + 1) || 'output.svf';
+  fs.writeFileSync(path.join(outDir, svfName), svfBytes);
+
+  // .svf(zip) 안의 manifest.json 에서 에셋 목록을 얻어 같은 폴더로 받는다.
+  const zip = new AdmZip(svfBytes);
+  const svfManifest = JSON.parse(zip.readAsText('manifest.json'));
+  const basePath = svfDerivUrn.substring(0, svfDerivUrn.lastIndexOf('/') + 1);
+  const assets = (svfManifest.assets || []).filter(
+    (a) => a.URI && !a.URI.startsWith('embed:') && !a.URI.includes('://') && a.URI !== svfName,
+  );
+  console.log(`[convert4d] 에셋 ${assets.length}개 병렬 다운로드…`);
+  let done = 0;
+  const downloadOne = async (asset) => {
+    let bytes;
+    try {
+      bytes = await fetchDerivativeBytes(token, basePath + asset.URI);
+    } catch (e) {
+      if (e?.status === 401) {
+        token = await mintApsToken(); // 장시간 다운로드 중 토큰 만료 → 재발급
+        bytes = await fetchDerivativeBytes(token, basePath + asset.URI);
+      } else {
+        throw new Error(`에셋 다운로드 실패(${asset.URI}): ${e?.message || e}`);
+      }
+    }
+    const dest = path.join(outDir, asset.URI);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, bytes);
+    if (++done % 50 === 0 || done === assets.length) console.log(`[convert4d]   ${done}/${assets.length}`);
+  };
+  // 동시성 풀(기본 16) — 순차 다운로드 병목 제거.
+  const CONCURRENCY = Number(process.env.DL_CONCURRENCY || 16);
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < assets.length) {
+      const a = assets[cursor++];
+      await downloadOne(a);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, assets.length) }, worker));
+  console.log(`[convert4d] 에셋 다운로드 완료 ${done}개`);
+  return path.join(outDir, svfName);
 }
 
 async function main() {
@@ -79,6 +170,19 @@ async function main() {
   need('APS_CLIENT_SECRET', APS_CLIENT_SECRET);
   need('SUPABASE_URL', SUPABASE_URL);
   need('SUPABASE_SERVICE_ROLE_KEY', SUPABASE_SERVICE_ROLE_KEY);
+  let host = '';
+  try {
+    host = new URL(SUPABASE_URL).host;
+  } catch {
+    throw new Error(`SUPABASE_URL 형식 오류. "https://<프로젝트>.supabase.co" 형태여야 합니다.`);
+  }
+  console.log(`[convert4d] Supabase host: ${host}`);
+  if (!/supabase\.(co|in|net)$/.test(host)) {
+    throw new Error(
+      `SUPABASE_URL 시크릿에 프로젝트 URL이 아니라 다른 값(키 등)이 들어간 것 같습니다. ` +
+        `Supabase 대시보드 → Project Settings → API → "Project URL"(https://xxxx.supabase.co)을 넣으세요. 현재 host=${host}`,
+    );
+  }
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
   const urn = await resolveUrn(supabase);
@@ -90,49 +194,40 @@ async function main() {
   console.log(`[convert4d] SVF 파생물 ${derivatives.length}개`);
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'svf2gltf-'));
-  const auth = new TwoLeggedAuthenticationProvider(APS_CLIENT_ID, APS_CLIENT_SECRET);
 
-  // 여러 SVF 가 있으면 가장 큰(=주) 것 하나만 우선 변환(PoC). 보통 1개.
+  // 여러 SVF 가 있으면 첫 번째(주) 것을 변환. 보통 1개.
   const derivative = derivatives[0];
   const t0 = Date.now();
-  console.log(`[convert4d] SVF 읽는 중 (guid=${derivative.guid})…`);
-  const reader = await SVFReader.FromDerivativeService(urn, derivative.guid, auth, APS_REGION);
-  const scene = await reader.read({ log: (m) => process.stdout.write('.') });
+  console.log(`[convert4d] SVF 다운로드 중 (guid=${derivative.guid})…`);
+  const svfPath = await downloadSvfToDisk(derivative, path.join(tmp, 'svf'));
+  console.log(`[convert4d] SVF 읽는 중 (${svfPath})…`);
+  const reader = await SVFReader.FromFileSystem(svfPath);
+  const scene = await reader.read({ log: () => process.stdout.write('.') });
   process.stdout.write('\n');
-  const gltfDir = path.join(tmp, 'gltf');
-  const writer = new DbIdGLTFWriter({ deduplicate: false, skipUnusedUvs: true, center: true, log: console.log });
-  console.log(`[convert4d] glTF 쓰는 중…`);
-  await writer.write(scene, gltfDir);
-  console.log(`[convert4d] glTF 완료 (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
 
-  // glTF(폴더) → GLB(단일 바이너리) + Draco 압축.
-  const gltfPath = path.join(gltfDir, 'output.gltf');
-  if (!fs.existsSync(gltfPath)) {
-    const found = fs.readdirSync(gltfDir).find((f) => f.endsWith('.gltf'));
-    if (!found) throw new Error(`glTF 산출물을 찾지 못함: ${fs.readdirSync(gltfDir).join(', ')}`);
-  }
-  const realGltf = fs.existsSync(gltfPath) ? gltfPath : path.join(gltfDir, fs.readdirSync(gltfDir).find((f) => f.endsWith('.gltf')));
-  const gltf = JSON.parse(fs.readFileSync(realGltf, 'utf8'));
-  console.log(`[convert4d] GLB+Draco 변환 중…`);
-  const { glb } = await gltfPipeline.gltfToGlb(gltf, {
-    resourceDirectory: gltfDir,
-    dracoOptions: { compressionLevel: 7 },
-  });
-  console.log(`[convert4d] GLB 크기: ${(glb.length / 1048576).toFixed(1)} MB`);
-
-  // 워크플로 아티팩트(백업·검수용)로 디스크에도 저장.
+  // 재질별 병합 + 정점당 dbId → 단일 GLB(거대 모델의 glTF JSON 한계 회피).
   fs.mkdirSync('out', { recursive: true });
-  fs.writeFileSync(path.join('out', 'model.glb'), glb);
+  const outPath = path.join('out', 'model.glb');
+  console.log(`[convert4d] 병합 GLB 생성 중…`);
+  const res = await buildMergedGlb(scene, { outPath, log: console.log });
+  console.log(
+    `[convert4d] GLB 완료: ${(res.bytes / 1048576).toFixed(1)} MB · 메시 ${res.groups} · 정점 ${res.vertices.toLocaleString()} · 단순화 ${res.decimated} (${((Date.now() - t0) / 1000).toFixed(1)}s)`,
+  );
 
-  // Supabase Storage 업로드(버킷 없으면 생성).
+  // Supabase Storage 업로드(버킷 없으면 생성). 대용량이라 실패해도 아티팩트로 남기고 계속.
   await supabase.storage.createBucket(STORAGE_BUCKET, { public: false }).catch(() => {});
   const objectPath = `${keyBase}/model.glb`;
-  const up = await supabase.storage.from(STORAGE_BUCKET).upload(objectPath, glb, {
-    contentType: 'model/gltf-binary',
-    upsert: true,
-  });
-  if (up.error) throw new Error(`업로드 실패: ${up.error.message}`);
-  console.log(`[convert4d] 업로드 완료: ${STORAGE_BUCKET}/${objectPath}`);
+  try {
+    const fileBuf = fs.readFileSync(outPath);
+    const up = await supabase.storage.from(STORAGE_BUCKET).upload(objectPath, fileBuf, {
+      contentType: 'model/gltf-binary',
+      upsert: true,
+    });
+    if (up.error) throw up.error;
+    console.log(`[convert4d] 업로드 완료: ${STORAGE_BUCKET}/${objectPath}`);
+  } catch (e) {
+    console.warn(`[convert4d] 업로드 실패(아티팩트로 보관): ${e?.message || e}`);
+  }
   console.log(`[convert4d] DONE`);
 }
 
