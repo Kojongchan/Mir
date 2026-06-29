@@ -88,11 +88,17 @@ async function main() {
   need('APS_CLIENT_SECRET', APS_CLIENT_SECRET);
   need('SUPABASE_URL', SUPABASE_URL);
   need('SUPABASE_SERVICE_ROLE_KEY', SUPABASE_SERVICE_ROLE_KEY);
+  let host = '';
   try {
-    console.log(`[convert4d] Supabase host: ${new URL(SUPABASE_URL).host}`);
+    host = new URL(SUPABASE_URL).host;
   } catch {
+    throw new Error(`SUPABASE_URL 형식 오류. "https://<프로젝트>.supabase.co" 형태여야 합니다.`);
+  }
+  console.log(`[convert4d] Supabase host: ${host}`);
+  if (!/supabase\.(co|in|net)$/.test(host)) {
     throw new Error(
-      `SUPABASE_URL 형식 오류. "https://<프로젝트>.supabase.co" 형태여야 합니다. (앞뒤 공백/따옴표·오타 확인)`,
+      `SUPABASE_URL 시크릿에 프로젝트 URL이 아니라 다른 값(키 등)이 들어간 것 같습니다. ` +
+        `Supabase 대시보드 → Project Settings → API → "Project URL"(https://xxxx.supabase.co)을 넣으세요. 현재 host=${host}`,
     );
   }
 
