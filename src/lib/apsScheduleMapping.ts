@@ -193,6 +193,45 @@ function mergeMapping(into: TaskMapping, add: TaskMapping): void {
   }
 }
 
+/**
+ * 한 규칙에 대해 모델/공정표 양쪽의 실제 값 표본과 매칭 가능 개수를 본다(진단용).
+ * 매핑이 0건일 때 "왜 안 맞는지"(값 형식 불일치)를 사용자에게 보여주는 데 쓴다.
+ */
+export async function diagnoseRule(
+  model: ApsModel,
+  elements: ApsElement[],
+  tasks: ScheduleTask[],
+  rule: ApsMatchRule,
+): Promise<{ modelValues: string[]; taskValues: string[]; modelHas: number; overlap: number }> {
+  const dbIds = elements.map((e) => e.dbId);
+  const modelVals = rule.modelProperty
+    ? await bulkPropertyValues(model, dbIds, rule.modelProperty)
+    : new Map(elements.map((e) => [e.dbId, e.name] as const));
+  const modelKeys = new Set<string>();
+  for (const v of modelVals.values()) {
+    const k = normKey(v);
+    if (k) modelKeys.add(k);
+  }
+  const taskVals: string[] = [];
+  let overlap = 0;
+  for (const t of tasks) {
+    const v = rule.taskField
+      ? taskFieldValue(t, rule.taskField)
+      : t.externalId ?? t.id ?? t.name;
+    if (v) {
+      taskVals.push(v);
+      if (modelKeys.has(normKey(v))) overlap++;
+    }
+  }
+  const uniqModel = [...new Set([...modelVals.values()])];
+  return {
+    modelValues: uniqModel.slice(0, 4),
+    taskValues: [...new Set(taskVals)].slice(0, 4),
+    modelHas: modelVals.size,
+    overlap,
+  };
+}
+
 export async function applyApsRules(
   model: ApsModel,
   elements: ApsElement[],

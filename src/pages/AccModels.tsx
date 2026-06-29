@@ -13,7 +13,7 @@ import { Timeline } from '../components/Timeline';
 import { useStore } from '../store/useStore';
 import { enumerateApsElements, type ApsElement } from '../lib/apsElements';
 import { createApsFourDViewer } from '../lib/apsFourdView';
-import { buildApsTaskMapping, collectPropertyNames, collectTaskFields, applyApsRules, type ApsMatchRule } from '../lib/apsScheduleMapping';
+import { buildApsTaskMapping, collectPropertyNames, collectTaskFields, applyApsRules, diagnoseRule, type ApsMatchRule } from '../lib/apsScheduleMapping';
 import { ApsRuleEditor } from '../components/ApsRuleEditor';
 import { mappingStats } from '../lib/fourd';
 import { formatDate, DAY } from '../lib/schedule';
@@ -199,6 +199,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   // 규칙 편집기(나비스웍스 류) — 여러 매핑 규칙을 만들어 한 번에 적용(#2/#4).
   const [ruleEditorOpen, setRuleEditorOpen] = useState(false);
   const [matchRules, setMatchRules] = useState<ApsMatchRule[]>([]);
+  const [ruleMsg, setRuleMsg] = useState<string>('');
   const [apsDbModelId, setApsDbModelId] = useState<string | null>(null);
   const [openName, setOpenName] = useState('');
   const fourd = useStore((s) => s.fourd);
@@ -292,8 +293,23 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
       useStore.getState().fourd.setMapping(taskMapping, stats.tasks, stats.elements);
       saveLocalApsSchedule(projectId, fourd.tasks, fourd.source ?? 'generic', taskMapping, mapping);
       setMatchRules(rules);
-      setRuleEditorOpen(false);
-      setStatus(`규칙 매핑(${rules.filter((r) => r.enabled).length}개 규칙): ${stats.tasks}작업 · ${stats.elements}객체`);
+      if (stats.elements === 0) {
+        // 0건이면 왜 안 맞는지(값 형식 불일치) 첫 규칙 기준으로 표본을 보여준다.
+        const first = rules.find((r) => r.enabled) ?? rules[0];
+        const dg = await diagnoseRule(m, els, fourd.tasks, first);
+        const msg =
+          `매핑 0건 — 두 값이 일치하지 않습니다.\n` +
+          `· 모델 속성값 예: ${dg.modelValues.join(' | ') || '(없음)'}\n` +
+          `· 공정표 값 예: ${dg.taskValues.join(' | ') || '(없음)'}\n` +
+          `이 속성을 가진 객체 ${dg.modelHas}개 / 일치 후보 ${dg.overlap}개. ` +
+          `규칙의 "공정표 비교 열"과 "모델 객체 속성"이 같은 값을 담고 있는지 확인하세요.`;
+        setRuleMsg(msg);
+        setStatus('규칙 매핑 0건 — 규칙 편집기의 진단 메시지를 확인하세요.');
+      } else {
+        setRuleMsg('');
+        setStatus(`규칙 매핑(${rules.filter((r) => r.enabled).length}개 규칙): ${stats.tasks}작업 · ${stats.elements}객체`);
+        setRuleEditorOpen(false);
+      }
     } catch (e) {
       setStatus(`규칙 매핑 실패: ${(e as Error).message}`);
     } finally {
@@ -1203,8 +1219,12 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
           propertyOptions={propertyOptions}
           initialRules={matchRules}
           busy={matching4d}
+          message={ruleMsg}
           onApply={(rules) => void applyRules(rules)}
-          onClose={() => setRuleEditorOpen(false)}
+          onClose={() => {
+            setRuleEditorOpen(false);
+            setRuleMsg('');
+          }}
         />
       )}
     </div>

@@ -20,6 +20,7 @@ export function ApsRuleEditor({
   propertyOptions,
   initialRules,
   busy,
+  message,
   onApply,
   onClose,
 }: {
@@ -27,6 +28,7 @@ export function ApsRuleEditor({
   propertyOptions: string[];
   initialRules: ApsMatchRule[];
   busy: boolean;
+  message?: string;
   onApply: (rules: ApsMatchRule[]) => void;
   onClose: () => void;
 }) {
@@ -83,6 +85,22 @@ export function ApsRuleEditor({
             </div>
           ))}
         </div>
+
+        {message && (
+          <div
+            style={{
+              marginTop: 10,
+              padding: '8px 10px',
+              borderRadius: 6,
+              background: 'color-mix(in srgb, #f97316 14%, transparent)',
+              border: '1px solid #f97316',
+              fontSize: 12,
+              whiteSpace: 'pre-line',
+            }}
+          >
+            {message}
+          </div>
+        )}
 
         <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center' }}>
           <button onClick={() => setRules((rs) => [...rs, newRule()])}>＋ 규칙 추가</button>
