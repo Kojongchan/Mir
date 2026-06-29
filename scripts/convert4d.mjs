@@ -118,9 +118,23 @@ async function main() {
   const derivative = derivatives[0];
   const t0 = Date.now();
   console.log(`[convert4d] SVF 읽는 중 (guid=${derivative.guid})…`);
-  const reader = await SVFReader.FromDerivativeService(urn, derivative.guid, auth, APS_REGION);
-  const scene = await reader.read({ log: (m) => process.stdout.write('.') });
-  process.stdout.write('\n');
+  // APS 파생물 다운로드는 간헐적으로 "no response"(네트워크 일시 오류)가 난다 → 재시도.
+  let scene;
+  let lastErr;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      const reader = await SVFReader.FromDerivativeService(urn, derivative.guid, auth, APS_REGION);
+      scene = await reader.read({ log: () => process.stdout.write('.') });
+      process.stdout.write('\n');
+      break;
+    } catch (e) {
+      lastErr = e;
+      process.stdout.write('\n');
+      console.warn(`[convert4d] 읽기 실패(시도 ${attempt}/4): ${e?.message || e}`);
+      if (attempt < 4) await new Promise((r) => setTimeout(r, attempt * 4000));
+    }
+  }
+  if (!scene) throw lastErr ?? new Error('SVF 읽기 실패');
   const gltfDir = path.join(tmp, 'gltf');
   const writer = new DbIdGLTFWriter({ deduplicate: false, skipUnusedUvs: true, center: true, log: console.log });
   console.log(`[convert4d] glTF 쓰는 중…`);
