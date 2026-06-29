@@ -236,6 +236,36 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
     return els;
   };
 
+  // 4D 자체 뷰어 PoC 1단계: 모델 SVF 파생물 규모 측정(변환 가능성 판단).
+  const runDerivativePoc = async () => {
+    if (!urn) {
+      setStatus('먼저 4D 모델을 여세요.');
+      return;
+    }
+    setStatus('변환 규모 측정 중…');
+    try {
+      const { data } = await supabase.auth.getSession();
+      const res = await fetch(`/api/aps-derivative-info?urn=${encodeURIComponent(urn)}`, {
+        headers: data.session ? { authorization: `Bearer ${data.session.access_token}` } : {},
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? `측정 실패(${res.status})`);
+      const lines = [
+        `[변환 PoC] 상태: ${body.status} (${body.progress})`,
+        `SVF 파생물: ${body.svfCount}개 · 총 ${body.svfTotalMB}MB`,
+        `속성DB: ${body.propDbMB}MB · 전체 파생물: ${body.totalDerivativeMB}MB · 뷰어블 ${body.viewables}`,
+        `판단: ${body.verdict}`,
+      ];
+      // eslint-disable-next-line no-console
+      console.log('aps-derivative-info', body);
+      setStatus(lines.join(' | '));
+      window.alert(lines.join('\n'));
+    } catch (e) {
+      setStatus(`변환 규모 측정 실패: ${(e as Error).message}`);
+      window.alert(`변환 규모 측정 실패: ${(e as Error).message}`);
+    }
+  };
+
   // 규칙 편집기에서 여러 규칙을 한 번에 적용(나비스웍스 류).
   const applyRules = async (rules: ApsMatchRule[]) => {
     const m = modelRef.current;
@@ -916,6 +946,11 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             title="ACC 폴더에서 4D 시뮬레이션용 모델을 선택"
           >
             🗂 4D 모델 지정
+          </button>
+        )}
+        {mode4d && isAdmin && urn && (
+          <button onClick={() => void runDerivativePoc()} style={btnStyle} title="자체 뷰어 PoC: 이 모델의 변환 규모(용량·SVF 수) 측정">
+            🧪 변환 PoC
           </button>
         )}
         {defaultName && <span style={{ fontSize: 12, color: 'var(--muted)' }}>{mode4d ? '4D 모델' : '기본'}: {defaultName}</span>}
