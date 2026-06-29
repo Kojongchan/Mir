@@ -745,13 +745,17 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             }
             if (autoClashRef.current) setClashOpen(true);
             if (mode4dRef.current) {
-              // 시뮬레이션 중 카메라 이동·객체 hide/show 시 프로그레시브 렌더로
-              // 객체가 잠깐 사라져 보이는 현상 방지: 한 프레임에 전체를 그리고
-              // 네비게이션 중 디테일 다운을 끈다. 고정 시뮬 뷰라 성능 트레이드오프
-              // 허용(Forma/Navisworks 류의 안정적 표시에 맞춤). 모델 재로딩 아님.
+              // 대형 연합모델은 progressive/navigation 최적화를 끄면 회전 시 렉이
+              // 심해진다 → LMV 기본값(부드러운 네비) 유지. 시뮬레이션 중 객체가
+              // 깜빡이며 사라지던 현상은 apsFourdView 의 diff 도색(needsClear=false)
+              // 으로 따로 잡는다. 모델 재로딩은 없음.
+              // 회전 렉 완화: 그림자/반사/SAO/AA 같은 고비용 효과를 끈다(공정
+              // 시뮬은 형상·색만 중요). 객체별 테마/숨김과 충돌 없음.
               try {
-                viewer.setProgressiveRendering?.(false);
-                viewer.impl?.setOptimizeNavigation?.(false);
+                viewer.setGroundShadow?.(false);
+                viewer.setGroundReflection?.(false);
+                viewer.setQualityLevel?.(false, false); // (SAO, 안티앨리어싱) 끔
+                viewer.setProgressiveRendering?.(true);
               } catch {
                 /* 일부 뷰어 버전엔 없음 — 무시 */
               }

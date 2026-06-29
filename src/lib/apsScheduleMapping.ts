@@ -51,20 +51,30 @@ export function bulkPropertyValues(
  * 카테고리/이름 등 항상 있는 속성은 매칭 기준으로 의미가 적어 흔한 것 위주로 두되,
  * 제외하지는 않는다(모델마다 의미가 다를 수 있어 사용자 판단에 맡긴다).
  */
-export function collectPropertyNames(model: ApsModel, dbIds: number[], sampleSize = 30): Promise<string[]> {
+export function collectPropertyNames(model: ApsModel, dbIds: number[], sampleSize = 600): Promise<string[]> {
   return new Promise((resolve) => {
-    const sample = dbIds.slice(0, sampleSize);
-    if (!sample.length || typeof model.getBulkProperties2 !== 'function') {
+    if (!dbIds.length || typeof model.getBulkProperties2 !== 'function') {
       resolve([]);
       return;
     }
+    // 요소 종류마다 속성 집합이 다르므로 앞부분만 보지 말고 모델 전체에서 고르게
+    // 표본을 뽑는다(stride 샘플링). 표본이 적으면(일부 속성 누락) 매핑 후보가
+    // 빠지는 문제(#1) 방지.
+    const stride = Math.max(1, Math.floor(dbIds.length / sampleSize));
+    const sample = stride === 1 ? dbIds.slice(0, sampleSize) : dbIds.filter((_, i) => i % stride === 0).slice(0, sampleSize);
     model.getBulkProperties2(
       sample,
       {},
-      (results: Array<{ properties?: Array<{ displayName: string }> }>) => {
+      (results: Array<{ properties?: Array<{ displayName: string; hidden?: boolean }> }>) => {
         const names = new Set<string>();
-        for (const r of results) for (const p of r.properties ?? []) names.add(p.displayName);
-        resolve([...names].sort());
+        for (const r of results)
+          for (const p of r.properties ?? []) {
+            // 내부/숨김 속성(__viewable_in 등)·빈 이름 제외, 나머지는 모두 후보로.
+            if (p.hidden) continue;
+            const n = (p.displayName ?? '').trim();
+            if (n && !n.startsWith('__')) names.add(n);
+          }
+        resolve([...names].sort((a, b) => a.localeCompare(b, 'ko')));
       },
       () => resolve([]),
     );

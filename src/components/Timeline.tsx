@@ -128,7 +128,16 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null }: Prop
   const [showSettings, setShowSettings] = useState(false);
   const [detailed, setDetailed] = useState(false);
   const [pendingCsv, setPendingCsv] = useState<CsvDoc | null>(null);
+  // 날짜 검색 — 지정하면 그 날짜에 걸치는(overlap) 공정만 간트/표에 보인다(#3).
+  const [filterDate, setFilterDate] = useState('');
   const hasSchedule = tasks.length > 0;
+
+  const visibleTasks = useMemo(() => {
+    if (!filterDate) return tasks;
+    const t = new Date(`${filterDate}T00:00:00`).getTime();
+    if (Number.isNaN(t)) return tasks;
+    return tasks.filter((task) => task.start <= t + DAY && task.end >= t);
+  }, [tasks, filterDate]);
 
   // 활성 슬롯에 즉시 저장(관리자, 모델 오픈 상태). 사용자 편집 직후 명시적으로 호출해
   // 프로그램적 복원(autoRestore)과의 경합을 피한다. fire-and-forget.
@@ -540,6 +549,27 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null }: Prop
             <button onClick={() => setDetailed((v) => !v)} title="상세 열 표시">
               {detailed ? '기본 열' : '상세 열'}
             </button>
+            <span className="tl-divider" />
+            <label className="tl-check" title="입력한 날짜에 걸치는 공정만 표시">
+              날짜
+              <input
+                type="date"
+                value={filterDate}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setFilterDate(v);
+                  if (v) {
+                    const t = new Date(`${v}T00:00:00`).getTime();
+                    if (!Number.isNaN(t)) fourd.setCurrentTime(t);
+                  }
+                }}
+              />
+            </label>
+            {filterDate && (
+              <button onClick={() => setFilterDate('')} title="날짜 필터 해제">
+                ✕ {visibleTasks.length}건
+              </button>
+            )}
             <span className="spacer" />
             <span className="tl-date">{formatDate(currentTime)}</span>
             <span className="muted">
@@ -591,7 +621,7 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null }: Prop
             onChange={(e) => fourd.setCurrentTime(Number(e.target.value))}
           />
           <TaskTable
-            tasks={tasks}
+            tasks={visibleTasks}
             rangeStart={rangeStart}
             rangeEnd={rangeEnd}
             currentTime={currentTime}
