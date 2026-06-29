@@ -21,11 +21,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createClient } from '@supabase/supabase-js';
-import { SVFReader, GLTFWriter } from 'svf-utils';
+import { SVFReader } from 'svf-utils';
 import { AuthenticationClient, Scopes } from '@aps_sdk/authentication';
 import { ModelDerivativeClient } from '@aps_sdk/model-derivative';
-import gltfPipeline from 'gltf-pipeline';
 import AdmZip from 'adm-zip';
+import { buildMergedGlb } from './mergeGlb.mjs';
 
 const APS_BASE = 'https://developer.api.autodesk.com';
 
@@ -165,15 +165,6 @@ async function downloadSvfToDisk(derivative, outDir) {
   return path.join(outDir, svfName);
 }
 
-// 각 노드 이름에 dbId 를 박아 런타임에서 객체별 통제가 가능하게 한다.
-class DbIdGLTFWriter extends GLTFWriter {
-  createNode(fragment, imf, outputUvs) {
-    const node = super.createNode(fragment, imf, outputUvs);
-    if (fragment && typeof fragment.dbid === 'number') node.name = `dbid:${fragment.dbid}`;
-    return node;
-  }
-}
-
 async function main() {
   need('APS_CLIENT_ID', APS_CLIENT_ID);
   need('APS_CLIENT_SECRET', APS_CLIENT_SECRET);
@@ -213,53 +204,30 @@ async function main() {
   const reader = await SVFReader.FromFileSystem(svfPath);
   const scene = await reader.read({ log: () => process.stdout.write('.') });
   process.stdout.write('\n');
-  const gltfDir = path.join(tmp, 'gltf');
-  // 4D 시뮬은 솔리드 구조물만 필요 → DWG 언더레이의 선/점 지오메트리를 제외하고
-  // 중복 메시를 제거해 glTF 크기를 크게 줄인다(거대 모델의 JSON 직렬화 한계 회피).
-  // 선/점도 포함하려면 INCLUDE_LINES=1.
-  const includeLines = process.env.INCLUDE_LINES === '1';
-  const writer = new DbIdGLTFWriter({
-    deduplicate: true,
-    skipUnusedUvs: true,
-    ignoreLineGeometry: !includeLines,
-    ignorePointGeometry: !includeLines,
-    center: true,
-    log: console.log,
-  });
-  console.log(`[convert4d] glTF 쓰는 중…`);
-  await writer.write(scene, gltfDir);
-  console.log(`[convert4d] glTF 완료 (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
 
-  // glTF(폴더) → GLB(단일 바이너리) + Draco 압축.
-  const gltfPath = path.join(gltfDir, 'output.gltf');
-  if (!fs.existsSync(gltfPath)) {
-    const found = fs.readdirSync(gltfDir).find((f) => f.endsWith('.gltf'));
-    if (!found) throw new Error(`glTF 산출물을 찾지 못함: ${fs.readdirSync(gltfDir).join(', ')}`);
-  }
-  const realGltf = fs.existsSync(gltfPath) ? gltfPath : path.join(gltfDir, fs.readdirSync(gltfDir).find((f) => f.endsWith('.gltf')));
-  const gltf = JSON.parse(fs.readFileSync(realGltf, 'utf8'));
-  // Draco 는 대형 모델에서 매우 느림 → 기본 끔(먼저 동작 확인). DRACO=1 로 켤 수 있음.
-  const useDraco = process.env.DRACO === '1';
-  console.log(`[convert4d] GLB 변환 중…${useDraco ? ' (Draco)' : ''}`);
-  const { glb } = await gltfPipeline.gltfToGlb(gltf, {
-    resourceDirectory: gltfDir,
-    ...(useDraco ? { dracoOptions: { compressionLevel: 7 } } : {}),
-  });
-  console.log(`[convert4d] GLB 크기: ${(glb.length / 1048576).toFixed(1)} MB`);
-
-  // 워크플로 아티팩트(백업·검수용)로 디스크에도 저장.
+  // 재질별 병합 + 정점당 dbId → 단일 GLB(거대 모델의 glTF JSON 한계 회피).
   fs.mkdirSync('out', { recursive: true });
-  fs.writeFileSync(path.join('out', 'model.glb'), glb);
+  const outPath = path.join('out', 'model.glb');
+  console.log(`[convert4d] 병합 GLB 생성 중…`);
+  const res = buildMergedGlb(scene, { outPath, log: console.log });
+  console.log(
+    `[convert4d] GLB 완료: ${(res.bytes / 1048576).toFixed(1)} MB · 재질그룹 ${res.groups} · 정점 ${res.vertices.toLocaleString()} (${((Date.now() - t0) / 1000).toFixed(1)}s)`,
+  );
 
-  // Supabase Storage 업로드(버킷 없으면 생성).
+  // Supabase Storage 업로드(버킷 없으면 생성). 대용량이라 실패해도 아티팩트로 남기고 계속.
   await supabase.storage.createBucket(STORAGE_BUCKET, { public: false }).catch(() => {});
   const objectPath = `${keyBase}/model.glb`;
-  const up = await supabase.storage.from(STORAGE_BUCKET).upload(objectPath, glb, {
-    contentType: 'model/gltf-binary',
-    upsert: true,
-  });
-  if (up.error) throw new Error(`업로드 실패: ${up.error.message}`);
-  console.log(`[convert4d] 업로드 완료: ${STORAGE_BUCKET}/${objectPath}`);
+  try {
+    const fileBuf = fs.readFileSync(outPath);
+    const up = await supabase.storage.from(STORAGE_BUCKET).upload(objectPath, fileBuf, {
+      contentType: 'model/gltf-binary',
+      upsert: true,
+    });
+    if (up.error) throw up.error;
+    console.log(`[convert4d] 업로드 완료: ${STORAGE_BUCKET}/${objectPath}`);
+  } catch (e) {
+    console.warn(`[convert4d] 업로드 실패(아티팩트로 보관): ${e?.message || e}`);
+  }
   console.log(`[convert4d] DONE`);
 }
 

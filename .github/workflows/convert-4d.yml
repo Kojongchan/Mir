@@ -36,10 +36,11 @@ jobs:
           node-version: 22
 
       - name: Install converter deps
-        run: npm install --no-save svf-utils@8 gltf-pipeline@4 @supabase/supabase-js@2 @aps_sdk/authentication @aps_sdk/model-derivative adm-zip
+        run: npm install --no-save svf-utils@8 @supabase/supabase-js@2 @aps_sdk/authentication @aps_sdk/model-derivative adm-zip
 
       - name: Convert SVF → GLB → upload
         env:
+          NODE_OPTIONS: '--max-old-space-size=6144'
           APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
           APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
