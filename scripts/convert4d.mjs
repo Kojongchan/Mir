@@ -29,13 +29,22 @@ import gltfPipeline from 'gltf-pipeline';
 const {
   APS_CLIENT_ID,
   APS_CLIENT_SECRET,
-  SUPABASE_URL,
   SUPABASE_SERVICE_ROLE_KEY,
   PROJECT_ID = '',
   URN: URN_ENV = '',
   APS_REGION = 'US',
   STORAGE_BUCKET = 'models4d',
 } = process.env;
+
+// SUPABASE_URL 정규화: 앞뒤 공백/따옴표 제거, 스킴 없으면 https:// 보정,
+// 끝 슬래시 제거. SUPABASE_URL 없으면 VITE_SUPABASE_URL 로 폴백.
+function cleanUrl(u) {
+  if (!u) return '';
+  let s = String(u).trim().replace(/^['"]+|['"]+$/g, '').trim();
+  if (s && !/^https?:\/\//i.test(s)) s = `https://${s}`;
+  return s.replace(/\/+$/, '');
+}
+const SUPABASE_URL = cleanUrl(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL);
 
 function need(name, v) {
   if (!v) throw new Error(`환경변수 누락: ${name}`);
@@ -79,6 +88,13 @@ async function main() {
   need('APS_CLIENT_SECRET', APS_CLIENT_SECRET);
   need('SUPABASE_URL', SUPABASE_URL);
   need('SUPABASE_SERVICE_ROLE_KEY', SUPABASE_SERVICE_ROLE_KEY);
+  try {
+    console.log(`[convert4d] Supabase host: ${new URL(SUPABASE_URL).host}`);
+  } catch {
+    throw new Error(
+      `SUPABASE_URL 형식 오류. "https://<프로젝트>.supabase.co" 형태여야 합니다. (앞뒤 공백/따옴표·오타 확인)`,
+    );
+  }
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
   const urn = await resolveUrn(supabase);
