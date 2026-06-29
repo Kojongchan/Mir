@@ -34,6 +34,31 @@ export function createApsFourDViewer(
 ): FourDViewer {
   const modelID: number = model?.id ?? 0;
   let hiddenDbIds = new Set<number>();
+  // 직전 틱의 (가시성·색) 시그니처. 매 틱 전체를 다시 칠하지 않고 바뀐 것만
+  // 갱신해 LMV 재렌더 부담을 줄인다(객체가 깜빡이며 사라지는 현상 완화).
+  let prevSig = new Map<number, string>();
+  const CLEAR = new THREE.Vector4(0, 0, 0, 0);
+
+  const colorFor = (state: CellState, opts: AppearanceSettings): THREE.Vector4 | null => {
+    switch (state) {
+      case 'ghost':
+        return opts.ghostFuture ? GHOST : null;
+      case 'active-construct':
+        return hexToVec4(opts.colorConstruct, opts.activeOpacity);
+      case 'active-demolish':
+        return hexToVec4(opts.colorDemolish, opts.activeOpacity);
+      case 'active-temporary':
+        return hexToVec4(opts.colorTemporary, opts.activeOpacity);
+      case 'active-early':
+        return hexToVec4(opts.colorEarly, opts.activeOpacity);
+      case 'active-late':
+        return hexToVec4(opts.colorLate, opts.activeOpacity);
+      default:
+        return null; // hidden/normal — 테마색 없음
+    }
+  };
+  const isHidden = (state: CellState, opts: AppearanceSettings): boolean =>
+    state === 'hidden' || (state === 'ghost' && !opts.ghostFuture);
 
   return {
     getElementCatalog(): ElementInfo[] {
@@ -52,58 +77,54 @@ export function createApsFourDViewer(
       }
 
       try {
-        // 이전 틱에서 숨겼던 것 중 이번에 더 이상 숨길 필요 없는 건 먼저 복원.
-        for (const dbId of hiddenDbIds) {
-          const next = desired.get(dbId);
-          const stillHidden = next === 'hidden' || (next === 'ghost' && !opts.ghostFuture);
-          if (!stillHidden) viewer.show?.(dbId);
-        }
+        const optSig = `${opts.activeOpacity}|${opts.colorConstruct}|${opts.colorDemolish}|${opts.colorTemporary}|${opts.colorEarly}|${opts.colorLate}|${opts.ghostFuture}`;
+        const nextSig = new Map<number, string>();
+        for (const [dbId, state] of desired) nextSig.set(dbId, `${state}|${optSig}`);
 
-        viewer.clearThemingColors?.(model);
+        // 변경이 전혀 없으면 아무 것도 하지 않는다(불필요한 재렌더 방지).
+        if (nextSig.size === prevSig.size) {
+          let same = true;
+          for (const [dbId, sig] of nextSig) {
+            if (prevSig.get(dbId) !== sig) {
+              same = false;
+              break;
+            }
+          }
+          if (same) return;
+        }
 
         const newHidden = new Set<number>();
-        for (const [dbId, state] of desired) {
-          switch (state) {
-            case 'hidden':
-              viewer.hide?.(dbId);
-              newHidden.add(dbId);
-              break;
-            case 'ghost':
-              if (opts.ghostFuture) {
-                viewer.show?.(dbId);
-                viewer.setThemingColor?.(dbId, GHOST, model, true);
-              } else {
-                viewer.hide?.(dbId);
-                newHidden.add(dbId);
-              }
-              break;
-            case 'normal':
-              viewer.show?.(dbId);
-              break;
-            case 'active-construct':
-              viewer.show?.(dbId);
-              viewer.setThemingColor?.(dbId, hexToVec4(opts.colorConstruct, opts.activeOpacity), model, true);
-              break;
-            case 'active-demolish':
-              viewer.show?.(dbId);
-              viewer.setThemingColor?.(dbId, hexToVec4(opts.colorDemolish, opts.activeOpacity), model, true);
-              break;
-            case 'active-temporary':
-              viewer.show?.(dbId);
-              viewer.setThemingColor?.(dbId, hexToVec4(opts.colorTemporary, opts.activeOpacity), model, true);
-              break;
-            case 'active-early':
-              viewer.show?.(dbId);
-              viewer.setThemingColor?.(dbId, hexToVec4(opts.colorEarly, opts.activeOpacity), model, true);
-              break;
-            case 'active-late':
-              viewer.show?.(dbId);
-              viewer.setThemingColor?.(dbId, hexToVec4(opts.colorLate, opts.activeOpacity), model, true);
-              break;
+        let changed = false;
+
+        // 1) 직전엔 제어했지만 이번엔 빠진(=normal 복귀) 객체: 보이게 + 테마 해제.
+        for (const [dbId] of prevSig) {
+          if (!nextSig.has(dbId)) {
+            viewer.show?.(dbId);
+            viewer.setThemingColor?.(dbId, CLEAR, model, true);
+            changed = true;
           }
         }
+
+        // 2) 이번 틱 객체: 시그니처가 바뀐 것만 가시성·색 갱신.
+        for (const [dbId, state] of desired) {
+          const sigChanged = prevSig.get(dbId) !== nextSig.get(dbId);
+          if (isHidden(state, opts)) {
+            viewer.hide?.(dbId);
+            newHidden.add(dbId);
+          } else {
+            if (hiddenDbIds.has(dbId)) viewer.show?.(dbId);
+            if (sigChanged) {
+              const color = colorFor(state, opts);
+              viewer.setThemingColor?.(dbId, color ?? CLEAR, model, true);
+            }
+          }
+          if (sigChanged) changed = true;
+        }
+
         hiddenDbIds = newHidden;
-        viewer.impl?.invalidate?.(true, true, true);
+        prevSig = nextSig;
+        // needsClear=false 로 전체 클리어 없이 다시 그린다(깜빡임 완화).
+        if (changed) viewer.impl?.invalidate?.(false, true, false);
       } catch {
         /* 무시 */
       }
@@ -114,8 +135,21 @@ export function createApsFourDViewer(
       try {
         for (const dbId of hiddenDbIds) viewer.show?.(dbId);
         hiddenDbIds = new Set();
+        prevSig = new Map();
         viewer.clearThemingColors?.(model);
-        viewer.impl?.invalidate?.(true, true, true);
+        viewer.impl?.invalidate?.(false, true, false);
+      } catch {
+        /* 무시 */
+      }
+    },
+
+    setPlaybackActive(active: boolean) {
+      if (!viewer) return;
+      try {
+        // 재생 중: progressive 렌더 OFF → 매 틱 전체를 한 번에 그려 깜빡임 제거.
+        // 멈춤: ON → 회전 시 부드럽게(점진 렌더).
+        viewer.setProgressiveRendering?.(!active);
+        viewer.impl?.invalidate?.(false, true, false);
       } catch {
         /* 무시 */
       }

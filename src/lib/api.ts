@@ -14,6 +14,9 @@ export interface ProjectAcc {
   acc_default_name: string | null;
   acc_root_folder_id: string | null;
   acc_root_folder_name: string | null;
+  /** 공정관리(4D) 전용 고정 모델(0030) — 통합모델/간섭 기본 모델과 독립된 뷰. */
+  acc_4d_urn: string | null;
+  acc_4d_name: string | null;
 }
 
 const EMPTY_ACC: ProjectAcc = {
@@ -23,17 +26,24 @@ const EMPTY_ACC: ProjectAcc = {
   acc_default_name: null,
   acc_root_folder_id: null,
   acc_root_folder_name: null,
+  acc_4d_urn: null,
+  acc_4d_name: null,
 };
+
+const ACC_COLS =
+  'acc_hub_id, acc_project_id, acc_default_urn, acc_default_name, acc_root_folder_id, acc_root_folder_name, acc_4d_urn, acc_4d_name';
+const ACC_COLS_LEGACY =
+  'acc_hub_id, acc_project_id, acc_default_urn, acc_default_name, acc_root_folder_id, acc_root_folder_name';
 
 /** 관리자가 고정한 ACC 허브/프로젝트/시작폴더/기본모델을 읽는다(미적용 시 null). */
 export async function getProjectAcc(projectId: string): Promise<ProjectAcc> {
-  const { data, error } = await supabase
-    .from('projects')
-    .select('acc_hub_id, acc_project_id, acc_default_urn, acc_default_name, acc_root_folder_id, acc_root_folder_name')
-    .eq('id', projectId)
-    .single();
-  if (error || !data) return EMPTY_ACC; // 0020 미적용 폴백
-  return { ...EMPTY_ACC, ...(data as Partial<ProjectAcc>) };
+  const { data, error } = await supabase.from('projects').select(ACC_COLS).eq('id', projectId).single();
+  if (!error && data) return { ...EMPTY_ACC, ...(data as Partial<ProjectAcc>) };
+
+  // 0030(acc_4d_urn/name) 미적용 폴백.
+  const legacy = await supabase.from('projects').select(ACC_COLS_LEGACY).eq('id', projectId).single();
+  if (legacy.error || !legacy.data) return EMPTY_ACC; // 0020 미적용 폴백
+  return { ...EMPTY_ACC, ...(legacy.data as Partial<ProjectAcc>) };
 }
 
 /** ACC 매핑 저장(관리자만 — projects update RLS). */
@@ -237,6 +247,49 @@ export async function syncBimModel(file: BimFileLike): Promise<ModelRecord> {
     .single();
   if (error) throw error;
   return normalizeModel(data);
+}
+
+/**
+ * Mirror an ACC(APS) model (identified by URN) into the `models` table so the
+ * existing IFC-based 4D persistence path (task_elements.model_id FK) can be
+ * reused for APS-loaded models. Idempotent per (project_id, storage_path=urn).
+ * APS dbId is deterministic per translated version, so it's safe to store it
+ * under the same `express_id` column the IFC path already persists.
+ */
+export async function getOrCreateApsModelRow(
+  projectId: string,
+  urn: string,
+  name: string,
+): Promise<ModelRecord> {
+  const { data: existing } = await supabase
+    .from('models')
+    .select('id')
+    .eq('project_id', projectId)
+    .eq('storage_path', urn)
+    .maybeSingle();
+  if (existing) {
+    const model = await getModel(existing.id);
+    if (model) return model;
+  }
+
+  const { data: userData } = await supabase.auth.getUser();
+  const base = {
+    project_id: projectId,
+    name,
+    storage_path: urn,
+    size_bytes: null,
+    uploaded_by: userData.user?.id ?? null,
+  };
+  const { data, error } = await supabase
+    .from('models')
+    .insert({ ...base, purpose: '4d' as ModelPurpose })
+    .select(COLS)
+    .single();
+  if (!error) return normalizeModel(data);
+
+  const legacy = await supabase.from('models').insert(base).select(COLS_LEGACY).single();
+  if (legacy.error) throw legacy.error;
+  return normalizeModel(legacy.data);
 }
 
 /** Remove the integrated model row mirroring a CDE BIM file (file deleted). */

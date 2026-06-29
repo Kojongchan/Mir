@@ -1182,12 +1182,90 @@ button.danger:hover:not(:disabled) {
 }
 
 /* ---- 4D 타임라인 ---- */
+/* 공정 매핑 규칙 편집기(나비스웍스 규칙 편집기 류). */
+.rule-grid {
+  display: grid;
+  grid-template-columns: 44px 1fr 1fr 36px;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 0;
+}
+.rule-grid-head {
+  font-size: 11px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+  margin-bottom: 4px;
+}
+.rule-grid select {
+  width: 100%;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+/* 4D 시뮬레이션 HUD — 모델 위 좌상단 날짜·진척 오버레이(Navisworks/Forma 류). */
+.fourd-hud {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 540;
+  pointer-events: none;
+  min-width: 168px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #f8fafc;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(2px);
+}
+.fourd-hud-date {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+.fourd-hud-meta {
+  font-size: 11px;
+  opacity: 0.85;
+  margin-top: 2px;
+}
+.fourd-hud-bar {
+  height: 5px;
+  margin: 6px 0 2px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.2);
+  overflow: hidden;
+}
+.fourd-hud-bar span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #22c55e, #3b82f6);
+  transition: width 0.12s linear;
+}
+
 .timeline {
   background: var(--panel-2);
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  max-height: 340px;
+  flex: none;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 위쪽 가장자리 드래그 핸들 — 패널 높이를 위아래로 조절. */
+.tl-resize {
+  height: 7px;
+  flex-shrink: 0;
+  cursor: ns-resize;
+  border-top: 2px solid transparent;
+  touch-action: none;
+}
+.tl-resize:hover {
+  border-top-color: var(--accent, #3b82f6);
+  background: color-mix(in srgb, var(--accent, #3b82f6) 14%, transparent);
 }
 
 .timeline.collapsed {
@@ -1320,9 +1398,33 @@ button.danger:hover:not(:disabled) {
   bottom: 0;
   width: 2px;
   background: var(--accent);
-  opacity: 0.8;
+  opacity: 0.85;
   pointer-events: none;
-  z-index: 2;
+  z-index: 4; /* 헤더·본문·라벨 위로 전체 높이 관통 */
+}
+
+/* 간트 시간축 — 세로 눈금선 + 헤더 라벨(나비스웍스 류). 테이블 전체 높이 기준. */
+.tl-gridline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--hairline);
+  pointer-events: none;
+  z-index: 0;
+}
+.tl-gridline.major {
+  background: var(--border);
+}
+.tl-axis-label {
+  position: absolute;
+  top: 3px;
+  transform: translateX(3px);
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 5; /* 헤더 배경 위 */
 }
 
 .tl-row {
@@ -1462,6 +1564,7 @@ button.danger:hover:not(:disabled) {
 .tl-table {
   display: flex;
   flex-direction: column;
+  flex: 1;
   min-height: 0;
   overflow: hidden;
 }
@@ -1474,6 +1577,8 @@ button.danger:hover:not(:disabled) {
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  position: relative;
+  z-index: 2; /* 시간축 눈금선 위, 라벨/커서 아래 */
 }
 .tl-thead .th {
   flex-shrink: 0;
@@ -1491,6 +1596,7 @@ button.danger:hover:not(:disabled) {
   position: relative;
   overflow-y: auto;
   min-height: 0;
+  z-index: 1; /* 행/간트바가 시간축 눈금선(z:0) 위에 오도록 */
 }
 .tl-tbody .tr {
   display: flex;

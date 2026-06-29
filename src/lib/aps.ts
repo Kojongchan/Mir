@@ -47,6 +47,17 @@ export async function getApsToken(): Promise<{ access_token: string; expires_in:
   return res.json();
 }
 
+/** 4D 자체 뷰어 PoC: 모델 SVF 파생물 규모(개수·용량·뷰어블) 측정. */
+export async function apsDerivativeInfo(urn: string, region = 'US'): Promise<any> {
+  const res = await fetch(
+    `/api/aps-derivative-info?urn=${encodeURIComponent(urn)}&region=${encodeURIComponent(region)}`,
+    { headers: await authHeader() },
+  );
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `규모 측정 실패(${res.status})`);
+  return body;
+}
+
 /** ACC Data Management 프록시 호출(서버가 2-legged 처리). */
 export async function accFetch(params: Record<string, string>): Promise<any> {
   const qs = new URLSearchParams(params).toString();

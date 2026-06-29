@@ -57,6 +57,11 @@ export interface FourDViewer {
     opts: AppearanceSettings,
   ): void;
   clearConstruction(): void;
+  /**
+   * 재생 모드 토글(선택). 재생 중에는 progressive rendering 을 꺼서 매 틱 모델이
+   * 깜빡이지 않게 하고, 멈추면 다시 켜서 회전을 부드럽게 한다(APS 어댑터만 구현).
+   */
+  setPlaybackActive?(active: boolean): void;
 }
 
 // --- 매핑 ----------------------------------------------------------------

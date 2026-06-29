@@ -1430,3 +1430,29 @@ alter table public.issues
   add column if not exists global_id_b text;
 
 notify pgrst, 'reload schema';
+
+-- ===================== 0029_task_elements_global_id.sql =====================
+alter table public.task_elements
+  add column if not exists global_id text;
+alter table public.task_elements
+  alter column express_id drop not null;
+alter table public.task_elements
+  drop constraint if exists task_elements_express_or_global_chk;
+alter table public.task_elements
+  add constraint task_elements_express_or_global_chk
+  check (express_id is not null or global_id is not null);
+create index if not exists task_elements_global_id_idx
+  on public.task_elements (model_id, global_id);
+create unique index if not exists task_elements_global_unique_idx
+  on public.task_elements (task_id, model_id, global_id)
+  where global_id is not null;
+
+notify pgrst, 'reload schema';
+
+-- ===================== 0030_acc_4d_default.sql =====================
+alter table public.projects
+  add column if not exists acc_4d_urn text;
+alter table public.projects
+  add column if not exists acc_4d_name text;
+
+notify pgrst, 'reload schema';
