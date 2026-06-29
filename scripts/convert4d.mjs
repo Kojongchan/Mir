@@ -132,9 +132,9 @@ async function downloadSvfToDisk(derivative, outDir) {
   const assets = (svfManifest.assets || []).filter(
     (a) => a.URI && !a.URI.startsWith('embed:') && !a.URI.includes('://') && a.URI !== svfName,
   );
-  console.log(`[convert4d] 에셋 ${assets.length}개 다운로드…`);
+  console.log(`[convert4d] 에셋 ${assets.length}개 병렬 다운로드…`);
   let done = 0;
-  for (const asset of assets) {
+  const downloadOne = async (asset) => {
     let bytes;
     try {
       bytes = await fetchDerivativeBytes(token, basePath + asset.URI);
@@ -149,8 +149,18 @@ async function downloadSvfToDisk(derivative, outDir) {
     const dest = path.join(outDir, asset.URI);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.writeFileSync(dest, bytes);
-    if (++done % 25 === 0) console.log(`[convert4d]   ${done}/${assets.length}`);
-  }
+    if (++done % 50 === 0 || done === assets.length) console.log(`[convert4d]   ${done}/${assets.length}`);
+  };
+  // 동시성 풀(기본 16) — 순차 다운로드 병목 제거.
+  const CONCURRENCY = Number(process.env.DL_CONCURRENCY || 16);
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < assets.length) {
+      const a = assets[cursor++];
+      await downloadOne(a);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, assets.length) }, worker));
   console.log(`[convert4d] 에셋 다운로드 완료 ${done}개`);
   return path.join(outDir, svfName);
 }
@@ -217,10 +227,12 @@ async function main() {
   }
   const realGltf = fs.existsSync(gltfPath) ? gltfPath : path.join(gltfDir, fs.readdirSync(gltfDir).find((f) => f.endsWith('.gltf')));
   const gltf = JSON.parse(fs.readFileSync(realGltf, 'utf8'));
-  console.log(`[convert4d] GLB+Draco 변환 중…`);
+  // Draco 는 대형 모델에서 매우 느림 → 기본 끔(먼저 동작 확인). DRACO=1 로 켤 수 있음.
+  const useDraco = process.env.DRACO === '1';
+  console.log(`[convert4d] GLB 변환 중…${useDraco ? ' (Draco)' : ''}`);
   const { glb } = await gltfPipeline.gltfToGlb(gltf, {
     resourceDirectory: gltfDir,
-    dracoOptions: { compressionLevel: 7 },
+    ...(useDraco ? { dracoOptions: { compressionLevel: 7 } } : {}),
   });
   console.log(`[convert4d] GLB 크기: ${(glb.length / 1048576).toFixed(1)} MB`);
 
