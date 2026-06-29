@@ -17,6 +17,9 @@ export interface ProjectAcc {
   /** 공정관리(4D) 전용 고정 모델(0030) — 통합모델/간섭 기본 모델과 독립된 뷰. */
   acc_4d_urn: string | null;
   acc_4d_name: string | null;
+  /** 간섭체크 전용 고정 모델(0031) — 통합모델/4D 와 독립된 뷰. */
+  acc_clash_urn: string | null;
+  acc_clash_name: string | null;
 }
 
 const EMPTY_ACC: ProjectAcc = {
@@ -28,9 +31,13 @@ const EMPTY_ACC: ProjectAcc = {
   acc_root_folder_name: null,
   acc_4d_urn: null,
   acc_4d_name: null,
+  acc_clash_urn: null,
+  acc_clash_name: null,
 };
 
 const ACC_COLS =
+  'acc_hub_id, acc_project_id, acc_default_urn, acc_default_name, acc_root_folder_id, acc_root_folder_name, acc_4d_urn, acc_4d_name, acc_clash_urn, acc_clash_name';
+const ACC_COLS_4D =
   'acc_hub_id, acc_project_id, acc_default_urn, acc_default_name, acc_root_folder_id, acc_root_folder_name, acc_4d_urn, acc_4d_name';
 const ACC_COLS_LEGACY =
   'acc_hub_id, acc_project_id, acc_default_urn, acc_default_name, acc_root_folder_id, acc_root_folder_name';
@@ -39,6 +46,10 @@ const ACC_COLS_LEGACY =
 export async function getProjectAcc(projectId: string): Promise<ProjectAcc> {
   const { data, error } = await supabase.from('projects').select(ACC_COLS).eq('id', projectId).single();
   if (!error && data) return { ...EMPTY_ACC, ...(data as Partial<ProjectAcc>) };
+
+  // 0031(acc_clash_urn/name) 미적용 폴백.
+  const r4d = await supabase.from('projects').select(ACC_COLS_4D).eq('id', projectId).single();
+  if (!r4d.error && r4d.data) return { ...EMPTY_ACC, ...(r4d.data as Partial<ProjectAcc>) };
 
   // 0030(acc_4d_urn/name) 미적용 폴백.
   const legacy = await supabase.from('projects').select(ACC_COLS_LEGACY).eq('id', projectId).single();

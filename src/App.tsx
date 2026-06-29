@@ -3,7 +3,6 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { Login } from './pages/Login';
 import { ProjectSelect } from './pages/ProjectSelect';
-import { Workspace } from './pages/Workspace';
 import { ProjectShell } from './pages/ProjectShell';
 import { Dashboard } from './pages/Dashboard';
 import { Schedule } from './pages/Schedule';
@@ -79,13 +78,14 @@ export default function App() {
             <Route path="board" element={<Board />} />
             {/* Modules with their own sub-tree — rendered inside the shell so the
                 left module rail stays put and only the right side changes. */}
-            {/* 통합모델(3D) · 공정관리(4D) · 간섭체크 — 각 모듈이 자기 용도의
-                모델 세트만 보도록 mode 로 구분(S33). 'viewer' 는 4D 하위호환 별칭. */}
-            <Route path="acc" element={<AccModels />} />
-            <Route path="model" element={<Workspace mode="integrated" />} />
-            {/* 공정관리(4D) = APS(ACC) 모델 위 4D 시뮬(S50). 구 IFC Workspace 4D 는 백업으로 보존. */}
+            {/* 통합모델(3D) · 공정관리(4D) · 간섭체크 — 모두 APS(ACC) 뷰어 기반(S52).
+                각 모듈은 자료관리에서 고정한 자기 전용 모델(통합=acc_default,
+                4D=acc_4d, 간섭=acc_clash)을 독립적으로 연다. IFC 뷰어(Workspace)와
+                'ACC 모델' 단독 메뉴는 제거됨. */}
+            <Route path="model" element={<AccModels />} />
+            {/* 공정관리(4D) = APS(ACC) 모델 위 4D 시뮬(S50). */}
             <Route path="viewer" element={<AccModels mode4d />} />
-            {/* 간섭체크 = APS(ACC) 모델 위 간섭(S49). 구 IFC Workspace clash 는 백업으로 보존. */}
+            {/* 간섭체크 = APS(ACC) 모델 위 간섭(S49). */}
             <Route path="clash" element={<AccModels autoClash />} />
             <Route path="quantities" element={<Quantities />} />
             <Route path="drawings" element={<Drawings />} />

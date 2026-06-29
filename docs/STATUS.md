@@ -3,6 +3,38 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 S52 — 통합모델(3D) APS 전환 · 메뉴 정리 · 홈뷰/관측점 이식 (2026-06-29)
+> branch `claude/aps-4d-simulation-euzmdl`. typecheck·build 통과.
+
+### ✅ 한 일
+1. **통합모델(3D) → APS(ACC) 뷰어로 전환, IFC 뷰어 제거**: `/model` 라우트를
+   `Workspace(IFC)` → `AccModels`(통합 모드)로 교체. `App.tsx`에서 `Workspace` import 제거.
+   (구 IFC `Workspace.tsx`·`ViewpointPanel.tsx`는 파일 보존, 라우트만 해제.)
+2. **‘ACC 모델’ 메뉴 제거**: `/acc` 라우트 + `ProjectNav` 항목 삭제. ACC 파일 탐색은
+   자료관리(`DocumentManager` → `AccBrowser`)로 일원화. AccBrowser의 3D 열기 링크는
+   `/acc?urn=` → `/model?urn=` 으로 수정.
+3. **세 메뉴 독립 고정 모델**: 통합=`acc_default`, 공정관리(4D)=`acc_4d`, 간섭=`acc_clash`.
+   - 마이그레이션 `0031_acc_clash_default.sql`(추가형): `acc_clash_urn/name`.
+   - `api.ts` `ProjectAcc`/`EMPTY_ACC`/`ACC_COLS`(+0030/0020 단계별 폴백)에 반영.
+   - `AccModels` init: 모드별 pinnedUrn 선택(간섭은 acc_clash 미지정 시 acc_default 폴백).
+   - **고정 지정은 자료관리 ACC 모델에서**: `AccBrowser` 모델 ⋮ 메뉴에 "🧊 통합/🏗 4D/🔍 간섭
+     고정" 추가(시스템관리자 또는 프로젝트 admin만, urn 있는 변환본만).
+4. **홈뷰·관측점 APS 이식(통합모델 전용)**: `lib/apsViewpoints.ts`(localStorage, 프로젝트별
+   홈뷰 1개 + 관측점 목록) + `components/acc/ApsViewpointPanel.tsx`(IFC ViewpointPanel의 APS판,
+   `viewer.getState()/restoreState()`·`getScreenShot` 썸네일). AccModels 통합 모드 툴바에
+   🏠 홈뷰/⬇ 홈뷰 저장/↺ 초기화/📌 관측점. 모델 로드 시 저장된 홈뷰 자동 복원.
+
+### 🔜 다음 할 일 / 미해결
+- 라이브 검증: ① 통합 `/model`이 acc_default를 열고 홈뷰/관측점 동작, ② 자료관리에서
+  세 용도 고정 후 각 메뉴가 독립적으로 자기 모델을 여는지, ③ 간섭이 acc_clash로 분리되는지.
+- 홈뷰/관측점은 현재 localStorage(브라우저 로컬). 팀 공유가 필요하면 DB(viewpoints 테이블) 이관 검토.
+- IFC 뷰어 의존 기능 중 추가로 이식할 것은 사용자 요청 시("더 필요한건 나중에").
+
+### 인수인계 한 줄
+통합모델을 APS로 전환·메뉴 정리·홈뷰/관측점 이식 완료(0031 마이그 추가). 라이브 테스트로
+세 메뉴 독립 고정 + 홈뷰/관측점 확인 필요.
+
+---
 ## 📋 [기획자 전달] S50 PoC — 4D 시공 시뮬레이션을 APS(ACC) Viewer 위로 이식 (2026-06-26)
 > branch `claude/aps-4d-simulation-euzmdl`. typecheck·build 통과. **PoC 단계** — 작은 공정표로
 > "스크럽 → 색/표시 변경"까지 동작 확인 필요(라이브 미검증, 코드 리뷰 부탁).

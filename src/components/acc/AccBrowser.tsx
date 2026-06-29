@@ -16,7 +16,9 @@ import {
   type AccNamed,
   type AccVersion,
 } from '../../lib/aps';
-import { getProjectAcc } from '../../lib/api';
+import { getProjectAcc, setProjectAcc } from '../../lib/api';
+import { useAuth } from '../../auth/AuthProvider';
+import { useProjectRole } from '../../auth/useProjectRole';
 import { listAccFileMeta, recordAccUpload, type AccFileMeta } from '../../lib/cde';
 import { viewerKindFor, type ViewerKind, type FileRecord } from '../../lib/files';
 import { StatusBadge } from '../cde/StatusBadge';
@@ -91,6 +93,10 @@ function flattenFolders(nodes: FolderNode[], depth = 0): Array<{ id: string; nam
  */
 export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit: boolean }) {
   const navigate = useNavigate();
+  const { profile } = useAuth();
+  const { role } = useProjectRole(projectId);
+  // 고정 모델 지정 권한: 시스템 관리자 또는 프로젝트 관리자(S52).
+  const canDesignate = !!profile?.is_admin || role === 'admin';
   const [accProject, setAccProject] = useState('');
   const [rootLabel, setRootLabel] = useState('ACC');
   const [pinned, setPinned] = useState(false);
@@ -128,7 +134,7 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
         listAccFileMeta(projectId).then((m) => !cancelled && setMeta(m));
         if (!acc.acc_hub_id || !acc.acc_project_id) {
           setPinned(false);
-          setStatus(canEdit ? "‘🅰 ACC 모델’ 메뉴에서 ACC 프로젝트를 먼저 고정하세요." : '관리자가 ACC 프로젝트를 아직 지정하지 않았습니다.');
+          setStatus(canDesignate ? "‘통합모델(3D)’ 메뉴에서 ACC 허브·프로젝트를 먼저 고정하세요." : '관리자가 ACC 프로젝트를 아직 지정하지 않았습니다.');
           return;
         }
         setPinned(true);
@@ -158,6 +164,32 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
   }, [projectId]);
 
   const refreshMeta = () => listAccFileMeta(projectId).then(setMeta).catch(() => {});
+
+  // 관리자: 이 모델을 메뉴별 고정뷰로 지정(S52) — 통합모델/공정관리(4D)/간섭체크가
+  // 각자 독립된 모델을 연다. urn 이 없으면(변환 전) 지정 불가.
+  const designate = async (it: AccItem, purpose: 'integrated' | '4d' | 'clash') => {
+    setMenuFor(null);
+    if (!it.urn) {
+      setStatus(`${it.name}: 변환된 3D 뷰가 아직 없어 고정할 수 없습니다.`);
+      return;
+    }
+    const fields =
+      purpose === '4d'
+        ? { acc_4d_urn: it.urn, acc_4d_name: it.name }
+        : purpose === 'clash'
+          ? { acc_clash_urn: it.urn, acc_clash_name: it.name }
+          : { acc_default_urn: it.urn, acc_default_name: it.name };
+    const label = purpose === '4d' ? '공정관리(4D)' : purpose === 'clash' ? '간섭체크' : '통합모델(3D)';
+    setBusy(true);
+    try {
+      await setProjectAcc(projectId, fields);
+      setStatus(`${label} 고정 모델로 지정: ${it.name}`);
+    } catch (e) {
+      setStatus(`지정 실패: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   // 폴더 내용을 지연 로드(이미 로드됐으면 펼침만 보장).
   const ensureLoaded = async (node: FolderNode, projId?: string) => {
@@ -241,7 +273,7 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
     if (kind !== 'unsupported') return void openDocument(it, kind);
     if (isAccModel(it.name)) {
       if (!it.urn) return setStatus(`${it.name}: 변환된 3D 뷰가 아직 없습니다(ACC 처리 중).`);
-      navigate(`/project/${projectId}/acc?urn=${encodeURIComponent(it.urn)}`);
+      navigate(`/project/${projectId}/model?urn=${encodeURIComponent(it.urn)}`);
       return;
     }
     void openDocument(it, 'unsupported');
@@ -549,6 +581,13 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
                       {menuFor === it.id && (
                         <div className="acc-menu" onClick={(e) => e.stopPropagation()}>
                           <button onClick={() => openItem(it)}>{model ? '3D 열기' : '미리보기'}</button>
+                          {model && canDesignate && (
+                            <>
+                              <button onClick={() => void designate(it, 'integrated')}>🧊 통합모델(3D) 고정</button>
+                              <button onClick={() => void designate(it, '4d')}>🏗 공정관리(4D) 고정</button>
+                              <button onClick={() => void designate(it, 'clash')}>🔍 간섭체크 고정</button>
+                            </>
+                          )}
                           <button onClick={() => openVersions(it)}>버전 이력</button>
                           {canEdit && <button onClick={() => startVersionUpload(it)}>새 버전 올리기</button>}
                           {canEdit && <button onClick={() => onDownload([it])}>다운로드</button>}

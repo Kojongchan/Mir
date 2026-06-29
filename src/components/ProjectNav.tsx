@@ -20,7 +20,6 @@ export function ProjectNav() {
     { to: base, icon: '📊', label: '사업개요', end: true },
     { to: `${base}/schedule`, icon: '📅', label: '공정현황' },
     { to: `${base}/model`, icon: '🧊', label: '통합모델 (3D)' },
-    { to: `${base}/acc`, icon: '🅰', label: 'ACC 모델' },
     { to: `${base}/viewer`, icon: '🏗', label: '공정관리 (4D)' },
     { to: `${base}/clash`, icon: '🔍', label: '간섭체크' },
     { to: `${base}/quantities`, icon: '🧮', label: '물량 산출 (QTO)' },
