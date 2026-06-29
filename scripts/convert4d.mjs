@@ -21,10 +21,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { createClient } from '@supabase/supabase-js';
-import { SVFReader, GLTFWriter, TwoLeggedAuthenticationProvider } from 'svf-utils';
+import { SVFReader, GLTFWriter } from 'svf-utils';
 import { AuthenticationClient, Scopes } from '@aps_sdk/authentication';
 import { ModelDerivativeClient } from '@aps_sdk/model-derivative';
 import gltfPipeline from 'gltf-pipeline';
+import AdmZip from 'adm-zip';
+
+const APS_BASE = 'https://developer.api.autodesk.com';
 
 const {
   APS_CLIENT_ID,
@@ -74,6 +77,84 @@ async function getSvfDerivatives(urn) {
   return out;
 }
 
+// --- 직접 다운로더(레거시 derivativeservice) ---
+// svf-utils 내장 다운로더는 getDerivativeUrl(signedcookies, SDK 15초 타임아웃)에서
+// CI 환경에서 자주 끊긴다. 우리 인앱 뷰어가 쓰는 레거시 엔드포인트로 타임아웃 없이
+// 직접 받아 디스크에 저장한 뒤 SVFReader.FromFileSystem 으로 읽는다.
+async function mintApsToken() {
+  const basic = Buffer.from(`${APS_CLIENT_ID}:${APS_CLIENT_SECRET}`).toString('base64');
+  const res = await fetch(`${APS_BASE}/authentication/v2/token`, {
+    method: 'POST',
+    headers: { authorization: `Basic ${basic}`, 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'client_credentials', scope: 'data:read viewables:read' }),
+  });
+  const d = await res.json();
+  if (!res.ok || !d.access_token) throw new Error('APS 토큰 발급 실패');
+  return d.access_token;
+}
+
+async function fetchDerivativeBytes(token, derivativeUrn, tries = 5) {
+  const url = `${APS_BASE}/derivativeservice/v2/derivatives/${encodeURIComponent(derivativeUrn)}`;
+  let lastErr;
+  for (let i = 1; i <= tries; i++) {
+    try {
+      const headers = { authorization: `Bearer ${token}` };
+      if (APS_REGION && APS_REGION !== 'US') headers['region'] = APS_REGION;
+      const res = await fetch(url, { headers }); // fetch 는 기본 타임아웃 없음
+      if (!res.ok) {
+        const err = new Error(`derivative ${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
+      return Buffer.from(await res.arrayBuffer());
+    } catch (e) {
+      lastErr = e;
+      if (i < tries) await new Promise((r) => setTimeout(r, i * 3000));
+    }
+  }
+  throw lastErr;
+}
+
+async function downloadSvfToDisk(derivative, outDir) {
+  let token = await mintApsToken();
+  const svfDerivUrn = derivative.urn;
+  if (!svfDerivUrn) throw new Error('SVF 파생물 urn 이 manifest 에 없습니다.');
+  fs.mkdirSync(outDir, { recursive: true });
+
+  const svfBytes = await fetchDerivativeBytes(token, svfDerivUrn);
+  const svfName = svfDerivUrn.substring(svfDerivUrn.lastIndexOf('/') + 1) || 'output.svf';
+  fs.writeFileSync(path.join(outDir, svfName), svfBytes);
+
+  // .svf(zip) 안의 manifest.json 에서 에셋 목록을 얻어 같은 폴더로 받는다.
+  const zip = new AdmZip(svfBytes);
+  const svfManifest = JSON.parse(zip.readAsText('manifest.json'));
+  const basePath = svfDerivUrn.substring(0, svfDerivUrn.lastIndexOf('/') + 1);
+  const assets = (svfManifest.assets || []).filter(
+    (a) => a.URI && !a.URI.startsWith('embed:') && !a.URI.includes('://') && a.URI !== svfName,
+  );
+  console.log(`[convert4d] 에셋 ${assets.length}개 다운로드…`);
+  let done = 0;
+  for (const asset of assets) {
+    let bytes;
+    try {
+      bytes = await fetchDerivativeBytes(token, basePath + asset.URI);
+    } catch (e) {
+      if (e?.status === 401) {
+        token = await mintApsToken(); // 장시간 다운로드 중 토큰 만료 → 재발급
+        bytes = await fetchDerivativeBytes(token, basePath + asset.URI);
+      } else {
+        throw new Error(`에셋 다운로드 실패(${asset.URI}): ${e?.message || e}`);
+      }
+    }
+    const dest = path.join(outDir, asset.URI);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, bytes);
+    if (++done % 25 === 0) console.log(`[convert4d]   ${done}/${assets.length}`);
+  }
+  console.log(`[convert4d] 에셋 다운로드 완료 ${done}개`);
+  return path.join(outDir, svfName);
+}
+
 // 각 노드 이름에 dbId 를 박아 런타임에서 객체별 통제가 가능하게 한다.
 class DbIdGLTFWriter extends GLTFWriter {
   createNode(fragment, imf, outputUvs) {
@@ -112,29 +193,16 @@ async function main() {
   console.log(`[convert4d] SVF 파생물 ${derivatives.length}개`);
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'svf2gltf-'));
-  const auth = new TwoLeggedAuthenticationProvider(APS_CLIENT_ID, APS_CLIENT_SECRET);
 
-  // 여러 SVF 가 있으면 가장 큰(=주) 것 하나만 우선 변환(PoC). 보통 1개.
+  // 여러 SVF 가 있으면 첫 번째(주) 것을 변환. 보통 1개.
   const derivative = derivatives[0];
   const t0 = Date.now();
-  console.log(`[convert4d] SVF 읽는 중 (guid=${derivative.guid})…`);
-  // APS 파생물 다운로드는 간헐적으로 "no response"(네트워크 일시 오류)가 난다 → 재시도.
-  let scene;
-  let lastErr;
-  for (let attempt = 1; attempt <= 4; attempt++) {
-    try {
-      const reader = await SVFReader.FromDerivativeService(urn, derivative.guid, auth, APS_REGION);
-      scene = await reader.read({ log: () => process.stdout.write('.') });
-      process.stdout.write('\n');
-      break;
-    } catch (e) {
-      lastErr = e;
-      process.stdout.write('\n');
-      console.warn(`[convert4d] 읽기 실패(시도 ${attempt}/4): ${e?.message || e}`);
-      if (attempt < 4) await new Promise((r) => setTimeout(r, attempt * 4000));
-    }
-  }
-  if (!scene) throw lastErr ?? new Error('SVF 읽기 실패');
+  console.log(`[convert4d] SVF 다운로드 중 (guid=${derivative.guid})…`);
+  const svfPath = await downloadSvfToDisk(derivative, path.join(tmp, 'svf'));
+  console.log(`[convert4d] SVF 읽는 중 (${svfPath})…`);
+  const reader = await SVFReader.FromFileSystem(svfPath);
+  const scene = await reader.read({ log: () => process.stdout.write('.') });
+  process.stdout.write('\n');
   const gltfDir = path.join(tmp, 'gltf');
   const writer = new DbIdGLTFWriter({ deduplicate: false, skipUnusedUvs: true, center: true, log: console.log });
   console.log(`[convert4d] glTF 쓰는 중…`);
