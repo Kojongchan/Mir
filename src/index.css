@@ -1419,6 +1419,24 @@ button.danger:hover:not(:disabled) {
 .tl-focus {
   cursor: pointer;
 }
+/* 레벨 트리 — 상위(합계) 행 강조 + 접기 토글 + 요약 간트바. */
+.tl-tbody .tr-summary {
+  font-weight: 700;
+  background: color-mix(in srgb, var(--accent, #3b82f6) 7%, transparent);
+}
+.tl-tree-toggle {
+  display: inline-block;
+  width: 12px;
+  margin-right: 2px;
+  color: var(--muted);
+}
+.tl-bar-summary {
+  background: #4b5563;
+  height: 6px !important;
+  top: 50% !important;
+  transform: translateY(-50%);
+  border-radius: 2px;
+}
 .tl-focus:hover {
   color: var(--accent, #3b82f6);
   text-decoration: underline;

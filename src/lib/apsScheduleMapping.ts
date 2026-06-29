@@ -126,6 +126,7 @@ export function mapByProperty(
 
   const mapping: TaskMapping = {};
   for (const task of tasks) {
+    if (task.isSummary) continue; // 상위(합계) 행 제외
     const candidates = taskField
       ? [taskFieldValue(task, taskField)].filter((v): v is string => !!v)
       : [task.externalId, task.id, task.name].filter((v): v is string => !!v);

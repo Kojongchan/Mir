@@ -126,6 +126,9 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
     }
   };
   const [playing, setPlaying] = useState(false);
+  // 시뮬 시작 여부: 임포트 직후엔 모델을 정상(불투명)으로 두고, 재생/스크럽을
+  // 시작해야 반투명+색 시뮬이 적용된다(#1). 새 공정표 로드 시 false 로 리셋.
+  const [started, setStarted] = useState(false);
   const [speed, setSpeed] = useState(3);
   const [showSettings, setShowSettings] = useState(false);
   const [detailed, setDetailed] = useState(false);
@@ -461,10 +464,16 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
     }
   };
 
+  // 새 공정표가 로드되면(기간/작업수 변화) 시뮬 시작 상태를 리셋 → 모델 정상 표시.
+  useEffect(() => {
+    setStarted(false);
+  }, [rangeStart, rangeEnd, tasks.length]);
+
   // --- 시점/표시 변경 → 뷰어 반영 ---
   useEffect(() => {
     if (!viewer) return;
-    if (!enabled || !hasSchedule || Number.isNaN(currentTime)) {
+    // 시작 전(임포트 직후)·4D 꺼짐·공정표 없음 → 정상 모델(반투명 안 함).
+    if (!enabled || !hasSchedule || !started || Number.isNaN(currentTime)) {
       viewer.clearConstruction();
       return;
     }
@@ -473,7 +482,7 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
       [...states.values()].map((v) => ({ ...v.ref, state: v.state })),
       appearance,
     );
-  }, [viewer, enabled, hasSchedule, tasks, mapping, currentTime, appearance]);
+  }, [viewer, enabled, hasSchedule, started, tasks, mapping, currentTime, appearance]);
 
   // --- 재생 ---
   const currentTimeRef = useRef(currentTime);
@@ -551,7 +560,13 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
               {mappedTasks > 0 ? `${mappedTasks}작업/${mappedElements}객체` : '미매핑'}
             </span>
             <span className="tl-divider" />
-            <button onClick={() => setPlaying((p) => !p)} disabled={!enabled}>
+            <button
+              onClick={() => {
+                setStarted(true);
+                setPlaying((p) => !p);
+              }}
+              disabled={!enabled}
+            >
               {playing ? '⏸' : '▶'}
             </button>
             <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))} title="재생 속도(일/틱)">
@@ -635,7 +650,10 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
             max={rangeEnd}
             step={DAY}
             value={Number.isNaN(currentTime) ? rangeStart : currentTime}
-            onChange={(e) => fourd.setCurrentTime(Number(e.target.value))}
+            onChange={(e) => {
+              setStarted(true);
+              fourd.setCurrentTime(Number(e.target.value));
+            }}
           />
           <TaskTable
             tasks={visibleTasks}
@@ -821,6 +839,19 @@ function TaskTable({
   const ticks = useMemo(() => buildTimeTicks(rangeStart, rangeEnd), [rangeStart, rangeEnd]);
   const leftCalc = (ms: number) => `calc(${metaW}px + (100% - ${metaW}px) * ${(ms - rangeStart) / span})`;
 
+  // 레벨(WBS/개요번호) 트리: 상위 행 접기/펴기. outline "1.2.3" → 깊이=점 개수.
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const depthOf = (o: string | null) => (o ? o.split('.').length - 1 : 0);
+  const collapsedArr = [...collapsed];
+  const rows = tasks.filter((t) => !(t.outline && collapsedArr.some((p) => t.outline!.startsWith(`${p}.`))));
+  const toggleCollapse = (o: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(o)) next.delete(o);
+      else next.add(o);
+      return next;
+    });
+
   return (
     <div className="tl-table" style={{ position: 'relative' }}>
       {/* 시간축 눈금선·라벨·현재시점 커서를 테이블 전체 높이에 걸쳐 한 좌표계로 그린다
@@ -848,20 +879,23 @@ function TaskTable({
       </div>
 
       <div className="tl-tbody">
-        {tasks.map((t) => {
+        {rows.map((t) => {
           const st = rowState(t, currentTime);
           const leftPct = ((t.start - rangeStart) / span) * 100;
           const widthPct = Math.max(0.5, ((t.end - t.start) / span) * 100);
           const count = mapping[t.id]?.length ?? 0;
+          const depth = depthOf(t.outline);
+          const isCollapsed = t.outline ? collapsed.has(t.outline) : false;
           return (
-            <div className="tr" key={t.id}>
+            <div className={`tr${t.isSummary ? ' tr-summary' : ''}`} key={t.id}>
               <div
-                className="td td-name tl-focus"
-                style={{ width: NAME_W }}
-                title={`${t.name} — 클릭 시 해당 객체로 이동`}
+                className={`td td-name${t.isSummary ? '' : ' tl-focus'}`}
+                style={{ width: NAME_W, paddingLeft: 8 + depth * 14 }}
+                title={t.isSummary ? `${t.name} — 클릭 시 접기/펴기` : `${t.name} — 클릭 시 해당 객체로 이동`}
                 role="button"
-                onClick={() => onFocus(t.id)}
+                onClick={() => (t.isSummary && t.outline ? toggleCollapse(t.outline) : onFocus(t.id))}
               >
+                {t.isSummary && <span className="tl-tree-toggle">{isCollapsed ? '▸' : '▾'}</span>}
                 {t.name}
               </div>
               <div className="td" style={{ width: 60 }}>
@@ -893,7 +927,10 @@ function TaskTable({
                 </span>
               </div>
               <div className="td td-gantt">
-                <div className={`tl-bar tl-bar-${st} tl-bar-${t.type}`} style={{ left: `${leftPct}%`, width: `${widthPct}%` }} />
+                <div
+                  className={t.isSummary ? 'tl-bar tl-bar-summary' : `tl-bar tl-bar-${st} tl-bar-${t.type}`}
+                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                />
               </div>
             </div>
           );
