@@ -165,7 +165,7 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
 
   const refreshMeta = () => listAccFileMeta(projectId).then(setMeta).catch(() => {});
 
-  // 관리자: 이 모델을 메뉴별 고정뷰로 지정(S52) — 통합모델/공정관리(4D)/간섭체크가
+  // 관리자: 이 모델을 메뉴별 고정뷰로 지정(S52) — 통합모델/공정관리(4D)/간섭검토가
   // 각자 독립된 모델을 연다. urn 이 없으면(변환 전) 지정 불가.
   const designate = async (it: AccItem, purpose: 'integrated' | '4d' | 'clash') => {
     setMenuFor(null);
@@ -179,7 +179,7 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
         : purpose === 'clash'
           ? { acc_clash_urn: it.urn, acc_clash_name: it.name }
           : { acc_default_urn: it.urn, acc_default_name: it.name };
-    const label = purpose === '4d' ? '공정관리(4D)' : purpose === 'clash' ? '간섭체크' : '통합모델(3D)';
+    const label = purpose === '4d' ? '공정관리(4D)' : purpose === 'clash' ? '간섭검토' : '통합모델(3D)';
     setBusy(true);
     try {
       await setProjectAcc(projectId, fields);
@@ -585,7 +585,7 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
                             <>
                               <button onClick={() => void designate(it, 'integrated')}>🧊 통합모델(3D) 고정</button>
                               <button onClick={() => void designate(it, '4d')}>🏗 공정관리(4D) 고정</button>
-                              <button onClick={() => void designate(it, 'clash')}>🔍 간섭체크 고정</button>
+                              <button onClick={() => void designate(it, 'clash')}>🔍 간섭검토 고정</button>
                             </>
                           )}
                           <button onClick={() => openVersions(it)}>버전 이력</button>

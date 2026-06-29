@@ -181,7 +181,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   const [urn, setUrn] = useState(urnFromUrl);
   const [status, setStatus] = useState('APS Viewer 준비…');
 
-  // 고유기능 이식(S49): dbId↔GlobalId 매핑 + 이슈 핀 + 간섭체크.
+  // 고유기능 이식(S49): dbId↔GlobalId 매핑 + 이슈 핀 + 간섭검토.
   const [mapping, setMapping] = useState<ApsMapping | null>(null);
   const [issues, setIssues] = useState<Issue[]>([]);
   const [clashOpen, setClashOpen] = useState(false);
@@ -579,7 +579,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
     }
   };
 
-  // 관리자: 현재 연 모델을 간섭체크 전용 고정뷰로 지정(통합/4D 와 독립 — S52).
+  // 관리자: 현재 연 모델을 간섭검토 전용 고정뷰로 지정(통합/4D 와 독립 — S52).
   const setAsClashDefault = async () => {
     if (!urn) {
       setStatus('먼저 모델을 여세요.');
@@ -839,7 +839,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
               void loadTopFolders(acc.acc_hub_id, acc.acc_project_id);
             }
             // 세 메뉴는 각자 전용 고정 모델을 완전히 독립적으로 연다(S52, 폴백 없음):
-            //   통합모델 → acc_default, 공정관리(4D) → acc_4d, 간섭체크 → acc_clash.
+            //   통합모델 → acc_default, 공정관리(4D) → acc_4d, 간섭검토 → acc_clash.
             const pinnedUrn = mode4d ? acc.acc_4d_urn : autoClash ? acc.acc_clash_urn : acc.acc_default_urn;
             const pinnedName = mode4d ? acc.acc_4d_name : autoClash ? acc.acc_clash_name : acc.acc_default_name;
             // 고정 모델 지정은 자료관리(ACC 모델)에서 한다 — 세 뷰 모두 폴더 트리는
@@ -850,7 +850,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
               setDefaultName(pinnedName ?? '');
               void openModel(pinnedUrn);
             } else {
-              const label = mode4d ? '공정관리(4D)' : autoClash ? '간섭체크' : '통합모델(3D)';
+              const label = mode4d ? '공정관리(4D)' : autoClash ? '간섭검토' : '통합모델(3D)';
               const how = isAdmin
                 ? mode4d
                   ? '"🗂 4D 모델 지정" 또는 자료관리 > ACC 모델에서 지정하세요.'
@@ -909,13 +909,13 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
           alignItems: 'center',
         }}
       >
-        <strong style={{ fontSize: 13 }}>{autoClash ? '🔍 간섭체크' : mode4d ? '🏗 공정관리(4D)' : '🧊 통합모델(3D)'}</strong>
+        <strong style={{ fontSize: 13 }}>{autoClash ? '🔍 간섭검토' : mode4d ? '🏗 공정관리(4D)' : '🧊 통합모델(3D)'}</strong>
         {/* 4D 매칭(규칙 편집기)은 하단 타임라인의 "공정표 임포트" 옆 버튼으로 통합(#3b). */}
         {/* 간섭 도구를 좌측에(#5). clash 모드에서는 폴더트리를 숨긴다(#1). 공정관리(4D)
             화면에선 간섭·이슈핀을 보지 않는다는 요청에 따라 4D 모드에서는 숨김. */}
         {!mode4d && mapping && (
           <>
-            {/* 간섭 검토 팝업은 간섭체크 메뉴에서만 — 통합모델(3D)에서는 제거(연동 분리). */}
+            {/* 간섭 검토 팝업은 간섭검토 메뉴에서만 — 통합모델(3D)에서는 제거(연동 분리). */}
             {autoClash && (
               <button onClick={() => setClashOpen(true)} style={{ ...btnStyle, fontWeight: 700 }} title="간섭 검토 팝업 열기">
                 🔍 간섭
@@ -997,7 +997,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             🗂 4D 모델 지정
           </button>
         )}
-        {/* 간섭체크 전용 고정 모델 지정 — 4D 와 동일 패턴(연동 분리). */}
+        {/* 간섭검토 전용 고정 모델 지정 — 4D 와 동일 패턴(연동 분리). */}
         {autoClash && isAdmin && (
           <button
             onClick={() => {
@@ -1005,7 +1005,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
               setShowBrowser(true);
             }}
             style={btnStyle}
-            title="ACC 폴더에서 간섭체크용 모델을 선택"
+            title="ACC 폴더에서 간섭검토용 모델을 선택"
           >
             🗂 간섭 모델 지정
           </button>
@@ -1193,7 +1193,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
               </div>
             </div>
           )}
-          {/* 간섭체크 패널(S49) — 모델 트리 A/B 선택. 4D 모드에선 숨김. */}
+          {/* 간섭검토 패널(S49) — 모델 트리 A/B 선택. 4D 모드에선 숨김. */}
           {!mode4d && clashOpen && mapping && !!modelRef.current && (
             <ApsClashPanel
               viewer={viewerRef.current}

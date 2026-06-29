@@ -21,7 +21,7 @@ export function ProjectNav() {
     { to: `${base}/schedule`, icon: '📅', label: '공정현황' },
     { to: `${base}/model`, icon: '🧊', label: '통합모델 (3D)' },
     { to: `${base}/viewer`, icon: '🏗', label: '공정관리 (4D)' },
-    { to: `${base}/clash`, icon: '🔍', label: '간섭체크' },
+    { to: `${base}/clash`, icon: '🔍', label: '간섭검토' },
     { to: `${base}/quantities`, icon: '🧮', label: '물량 산출 (QTO)' },
     { to: `${base}/drawings`, icon: '📐', label: '도면 (2D)' },
     { to: `${base}/logs`, icon: '📝', label: '공사일보' },

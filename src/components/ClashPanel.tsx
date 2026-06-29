@@ -41,7 +41,7 @@ interface Props {
 }
 
 /**
- * 간섭체크 결과 — 이동/크기 조절 가능한 팝업 창. 대상 A/B 를 (모델 → 카테고리)
+ * 간섭검토 결과 — 이동/크기 조절 가능한 팝업 창. 대상 A/B 를 (모델 → 카테고리)
  * 2단계로 선택하고 허용오차로 Hard/Clearance 간섭을 검출한다. 결과 행 클릭 시
  * 대상객체 A=초록/B=빨강 하이라이트 + 나머지 반투명 + 줌인. 간섭 → 이슈 전환은
  * 내용 작성 + 4각도 스냅샷 첨부까지 한 창에서. 결과 DB 저장/불러오기 + CSV.
@@ -461,7 +461,7 @@ export function ClashPanel({ viewer, projectId, modelIdMap, onClose }: Props) {
   return (
     <div className="clash-win" style={{ left: win.x, top: win.y, width: win.w, height: win.h }}>
       <div className="clash-head" onMouseDown={startDrag('move')}>
-        <h3>🔍 간섭체크 결과</h3>
+        <h3>🔍 간섭검토 결과</h3>
         <button className="clash-x" onClick={onClose} title="닫기">
           ✕
         </button>

@@ -33,12 +33,12 @@ import {
 import { listFolders, listProjectFiles, listVersions, type Folder, type FileVersion } from '../lib/cde';
 
 /**
- * 3D 뷰어 모듈의 용도. 모델 풀은 셋이 공유한다(통합모델에 올린 모델이 4D·간섭체크
+ * 3D 뷰어 모듈의 용도. 모델 풀은 셋이 공유한다(통합모델에 올린 모델이 4D·간섭검토
  * 에도 보임). 각 모듈은 진입 시 **프로젝트의 모든 모델을 자동 로드**하고, 자기 IfcViewer
- * 인스턴스를 가지므로 4D 공정 매핑이 간섭체크 화면을 방해하지 않는다.
+ * 인스턴스를 가지므로 4D 공정 매핑이 간섭검토 화면을 방해하지 않는다.
  *  - integrated: 통합모델 3D. 모델 트리 + 업로드 + 이슈 생성/이슈 핀 토글.
  *  - 4d: 공정관리. 트리 숨김(메인 확대) + 하단 4D 타임라인.
- *  - clash: 간섭체크. 트리 숨김(메인 확대) + 간섭체크 결과 팝업.
+ *  - clash: 간섭검토. 트리 숨김(메인 확대) + 간섭검토 결과 팝업.
  */
 export type ViewerMode = ModelPurpose;
 
@@ -53,7 +53,7 @@ const SNAP_OPTIONS: { key: SnapKind; label: string }[] = [
 const MODE_TITLE: Record<ViewerMode, string> = {
   integrated: '통합모델 (3D)',
   '4d': '공정관리 (4D)',
-  clash: '간섭체크',
+  clash: '간섭검토',
 };
 
 export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
@@ -968,9 +968,9 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
             <button
               className={showClash ? 'is-active' : undefined}
               onClick={() => setShowClash((v) => !v)}
-              title="간섭체크 결과 창 열기/닫기"
+              title="간섭검토 결과 창 열기/닫기"
             >
-              🔍 간섭체크 결과
+              🔍 간섭검토 결과
             </button>
           )}
 
@@ -1175,7 +1175,7 @@ function loadUpAxisPref(modelId: string): UpAxis | null {
   return v === 'x' || v === 'y' || v === 'z' ? v : null;
 }
 
-// Start view is saved per (project, module): 통합모델·공정관리(4D)·간섭체크 each keep
+// Start view is saved per (project, module): 통합모델·공정관리(4D)·간섭검토 each keep
 // their own home view so saving in one module no longer overrides the others.
 const HOME_VIEW_KEY = (projectId: string, mode: ViewerMode) => `mir.homeview.${projectId}.${mode}`;
 

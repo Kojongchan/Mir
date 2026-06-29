@@ -17,7 +17,7 @@ export interface ProjectAcc {
   /** 공정관리(4D) 전용 고정 모델(0030) — 통합모델/간섭 기본 모델과 독립된 뷰. */
   acc_4d_urn: string | null;
   acc_4d_name: string | null;
-  /** 간섭체크 전용 고정 모델(0031) — 통합모델/4D 와 독립된 뷰. */
+  /** 간섭검토 전용 고정 모델(0031) — 통합모델/4D 와 독립된 뷰. */
   acc_clash_urn: string | null;
   acc_clash_name: string | null;
 }

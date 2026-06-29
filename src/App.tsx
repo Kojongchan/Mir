@@ -78,15 +78,18 @@ export default function App() {
             <Route path="board" element={<Board />} />
             {/* Modules with their own sub-tree — rendered inside the shell so the
                 left module rail stays put and only the right side changes. */}
-            {/* 통합모델(3D) · 공정관리(4D) · 간섭체크 — 모두 APS(ACC) 뷰어 기반(S52).
+            {/* 통합모델(3D) · 공정관리(4D) · 간섭검토 — 모두 APS(ACC) 뷰어 기반(S52).
                 각 모듈은 자료관리에서 고정한 자기 전용 모델(통합=acc_default,
                 4D=acc_4d, 간섭=acc_clash)을 독립적으로 연다. IFC 뷰어(Workspace)와
                 'ACC 모델' 단독 메뉴는 제거됨. */}
-            <Route path="model" element={<AccModels />} />
+            {/* key 로 메뉴마다 별도 인스턴스 강제 — 같은 컴포넌트 타입이라 React 가
+                인스턴스를 재사용하면 init effect([])·mode refs 가 첫 진입 모드로 고정돼
+                세 뷰가 연동되는 문제가 생긴다(S52 버그). */}
+            <Route path="model" element={<AccModels key="integrated" />} />
             {/* 공정관리(4D) = APS(ACC) 모델 위 4D 시뮬(S50). */}
-            <Route path="viewer" element={<AccModels mode4d />} />
-            {/* 간섭체크 = APS(ACC) 모델 위 간섭(S49). */}
-            <Route path="clash" element={<AccModels autoClash />} />
+            <Route path="viewer" element={<AccModels key="fourd" mode4d />} />
+            {/* 간섭검토 = APS(ACC) 모델 위 간섭(S49). */}
+            <Route path="clash" element={<AccModels key="clash" autoClash />} />
             <Route path="quantities" element={<Quantities />} />
             <Route path="drawings" element={<Drawings />} />
             <Route path="docs" element={<DocumentManager />} />
