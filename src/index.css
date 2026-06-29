@@ -1398,12 +1398,12 @@ button.danger:hover:not(:disabled) {
   bottom: 0;
   width: 2px;
   background: var(--accent);
-  opacity: 0.8;
+  opacity: 0.85;
   pointer-events: none;
-  z-index: 2;
+  z-index: 4; /* 헤더·본문·라벨 위로 전체 높이 관통 */
 }
 
-/* 간트 시간축 — 세로 눈금선 + 헤더 라벨(나비스웍스 류). */
+/* 간트 시간축 — 세로 눈금선 + 헤더 라벨(나비스웍스 류). 테이블 전체 높이 기준. */
 .tl-gridline {
   position: absolute;
   top: 0;
@@ -1418,12 +1418,13 @@ button.danger:hover:not(:disabled) {
 }
 .tl-axis-label {
   position: absolute;
-  top: 2px;
-  transform: translateX(2px);
+  top: 3px;
+  transform: translateX(3px);
   font-size: 10px;
   color: var(--muted);
   white-space: nowrap;
   pointer-events: none;
+  z-index: 5; /* 헤더 배경 위 */
 }
 
 .tl-row {
@@ -1576,6 +1577,8 @@ button.danger:hover:not(:disabled) {
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  position: relative;
+  z-index: 2; /* 시간축 눈금선 위, 라벨/커서 아래 */
 }
 .tl-thead .th {
   flex-shrink: 0;
@@ -1593,6 +1596,7 @@ button.danger:hover:not(:disabled) {
   position: relative;
   overflow-y: auto;
   min-height: 0;
+  z-index: 1; /* 행/간트바가 시간축 눈금선(z:0) 위에 오도록 */
 }
 .tl-tbody .tr {
   display: flex;

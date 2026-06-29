@@ -54,6 +54,8 @@ interface Props {
    * 저장/복원도 이 경로를 쓴다. null/undefined 면 기존 IFC express_id 경로 사용.
    */
   apsMode?: { modelDbId: string | null; apsMapping: ApsMapping | null } | null;
+  /** APS 4D: 공정표 옆 "4D 매칭" 버튼이 호출(규칙 편집기 열기). 상위(AccModels)가 처리. */
+  onOpenMapping?: (() => void) | null;
 }
 
 /**
@@ -61,7 +63,7 @@ interface Props {
  * 타임슬라이더로 현재 시점을 옮기면 그 시점의 시공 상태(시공/철거/임시)를 유형별
  * 색상·반투명으로 뷰어에 반영한다. 작업 테이블(헤더/열)과 간트를 함께 표시.
  */
-export function Timeline({ viewer, projectId, modelIdMap, apsMode = null }: Props) {
+export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpenMapping = null }: Props) {
   // DB 모델 uuid → 런타임 modelID (불러온 매핑을 현재 세션 모델로 재해석). IFC 경로용.
   const dbToRuntime = useMemo(() => {
     const m = new Map<string, number>();
@@ -469,6 +471,12 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null }: Prop
     currentTimeRef.current = currentTime;
   }, [currentTime]);
 
+  // 재생 중에는 뷰어의 progressive 렌더를 꺼서 모델이 깜빡이지 않게 한다(#1).
+  useEffect(() => {
+    viewer?.setPlaybackActive?.(playing);
+    return () => viewer?.setPlaybackActive?.(false);
+  }, [viewer, playing]);
+
   useEffect(() => {
     if (!playing || !hasSchedule) return;
     const id = window.setInterval(() => {
@@ -516,6 +524,11 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null }: Prop
         </button>
         <input ref={fileInput} type="file" accept=".csv" hidden onChange={onPickFile} />
         <button onClick={() => fileInput.current?.click()}>공정표 임포트</button>
+        {apsMode && onOpenMapping && hasSchedule && (
+          <button onClick={() => onOpenMapping()} title="공정표와 모델 객체 속성을 매칭(규칙 편집기)">
+            🔗 4D 매칭
+          </button>
+        )}
 
         {hasSchedule && (
           <>
@@ -802,7 +815,18 @@ function TaskTable({
   const leftCalc = (ms: number) => `calc(${metaW}px + (100% - ${metaW}px) * ${(ms - rangeStart) / span})`;
 
   return (
-    <div className="tl-table">
+    <div className="tl-table" style={{ position: 'relative' }}>
+      {/* 시간축 눈금선·라벨·현재시점 커서를 테이블 전체 높이에 걸쳐 한 좌표계로 그린다
+          (헤더부터 마지막 행까지 끊기지 않게 — #3a). */}
+      {ticks.map((tk) => (
+        <div key={`g${tk.ms}`} className={`tl-gridline${tk.major ? ' major' : ''}`} style={{ left: leftCalc(tk.ms) }} />
+      ))}
+      {ticks.map((tk) => (
+        <span key={`l${tk.ms}`} className="tl-axis-label" style={{ left: leftCalc(tk.ms) }}>
+          {tk.label}
+        </span>
+      ))}
+      <div className="tl-cursor" style={{ left: `calc(${metaW}px + (100% - ${metaW}px) * ${cursorPct / 100})` }} />
       <div className="tl-thead" style={{ ['--meta-w' as string]: `${metaW}px` }}>
         <div className="th" style={{ width: NAME_W }}>공정명</div>
         <div className="th" style={{ width: 60 }}>유형</div>
@@ -813,20 +837,10 @@ function TaskTable({
         {detailed && <div className="th" style={{ width: 92 }}>실제 끝</div>}
         {detailed && <div className="th" style={{ width: 96 }}>비용</div>}
         <div className="th" style={{ width: 56 }}>맵핑</div>
-        <div className="th th-gantt" style={{ position: 'relative' }}>
-          {ticks.map((tk) => (
-            <span key={tk.ms} className="tl-axis-label" style={{ left: leftCalc(tk.ms) }}>
-              {tk.label}
-            </span>
-          ))}
-        </div>
+        <div className="th th-gantt" />
       </div>
 
       <div className="tl-tbody">
-        {ticks.map((tk) => (
-          <div key={tk.ms} className={`tl-gridline${tk.major ? ' major' : ''}`} style={{ left: leftCalc(tk.ms) }} />
-        ))}
-        <div className="tl-cursor" style={{ left: `calc(${metaW}px + (100% - ${metaW}px) * ${cursorPct / 100})` }} />
         {tasks.map((t) => {
           const st = rowState(t, currentTime);
           const leftPct = ((t.start - rangeStart) / span) * 100;

@@ -43,7 +43,7 @@ export function ApsRuleEditor({
   return createPortal(
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" style={{ width: 720, maxWidth: '94vw' }} onClick={(e) => e.stopPropagation()}>
-        <h3 style={{ margin: '0 0 4px' }}>공정 매핑 규칙 편집기</h3>
+        <h3 style={{ margin: '0 0 4px' }}>4D 매칭 — 규칙 편집기</h3>
         <p className="muted" style={{ margin: '0 0 12px', fontSize: 12 }}>
           공정표(엑셀)의 비교 열과 모델(nwd) 객체 속성을 짝지어 매핑합니다. 규칙을 위에서
           아래로 적용해 결과를 합칩니다(나비스웍스 TimeLiner 규칙과 동일).

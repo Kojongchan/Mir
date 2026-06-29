@@ -201,9 +201,10 @@ export const DEFAULT_APPEARANCE: AppearanceSettings = {
   colorTemporary: '#eab308', // yellow
   colorEarly: '#3b82f6', // blue — 계획보다 빠르게 시작
   colorLate: '#f97316', // orange — 계획보다 늦게 시작
-  // Navisworks TimeLiner/Forma 4D 류 기본 동작: 미시공 요소를 완전히 숨기지 않고
-  // 반투명 고스트로 남겨 "재생하면 객체가 사라진다"는 인상을 주지 않는다.
-  ghostFuture: true,
+  // Forma/Navisworks 4D 기본 동작: 미시공 요소는 숨겨 두었다가 시공 시점에
+  // "생성"되듯 나타나게 한다(설정에서 반투명 고스트로 바꿀 수 있음). 재생 중
+  // 깜빡임은 progressive 렌더 OFF(setPlaybackActive)로 따로 해결.
+  ghostFuture: false,
 };
 
 type SelectCallback = (props: ElementProperties | null) => void;

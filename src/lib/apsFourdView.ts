@@ -142,5 +142,17 @@ export function createApsFourDViewer(
         /* 무시 */
       }
     },
+
+    setPlaybackActive(active: boolean) {
+      if (!viewer) return;
+      try {
+        // 재생 중: progressive 렌더 OFF → 매 틱 전체를 한 번에 그려 깜빡임 제거.
+        // 멈춤: ON → 회전 시 부드럽게(점진 렌더).
+        viewer.setProgressiveRendering?.(!active);
+        viewer.impl?.invalidate?.(false, true, false);
+      } catch {
+        /* 무시 */
+      }
+    },
   };
 }
