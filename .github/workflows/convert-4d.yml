@@ -1,0 +1,59 @@
+name: 4D 모델 변환(SVF→GLB)
+
+# 4D 공정관리 자체 뷰어용: ACC 모델(SVF)을 glTF/GLB 로 변환해 Supabase Storage 에
+# 올린다. 대형 모델 변환은 Vercel 서버리스 한도를 넘으므로 여기(러너: 7GB/14GB/6h)서
+# 1회 실행한다. 수동 트리거(workflow_dispatch).
+#
+# 필요한 레포 Secrets (Settings → Secrets and variables → Actions):
+#   APS_CLIENT_ID, APS_CLIENT_SECRET, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: '대상 프로젝트 ID (projects.acc_4d_urn 을 읽어 변환)'
+        required: false
+        default: ''
+      urn:
+        description: '직접 URN 지정(선택 — project_id 보다 우선)'
+        required: false
+        default: ''
+      region:
+        description: 'APS 리전 (US / EMEA / AUS)'
+        required: false
+        default: 'US'
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install converter deps
+        run: npm install --no-save svf-utils@8 gltf-pipeline@4 @supabase/supabase-js@2 @aps_sdk/authentication @aps_sdk/model-derivative
+
+      - name: Convert SVF → GLB → upload
+        env:
+          APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
+          APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PROJECT_ID: ${{ github.event.inputs.project_id }}
+          URN: ${{ github.event.inputs.urn }}
+          APS_REGION: ${{ github.event.inputs.region }}
+        run: node scripts/convert4d.mjs
+
+      - name: Upload glb as workflow artifact (백업)
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-glb
+          path: out/model.glb
+          if-no-files-found: ignore
