@@ -948,7 +948,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             🗂 4D 모델 지정
           </button>
         )}
-        {mode4d && isAdmin && urn && (
+        {mode4d && urn && (
           <button onClick={() => void runDerivativePoc()} style={btnStyle} title="자체 뷰어 PoC: 이 모델의 변환 규모(용량·SVF 수) 측정">
             🧪 변환 PoC
           </button>
