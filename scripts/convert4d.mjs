@@ -221,8 +221,8 @@ async function main() {
   const writer = new DbIdGLTFWriter({
     deduplicate: true,
     skipUnusedUvs: true,
-    ignoreLines: !includeLines,
-    ignorePoints: !includeLines,
+    ignoreLineGeometry: !includeLines,
+    ignorePointGeometry: !includeLines,
     center: true,
     log: console.log,
   });
