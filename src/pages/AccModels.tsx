@@ -287,7 +287,9 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   };
 
   // ACC 탐색 상태.
-  const [showBrowser, setShowBrowser] = useState(!urnFromUrl);
+  // 폴더 트리는 기본 숨김 — 세 메뉴 모두 고정 모델만 여는 순수 3D 뷰(S52).
+  // 통합모델 관리자는 "폴더 펼치기" 토글로, 4D/간섭 관리자는 "🗂 모델 지정"으로 연다.
+  const [showBrowser, setShowBrowser] = useState(false);
   const [hubs, setHubs] = useState<Named[]>([]);
   const [hub, setHub] = useState('');
   const [projects, setProjects] = useState<Named[]>([]);
@@ -305,6 +307,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   // 공정관리(4D) 전용: 관리자가 "🗂 4D 모델 지정" 버튼을 눌러 폴더 트리를 일시적으로
   // 열어 모델을 고른다(평소엔 숨김 — #5). 고르면 acc_4d_urn/name 으로 고정.
   const [pickFor4dOpen, setPickFor4dOpen] = useState(false);
+  const [pickForClashOpen, setPickForClashOpen] = useState(false);
 
   // 문서(비-3D) 뷰: APS 캔버스 위에 우리 뷰어를 오버레이.
   const [docView, setDocView] = useState<{ url: string; name: string; kind: ViewerKind } | null>(null);
@@ -576,6 +579,24 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
     }
   };
 
+  // 관리자: 현재 연 모델을 간섭체크 전용 고정뷰로 지정(통합/4D 와 독립 — S52).
+  const setAsClashDefault = async () => {
+    if (!urn) {
+      setStatus('먼저 모델을 여세요.');
+      return;
+    }
+    const name = openName || '간섭 모델';
+    try {
+      await setProjectAcc(projectId, { acc_clash_urn: urn, acc_clash_name: name });
+      setDefaultName(name);
+      setPickForClashOpen(false);
+      setShowBrowser(false);
+      setStatus(`간섭 모델로 지정: ${name}`);
+    } catch (e) {
+      setStatus(`지정 실패: ${(e as Error).message}`);
+    }
+  };
+
   // 3D 에서 선택한 객체 위치에 이슈 생성(선택 dbId → GlobalId 앵커, S49 Step 2).
   const createIssueHere = async () => {
     const m = modelRef.current as any;
@@ -817,19 +838,10 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             } else {
               void loadTopFolders(acc.acc_hub_id, acc.acc_project_id);
             }
-            // 세 메뉴는 각자 전용 고정 모델을 독립적으로 연다(S52):
+            // 세 메뉴는 각자 전용 고정 모델을 완전히 독립적으로 연다(S52, 폴백 없음):
             //   통합모델 → acc_default, 공정관리(4D) → acc_4d, 간섭체크 → acc_clash.
-            // 간섭은 하위호환을 위해 acc_clash 미지정 시 acc_default 로 폴백.
-            const pinnedUrn = mode4d
-              ? acc.acc_4d_urn
-              : autoClash
-                ? acc.acc_clash_urn ?? acc.acc_default_urn
-                : acc.acc_default_urn;
-            const pinnedName = mode4d
-              ? acc.acc_4d_name
-              : autoClash
-                ? acc.acc_clash_name ?? acc.acc_default_name
-                : acc.acc_default_name;
+            const pinnedUrn = mode4d ? acc.acc_4d_urn : autoClash ? acc.acc_clash_urn : acc.acc_default_urn;
+            const pinnedName = mode4d ? acc.acc_4d_name : autoClash ? acc.acc_clash_name : acc.acc_default_name;
             // 고정 모델 지정은 자료관리(ACC 모델)에서 한다 — 세 뷰 모두 폴더 트리는
             // 기본적으로 숨기고 고정된 모델만 연다.
             if (pinnedUrn) {
@@ -839,11 +851,18 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
               void openModel(pinnedUrn);
             } else {
               const label = mode4d ? '공정관리(4D)' : autoClash ? '간섭체크' : '통합모델(3D)';
-              setStatus(`관리자가 ${label}용 ACC 모델을 아직 지정하지 않았습니다 — 자료관리 > ACC 모델에서 지정하세요.`);
+              const how = isAdmin
+                ? mode4d
+                  ? '"🗂 4D 모델 지정" 또는 자료관리 > ACC 모델에서 지정하세요.'
+                  : autoClash
+                    ? '"🗂 간섭 모델 지정" 또는 자료관리 > ACC 모델에서 지정하세요.'
+                    : '"폴더 펼치기"로 모델을 연 뒤 "⭐ 기본 모델로 지정" 또는 자료관리에서 지정하세요.'
+                : '';
+              setStatus(`관리자가 ${label}용 ACC 모델을 아직 지정하지 않았습니다. ${how}`.trim());
             }
           } else if (isAdmin) {
-            // 매핑 없음 + 관리자 → 전체 탐색해서 고정 가능.
-            setShowBrowser(!mode4d);
+            // 매핑 없음 + 관리자 → (통합모델에서만) 전체 탐색해서 허브·프로젝트 고정.
+            setShowBrowser(integrated);
             void loadHubs();
             setStatus('허브·프로젝트를 선택해 "이 프로젝트에 고정"을 누르세요.');
           } else {
@@ -896,9 +915,12 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             화면에선 간섭·이슈핀을 보지 않는다는 요청에 따라 4D 모드에서는 숨김. */}
         {!mode4d && mapping && (
           <>
-            <button onClick={() => setClashOpen(true)} style={{ ...btnStyle, fontWeight: 700 }} title="간섭 검토 팝업 열기">
-              🔍 간섭
-            </button>
+            {/* 간섭 검토 팝업은 간섭체크 메뉴에서만 — 통합모델(3D)에서는 제거(연동 분리). */}
+            {autoClash && (
+              <button onClick={() => setClashOpen(true)} style={{ ...btnStyle, fontWeight: 700 }} title="간섭 검토 팝업 열기">
+                🔍 간섭
+              </button>
+            )}
             <button onClick={() => setPinsOn((v) => !v)} style={btnStyle} title="이슈 핀 표시/숨김">
               {pinsOn ? '📍 핀 켜짐' : '📍 핀 꺼짐'}
             </button>
@@ -955,7 +977,8 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             </button>
           </>
         )}
-        {!autoClash && !mode4d && (
+        {/* 통합모델 폴더 탐색은 관리자만(재고정용) — 일반 사용자는 순수 3D 뷰. */}
+        {integrated && isAdmin && (
           <button onClick={() => setShowBrowser((s) => !s)} style={btnStyle}>
             {showBrowser ? '◀ 폴더 닫기' : '폴더 펼치기 ▶'}
           </button>
@@ -974,15 +997,32 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             🗂 4D 모델 지정
           </button>
         )}
-        {defaultName && <span style={{ fontSize: 12, color: 'var(--muted)' }}>{mode4d ? '4D 모델' : '기본'}: {defaultName}</span>}
-        <span style={{ flex: 1 }} />
-        {isAdmin && !autoClash && urn && (
+        {/* 간섭체크 전용 고정 모델 지정 — 4D 와 동일 패턴(연동 분리). */}
+        {autoClash && isAdmin && (
           <button
-            onClick={() => void (mode4d ? setAs4dDefault() : setAsDefault())}
+            onClick={() => {
+              setPickForClashOpen(true);
+              setShowBrowser(true);
+            }}
             style={btnStyle}
-            title={mode4d ? '이 모델을 4D 고정뷰로 지정' : '이 모델을 자동으로 열리게 지정'}
+            title="ACC 폴더에서 간섭체크용 모델을 선택"
           >
-            {mode4d ? '⭐ 4D 모델로 지정' : '⭐ 기본 모델로 지정'}
+            🗂 간섭 모델 지정
+          </button>
+        )}
+        {defaultName && (
+          <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+            {mode4d ? '4D 모델' : autoClash ? '간섭 모델' : '기본'}: {defaultName}
+          </span>
+        )}
+        <span style={{ flex: 1 }} />
+        {isAdmin && urn && (
+          <button
+            onClick={() => void (mode4d ? setAs4dDefault() : autoClash ? setAsClashDefault() : setAsDefault())}
+            style={btnStyle}
+            title={mode4d ? '이 모델을 4D 고정뷰로 지정' : autoClash ? '이 모델을 간섭 고정뷰로 지정' : '이 모델을 자동으로 열리게 지정'}
+          >
+            {mode4d ? '⭐ 4D 모델로 지정' : autoClash ? '⭐ 간섭 모델로 지정' : '⭐ 기본 모델로 지정'}
           </button>
         )}
         {urn && (
@@ -995,7 +1035,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
         </span>
       </div>
       <div style={{ position: 'relative', flex: 1, display: 'flex' }}>
-        {showBrowser && !autoClash && (!mode4d || pickFor4dOpen) && (
+        {showBrowser && (mode4d ? pickFor4dOpen : autoClash ? pickForClashOpen : true) && (
           <div
             style={{
               width: panelW,
@@ -1011,12 +1051,13 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
           >
             <div className="subtree-resizer" onMouseDown={startResize} title="좌우 폭 조절" />
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-              <strong>{mode4d ? '4D 모델 선택' : isAdmin ? 'ACC 탐색' : pinnedProjectName || 'ACC'}</strong>
+              <strong>{mode4d ? '4D 모델 선택' : autoClash ? '간섭 모델 선택' : isAdmin ? 'ACC 탐색' : pinnedProjectName || 'ACC'}</strong>
               {busy && <span style={{ opacity: 0.7 }}>로딩…</span>}
-              {mode4d && pickFor4dOpen && (
+              {(pickFor4dOpen || pickForClashOpen) && (
                 <button
                   onClick={() => {
                     setPickFor4dOpen(false);
+                    setPickForClashOpen(false);
                     setShowBrowser(false);
                   }}
                   style={{ ...btnStyle, padding: '2px 6px' }}
