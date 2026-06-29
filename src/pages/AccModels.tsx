@@ -15,7 +15,7 @@ import { enumerateApsElements, type ApsElement } from '../lib/apsElements';
 import { createApsFourDViewer } from '../lib/apsFourdView';
 import { collectPropertyNames, collectTaskFields, applyApsRules, diagnoseRule, type ApsMatchRule } from '../lib/apsScheduleMapping';
 import { ApsRuleEditor } from '../components/ApsRuleEditor';
-import { mappingStats, mapSequential } from '../lib/fourd';
+import { mappingStats } from '../lib/fourd';
 import { formatDate, DAY } from '../lib/schedule';
 import { saveLocalApsSchedule } from '../lib/localSchedule';
 import { viewerKindFor, type ViewerKind, type FileRecord } from '../lib/files';
@@ -199,20 +199,6 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   const [ruleMsg, setRuleMsg] = useState<string>('');
   const [apsDbModelId, setApsDbModelId] = useState<string | null>(null);
   const [openName, setOpenName] = useState('');
-  // 이동 중 전체표시(progressive 끔): 선형 구조물이라 화면을 움직이며 봐야 하므로
-  // 기본 ON — 이동 중 객체가 사라지지 않는다(대신 fps↓). OFF면 부드럽지만 점진 표시.
-  const [fullDetailNav, setFullDetailNav] = useState(true);
-  const fullDetailNavRef = useRef(true);
-  useEffect(() => {
-    fullDetailNavRef.current = fullDetailNav;
-    const v = viewerRef.current as any;
-    try {
-      v?.setProgressiveRendering?.(!fullDetailNav);
-      v?.impl?.invalidate?.(true, true, false);
-    } catch {
-      /* 무시 */
-    }
-  }, [fullDetailNav]);
   const fourd = useStore((s) => s.fourd);
   // 4D 모드: APS 모델(URN)을 models 테이블에 미러링해 기존 IFC 영속화 경로
   // (task_elements.model_id FK)를 재사용 — 없으면 가져오기한 공정표/매핑이
@@ -250,34 +236,6 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
       }
     }
     return els;
-  };
-
-  // 검증용: 속성 매칭과 무관하게 객체를 공정 순서대로 임시 배정(시뮬이 보이는지 확인).
-  const autoAssign = async () => {
-    const m = modelRef.current;
-    if (!m || !fourd.tasks.length) {
-      setStatus(m ? '먼저 공정표를 임포트하세요.' : '모델이 아직 로드되지 않았습니다.');
-      return;
-    }
-    setMatching4d(true);
-    try {
-      const els = await ensureApsElements(m);
-      if (!els.length) {
-        setStatus('모델에서 객체를 찾지 못했습니다(요소 열거 0).');
-        return;
-      }
-      const mid = (m as { id?: number }).id ?? 0;
-      const catalog = els.map((e) => ({ modelID: mid, expressID: e.dbId, name: e.name }));
-      const taskMapping = mapSequential(fourd.tasks, catalog);
-      const stats = mappingStats(taskMapping);
-      useStore.getState().fourd.setMapping(taskMapping, stats.tasks, stats.elements);
-      saveLocalApsSchedule(projectId, fourd.tasks, fourd.source ?? 'generic', taskMapping, mapping);
-      setStatus(`순서 자동배정(검증용): ${stats.tasks}작업 · ${stats.elements}객체`);
-    } catch (e) {
-      setStatus(`자동배정 실패: ${(e as Error).message}`);
-    } finally {
-      setMatching4d(false);
-    }
   };
 
   // 규칙 편집기에서 여러 규칙을 한 번에 적용(나비스웍스 류).
@@ -799,20 +757,8 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             }
             if (autoClashRef.current) setClashOpen(true);
             if (mode4dRef.current) {
-              // 대형 연합모델은 progressive/navigation 최적화를 끄면 회전 시 렉이
-              // 심해진다 → LMV 기본값(부드러운 네비) 유지. 시뮬레이션 중 객체가
-              // 깜빡이며 사라지던 현상은 apsFourdView 의 diff 도색(needsClear=false)
-              // 으로 따로 잡는다. 모델 재로딩은 없음.
-              // 회전 렉 완화: 그림자/반사/SAO/AA 같은 고비용 효과를 끈다(공정
-              // 시뮬은 형상·색만 중요). 객체별 테마/숨김과 충돌 없음.
-              try {
-                viewer.setGroundShadow?.(false);
-                viewer.setGroundReflection?.(false);
-                viewer.setQualityLevel?.(false, false); // (SAO, 안티앨리어싱) 끔
-                viewer.setProgressiveRendering?.(!fullDetailNavRef.current);
-              } catch {
-                /* 일부 뷰어 버전엔 없음 — 무시 */
-              }
+              // 뷰어 설정은 ACC 네이티브 기본값을 그대로 둔다(조작감 일치 — #6).
+              // 시뮬 표현은 apsFourdView 의 isolate/도색으로만 처리.
               enumerateApsElements(m)
                 .then((els) => {
                   if (cancelled) return;
@@ -926,16 +872,6 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
       >
         <strong style={{ fontSize: 13 }}>{autoClash ? '🔍 간섭체크' : mode4d ? '🏗 공정관리(4D)' : '🅰 ACC 모델'}</strong>
         {/* 4D 매칭(규칙 편집기)은 하단 타임라인의 "공정표 임포트" 옆 버튼으로 통합(#3b). */}
-        {mode4d && fourd.tasks.length > 0 && (
-          <button onClick={() => void autoAssign()} disabled={matching4d} style={btnStyle} title="속성 매칭 없이 객체를 공정 순서대로 임시 배정 — 시뮬 동작 확인용">
-            {matching4d ? '배정 중…' : '⚡ 순서 배정'}
-          </button>
-        )}
-        {mode4d && urn && (
-          <button onClick={() => setFullDetailNav((v) => !v)} style={btnStyle} title="이동 중 객체가 사라지지 않게 전체표시(기본) ↔ 부드러운 회전(점진 표시)">
-            {fullDetailNav ? '🐢 전체표시' : '🐇 부드럽게'}
-          </button>
-        )}
         {/* 간섭 도구를 좌측에(#5). clash 모드에서는 폴더트리를 숨긴다(#1). 공정관리(4D)
             화면에선 간섭·이슈핀을 보지 않는다는 요청에 따라 4D 모드에서는 숨김. */}
         {!mode4d && mapping && (
