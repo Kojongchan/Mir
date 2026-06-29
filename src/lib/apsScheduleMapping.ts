@@ -163,3 +163,56 @@ export async function buildApsTaskMapping(
   if (Object.keys(mapping).length === 0) mapping = mapSequential(tasks, catalog);
   return mapping;
 }
+
+// ---------------------------------------------------------------------
+// 규칙 기반 매핑(나비스웍스 TimeLiner '규칙 편집기' 류). 여러 규칙을 위에서
+// 아래로 적용해 결과를 합집합(객체 중복 제거)으로 누적한다. 각 규칙은 모델 속성
+// (없으면 객체 이름)과 공정표 비교 열(없으면 자동: 동기화ID→작업ID→작업명)을 짝짓는다.
+// ---------------------------------------------------------------------
+export interface ApsMatchRule {
+  id: string;
+  /** 모델 객체 속성명. null/'' 이면 객체 이름으로 매칭. */
+  modelProperty: string | null;
+  /** 공정표 비교 열. null/'' 이면 자동(동기화ID→작업ID→작업명). */
+  taskField: string | null;
+  enabled: boolean;
+}
+
+function mergeMapping(into: TaskMapping, add: TaskMapping): void {
+  for (const [taskId, refs] of Object.entries(add)) {
+    const existing = into[taskId] ?? [];
+    const seen = new Set(existing.map((r) => `${r.modelID}:${r.expressID}`));
+    for (const r of refs) {
+      const k = `${r.modelID}:${r.expressID}`;
+      if (!seen.has(k)) {
+        existing.push(r);
+        seen.add(k);
+      }
+    }
+    into[taskId] = existing;
+  }
+}
+
+export async function applyApsRules(
+  model: ApsModel,
+  elements: ApsElement[],
+  tasks: ScheduleTask[],
+  rules: ApsMatchRule[],
+): Promise<TaskMapping> {
+  const modelID: number = model?.id ?? 0;
+  const catalog: ElementInfo[] = elements.map((e) => ({ modelID, expressID: e.dbId, name: e.name }));
+  const dbIds = elements.map((e) => e.dbId);
+  const merged: TaskMapping = {};
+  for (const rule of rules) {
+    if (!rule.enabled) continue;
+    let partial: TaskMapping = {};
+    if (rule.modelProperty) {
+      const propValues = await bulkPropertyValues(model, dbIds, rule.modelProperty);
+      partial = mapByProperty(tasks, propValues, modelID, rule.taskField);
+    } else {
+      partial = mapByName(tasks, catalog);
+    }
+    mergeMapping(merged, partial);
+  }
+  return merged;
+}

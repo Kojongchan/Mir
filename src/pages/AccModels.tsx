@@ -13,7 +13,8 @@ import { Timeline } from '../components/Timeline';
 import { useStore } from '../store/useStore';
 import { enumerateApsElements, type ApsElement } from '../lib/apsElements';
 import { createApsFourDViewer } from '../lib/apsFourdView';
-import { buildApsTaskMapping, collectPropertyNames, collectTaskFields } from '../lib/apsScheduleMapping';
+import { buildApsTaskMapping, collectPropertyNames, collectTaskFields, applyApsRules, type ApsMatchRule } from '../lib/apsScheduleMapping';
+import { ApsRuleEditor } from '../components/ApsRuleEditor';
 import { mappingStats } from '../lib/fourd';
 import { formatDate, DAY } from '../lib/schedule';
 import { saveLocalApsSchedule } from '../lib/localSchedule';
@@ -195,6 +196,9 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   // 나비스웍스 TimeLiner "Column Name" 옵션처럼 공정표 쪽 비교 열도 고른다(#3 상세화).
   const [matchTaskField, setMatchTaskField] = useState<string>('');
   const [matching4d, setMatching4d] = useState(false);
+  // 규칙 편집기(나비스웍스 류) — 여러 매핑 규칙을 만들어 한 번에 적용(#2/#4).
+  const [ruleEditorOpen, setRuleEditorOpen] = useState(false);
+  const [matchRules, setMatchRules] = useState<ApsMatchRule[]>([]);
   const [apsDbModelId, setApsDbModelId] = useState<string | null>(null);
   const [openName, setOpenName] = useState('');
   const fourd = useStore((s) => s.fourd);
@@ -264,6 +268,34 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
       );
     } catch (e) {
       setStatus(`4D 매핑 실패: ${(e as Error).message}`);
+    } finally {
+      setMatching4d(false);
+    }
+  };
+
+  // 규칙 편집기에서 여러 규칙을 한 번에 적용(나비스웍스 류).
+  const applyRules = async (rules: ApsMatchRule[]) => {
+    const m = modelRef.current;
+    if (!m || !fourd.tasks.length) {
+      setStatus(m ? '먼저 공정표를 임포트하세요.' : '모델이 아직 로드되지 않았습니다.');
+      return;
+    }
+    setMatching4d(true);
+    try {
+      const els = await ensureApsElements(m);
+      if (!els.length) {
+        setStatus('모델에서 매칭할 객체를 찾지 못했습니다(요소 열거 0).');
+        return;
+      }
+      const taskMapping = await applyApsRules(m, els, fourd.tasks, rules);
+      const stats = mappingStats(taskMapping);
+      useStore.getState().fourd.setMapping(taskMapping, stats.tasks, stats.elements);
+      saveLocalApsSchedule(projectId, fourd.tasks, fourd.source ?? 'generic', taskMapping, mapping);
+      setMatchRules(rules);
+      setRuleEditorOpen(false);
+      setStatus(`규칙 매핑(${rules.filter((r) => r.enabled).length}개 규칙): ${stats.tasks}작업 · ${stats.elements}객체`);
+    } catch (e) {
+      setStatus(`규칙 매핑 실패: ${(e as Error).message}`);
     } finally {
       setMatching4d(false);
     }
@@ -899,6 +931,9 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             <button onClick={() => void runPropertyMatch()} disabled={matching4d || !fourd.tasks.length} style={btnStyle} title="선택한 속성으로 공정표↔객체 매칭">
               {matching4d ? '매칭 중…' : '🔗 4D 매칭'}
             </button>
+            <button onClick={() => setRuleEditorOpen(true)} disabled={matching4d} style={btnStyle} title="여러 매핑 규칙을 만들어 한 번에 적용(나비스웍스 규칙 편집기)">
+              🧩 규칙 편집기
+            </button>
           </>
         )}
         {/* 간섭 도구를 좌측에(#5). clash 모드에서는 폴더트리를 숨긴다(#1). 공정관리(4D)
@@ -1160,6 +1195,16 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
           projectId={projectId}
           modelIdMap={EMPTY_MODEL_ID_MAP}
           apsMode={{ modelDbId: apsDbModelId, apsMapping: mapping }}
+        />
+      )}
+      {mode4d && ruleEditorOpen && (
+        <ApsRuleEditor
+          taskFields={collectTaskFields(fourd.tasks)}
+          propertyOptions={propertyOptions}
+          initialRules={matchRules}
+          busy={matching4d}
+          onApply={(rules) => void applyRules(rules)}
+          onClose={() => setRuleEditorOpen(false)}
         />
       )}
     </div>

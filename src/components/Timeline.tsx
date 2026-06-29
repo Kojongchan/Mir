@@ -724,6 +724,50 @@ function AppearancePanel() {
 const NAME_W = 200;
 type RowState = 'before' | 'active' | 'done';
 
+interface TimeTick {
+  ms: number;
+  label: string;
+  major: boolean;
+}
+
+/**
+ * 간트 시간축 눈금 생성(나비스웍스 류). 전체 기간에 따라 주/월/분기 간격을 고르고,
+ * 연·분기 경계는 major(굵은 선)로 강조한다.
+ */
+function buildTimeTicks(start: number, end: number): TimeTick[] {
+  const days = (end - start) / DAY;
+  const out: TimeTick[] = [];
+  const d = new Date(start);
+  d.setHours(0, 0, 0, 0);
+  if (days > 420) {
+    // 분기 단위, 연초 major.
+    d.setDate(1);
+    d.setMonth(Math.floor(d.getMonth() / 3) * 3);
+    while (d.getTime() <= end) {
+      const q = Math.floor(d.getMonth() / 3) + 1;
+      out.push({ ms: d.getTime(), label: q === 1 ? `${d.getFullYear()}` : `Q${q}`, major: q === 1 });
+      d.setMonth(d.getMonth() + 3);
+    }
+  } else if (days > 90) {
+    // 월 단위, 1월 major.
+    d.setDate(1);
+    while (d.getTime() <= end) {
+      const mo = d.getMonth();
+      out.push({ ms: d.getTime(), label: mo === 0 ? `${d.getFullYear()}` : `${mo + 1}월`, major: mo === 0 });
+      d.setMonth(mo + 1);
+    }
+  } else {
+    // 주 단위(월요일), 월초 주 major.
+    const day = (d.getDay() + 6) % 7;
+    d.setDate(d.getDate() - day);
+    while (d.getTime() <= end) {
+      out.push({ ms: d.getTime(), label: `${d.getMonth() + 1}/${d.getDate()}`, major: d.getDate() <= 7 });
+      d.setDate(d.getDate() + 7);
+    }
+  }
+  return out.filter((t) => t.ms >= start && t.ms <= end);
+}
+
 function rowState(t: ScheduleTask, now: number): RowState {
   return now >= t.end ? 'done' : now >= t.start ? 'active' : 'before';
 }
@@ -754,6 +798,8 @@ function TaskTable({
   // 메타 열 폭 합 = 간트 커서 좌측 오프셋
   const metaW = NAME_W + 60 + 56 + 92 + 92 + (detailed ? 92 + 92 + 96 : 0) + 56;
   const cursorPct = ((currentTime - rangeStart) / span) * 100;
+  const ticks = useMemo(() => buildTimeTicks(rangeStart, rangeEnd), [rangeStart, rangeEnd]);
+  const leftCalc = (ms: number) => `calc(${metaW}px + (100% - ${metaW}px) * ${(ms - rangeStart) / span})`;
 
   return (
     <div className="tl-table">
@@ -767,10 +813,19 @@ function TaskTable({
         {detailed && <div className="th" style={{ width: 92 }}>실제 끝</div>}
         {detailed && <div className="th" style={{ width: 96 }}>비용</div>}
         <div className="th" style={{ width: 56 }}>맵핑</div>
-        <div className="th th-gantt">간트</div>
+        <div className="th th-gantt" style={{ position: 'relative' }}>
+          {ticks.map((tk) => (
+            <span key={tk.ms} className="tl-axis-label" style={{ left: leftCalc(tk.ms) }}>
+              {tk.label}
+            </span>
+          ))}
+        </div>
       </div>
 
       <div className="tl-tbody">
+        {ticks.map((tk) => (
+          <div key={tk.ms} className={`tl-gridline${tk.major ? ' major' : ''}`} style={{ left: leftCalc(tk.ms) }} />
+        ))}
         <div className="tl-cursor" style={{ left: `calc(${metaW}px + (100% - ${metaW}px) * ${cursorPct / 100})` }} />
         {tasks.map((t) => {
           const st = rowState(t, currentTime);
