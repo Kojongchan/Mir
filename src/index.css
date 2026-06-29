@@ -1416,6 +1416,13 @@ button.danger:hover:not(:disabled) {
 .tl-gridline.major {
   background: var(--border);
 }
+.tl-focus {
+  cursor: pointer;
+}
+.tl-focus:hover {
+  color: var(--accent, #3b82f6);
+  text-decoration: underline;
+}
 .tl-axis-label {
   position: absolute;
   top: 3px;

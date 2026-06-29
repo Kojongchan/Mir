@@ -62,6 +62,8 @@ export interface FourDViewer {
    * 깜빡이지 않게 하고, 멈추면 다시 켜서 회전을 부드럽게 한다(APS 어댑터만 구현).
    */
   setPlaybackActive?(active: boolean): void;
+  /** 지정 객체들로 카메라를 맞춘다(공정명 클릭 → 해당 객체로 이동). APS 어댑터만 구현. */
+  focusObjects?(refs: ElementRef[]): void;
 }
 
 // --- 매핑 ----------------------------------------------------------------

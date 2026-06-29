@@ -119,5 +119,17 @@ export function createApsFourDViewer(
         /* 무시 */
       }
     },
+
+    focusObjects(refs) {
+      if (!viewer || !refs?.length) return;
+      try {
+        const dbIds = refs.filter((r) => r.modelID === modelID).map((r) => r.expressID);
+        if (!dbIds.length) return;
+        viewer.select?.(dbIds, model);
+        viewer.fitToView?.(dbIds, model, false);
+      } catch {
+        /* 무시 */
+      }
+    },
   };
 }
