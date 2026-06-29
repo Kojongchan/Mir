@@ -218,6 +218,8 @@ export async function loadSchedule(scheduleId: string): Promise<LoadedSchedule> 
     cost: null,
     externalId: (r.external_id as string) ?? null,
     custom: {},
+    outline: null,
+    isSummary: false,
   }));
 
   const taskIds = tasks.map((t) => t.id);

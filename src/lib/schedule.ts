@@ -27,6 +27,10 @@ export interface ScheduleTask {
   externalId: string | null;
   /** 매핑되지 않은 나머지 열(헤더→값) — 테이블의 "사용자 값" 표시용 */
   custom: Record<string, string>;
+  /** WBS/개요번호(예 "1.2.3") — 레벨 트리 구성용. 없으면 null(평면). */
+  outline: string | null;
+  /** 하위 작업을 가진 상위(합계) 행인지 — 매핑·시뮬 대상에서 제외, 트리 헤더로만 표시. */
+  isSummary: boolean;
 }
 
 export type TaskKind = 'construct' | 'demolish' | 'equipment' | 'temporary' | 'other';
@@ -258,7 +262,9 @@ export function buildSchedule(doc: CsvDoc, map: ColumnMap): ParsedSchedule {
     const end = parseDate(map.end >= 0 ? cols[map.end] : '');
     const outline = map.outline >= 0 ? (cols[map.outline] ?? '').trim() : '';
 
-    if (!name || /\(root\)/i.test(name) || summaryOutlines.has(outline) || Number.isNaN(start) || Number.isNaN(end)) {
+    const isSummary = !!outline && summaryOutlines.has(outline);
+    // 루트/이름없음/날짜없음만 건너뛴다. 상위(합계) 행은 트리 헤더로 쓰려고 유지한다.
+    if (!name || /\(root\)/i.test(name) || Number.isNaN(start) || Number.isNaN(end)) {
       skipped++;
       continue;
     }
@@ -287,6 +293,8 @@ export function buildSchedule(doc: CsvDoc, map: ColumnMap): ParsedSchedule {
       cost: map.cost >= 0 ? parseCost(cols[map.cost]) : null,
       externalId,
       custom,
+      outline: outline || null,
+      isSummary,
     });
   }
 

@@ -98,6 +98,7 @@ export function mapByName(tasks: ScheduleTask[], catalog: ElementInfo[]): TaskMa
     .map((c) => ({ ref: c, key: normalizeName(c.name) }));
 
   for (const task of tasks) {
+    if (task.isSummary) continue; // 상위(합계) 행은 매핑 대상 아님
     const keys = nameKeys(task.name);
     const hits: ElementRef[] = [];
     for (const { ref, key } of normedCatalog) {
@@ -117,11 +118,12 @@ export function mapByName(tasks: ScheduleTask[], catalog: ElementInfo[]): TaskMa
  */
 export function mapSequential(tasks: ScheduleTask[], catalog: ElementInfo[]): TaskMapping {
   // 순서 데모는 "쌓아 올리는" 시각화이므로 생성 작업에만 분배한다(철거/장비/임시 제외).
-  const buildTasks = tasks
+  const leaf = tasks.filter((t) => !t.isSummary); // 상위(합계) 행 제외
+  const buildTasks = leaf
     .filter((t) => t.type === 'construct' || t.type === 'other')
     .slice()
     .sort((a, b) => a.start - b.start || a.end - b.end);
-  const targets = buildTasks.length ? buildTasks : tasks.slice().sort((a, b) => a.start - b.start);
+  const targets = buildTasks.length ? buildTasks : leaf.slice().sort((a, b) => a.start - b.start);
   if (targets.length === 0) return {};
 
   const elems = catalog.slice().sort((a, b) => a.modelID - b.modelID || a.expressID - b.expressID);
