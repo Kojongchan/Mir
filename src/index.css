@@ -2334,6 +2334,9 @@ button.danger:hover:not(:disabled) {
 .portal-main {
   position: relative;
   min-height: 0;
+  /* grid 자식 기본 min-width:auto 때문에 넓은 콘텐츠(표·차트)가 칸을 밀어
+     뷰포트 밖으로 삐져나간다 → min-width:0 으로 칸 안에서 스크롤되게 한다. */
+  min-width: 0;
   overflow: auto;
   background: var(--bg);
 }
