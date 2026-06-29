@@ -209,9 +209,9 @@ async function main() {
   fs.mkdirSync('out', { recursive: true });
   const outPath = path.join('out', 'model.glb');
   console.log(`[convert4d] 병합 GLB 생성 중…`);
-  const res = buildMergedGlb(scene, { outPath, log: console.log });
+  const res = await buildMergedGlb(scene, { outPath, log: console.log });
   console.log(
-    `[convert4d] GLB 완료: ${(res.bytes / 1048576).toFixed(1)} MB · 재질그룹 ${res.groups} · 정점 ${res.vertices.toLocaleString()} (${((Date.now() - t0) / 1000).toFixed(1)}s)`,
+    `[convert4d] GLB 완료: ${(res.bytes / 1048576).toFixed(1)} MB · 메시 ${res.groups} · 정점 ${res.vertices.toLocaleString()} · 단순화 ${res.decimated} (${((Date.now() - t0) / 1000).toFixed(1)}s)`,
   );
 
   // Supabase Storage 업로드(버킷 없으면 생성). 대용량이라 실패해도 아티팩트로 남기고 계속.
