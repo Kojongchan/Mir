@@ -106,15 +106,19 @@ export default async function handler(req: Request): Promise<Response> {
       propDbMB: mb(propDbSize),
       totalDerivativeMB: mb(totalSize),
       svf: svf.map((d) => ({ guid: d.guid, mime: d.mime, status: d.status, sizeMB: mb(d.size) })),
-      // 단일 서버리스 변환 가능성에 대한 대략적 판단(메모리/시간 한도 기준 휴리스틱).
+      svfKinds: [...new Set(svf.map((d) => d.mime))],
+      sizeReported: svfTotal > 0,
+      // 판단은 "SVF 존재 여부" 기준. 용량은 manifest 가 보통 0 으로 주므로 변환 때 실측.
       verdict:
-        svfTotal === 0
-          ? 'SVF 파생물을 찾지 못함(SVF2 전용이거나 변환 미완). 변환 방식 재검토 필요.'
-          : svfTotal < 80 * 1048576
-            ? '소형 — 단일 서버리스 변환 가능성 높음.'
-            : svfTotal < 300 * 1048576
-              ? '중형 — 서버리스 한계 근접. 파생물 단위 분할 권장.'
-              : '대형 — 단일 서버리스 변환 어려움. 백그라운드/분할 변환 필요.',
+        svf.length === 0
+          ? 'SVF 파생물 없음(아직 변환 미완이거나 다른 포맷). 변환 방식 재검토 필요.'
+          : svfTotal === 0
+            ? 'SVF 파생물 있음 ✅ (용량은 manifest 미보고 — 정상). 변환 진행 시 실측됨.'
+            : svfTotal < 80 * 1048576
+              ? '소형 — 단일 서버리스 변환 가능성 높음.'
+              : svfTotal < 300 * 1048576
+                ? '중형 — 서버리스 한계 근접. 파생물 단위 분할 권장.'
+                : '대형 — 단일 서버리스 변환 어려움. 백그라운드/분할 변환 필요.',
     });
   } catch (e) {
     return json({ error: (e as Error).message }, 500);

@@ -252,8 +252,8 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
       if (!res.ok) throw new Error(body.error ?? `측정 실패(${res.status})`);
       const lines = [
         `[변환 PoC] 상태: ${body.status} (${body.progress})`,
-        `SVF 파생물: ${body.svfCount}개 · 총 ${body.svfTotalMB}MB`,
-        `속성DB: ${body.propDbMB}MB · 전체 파생물: ${body.totalDerivativeMB}MB · 뷰어블 ${body.viewables}`,
+        `SVF 파생물: ${body.svfCount}개${body.svfKinds?.length ? ` (${body.svfKinds.join(', ')})` : ''} · 뷰어블 ${body.viewables}`,
+        `용량(manifest 보고분): SVF ${body.svfTotalMB}MB · 속성DB ${body.propDbMB}MB · 전체 ${body.totalDerivativeMB}MB`,
         `판단: ${body.verdict}`,
       ];
       // eslint-disable-next-line no-console
