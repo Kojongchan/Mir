@@ -49,7 +49,7 @@ interface Props {
 type SelNode = { dbId: number; name: string };
 
 /**
- * APS 간섭체크 — ACC 통합모델(nwd)의 인스턴스 트리에서 **대상 A·B 를 각각의 트리 칸**
+ * APS 간섭검토 — ACC 통합모델(nwd)의 인스턴스 트리에서 **대상 A·B 를 각각의 트리 칸**
  * 에서 고른다(파일 → 부재). 상위 노드 둘을 고르면 곧 파일간 간섭. 검출은 apsClash,
  * 결과 클릭 시 두 부재의 상위 파일만 남기고(나머지 숨김) A초록/B빨강 + 반투명 + 줌.
  * 표시 옵션(전체/반투명), 저장(GlobalId)·CSV·이미지 보고서. 그룹/정렬/필터는 clash.ts.
@@ -429,7 +429,7 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
       style={{ position: 'fixed', left: win.x, top: win.y, width: win.w, height: win.h, background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 8, display: 'flex', flexDirection: 'column', zIndex: 600, boxShadow: '0 8px 32px rgba(0,0,0,0.35)' }}
     >
       <div onMouseDown={startDrag('move')} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderBottom: '1px solid var(--border)', cursor: 'move' }}>
-        <strong style={{ fontSize: 13 }}>🔍 간섭체크</strong>
+        <strong style={{ fontSize: 13 }}>🔍 간섭검토</strong>
         <span style={{ fontSize: 12, color: 'var(--muted)' }}>{rows.length ? `총 ${rows.length} · 미해결 ${openCount}` : ''}</span>
         <span style={{ flex: 1 }} />
         <button onClick={showAll} style={{ ...btn, fontSize: 11 }} title="모든 파일 표시(색 유지)">전체 표시</button>

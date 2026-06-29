@@ -84,6 +84,33 @@ S48에서 자료관리가 ACC 단독이 되며 **Supabase BIM(IFC) 업로드 UI�
 2. **ACC 미보유 프로젝트**: 병행 결정상 IFC 백업 경로 유지(모든 프로젝트 ACC 강제 보류).
 3. **S43 CDE 고도화**(승인·transmittal·검색)는 ACC 메타(0022) 위에서 재설계 — S47과 통합 검토.
 
+## ⚡ 0-C. S52 완료 현황 + 다음 개발 스텝 (2026-06-29) ★현재 위치★
+
+### ✅ S49~S52 까지 이식 완료(🅰 Track A)
+- **통합모델(3D)·공정관리(4D)·간섭검토 = 모두 APS(ACC) 뷰어**로 통일. 구 IFC 뷰어
+  (`Workspace`)와 `ACC 모델` 단독 메뉴 제거(라우트 해제, 파일은 백업 보존).
+- **세 메뉴 완전 독립**: 각자 전용 고정 모델(`acc_default`/`acc_4d`/`acc_clash`, 0030·0031)을
+  자료관리 ACC 모델 또는 각 뷰 ⭐ 버튼에서 지정. 라우트별 `key` 로 인스턴스 분리(연동 버그 해결).
+- **고유기능 APS 이식**: 이슈 핀(S49)·4D 시뮬 isolate/도색(S50)·간섭(S49)·홈뷰/관측점(S52).
+- **공통 레이아웃 픽스**: `.portal-main` grid 자식 `min-width:0` — 표/차트 넓은 모듈
+  (물량·도면·일보·이슈·기성·하도급·게시판)이 뷰포트 밖으로 삐져나가던 문제 해결.
+
+### 🔜 다음 개발 스텝(우선순위 제안)
+1. **S53 IfcViewer 은퇴 마무리(IA 통합)** — 통합모델=ACC 단일 경로 확정. 남은 IFC 전용
+   기능(측정·단면·마크업) 중 실사용분을 APS 표준확장으로 매핑하거나 보류 정리. 죽은 코드
+   (`Workspace.tsx`·`IfcViewer.ts` 등) 의존성 점검 후 단계적 제거(패리티 확인 전 삭제 금지).
+2. **관측점·홈뷰 팀 공유(DB 이관)** — 현재 localStorage(브라우저 로컬) → `viewpoints` 테이블에
+   APS state 컬럼 추가(추가형 마이그레이션)로 팀 공유·썸네일 영속화. 이슈 연동까지.
+3. **S51 물량(QTO) APS 이식** — APS 속성DB(getBulkProperties2/Model Properties API)로 개수·
+   길이·면적·체적 집계 → 기성내역 행 제안. IFC QTO 병행 정리.
+4. **간섭 검토 본이식(S52 본체)** — 현재 GlobalId 기반 결과/핀은 동작. APS Model Coordination
+   API 연동 또는 fragment+BVH 스파이크 중 택1로 "검출"까지 APS 위에서. (열린 결정 #1)
+5. **S43 CDE 고도화** — 승인 워크플로우·transmittal·검색/태그를 ACC 메타(0022) 위 재설계.
+6. **품질/UX 잔여** — 비-3D 모듈 반응형 추가 점검(좁은 폭 표 가로 스크롤 일관화), 번들
+   코드스플리팅(S18, 청크 5MB 경고), 도면 목록 "Invalid Date" 표기 버그.
+
+> 마이그레이션 사전 배정: 다음 추가 컬럼/테이블은 `0032_` 이후로(관측점 DB 이관 등).
+
 ## 0. 현재 위치 (요약)
 - ✅ Phase 0 인증/권한(RLS)/저장 · Phase 1 3D IFC 뷰어 · Phase 2 4D 시뮬레이션(S4).
 - 스택: Vite+React+TS / Three.js + web-ifc(WASM) **+ APS Viewer/ACC(S46)** / Supabase / Vercel.

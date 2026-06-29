@@ -15,6 +15,8 @@ import { enumerateApsElements, type ApsElement } from '../lib/apsElements';
 import { createApsFourDViewer } from '../lib/apsFourdView';
 import { collectPropertyNames, collectTaskFields, applyApsRules, diagnoseRule, type ApsMatchRule } from '../lib/apsScheduleMapping';
 import { ApsRuleEditor } from '../components/ApsRuleEditor';
+import { ApsViewpointPanel } from '../components/acc/ApsViewpointPanel';
+import { saveApsHomeView, loadApsHomeView, clearApsHomeView } from '../lib/apsViewpoints';
 import { mappingStats } from '../lib/fourd';
 import { formatDate, DAY } from '../lib/schedule';
 import { saveLocalApsSchedule } from '../lib/localSchedule';
@@ -164,6 +166,9 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   const isAdmin = !!profile?.is_admin;
   const { canEdit } = useProjectRole(projectId);
   const authorName = profile?.full_name ?? profile?.username ?? null;
+  // 통합모델(3D) 전용: IFC 뷰어에서 이식한 홈뷰·관측점(시점 북마크) — S52.
+  const integrated = !mode4d && !autoClash;
+  const [vpOpen, setVpOpen] = useState(false);
   const [params] = useSearchParams();
   const urnFromUrl = params.get('urn') ?? '';
   const focusGlobalId = params.get('focusGlobalId') ?? '';
@@ -176,7 +181,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   const [urn, setUrn] = useState(urnFromUrl);
   const [status, setStatus] = useState('APS Viewer 준비…');
 
-  // 고유기능 이식(S49): dbId↔GlobalId 매핑 + 이슈 핀 + 간섭체크.
+  // 고유기능 이식(S49): dbId↔GlobalId 매핑 + 이슈 핀 + 간섭검토.
   const [mapping, setMapping] = useState<ApsMapping | null>(null);
   const [issues, setIssues] = useState<Issue[]>([]);
   const [clashOpen, setClashOpen] = useState(false);
@@ -282,7 +287,9 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   };
 
   // ACC 탐색 상태.
-  const [showBrowser, setShowBrowser] = useState(!urnFromUrl);
+  // 폴더 트리는 기본 숨김 — 세 메뉴 모두 고정 모델만 여는 순수 3D 뷰(S52).
+  // 통합모델 관리자는 "폴더 펼치기" 토글로, 4D/간섭 관리자는 "🗂 모델 지정"으로 연다.
+  const [showBrowser, setShowBrowser] = useState(false);
   const [hubs, setHubs] = useState<Named[]>([]);
   const [hub, setHub] = useState('');
   const [projects, setProjects] = useState<Named[]>([]);
@@ -300,6 +307,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   // 공정관리(4D) 전용: 관리자가 "🗂 4D 모델 지정" 버튼을 눌러 폴더 트리를 일시적으로
   // 열어 모델을 고른다(평소엔 숨김 — #5). 고르면 acc_4d_urn/name 으로 고정.
   const [pickFor4dOpen, setPickFor4dOpen] = useState(false);
+  const [pickForClashOpen, setPickForClashOpen] = useState(false);
 
   // 문서(비-3D) 뷰: APS 캔버스 위에 우리 뷰어를 오버레이.
   const [docView, setDocView] = useState<{ url: string; name: string; kind: ViewerKind } | null>(null);
@@ -571,6 +579,24 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
     }
   };
 
+  // 관리자: 현재 연 모델을 간섭검토 전용 고정뷰로 지정(통합/4D 와 독립 — S52).
+  const setAsClashDefault = async () => {
+    if (!urn) {
+      setStatus('먼저 모델을 여세요.');
+      return;
+    }
+    const name = openName || '간섭 모델';
+    try {
+      await setProjectAcc(projectId, { acc_clash_urn: urn, acc_clash_name: name });
+      setDefaultName(name);
+      setPickForClashOpen(false);
+      setShowBrowser(false);
+      setStatus(`간섭 모델로 지정: ${name}`);
+    } catch (e) {
+      setStatus(`지정 실패: ${(e as Error).message}`);
+    }
+  };
+
   // 3D 에서 선택한 객체 위치에 이슈 생성(선택 dbId → GlobalId 앵커, S49 Step 2).
   const createIssueHere = async () => {
     const m = modelRef.current as any;
@@ -756,6 +782,17 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
               if (typeof dbId === 'number') isolateAndFit(viewer, m, dbId);
             }
             if (autoClashRef.current) setClashOpen(true);
+            // 통합모델(3D): 저장된 홈뷰가 있으면 복원(없으면 ACC 기본 카메라).
+            if (!mode4dRef.current && !autoClashRef.current) {
+              const home = loadApsHomeView(projectId);
+              if (home) {
+                try {
+                  viewer.restoreState(home);
+                } catch {
+                  /* 상태 형식 불일치 무시 */
+                }
+              }
+            }
             if (mode4dRef.current) {
               // 뷰어 설정은 ACC 네이티브 기본값을 그대로 둔다(조작감 일치 — #6).
               // 시뮬 표현은 apsFourdView 의 isolate/도색으로만 처리.
@@ -801,29 +838,31 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             } else {
               void loadTopFolders(acc.acc_hub_id, acc.acc_project_id);
             }
-            // 공정관리(4D) 는 별도 고정 모델(acc_4d_urn)을 쓴다 — 통합모델/간섭과
-            // 독립된 뷰(#5). 폴더 트리는 4D 화면에서 기본적으로 숨김.
-            const pinnedUrn = mode4d ? acc.acc_4d_urn : acc.acc_default_urn;
-            const pinnedName = mode4d ? acc.acc_4d_name : acc.acc_default_name;
+            // 세 메뉴는 각자 전용 고정 모델을 완전히 독립적으로 연다(S52, 폴백 없음):
+            //   통합모델 → acc_default, 공정관리(4D) → acc_4d, 간섭검토 → acc_clash.
+            const pinnedUrn = mode4d ? acc.acc_4d_urn : autoClash ? acc.acc_clash_urn : acc.acc_default_urn;
+            const pinnedName = mode4d ? acc.acc_4d_name : autoClash ? acc.acc_clash_name : acc.acc_default_name;
+            // 고정 모델 지정은 자료관리(ACC 모델)에서 한다 — 세 뷰 모두 폴더 트리는
+            // 기본적으로 숨기고 고정된 모델만 연다.
             if (pinnedUrn) {
               setUrn(pinnedUrn);
               setOpenName(pinnedName ?? '');
               setDefaultName(pinnedName ?? '');
-              if (!mode4d) setShowBrowser(true);
               void openModel(pinnedUrn);
-            } else if (mode4d) {
-              setStatus(
-                isAdmin
-                  ? '관리자가 4D 시뮬레이션용 모델을 아직 지정하지 않았습니다 — "🗂 4D 모델 지정" 버튼을 누르세요.'
-                  : '관리자가 4D 시뮬레이션용 모델을 아직 지정하지 않았습니다.',
-              );
             } else {
-              setShowBrowser(true);
-              setStatus('폴더에서 모델을 선택하세요.');
+              const label = mode4d ? '공정관리(4D)' : autoClash ? '간섭검토' : '통합모델(3D)';
+              const how = isAdmin
+                ? mode4d
+                  ? '"🗂 4D 모델 지정" 또는 자료관리 > ACC 모델에서 지정하세요.'
+                  : autoClash
+                    ? '"🗂 간섭 모델 지정" 또는 자료관리 > ACC 모델에서 지정하세요.'
+                    : '"폴더 펼치기"로 모델을 연 뒤 "⭐ 기본 모델로 지정" 또는 자료관리에서 지정하세요.'
+                : '';
+              setStatus(`관리자가 ${label}용 ACC 모델을 아직 지정하지 않았습니다. ${how}`.trim());
             }
           } else if (isAdmin) {
-            // 매핑 없음 + 관리자 → 전체 탐색해서 고정 가능.
-            setShowBrowser(!mode4d);
+            // 매핑 없음 + 관리자 → (통합모델에서만) 전체 탐색해서 허브·프로젝트 고정.
+            setShowBrowser(integrated);
             void loadHubs();
             setStatus('허브·프로젝트를 선택해 "이 프로젝트에 고정"을 누르세요.');
           } else {
@@ -870,15 +909,18 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
           alignItems: 'center',
         }}
       >
-        <strong style={{ fontSize: 13 }}>{autoClash ? '🔍 간섭체크' : mode4d ? '🏗 공정관리(4D)' : '🅰 ACC 모델'}</strong>
+        <strong style={{ fontSize: 13 }}>{autoClash ? '🔍 간섭검토' : mode4d ? '🏗 공정관리(4D)' : '🧊 통합모델(3D)'}</strong>
         {/* 4D 매칭(규칙 편집기)은 하단 타임라인의 "공정표 임포트" 옆 버튼으로 통합(#3b). */}
         {/* 간섭 도구를 좌측에(#5). clash 모드에서는 폴더트리를 숨긴다(#1). 공정관리(4D)
             화면에선 간섭·이슈핀을 보지 않는다는 요청에 따라 4D 모드에서는 숨김. */}
         {!mode4d && mapping && (
           <>
-            <button onClick={() => setClashOpen(true)} style={{ ...btnStyle, fontWeight: 700 }} title="간섭 검토 팝업 열기">
-              🔍 간섭
-            </button>
+            {/* 간섭 검토 팝업은 간섭검토 메뉴에서만 — 통합모델(3D)에서는 제거(연동 분리). */}
+            {autoClash && (
+              <button onClick={() => setClashOpen(true)} style={{ ...btnStyle, fontWeight: 700 }} title="간섭 검토 팝업 열기">
+                🔍 간섭
+              </button>
+            )}
             <button onClick={() => setPinsOn((v) => !v)} style={btnStyle} title="이슈 핀 표시/숨김">
               {pinsOn ? '📍 핀 켜짐' : '📍 핀 꺼짐'}
             </button>
@@ -889,7 +931,54 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             )}
           </>
         )}
-        {!autoClash && !mode4d && (
+        {/* 통합모델(3D) 전용: 홈뷰·관측점(IFC 뷰어 이식 — S52). */}
+        {integrated && urn && (
+          <>
+            <button
+              onClick={() => {
+                const v = viewerRef.current as any;
+                const home = loadApsHomeView(projectId);
+                if (v && home) v.restoreState(home);
+                else if (v?.fitToView) v.fitToView();
+              }}
+              style={btnStyle}
+              title="저장된 홈뷰로 이동(없으면 전체 맞춤)"
+            >
+              🏠 홈뷰
+            </button>
+            {isAdmin && (
+              <button
+                onClick={() => {
+                  const v = viewerRef.current as any;
+                  if (!v) return;
+                  saveApsHomeView(projectId, v.getState());
+                  setStatus('현재 시점을 홈뷰로 저장했습니다.');
+                }}
+                style={btnStyle}
+                title="현재 시점을 이 모델의 홈뷰로 저장"
+              >
+                ⬇ 홈뷰 저장
+              </button>
+            )}
+            {isAdmin && loadApsHomeView(projectId) && (
+              <button
+                onClick={() => {
+                  clearApsHomeView(projectId);
+                  setStatus('홈뷰를 초기화했습니다.');
+                }}
+                style={btnStyle}
+                title="저장된 홈뷰 삭제"
+              >
+                ↺ 홈뷰 초기화
+              </button>
+            )}
+            <button onClick={() => setVpOpen((v) => !v)} style={btnStyle} title="관측점(시점 북마크) 열기">
+              📌 관측점
+            </button>
+          </>
+        )}
+        {/* 통합모델 폴더 탐색은 관리자만(재고정용) — 일반 사용자는 순수 3D 뷰. */}
+        {integrated && isAdmin && (
           <button onClick={() => setShowBrowser((s) => !s)} style={btnStyle}>
             {showBrowser ? '◀ 폴더 닫기' : '폴더 펼치기 ▶'}
           </button>
@@ -908,15 +997,32 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             🗂 4D 모델 지정
           </button>
         )}
-        {defaultName && <span style={{ fontSize: 12, color: 'var(--muted)' }}>{mode4d ? '4D 모델' : '기본'}: {defaultName}</span>}
-        <span style={{ flex: 1 }} />
-        {isAdmin && !autoClash && urn && (
+        {/* 간섭검토 전용 고정 모델 지정 — 4D 와 동일 패턴(연동 분리). */}
+        {autoClash && isAdmin && (
           <button
-            onClick={() => void (mode4d ? setAs4dDefault() : setAsDefault())}
+            onClick={() => {
+              setPickForClashOpen(true);
+              setShowBrowser(true);
+            }}
             style={btnStyle}
-            title={mode4d ? '이 모델을 4D 고정뷰로 지정' : '이 모델을 자동으로 열리게 지정'}
+            title="ACC 폴더에서 간섭검토용 모델을 선택"
           >
-            {mode4d ? '⭐ 4D 모델로 지정' : '⭐ 기본 모델로 지정'}
+            🗂 간섭 모델 지정
+          </button>
+        )}
+        {defaultName && (
+          <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+            {mode4d ? '4D 모델' : autoClash ? '간섭 모델' : '기본'}: {defaultName}
+          </span>
+        )}
+        <span style={{ flex: 1 }} />
+        {isAdmin && urn && (
+          <button
+            onClick={() => void (mode4d ? setAs4dDefault() : autoClash ? setAsClashDefault() : setAsDefault())}
+            style={btnStyle}
+            title={mode4d ? '이 모델을 4D 고정뷰로 지정' : autoClash ? '이 모델을 간섭 고정뷰로 지정' : '이 모델을 자동으로 열리게 지정'}
+          >
+            {mode4d ? '⭐ 4D 모델로 지정' : autoClash ? '⭐ 간섭 모델로 지정' : '⭐ 기본 모델로 지정'}
           </button>
         )}
         {urn && (
@@ -929,7 +1035,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
         </span>
       </div>
       <div style={{ position: 'relative', flex: 1, display: 'flex' }}>
-        {showBrowser && !autoClash && (!mode4d || pickFor4dOpen) && (
+        {showBrowser && (mode4d ? pickFor4dOpen : autoClash ? pickForClashOpen : true) && (
           <div
             style={{
               width: panelW,
@@ -945,12 +1051,13 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
           >
             <div className="subtree-resizer" onMouseDown={startResize} title="좌우 폭 조절" />
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-              <strong>{mode4d ? '4D 모델 선택' : isAdmin ? 'ACC 탐색' : pinnedProjectName || 'ACC'}</strong>
+              <strong>{mode4d ? '4D 모델 선택' : autoClash ? '간섭 모델 선택' : isAdmin ? 'ACC 탐색' : pinnedProjectName || 'ACC'}</strong>
               {busy && <span style={{ opacity: 0.7 }}>로딩…</span>}
-              {mode4d && pickFor4dOpen && (
+              {(pickFor4dOpen || pickForClashOpen) && (
                 <button
                   onClick={() => {
                     setPickFor4dOpen(false);
+                    setPickForClashOpen(false);
                     setShowBrowser(false);
                   }}
                   style={{ ...btnStyle, padding: '2px 6px' }}
@@ -1020,6 +1127,15 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
           {/* 4D 시뮬레이션 날짜·진척 HUD(Navisworks/Forma 류) — 재생 중 모델 위에 현재
               시점과 진행률을 띄운다. 모델 재로딩 없이 오버레이만 갱신. */}
           {mode4d && <FourDHud />}
+          {/* 통합모델(3D) 관측점 패널(IFC 뷰어 이식 — S52). */}
+          {integrated && vpOpen && !!modelRef.current && (
+            <ApsViewpointPanel
+              viewer={viewerRef.current}
+              projectId={projectId}
+              isAdmin={isAdmin}
+              onClose={() => setVpOpen(false)}
+            />
+          )}
           {/* 이슈 핀 오버레이(S49 Step 2) — GlobalId 앵커를 화면좌표 마커로. 4D 모드에선 숨김. */}
           {!mode4d && pinsOn && mapping && !!modelRef.current && (
             <ApsIssuePins
@@ -1077,7 +1193,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
               </div>
             </div>
           )}
-          {/* 간섭체크 패널(S49) — 모델 트리 A/B 선택. 4D 모드에선 숨김. */}
+          {/* 간섭검토 패널(S49) — 모델 트리 A/B 선택. 4D 모드에선 숨김. */}
           {!mode4d && clashOpen && mapping && !!modelRef.current && (
             <ApsClashPanel
               viewer={viewerRef.current}

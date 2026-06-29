@@ -2334,6 +2334,9 @@ button.danger:hover:not(:disabled) {
 .portal-main {
   position: relative;
   min-height: 0;
+  /* grid 자식 기본 min-width:auto 때문에 넓은 콘텐츠(표·차트)가 칸을 밀어
+     뷰포트 밖으로 삐져나간다 → min-width:0 으로 칸 안에서 스크롤되게 한다. */
+  min-width: 0;
   overflow: auto;
   background: var(--bg);
 }
@@ -3810,7 +3813,7 @@ button.danger:hover:not(:disabled) {
 /* =====================================================================
    충돌검사(Clash Detection) 패널 — Phase 4 / S32. 색은 토큰만 사용.
    ===================================================================== */
-/* 이동/크기 조절 가능한 간섭체크 결과 창 */
+/* 이동/크기 조절 가능한 간섭검토 결과 창 */
 .clash-win {
   position: absolute;
   display: flex;
@@ -4240,7 +4243,7 @@ button.danger:hover:not(:disabled) {
   gap: 10px;
 }
 
-/* 3D 뷰어 모듈 제목(통합모델/공정관리/간섭체크 구분 표시) */
+/* 3D 뷰어 모듈 제목(통합모델/공정관리/간섭검토 구분 표시) */
 .viewer-mode-title {
   font-size: 13px;
   font-weight: 700;
