@@ -36,13 +36,12 @@
   *다음에* 실행되어 덮어쓰기 경쟁에서 이김). 히트 지점을 `viewer.utilities.setPivotPoint(p,true,true)`
   + `pivotActive(true,false)` + `setPivotSetFlag(true)` 로 지정(초록 구 표시 + 피벗 적용).
   유틸 미지원 버전은 `navigation.setPivotPoint` 폴백. 빈 공간은 직전 피벗 유지.
-- **여전히 미검증(원격)**: 실 ACC 모델에서 ① 초록 피벗 구가 마우스 위치에 뜨는지 ② 그 점 중심 회전인지.
-  안 되면 다음 후보: 활성 네비툴 차이(`setActiveNavigationTool('orbit')`) / `clientToWorld` 사용 /
-  대형 reality-mesh 모델에서 hitTest 반환값 점검.
+- **✅ 라이브 확인 완료(2026-06-30, 사용자)**: 실 ACC 모델에서 마우스 위치 초록 피벗 구 표시 +
+  그 지점 중심 회전 = ACC 동일 체감. **V1 완료.**
 
 ### 인수인계 한 줄
-회전 피벗 2차 보강: `viewer.utilities.setPivotPoint`(+초록 구 인디케이터) + mousedown 버블 리스너로 전환.
-typecheck·build 통과. 다음 세션은 실 ACC 모델에서 초록 구·중심회전 여부 라이브 확인부터.
+회전 피벗 = 커서 기준 완료(2차 보강이 정답: `viewer.utilities.setPivotPoint` + 초록 구 인디케이터 +
+mousedown 버블 리스너). 라이브 확인 OK. 후속은 V2~V4(카메라 프리셋/표시 품질/성능).
 
 ---
 ## 📋 S52 — 통합모델(3D) APS 전환 · 메뉴 정리 · 홈뷰/관측점 이식 (2026-06-29)
