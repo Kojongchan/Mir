@@ -263,8 +263,13 @@ export function buildSchedule(doc: CsvDoc, map: ColumnMap): ParsedSchedule {
     const outline = map.outline >= 0 ? (cols[map.outline] ?? '').trim() : '';
 
     const isSummary = !!outline && summaryOutlines.has(outline);
-    // 루트/이름없음/날짜없음만 건너뛴다. 상위(합계) 행은 트리 헤더로 쓰려고 유지한다.
-    if (!name || /\(root\)/i.test(name) || Number.isNaN(start) || Number.isNaN(end)) {
+    // 루트/이름없음은 건너뛴다. 날짜 없는 행은 leaf 만 건너뛰고, 상위(합계) 행은
+    // 트리 헤더로 쓰려고 유지한다(날짜는 아래에서 자식 범위로 채운다).
+    if (!name || /\(root\)/i.test(name)) {
+      skipped++;
+      continue;
+    }
+    if (!isSummary && (Number.isNaN(start) || Number.isNaN(end))) {
       skipped++;
       continue;
     }
@@ -298,10 +303,27 @@ export function buildSchedule(doc: CsvDoc, map: ColumnMap): ParsedSchedule {
     });
   }
 
-  if (skipped > 0) warnings.push(`${skipped}개 행을 건너뜀(루트/합계/날짜 없음).`);
+  if (skipped > 0) warnings.push(`${skipped}개 행을 건너뜀(루트/이름·날짜 없는 말단).`);
 
-  const starts = tasks.map((t) => t.start);
-  const ends = tasks.map((t) => t.end);
+  // 상위(합계) 행의 기간을 자식(개요번호 접두어가 일치하는 하위) 범위로 채운다 —
+  // 날짜가 비어 있어도 간트 막대/트리 헤더가 자식 전체 기간을 덮도록(엑셀 요약행과 동일).
+  for (const t of tasks) {
+    if (!t.isSummary || !t.outline) continue;
+    const prefix = t.outline + '.';
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const c of tasks) {
+      if (c === t || c.isSummary || !c.outline || !c.outline.startsWith(prefix)) continue;
+      if (!Number.isNaN(c.start)) lo = Math.min(lo, c.start);
+      if (!Number.isNaN(c.end)) hi = Math.max(hi, c.end);
+    }
+    // 자식 범위가 있으면 그것으로, 없으면(또는 원본 날짜가 있으면) 원본 유지.
+    if (Number.isFinite(lo)) t.start = Number.isNaN(t.start) ? lo : Math.min(t.start, lo);
+    if (Number.isFinite(hi)) t.end = Number.isNaN(t.end) ? hi : Math.max(t.end, hi);
+  }
+
+  const starts = tasks.map((t) => t.start).filter((n) => !Number.isNaN(n));
+  const ends = tasks.map((t) => t.end).filter((n) => !Number.isNaN(n));
   return {
     tasks,
     source,
