@@ -2410,6 +2410,18 @@ button.danger:hover:not(:disabled) {
   overflow: auto;
   padding: 6px 0;
 }
+/* 트리↔본문 드래그 스플리터(좌우 폭 조절). subtree-resizer 패턴 재사용. */
+.acc-fm-resizer {
+  flex: none;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 6;
+  background: transparent;
+}
+.acc-fm-resizer:hover {
+  background: var(--accent);
+  opacity: 0.35;
+}
 .acc-fm-tree-head {
   font-size: 12px;
   color: var(--muted);

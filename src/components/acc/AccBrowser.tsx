@@ -31,6 +31,17 @@ import { PdfViewer } from '../viewers/PdfViewer';
 import { SheetViewer } from '../viewers/SheetViewer';
 import { OfficeViewer } from '../viewers/OfficeViewer';
 
+// 폴더트리 폭(좌측). 드래그 스플리터로 조절, localStorage 저장/복원(min~max clamp).
+const TREE_W_KEY = 'mir.acc.treeW';
+const TREE_W_MIN = 200;
+const TREE_W_MAX = 560;
+const TREE_W_DEFAULT = 260;
+const clampTreeW = (w: number) => Math.min(TREE_W_MAX, Math.max(TREE_W_MIN, w));
+function loadTreeW(): number {
+  const v = Number(localStorage.getItem(TREE_W_KEY));
+  return Number.isFinite(v) && v > 0 ? clampTreeW(v) : TREE_W_DEFAULT;
+}
+
 const fakeFile = (name: string) => ({ name, size_bytes: null, mime_type: null }) as unknown as FileRecord;
 const fmtDate = (s?: string | null) =>
   s ? new Date(s).toLocaleDateString('ko-KR', { year: '2-digit', month: '2-digit', day: '2-digit' }) : '';
@@ -109,6 +120,30 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
   const [menuFor, setMenuFor] = useState<string | null>(null);
   const [progress, setProgress] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  // 폴더트리 폭(드래그 스플리터). 저장값 복원, 더블클릭 시 기본값 리셋.
+  const [treeW, setTreeW] = useState<number>(loadTreeW);
+  const startTreeResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = treeW;
+    const onMove = (ev: MouseEvent) => setTreeW(clampTreeW(startW + (ev.clientX - startX)));
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+    };
+    document.body.style.cursor = 'col-resize';
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+  const resetTreeW = () => setTreeW(TREE_W_DEFAULT);
+  useEffect(() => {
+    try {
+      localStorage.setItem(TREE_W_KEY, String(treeW));
+    } catch {
+      /* 저장공간 불가 시 무시 */
+    }
+  }, [treeW]);
 
   const [docView, setDocView] = useState<{ url: string; name: string; kind: ViewerKind } | null>(null);
   const [versionsFor, setVersionsFor] = useState<{ item: AccItem; list: AccVersion[] } | null>(null);
@@ -470,7 +505,7 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
       <input ref={versionInput} type="file" style={{ display: 'none' }} onChange={onPickVersion} />
 
       {/* 좌측 폴더 트리 */}
-      <aside className="acc-fm-tree">
+      <aside className="acc-fm-tree" style={{ width: treeW }}>
         <div className="acc-fm-tree-head">🅰 ACC 폴더</div>
         <ul className="acc-tree-ul">
           <li>
@@ -481,6 +516,16 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
           {roots.map((n) => renderTree(n, 0))}
         </ul>
       </aside>
+
+      {/* 트리↔본문 드래그 스플리터(더블클릭 시 폭 리셋) */}
+      <div
+        className="acc-fm-resizer"
+        onMouseDown={startTreeResize}
+        onDoubleClick={resetTreeW}
+        title="좌우 폭 조절 (더블클릭: 기본값)"
+        role="separator"
+        aria-orientation="vertical"
+      />
 
       {/* 우측 메인 */}
       <section className="acc-fm-main">
