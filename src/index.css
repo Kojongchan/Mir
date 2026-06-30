@@ -3117,9 +3117,11 @@ button.danger:hover:not(:disabled) {
 }
 
 /* ---- 대시보드 ---- */
+/* 포털 모듈 7개 공용 래퍼 — .portal-main 가용폭을 풀폭으로 채운다
+   (사이드바 우측~뷰포트 우단). 표·차트·리스트·카드 그리드는 가용폭 활용,
+   입력 폼(.dash-edit)만 따로 max-width 로 과확장 방지. */
 .dash {
-  max-width: 1180px;
-  margin: 0 auto;
+  width: 100%;
   padding: 20px 24px 40px;
 }
 .dash-head {
@@ -3295,8 +3297,11 @@ button.danger:hover:not(:disabled) {
 }
 
 /* 편집 영역 */
+/* 입력 폼 카드는 풀폭에서 과도하게 늘어지면 가독성이 떨어져 적정폭으로 제한.
+   표·차트·리스트·카드 그리드는 풀폭 유지. */
 .dash-edit {
   margin: 16px 0;
+  max-width: 920px;
 }
 .dash-edit h3 {
   margin-bottom: 12px;
