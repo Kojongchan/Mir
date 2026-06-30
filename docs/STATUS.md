@@ -3,6 +3,27 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 B3(부분) — ACC 파일관리자 폴더트리 폭 리사이즈 스플리터 (2026-06-30)
+> branch `claude/folder-tree-resizable-splitter-qidetn`. typecheck·build 통과. 마이그레이션 없음(3D 무관, 병렬 안전).
+
+### ✅ 한 일
+1. **폴더트리↔본문 드래그 스플리터**: `.acc-fm-tree` 의 고정폭(`width:260px; flex:none`)으로
+   폭 조절 불가 + 핸들 없던 문제 해결(S48 핸드오프 "트리 폭 리사이즈" 미해결 건).
+   - `AccBrowser.tsx`: `treeW` 상태(`useState(loadTreeW)`)로 트리 폭 제어, `aside` 에 인라인 `width`.
+   - 트리와 본문 사이 `.acc-fm-resizer` 핸들 추가(`onMouseDown=startTreeResize`, Workspace
+     `subtree-resizer` 패턴 재사용). 드래그 중 `document.body.cursor='col-resize'`.
+   - **localStorage 저장/복원**: 키 `mir.acc.treeW`, clamp `200~560px`(기본 260). `treeW` 변경 시 저장.
+   - **더블클릭 리셋**: 핸들 더블클릭 시 기본폭(260)으로 복귀.
+   - `index.css`: `.acc-fm-resizer`(6px, col-resize, hover 시 accent) 추가.
+
+### 🔜 다음 할 일 / 미해결
+- 라이브 검증: 드래그로 트리 폭 조절·새로고침 후 폭 유지·더블클릭 리셋 확인.
+- B3 나머지(이동·새 버전 업로드 UI·라이브 검증)는 별도 진행.
+
+### 인수인계 한 줄
+ACC 폴더트리 폭 드래그 스플리터 + localStorage 저장/복원/더블클릭 리셋 완료. B3 나머지(이동·버전 UI) 남음.
+
+---
 ## 📋 S52 — 통합모델(3D) APS 전환 · 메뉴 정리 · 홈뷰/관측점 이식 (2026-06-29)
 > branch `claude/aps-4d-simulation-euzmdl`. typecheck·build 통과.
 
