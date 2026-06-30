@@ -178,6 +178,8 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   const viewerRef = useRef<unknown>(null);
   const modelRef = useRef<unknown>(null);
   const resizeObsRef = useRef<ResizeObserver | null>(null);
+  // 커서(피벗) 기준 회전을 위해 캔버스에 붙인 pointerdown 리스너 해제 함수(언마운트 정리용).
+  const pivotCleanupRef = useRef<(() => void) | null>(null);
   const [urn, setUrn] = useState(urnFromUrl);
   const [status, setStatus] = useState('APS Viewer 준비…');
 
@@ -749,12 +751,47 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
         viewer.start();
         // 라이트회색 기본 배경이 앱 다크 테마와 안 맞아 어두운 그라데이션으로 통일.
         viewer.setBackgroundColor(40, 48, 64, 20, 26, 38);
-        // ACC 와 동일한 휠 방향(휠 위=확대) + 커서 기준 줌.
+        // ACC 와 동일한 휠 방향(휠 위=확대) + 커서 기준 줌 + 커서(피벗) 기준 회전.
         try {
           viewer.setReverseZoomDirection(true);
           viewer.navigation.setZoomTowardsPivot(true);
+          // (1차) 회전을 화면 중앙(카메라 타깃)이 아니라 피벗 기준으로 — ACC 조작감.
+          viewer.navigation.setUsePivotAlways(true);
+          // (1차) 빈 곳이 아닌, 마우스 아래 표면 지점으로 피벗을 갱신(클릭 시 COI 설정).
+          viewer.setClickToSetCOI(true, false);
         } catch {
           /* 일부 버전 미지원 무시 */
+        }
+        // (2차) orbit 시작 시점(pointerdown)에 커서 바로 아래 표면을 읽어 피벗으로 지정한다.
+        // setUsePivotAlways/setClickToSetCOI 만으로 중심 회전이 남는 경우의 확실한 보강.
+        // 읽기 전용 히트테스트만 하고 preventDefault 하지 않으므로 선택/측정/이슈핀 등
+        // 기존 상호작용과 충돌하지 않는다. 빈 공간을 잡으면 직전 피벗을 그대로 유지.
+        try {
+          const canvas = viewer.impl?.canvas as HTMLCanvasElement | undefined;
+          if (canvas) {
+            const onPointerDown = (ev: PointerEvent) => {
+              // 좌클릭(주 버튼)으로 시작하는 orbit 만 대상(휠/우클릭 팬·메뉴 제외).
+              if (ev.button !== 0) return;
+              try {
+                const r = canvas.getBoundingClientRect();
+                const x = ev.clientX - r.left;
+                const y = ev.clientY - r.top;
+                const hit = viewer.impl.hitTest(x, y, false);
+                if (hit && hit.intersectPoint) {
+                  viewer.navigation.setPivotPoint(hit.intersectPoint);
+                  // 피벗 인디케이터 노출(지원 버전에서만).
+                  viewer.navigation.setPivotSetFlag?.(true);
+                }
+                // 히트 실패(빈 공간)면 아무것도 하지 않아 마지막 피벗을 유지한다.
+              } catch {
+                /* 히트테스트 미지원/실패 무시 */
+              }
+            };
+            canvas.addEventListener('pointerdown', onPointerDown, true);
+            pivotCleanupRef.current = () => canvas.removeEventListener('pointerdown', onPointerDown, true);
+          }
+        } catch {
+          /* 캔버스 접근 불가 무시 */
         }
         // 패널 토글/리사이즈/창크기 변경 시 캔버스를 컨테이너에 맞춤(잘림·빈 박스 방지).
         const ro = new ResizeObserver(() => viewer.resize());
@@ -879,6 +916,8 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
       cancelled = true;
       resizeObsRef.current?.disconnect();
       resizeObsRef.current = null;
+      pivotCleanupRef.current?.();
+      pivotCleanupRef.current = null;
       if (docBlobRef.current) URL.revokeObjectURL(docBlobRef.current);
       const v = viewerRef.current as any;
       if (v?.finish) v.finish();

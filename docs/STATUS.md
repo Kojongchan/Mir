@@ -3,6 +3,34 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 V1 — 3D 뷰어 회전을 "커서(피벗) 기준"으로 (ACC 조작감 일치) (2026-06-30)
+> branch `claude/3d-viewer-pivot-rotation-ymsocr`. typecheck·build 통과. 대상 `src/pages/AccModels.tsx` 뷰어 초기화부.
+> 통합/4D/간섭은 모두 같은 `AccModels` 초기화 경로를 쓰므로 한 곳 수정으로 세 모드 모두 적용됨.
+
+### ✅ 한 일
+1. **(1차) 피벗 기준 회전 옵션 적용**: 줌 옵션(`setReverseZoomDirection`/`setZoomTowardsPivot`) 옆에
+   `viewer.navigation.setUsePivotAlways(true)`(회전을 카메라 타깃이 아닌 피벗 기준) +
+   `viewer.setClickToSetCOI(true, false)`(클릭한 표면 지점으로 COI/피벗 갱신) 추가.
+   (참고 브랜치 `claude/magical-curie-d4relv` 1차 시도를 본 브랜치에 포함.)
+2. **(2차) orbit 시작 시 커서 아래 표면을 피벗으로 지정 — 확실한 보강**: `viewer.impl.canvas` 에
+   `pointerdown`(capture, 좌클릭만) 리스너 추가 → 캔버스 기준 좌표로 `viewer.impl.hitTest(x,y,false)`
+   읽기 전용 히트테스트 → `intersectPoint` 있으면 `viewer.navigation.setPivotPoint(...)`(+ `setPivotSetFlag(true)`).
+   빈 공간이면 직전 피벗 유지. `preventDefault` 안 함 → 선택/측정/이슈핀 등 기존 상호작용 회귀 없음.
+   언마운트 시 리스너 해제(`pivotCleanupRef`).
+3. **더블클릭 포커스**: GuiViewer3D + 표준 확장의 기본 동작(더블클릭=객체 포커스) 그대로 사용(별도 코드 불필요).
+
+### 🔜 다음 할 일 / 미해결
+- **라이브 검증 필요(원격 환경 미검증)**: 실제 ACC 모델 로드 후 ① 임의 표면 위 드래그가 그 지점 중심
+  회전인지(ACC 체감) ② 빈 공간 드래그=마지막 피벗 ③ 더블클릭 포커스 ④ 선택/이슈핀/측정 회귀 없음.
+- 1차 옵션만으로 충분하면 2차(pointerdown)는 무해하게 중복 적용되는 것(둘 다 피벗을 같은 지점으로 맞춤).
+  과하다 판단되면 추후 1차만 남기는 정리 가능.
+- 범위 밖(후속 V2~V4): 카메라 프리셋(ViewCube/홈/정투영/표준뷰), 표시 품질(엣지/고스트/선택색), 성능.
+
+### 인수인계 한 줄
+회전 피벗을 커서 기준으로(1차 옵션 + 2차 pointerdown hitTest→setPivotPoint) `AccModels` 한 경로에 적용,
+typecheck·build 통과. 다음 세션은 실 ACC 모델 라이브 체감 검증부터.
+
+---
 ## 📋 S52 — 통합모델(3D) APS 전환 · 메뉴 정리 · 홈뷰/관측점 이식 (2026-06-29)
 > branch `claude/aps-4d-simulation-euzmdl`. typecheck·build 통과.
 
