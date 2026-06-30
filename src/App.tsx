@@ -13,7 +13,6 @@ import { Subcontracts } from './pages/Subcontracts';
 import { Board } from './pages/Board';
 import { DocumentManager } from './pages/DocumentManager';
 import { Drawings } from './pages/Drawings';
-import { Quantities } from './pages/Quantities';
 import { Admin } from './pages/Admin';
 import { ProjectMembers } from './pages/ProjectMembers';
 import { FileViewer } from './pages/FileViewer';
@@ -90,7 +89,9 @@ export default function App() {
             <Route path="viewer" element={<AccModels key="fourd" mode4d />} />
             {/* 간섭검토 = APS(ACC) 모델 위 간섭(S49). */}
             <Route path="clash" element={<AccModels key="clash" autoClash />} />
-            <Route path="quantities" element={<Quantities />} />
+            {/* 물량 산출(QTO) = APS(ACC) 통합모델(acc_default) 위 속성 DB 산출(S51).
+                구 web-ifc 경로(Quantities + IfcViewer)는 백업으로 파일만 보존. */}
+            <Route path="quantities" element={<AccModels key="qto" modeQto />} />
             <Route path="drawings" element={<Drawings />} />
             <Route path="docs" element={<DocumentManager />} />
             <Route path="members" element={<ProjectMembers />} />

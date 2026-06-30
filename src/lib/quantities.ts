@@ -144,7 +144,7 @@ export function aggregateByCategory(rows: ElementQty[]): CategoryQty[] {
   return [...map.values()].sort((a, b) => b.count - a.count);
 }
 
-function sumCategories(cats: CategoryQty[]): CategoryQty {
+export function sumCategories(cats: CategoryQty[]): CategoryQty {
   return cats.reduce(
     (a, c) => {
       a.count += c.count;

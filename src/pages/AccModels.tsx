@@ -15,6 +15,7 @@ import { enumerateApsElements, type ApsElement } from '../lib/apsElements';
 import { createApsFourDViewer } from '../lib/apsFourdView';
 import { collectPropertyNames, collectTaskFields, applyApsRules, diagnoseRule, type ApsMatchRule } from '../lib/apsScheduleMapping';
 import { ApsRuleEditor } from '../components/ApsRuleEditor';
+import { ApsQuantitiesPanel } from '../components/ApsQuantitiesPanel';
 import { ApsViewpointPanel } from '../components/acc/ApsViewpointPanel';
 import { saveApsHomeView, loadApsHomeView, clearApsHomeView } from '../lib/apsViewpoints';
 import { mappingStats } from '../lib/fourd';
@@ -159,7 +160,7 @@ function updateFolder(nodes: FolderNode[], id: string, fn: (n: FolderNode) => Fo
   });
 }
 
-export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: boolean; mode4d?: boolean } = {}) {
+export function AccModels({ autoClash = false, mode4d = false, modeQto = false }: { autoClash?: boolean; mode4d?: boolean; modeQto?: boolean } = {}) {
   const { projectId = '' } = useParams();
   const navigate = useNavigate();
   const { profile } = useAuth();
@@ -167,7 +168,10 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   const { canEdit } = useProjectRole(projectId);
   const authorName = profile?.full_name ?? profile?.username ?? null;
   // 통합모델(3D) 전용: IFC 뷰어에서 이식한 홈뷰·관측점(시점 북마크) — S52.
-  const integrated = !mode4d && !autoClash;
+  // 물량 산출(QTO)도 acc_default 통합모델을 쓰지만 전용 패널이라 integrated 부가
+  // 기능(홈뷰·관측점·폴더 탐색)은 띄우지 않는다.
+  const integrated = !mode4d && !autoClash && !modeQto;
+  const modeQtoRef = useRef(modeQto);
   const [vpOpen, setVpOpen] = useState(false);
   const [params] = useSearchParams();
   const urnFromUrl = params.get('urn') ?? '';
@@ -859,6 +863,15 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
                 })
                 .catch(() => {});
             }
+            if (modeQtoRef.current) {
+              // 물량 산출(QTO): 요소(dbId·이름·카테고리) 열거만 하면 패널에서 수량을
+              // 속성 DB(getBulkProperties2)로 추출한다. 속성명 후보는 QTO 패널 내부 고정.
+              enumerateApsElements(m)
+                .then((els) => {
+                  if (!cancelled) setApsElements(els);
+                })
+                .catch(() => {});
+            }
           } catch (e2) {
             setStatus(`GlobalId 매핑 실패: ${(e2 as Error).message}`);
           }
@@ -902,7 +915,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
               setDefaultName(pinnedName ?? '');
               void openModel(pinnedUrn);
             } else {
-              const label = mode4d ? '공정관리(4D)' : autoClash ? '간섭검토' : '통합모델(3D)';
+              const label = mode4d ? '공정관리(4D)' : autoClash ? '간섭검토' : modeQto ? '물량 산출(QTO)' : '통합모델(3D)';
               const how = isAdmin
                 ? mode4d
                   ? '"🗂 4D 모델 지정" 또는 자료관리 > ACC 모델에서 지정하세요.'
@@ -963,7 +976,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
           alignItems: 'center',
         }}
       >
-        <strong style={{ fontSize: 13 }}>{autoClash ? '🔍 간섭검토' : mode4d ? '🏗 공정관리(4D)' : '🧊 통합모델(3D)'}</strong>
+        <strong style={{ fontSize: 13 }}>{autoClash ? '🔍 간섭검토' : mode4d ? '🏗 공정관리(4D)' : modeQto ? '🧮 물량 산출 (QTO)' : '🧊 통합모델(3D)'}</strong>
         {/* 4D 매칭(규칙 편집기)은 하단 타임라인의 "공정표 임포트" 옆 버튼으로 통합(#3b). */}
         {/* 간섭 도구를 좌측에(#5). clash 모드에서는 폴더트리를 숨긴다(#1). 공정관리(4D)
             화면에선 간섭·이슈핀을 보지 않는다는 요청에 따라 4D 모드에서는 숨김. */}
@@ -1305,6 +1318,17 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             setRuleMsg('');
             setRuleEditorOpen(true);
           }}
+        />
+      )}
+      {/* 물량 산출(QTO) 패널(S51) — acc_default 통합모델 위에서 APS 속성 DB 로 공종별
+          물량을 산출. 타임라인과 동일하게 컬럼 흐름의 형제로 하단에 도크한다. */}
+      {modeQto && mapping && !!modelRef.current && (
+        <ApsQuantitiesPanel
+          viewer={viewerRef.current}
+          model={modelRef.current}
+          elements={apsElements}
+          projectId={projectId}
+          isAdmin={isAdmin}
         />
       )}
       {mode4d && ruleEditorOpen && (

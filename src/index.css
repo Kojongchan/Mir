@@ -2980,6 +2980,52 @@ button.danger:hover:not(:disabled) {
   font-size: 11px;
 }
 
+/* 물량 산출(QTO) APS 하단 도크(S51) — AccModels(modeQto) 컬럼 흐름의 형제. */
+.aps-qto-dock {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+}
+.aps-qto-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+}
+.aps-qto-field {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.aps-qto-field select {
+  font-size: 12px;
+}
+.aps-qto-sum {
+  font-size: 12px;
+  color: var(--muted);
+}
+.aps-qto-sum b {
+  color: var(--text);
+}
+.aps-qto-status {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.aps-qto-table-wrap {
+  max-height: 38vh;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+}
+
 /* 자료관리 안에서 IFC 인라인 뷰어 */
 .inline-viewer {
   position: relative;

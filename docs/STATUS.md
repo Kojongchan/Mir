@@ -65,6 +65,44 @@ mousedown 버블 리스너). 라이브 확인 OK. 후속은 V2~V4(카메라 프�
 포털 7개 모듈 + 2D 도면 본문을 `.dash` 풀폭화로 정리(입력 폼만 920px 제한). 라이브 폭 확인 필요.
 
 ---
+## 📋 S51 — 물량 산출(QTO) APS(ACC) 모델 위로 이식 (2026-06-30)
+> branch `claude/qto-aps-migration-lsyewk`. typecheck·build 통과. 라이브 미검증
+> (원격 egress 제약) — ACC 모델 로드 후 물량 정확도/단위 정규화 눈검증 필요.
+
+### ✅ 한 일
+1. **뷰어 소스 교체(IFC → APS)**: `/quantities` 라우트를 `Quantities`(IfcViewer +
+   Supabase `models` 버킷) → `AccModels key="qto" modeQto`(acc_default 통합모델)로 교체.
+   이제 신규 ACC 업로드 모델이 다른 모듈과 **단일 소스**로 물량에 반영됨. 구 web-ifc
+   경로(`pages/Quantities.tsx`)는 백업으로 파일만 보존(라우트·App.tsx import 해제).
+2. **`AccModels` 에 `modeQto` prop 추가**(mode4d/autoClash 전례 동일 패턴): acc_default
+   고정 URN 로드 → OBJECT_TREE_CREATED 후 `enumerateApsElements`(S49)로 dbId·이름·
+   카테고리 열거 → 하단 도크에 `ApsQuantitiesPanel` 렌더. 헤더 타이틀/폴백 라벨에 QTO 추가.
+3. **APS 수량 추출(`lib/apsQuantities.ts` 신규)**: `getBulkProperties2(dbIds,
+   {propFilter:[Net/Gross Volume·Area·Length, Revit Volume/Area/Length, Perimeter…]})` 로
+   수량 속성 조회 → 각 속성 `units` 를 `linearMeterScale`(mm/cm/m/ft/in/yd, square·cubic·
+   ^2·^3 파싱)로 읽어 **m³/m²/m 정규화**. raw 값+단위를 보존해 단위 토글 시 재질의 없이
+   재정규화(`normalizeApsQuantities`). 단위 미상이면 **개수만, 체적/면적/길이는 "미산출"**.
+4. **집계/CSV/포맷 공통 로직 재사용**: `lib/quantities.ts` 의 `aggregateByCategory`·
+   `sumCategories`(export 추가)·`quantitiesToCsv`·`fmtQty` 를 그대로 태움(APS 측은 데이터
+   소스 추출부만 교체, ElementQty.expressID 슬롯에 dbId 담는 S49 관례). 측정=ifc 슬롯,
+   미측정=count 슬롯으로 매핑.
+5. **UI/연계 유지**: 공종 선택·단위 토글(자동/m/mm)·물량 산출 진행바·공종별 물량표+합계·
+   CSV 내보내기·**기성 제안**(`createBillingItem`, admin) 그대로. 표 행 클릭 포커스는
+   `focusElement` → APS `isolateAndFit`(dbId, isolate+fit)로 대체. 표 접기/펼치기 추가.
+
+### 🔜 다음 할 일 / 미해결
+- **라이브 검증**: ACC 통합모델에서 ① 공종별 물량표 산출 ② 단위 정규화 정확도(Revit 모델은
+  보통 units 가 m^3/ft^3 등으로 옴, IFC 변환본은 BaseQuantities 명명 확인) ③ 행 클릭 isolate+fit
+  ④ 기성 제안 행 생성. 단위 미상 모델이 "미산출"로 깨지지 않고 표기되는지.
+- **폴백(범위 밖)**: 속성에 수량이 없을 때 fragment 지오메트리 적분(체적 직접 계산)은 후속.
+  단가 DB 자동 금액·4D 기간별 투입물량 곡선도 후속.
+- `getBulkProperties2` 대형 모델 성능(현재 2000개 청크)·propFilter 명명 커버리지 점검.
+
+### 인수인계 한 줄
+물량(QTO)을 APS(ACC) acc_default 위로 이식(modeQto + apsQuantities + ApsQuantitiesPanel,
+공통 집계 재사용)·typecheck/build 통과·푸시. 다음 세션은 **실 ACC 모델로 물량/단위 라이브 검증**.
+
+---
 ## 📋 S52 — 통합모델(3D) APS 전환 · 메뉴 정리 · 홈뷰/관측점 이식 (2026-06-29)
 > branch `claude/aps-4d-simulation-euzmdl`. typecheck·build 통과.
 
