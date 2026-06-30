@@ -26,9 +26,23 @@
   과하다 판단되면 추후 1차만 남기는 정리 가능.
 - 범위 밖(후속 V2~V4): 카메라 프리셋(ViewCube/홈/정투영/표준뷰), 표시 품질(엣지/고스트/선택색), 성능.
 
+### 🔁 2차 보강 (라이브 1차 실패 후 — 2026-06-30)
+라이브에서 여전히 중심 회전 + ACC엔 마우스 위치에 초록 피벗 구가 보인다는 피드백 반영.
+- **원인 가설 2개**: ① 저수준 `navigation.setPivotPoint` 만으로는 orbit 이 그 점을 안 따르고
+  초록 인디케이터도 안 뜬다. ACC 는 **`viewer.utilities.setPivotPoint`**(내부 ViewingUtilities)를
+  쓴다 — 이게 초록 구를 그리고 orbit 이 실제로 그 점을 피벗으로 삼는 경로.
+  ② 리스너를 **캡처 단계**로 걸어 뷰어 자체 mousedown 핸들러가 우리 피벗을 타깃으로 되돌림.
+- **수정**: pointerdown(capture) 리스너 제거 → **mousedown(버블) 리스너**로 교체(뷰어 내부 핸들러
+  *다음에* 실행되어 덮어쓰기 경쟁에서 이김). 히트 지점을 `viewer.utilities.setPivotPoint(p,true,true)`
+  + `pivotActive(true,false)` + `setPivotSetFlag(true)` 로 지정(초록 구 표시 + 피벗 적용).
+  유틸 미지원 버전은 `navigation.setPivotPoint` 폴백. 빈 공간은 직전 피벗 유지.
+- **여전히 미검증(원격)**: 실 ACC 모델에서 ① 초록 피벗 구가 마우스 위치에 뜨는지 ② 그 점 중심 회전인지.
+  안 되면 다음 후보: 활성 네비툴 차이(`setActiveNavigationTool('orbit')`) / `clientToWorld` 사용 /
+  대형 reality-mesh 모델에서 hitTest 반환값 점검.
+
 ### 인수인계 한 줄
-회전 피벗을 커서 기준으로(1차 옵션 + 2차 pointerdown hitTest→setPivotPoint) `AccModels` 한 경로에 적용,
-typecheck·build 통과. 다음 세션은 실 ACC 모델 라이브 체감 검증부터.
+회전 피벗 2차 보강: `viewer.utilities.setPivotPoint`(+초록 구 인디케이터) + mousedown 버블 리스너로 전환.
+typecheck·build 통과. 다음 세션은 실 ACC 모델에서 초록 구·중심회전 여부 라이브 확인부터.
 
 ---
 ## 📋 S52 — 통합모델(3D) APS 전환 · 메뉴 정리 · 홈뷰/관측점 이식 (2026-06-29)

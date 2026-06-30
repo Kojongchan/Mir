@@ -762,33 +762,48 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
         } catch {
           /* 일부 버전 미지원 무시 */
         }
-        // (2차) orbit 시작 시점(pointerdown)에 커서 바로 아래 표면을 읽어 피벗으로 지정한다.
-        // setUsePivotAlways/setClickToSetCOI 만으로 중심 회전이 남는 경우의 확실한 보강.
-        // 읽기 전용 히트테스트만 하고 preventDefault 하지 않으므로 선택/측정/이슈핀 등
-        // 기존 상호작용과 충돌하지 않는다. 빈 공간을 잡으면 직전 피벗을 그대로 유지.
+        // (2차) orbit 시작 시점에 커서 바로 아래 표면을 읽어 피벗으로 지정한다(ACC 동일).
+        // 핵심 2가지:
+        //  ① 저수준 navigation.setPivotPoint 가 아니라 viewer.utilities.setPivotPoint 를 쓴다.
+        //     이게 ACC 가 쓰는 내부 경로 — 회전이 그 점을 실제로 따르고, 마우스 위치에 나타나는
+        //     "초록 피벗 구(green pivot indicator)" 까지 함께 그려준다(사용자가 본 그 점).
+        //  ② 캡처가 아니라 버블 단계 + (pointerdown 보다 늦게 오는) mousedown 에도 건다.
+        //     뷰어 자체 mousedown 핸들러가 피벗을 타깃으로 되돌린 "직후" 우리가 다시 찍어야
+        //     덮어쓰기 경쟁에서 이긴다(캡처 단계면 뷰어가 우리 값을 지움 → 중심 회전 잔존).
+        // 읽기 전용 히트테스트만 하고 preventDefault 안 함 → 선택/측정/이슈핀 회귀 없음.
+        // 빈 공간을 잡으면 아무것도 안 해 직전 피벗을 그대로 유지.
         try {
           const canvas = viewer.impl?.canvas as HTMLCanvasElement | undefined;
           if (canvas) {
-            const onPointerDown = (ev: PointerEvent) => {
-              // 좌클릭(주 버튼)으로 시작하는 orbit 만 대상(휠/우클릭 팬·메뉴 제외).
-              if (ev.button !== 0) return;
+            const setPivotUnderCursor = (clientX: number, clientY: number) => {
               try {
                 const r = canvas.getBoundingClientRect();
-                const x = ev.clientX - r.left;
-                const y = ev.clientY - r.top;
+                const x = clientX - r.left;
+                const y = clientY - r.top;
                 const hit = viewer.impl.hitTest(x, y, false);
-                if (hit && hit.intersectPoint) {
-                  viewer.navigation.setPivotPoint(hit.intersectPoint);
-                  // 피벗 인디케이터 노출(지원 버전에서만).
-                  viewer.navigation.setPivotSetFlag?.(true);
+                const p = hit?.intersectPoint;
+                if (!p) return; // 빈 공간 → 마지막 피벗 유지
+                const util = viewer.utilities;
+                if (util?.setPivotPoint) {
+                  // (point, triggerHideTimer, preserveView) — preserveView=true 면 카메라
+                  // 이동 없이 피벗만 옮긴다. 초록 구 인디케이터 표시.
+                  util.setPivotPoint(p, true, true);
+                  util.pivotActive?.(true, false);
+                } else {
+                  viewer.navigation.setPivotPoint(p);
                 }
-                // 히트 실패(빈 공간)면 아무것도 하지 않아 마지막 피벗을 유지한다.
+                viewer.navigation.setPivotSetFlag?.(true);
               } catch {
-                /* 히트테스트 미지원/실패 무시 */
+                /* 히트테스트/유틸 미지원·실패 무시 */
               }
             };
-            canvas.addEventListener('pointerdown', onPointerDown, true);
-            pivotCleanupRef.current = () => canvas.removeEventListener('pointerdown', onPointerDown, true);
+            const onMouseDown = (ev: MouseEvent) => {
+              if (ev.button !== 0) return; // 좌클릭(orbit)만 — 휠/우클릭 팬·메뉴 제외
+              setPivotUnderCursor(ev.clientX, ev.clientY);
+            };
+            // 버블 단계(true 아님)로 등록 → 뷰어 내부 핸들러 다음에 실행되어 우리 피벗이 살아남음.
+            canvas.addEventListener('mousedown', onMouseDown, false);
+            pivotCleanupRef.current = () => canvas.removeEventListener('mousedown', onMouseDown, false);
           }
         } catch {
           /* 캔버스 접근 불가 무시 */
