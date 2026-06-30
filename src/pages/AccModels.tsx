@@ -1327,8 +1327,9 @@ export function AccModels({ autoClash = false, mode4d = false, modeQto = false }
           viewer={viewerRef.current}
           model={modelRef.current}
           elements={apsElements}
+          mapping={mapping}
           projectId={projectId}
-          isAdmin={isAdmin}
+          canEdit={canEdit}
         />
       )}
       {mode4d && ruleEditorOpen && (

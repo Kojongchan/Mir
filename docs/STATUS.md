@@ -3,6 +3,49 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 S54 — 5D 원가·기성 초안(MVP): 물량→단가→금액→4D 기성 (2026-06-30)
+> branch `claude/5d-cost-progress-mvp-4j9cdp`. typecheck·build 통과. **초안(MVP)** —
+> 여기까지 보고 다음 스텝(정식 단가체계·토공 물량법)을 논의. 라이브 미검증(원격 환경).
+> 선결: 별도 브랜치 `claude/qto-aps-migration-lsyewk`(S51 QTO·ApsQuantitiesPanel)를
+> 이 브랜치에 ff 병합한 위에서 진행(merge-base = 현재 브랜치 HEAD라 충돌 0).
+
+### ✅ 한 일
+1. **마이그레이션 `0032_cost_rates.sql`(추가형)**: 공종별 산출기준·단가·수동물량.
+   `cost_rates(project_id, category, qty_basis, unit_price, manual_qty, note, updated_by,
+   updated_at)`, PK(project_id, category), qty_basis check(length/area/volume/weight/count).
+   RLS 읽기=`is_member`, 쓰기=`is_editor`(0023 RBAC). 금액·기성은 **저장 안 함**(런타임 계산).
+   setup_all.sql 에 0031·0032 보강(0031 누락분 포함).
+2. **`lib/cost.ts`(신규)**: 단가 데이터층. 산출기준 자동추정(`defaultQtyBasis` — 말뚝=길이·
+   기초/기둥=체적·거푸집=면적·창호=개수 …), 산출기준별 모델/객체 물량 선택, 수동물량 우선
+   `effectiveQty`, 공종 금액, **객체별 금액 분배**(`distributeAmount` — 모델 물량 비율 가중,
+   없으면 균등), `loadCostRates`/`saveCostRates`(upsert).
+3. **`lib/earnedValue.ts`(신규)**: 4D 기성(EV) 순수계산. `EvItem{amount,계획/실적 start·end}`,
+   진행률=**선형 보간**(미착수 0·진행중 경과비율·완료 100, 주석 명시), 기준일 계획/실적 누계·
+   잔여(`summarizeAt`), 공종별 기성행(`summarizeByCategory`), 월/주 버킷 **비용 S-curve**(`buildSCurve`).
+4. **`ApsQuantitiesPanel` 확장(화면 2개)**: 탭 `[적산] / [원가·기성(5D)]`. `mapping`(ApsMapping)·
+   `canEdit` prop 추가(편집/저장 = 실무자 이상, RLS 일치).
+   - **적산**: 공종행에 산출기준 드롭다운 · 모델물량 · 적용물량(수동입력=모델값 덮어씀·출처 뱃지) ·
+     단가 · 금액 · 총 도급금액 합계. 💾 단가 저장(cost_rates), 원가 CSV.
+   - **원가·기성(5D)**: 기준일(기본 오늘)+카드3개(계획/실적 누계·잔여) · 계획 vs 실적 S-curve
+     (MiniChart) · 공종별 기성표(도급액/계획/실적/진행률/잔여) · (선택)기성내역(0011)으로 보내기.
+   - 4D 결합: `localSchedule`(공정표 tasks+작업→GlobalId) ⨝ 객체 GlobalId(apsMapping)로 객체별
+     금액×일정 → EvItem. 토공처럼 모델물량 0인 공종도 수동물량으로 금액·기성 포함.
+5. **`AccModels`**: QTO 패널에 `mapping`·`canEdit` 전달.
+
+### 🔜 다음 할 일 / 미해결
+- **라이브 검증(미검증)**: ① acc_default 위 QTO 산출→단가입력→저장/재로드 ② 기준일 변경 시
+  S-curve·카드 갱신 ③ 토공 수동물량 반영 ④ 기성내역 전송.
+- **GlobalId 공간 공유 전제**: 4D 결합은 통합모델(acc_default)과 4D 모델(acc_4d)이 **같은 GlobalId**
+  를 쓸 때만 조인됨(보통 같은 통합 NWD). 다르면 기성 0·"미연결 금액"으로 표기됨 → 다음 스텝에서
+  단일 소스(또는 모델간 GlobalId 매핑) 정리.
+- **단가 분해 없음(복합단가 1개)**: 일위대가(재료/노무/장비)·표준품셈·노임단가표는 범위 밖.
+- 진행률은 선형 단순화(부분 타설 등 정밀 모델 범위 밖). 실적 종료 없으면 계획종료를 추정종료로.
+
+### 인수인계 한 줄
+→ 5D 원가·기성 초안(0032 + cost.ts/earnedValue.ts + QTO 패널 2탭) 완료·푸시. 다음 세션은
+**라이브로 물량→단가→금액→기준일 기성/S-curve 눈검증** 후 정식 단가체계/토공 물량법 논의.
+
+---
 ## 📋 B3(부분) — ACC 파일관리자 폴더트리 폭 리사이즈 스플리터 (2026-06-30)
 > branch `claude/folder-tree-resizable-splitter-qidetn` (PR #102). typecheck·build 통과. 마이그레이션 없음.
 > S51(QTO) 브랜치에 함께 가져옴 — 자료관리 ACC 폴더트리 드래그 핸들 누락 보완.

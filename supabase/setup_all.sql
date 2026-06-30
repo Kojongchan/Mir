@@ -1456,3 +1456,40 @@ alter table public.projects
   add column if not exists acc_4d_name text;
 
 notify pgrst, 'reload schema';
+
+-- ===================== 0031_acc_clash_default.sql =====================
+alter table public.projects
+  add column if not exists acc_clash_urn text;
+alter table public.projects
+  add column if not exists acc_clash_name text;
+
+notify pgrst, 'reload schema';
+
+-- ===================== 0032_cost_rates.sql =====================
+create table if not exists public.cost_rates (
+  project_id uuid not null references public.projects on delete cascade,
+  category text not null,
+  qty_basis text not null default 'volume'
+    check (qty_basis in ('length', 'area', 'volume', 'weight', 'count')),
+  unit_price numeric(16,2) not null default 0,
+  manual_qty numeric(20,4),
+  note text,
+  updated_by uuid references auth.users on delete set null,
+  updated_at timestamptz not null default now(),
+  primary key (project_id, category)
+);
+alter table public.cost_rates enable row level security;
+drop policy if exists cost_rates_select on public.cost_rates;
+create policy cost_rates_select on public.cost_rates
+  for select using (public.is_admin() or public.is_member(project_id));
+drop policy if exists cost_rates_insert on public.cost_rates;
+create policy cost_rates_insert on public.cost_rates
+  for insert with check (public.is_editor(project_id));
+drop policy if exists cost_rates_update on public.cost_rates;
+create policy cost_rates_update on public.cost_rates
+  for update using (public.is_editor(project_id)) with check (public.is_editor(project_id));
+drop policy if exists cost_rates_delete on public.cost_rates;
+create policy cost_rates_delete on public.cost_rates
+  for delete using (public.is_editor(project_id));
+
+notify pgrst, 'reload schema';

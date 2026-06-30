@@ -3038,6 +3038,129 @@ button.danger:hover:not(:disabled) {
   border-top: 1px solid var(--border);
 }
 
+/* ---- 5D 적산·기성 패널(S54) ---- */
+.aps-cost-tabs {
+  display: inline-flex;
+  gap: 4px;
+}
+.aps-cost-tabs button {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--muted);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.aps-cost-tabs button.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+}
+.aps-qto-bar input[type='date'],
+.aps-qto-bar input[type='number'] {
+  font-size: 12px;
+  padding: 2px 6px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.qto-table .qto-cat {
+  cursor: pointer;
+}
+.aps-cost-basis {
+  font-size: 12px;
+  padding: 2px 4px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.aps-cost-input {
+  width: 96px;
+  font-size: 12px;
+  text-align: right;
+  padding: 2px 6px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.aps-cost-input:disabled,
+.aps-cost-basis:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.aps-src-badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--chip-neutral-bg);
+  color: var(--chip-neutral-fg);
+}
+.aps-src-badge.src-manual {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.aps-src-badge.src-model {
+  background: var(--chip-construct-bg);
+  color: var(--chip-construct-fg);
+}
+.aps-cost-progress {
+  padding: 12px;
+}
+.aps-cost-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.aps-cost-card {
+  flex: 1;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+.aps-cost-card .lbl {
+  font-size: 12px;
+  color: var(--muted);
+}
+.aps-cost-card .val {
+  font-size: 20px;
+  font-weight: 700;
+}
+.aps-cost-card .sub {
+  font-size: 11px;
+}
+.aps-cost-chart {
+  margin-bottom: 12px;
+}
+.aps-cost-legend {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.aps-cost-legend i {
+  display: inline-block;
+  width: 12px;
+  height: 3px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
 /* 자료관리 안에서 IFC 인라인 뷰어 */
 .inline-viewer {
   position: relative;
