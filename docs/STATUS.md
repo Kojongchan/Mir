@@ -31,8 +31,16 @@
    - 4D 결합: `localSchedule`(공정표 tasks+작업→GlobalId) ⨝ 객체 GlobalId(apsMapping)로 객체별
      금액×일정 → EvItem. 토공처럼 모델물량 0인 공종도 수동물량으로 금액·기성 포함.
 5. **`AccModels`**: QTO 패널에 `mapping`·`canEdit` 전달.
+6. **QTO 속성 추출 견고화(라이브 피드백 — 전부 "미산출")**: 고정 영문 이름+정확매칭+
+   propFilter 만 쓰던 `apsQuantities.ts` 를 **속성명 자동 발견 + 한글/영문·단위 기반 분류 +
+   문자열 값/단위 파싱**으로 교체. 통합 NWD 속 한글 Revit(체적/면적/길이/둘레, "12.5 ㎥" 문자열)
+   을 인식. ㎥/㎡/㎜·미터 등 전각·한글 단위까지 m³/m²/m 정규화(`linearMeterScale` 확장).
+   `computeApsQuantities` 가 `{raw, diag}` 반환. **🔍 속성 진단** 버튼 추가 — 이 모델이 실제
+   노출하는 수치형 속성명·예시값·단위를 표로 보여줘 "미산출" 원인을 즉시 확인.
 
 ### 🔜 다음 할 일 / 미해결
+- **라이브 재검증(QTO 속성)**: 위 견고화로 Revit 객체 수량이 잡히는지 + "속성 진단"으로
+  이 NWD 의 실제 속성명 확인. 안 잡히면 진단 표의 속성명을 알려주면 매칭 규칙 보강.
 - **라이브 검증(미검증)**: ① acc_default 위 QTO 산출→단가입력→저장/재로드 ② 기준일 변경 시
   S-curve·카드 갱신 ③ 토공 수동물량 반영 ④ 기성내역 전송.
 - **GlobalId 공간 공유 전제**: 4D 결합은 통합모델(acc_default)과 4D 모델(acc_4d)이 **같은 GlobalId**

@@ -3160,6 +3160,16 @@ button.danger:hover:not(:disabled) {
   margin-right: 4px;
   vertical-align: middle;
 }
+.aps-diag-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+}
 
 /* 자료관리 안에서 IFC 인라인 뷰어 */
 .inline-viewer {

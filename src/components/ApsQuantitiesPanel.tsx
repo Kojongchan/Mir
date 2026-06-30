@@ -6,8 +6,10 @@ import { groupByCategory, type ApsElement } from '../lib/apsElements';
 import type { ApsMapping } from '../lib/apsMapping';
 import {
   computeApsQuantities,
+  discoverQtyProps,
   normalizeApsQuantities,
   type ApsRawQty,
+  type QtyDiagnostics,
 } from '../lib/apsQuantities';
 import {
   downloadCsv,
@@ -78,6 +80,10 @@ export function ApsQuantitiesPanel({
   const [raw, setRaw] = useState<ApsRawQty[] | null>(null);
   const [status, setStatus] = useState('');
   const [collapsed, setCollapsed] = useState(false);
+  // 속성 진단 — 이 모델이 실제로 노출하는 수량 속성명을 확인(미산출 원인 추적).
+  const [diag, setDiag] = useState<QtyDiagnostics | null>(null);
+  const [showDiag, setShowDiag] = useState(false);
+  const [diagRunning, setDiagRunning] = useState(false);
 
   // 공종별 단가/산출기준/수동물량(cost_rates). 편집은 Map 으로 즉시 반영.
   const [rates, setRates] = useState<Map<string, CostRate>>(new Map());
@@ -232,13 +238,39 @@ export function ApsQuantitiesPanel({
     setRunning(true);
     setProgress(0);
     try {
-      const r = await computeApsQuantities(model, elements, setProgress);
+      const { raw: r, diag: d } = await computeApsQuantities(model, elements, setProgress);
       setRaw(r);
-      setStatus(`물량 산출 완료: 요소 ${r.length.toLocaleString('ko-KR')}개 (속성 DB 기준)`);
+      setDiag(d);
+      const recog = d.volumeNames.length + d.areaNames.length + d.lengthNames.length;
+      const head = (arr: string[]) => (arr.length ? arr.slice(0, 2).join('·') : '—');
+      setStatus(
+        recog > 0
+          ? `완료 — 인식 수량속성: 체적[${head(d.volumeNames)}] 면적[${head(d.areaNames)}] 길이[${head(d.lengthNames)}]`
+          : `수량 속성을 인식하지 못했습니다(요소 ${r.length.toLocaleString('ko-KR')}개). "속성 진단"으로 이 모델의 속성명을 확인하세요.`,
+      );
     } catch (e) {
       setStatus(`산출 실패: ${errMessage(e)}`);
     } finally {
       setRunning(false);
+    }
+  };
+
+  // 속성 진단 — 물량 산출 없이도 샘플 요소의 수량 속성명을 발견해 보여준다.
+  const runDiag = async () => {
+    if (!model || elements.length === 0) {
+      setStatus('모델 요소가 아직 준비되지 않았습니다.');
+      return;
+    }
+    setDiagRunning(true);
+    try {
+      const d = await discoverQtyProps(model, elements);
+      setDiag(d);
+      setShowDiag(true);
+      setStatus(`속성 진단: 수치형 속성 ${d.samples.length}종 발견(샘플 ${d.sampled}개 요소).`);
+    } catch (e) {
+      setStatus(`진단 실패: ${errMessage(e)}`);
+    } finally {
+      setDiagRunning(false);
     }
   };
 
@@ -364,6 +396,9 @@ export function ApsQuantitiesPanel({
             <button onClick={onCostCsv} title="공종·물량·단가·금액 CSV">
               CSV
             </button>
+            <button onClick={() => void runDiag()} disabled={diagRunning} title="이 모델이 노출하는 수량 속성명을 확인(미산출 원인 추적)">
+              {diagRunning ? '진단 중…' : '🔍 속성 진단'}
+            </button>
           </>
         )}
 
@@ -404,7 +439,52 @@ export function ApsQuantitiesPanel({
         </div>
       )}
 
-      {!collapsed && tab === 'estimate' && (
+      {!collapsed && tab === 'estimate' && showDiag && (
+        <div className="aps-qto-table-wrap">
+          <div className="aps-diag-head">
+            <strong>🔍 속성 진단 — 이 모델의 수치형 속성 {diag?.samples.length ?? 0}종</strong>
+            {diag && (
+              <span className="muted">
+                인식: 체적[{diag.volumeNames.join(', ') || '—'}] · 면적[{diag.areaNames.join(', ') || '—'}] · 길이[
+                {diag.lengthNames.join(', ') || '—'}]
+              </span>
+            )}
+            <span style={{ flex: 1 }} />
+            <button onClick={() => setShowDiag(false)}>✕ 닫기</button>
+          </div>
+          {!diag || diag.samples.length === 0 ? (
+            <p className="muted qto-empty">
+              샘플 요소에서 수치형 속성을 찾지 못했습니다. 이 NWD 객체들이 속성 DB에 수량을 안 담고 있을 수 있습니다
+              (DWG 유래 토공/솔리드). 구조물(Revit) 객체가 포함된 영역에서 다시 시도해 보세요.
+            </p>
+          ) : (
+            <table className="cde-table qto-table">
+              <thead>
+                <tr>
+                  <th>속성명</th>
+                  <th>인식 축</th>
+                  <th className="right">예시 값</th>
+                  <th>단위</th>
+                  <th className="right">샘플 수</th>
+                </tr>
+              </thead>
+              <tbody>
+                {diag.samples.map((s) => (
+                  <tr key={s.name}>
+                    <td>{s.name}</td>
+                    <td>{s.axis === 'volume' ? '체적' : s.axis === 'area' ? '면적' : s.axis === 'length' ? '길이' : '—'}</td>
+                    <td className="right">{s.value}</td>
+                    <td>{s.units || '—'}</td>
+                    <td className="right">{s.count}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {!collapsed && tab === 'estimate' && !showDiag && (
         <div className="aps-qto-table-wrap">
           {cats.length === 0 ? (
             <p className="muted qto-empty">모델 요소가 아직 준비되지 않았습니다.</p>
