@@ -23,8 +23,20 @@
 - **Lighthouse**(Perf≥90/A11y≥95): 실 배포 프리뷰 측정. axe 0 은 확인 완료.
 - 뷰어 툴바는 이미 토큰 기반(라이트/다크 적응) — 디자인 톤 큰 문제 없음(이모지→커스텀 아이콘 교체는 선택).
 
+### ✅ 안전 슬라이스 추가(Q2·Q3 — 코드/빌드로 검증 가능한 것만, 사용자 결정 "안전한 것만 지금")
+- **Q3 도면 'Invalid Date' 수정**(`lib/dashboard.formatDate`): `created_at` 같은 전체 타임스탬프에
+  `T00:00:00` 을 덧붙여 Invalid Date 가 되던 버그 → date-only 만 로컬 자정 파싱, 타임스탬프는 그대로,
+  실패 시 '미정'. 단위 검증(타임스탬프/date-only/쓰레기 입력) 통과.
+- **Q2 게이팅 감사 → 사업개요 정정**: RLS(0023) `project_info/project_milestones/monthly_records` 쓰기는
+  `is_editor`(실무자+) 허용인데 Dashboard 편집 버튼만 `is_admin`(시스템관리자) 한정 → 실무자·프로젝트관리자
+  편집 불가 회귀(B1). `useProjectRole().canEdit` 로 정정(RLS 일치). 다른 페이지는 이미 canEdit, AccModels 의
+  `isAdmin` 은 모델 고정·홈뷰 등 관리 설정(정당), Quantities 기성제안은 S51 의도적 admin — 변경 안 함.
+- **잔여 라이트 전환(문서뷰어 바·Admin 상단바 네이비→라이트)**: 이 샌드박스에서 시각 검증 불가 + STATUS 상
+  의도적 보류 항목이라 **미적용**(후속). 뷰어 툴바는 이미 토큰 기반이라 큰 문제 없음.
+
 ### 인수인계 한 줄
-Q1 코드 스플리팅 완료(초기 번들 5MB→93kB, 지연 라우트 스모크 OK). 남은 U3-V2/V3·F/Q 는 실 인증·ACC 환경 검증 필요.
+Q1 코드 스플리팅(5MB→93kB) + Q2 사업개요 게이팅 정정 + Q3 도면 날짜 버그 완료(PR #107). 남은 U3-V2/V3·
+F1·F2·Lighthouse·잔여 라이트 전환은 실 인증·ACC 환경 검증 필요.
 
 ---
 ## 📋 U4 — 디자인 시스템 Phase 4 마감: 다크·반응형·모션·a11y (2026-07-02)
