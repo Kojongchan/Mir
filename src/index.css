@@ -199,6 +199,13 @@
   --color-paper: #ffffff; /* PDF 렌더 지면 — 다크에서도 흰 종이 */
   --backdrop: rgba(15, 23, 42, 0.5);
 
+  /* 차트(dataviz) — 계획/실적 2계열 팔레트(검증 통과: 라이트/다크 CVD·대비 OK).
+     chart-1=실적(brand, 테마적응), chart-2=계획(teal, 고정). 축/그리드는 ink 토큰. */
+  --chart-1: var(--color-brand-primary);
+  --chart-2: #0d9488;
+  --chart-grid: var(--color-border-subtle);
+  --chart-axis: var(--color-text-tertiary);
+
   /* 디테일 */
   --hairline: rgba(15, 23, 42, 0.06);
   --row-hover: rgba(15, 23, 42, 0.04);
@@ -5455,4 +5462,233 @@ textarea.input {
 }
 .toast--error {
   border-left-color: var(--color-error);
+}
+
+/* =====================================================================
+   U2 — 사업개요 Bento 대시보드 + KPI 카드 + 차트 (DESIGN_SYSTEM §2·§3)
+   ===================================================================== */
+.bento-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: var(--space-4);
+  grid-auto-rows: minmax(140px, auto);
+  margin-bottom: var(--space-4);
+}
+.bento-hero {
+  grid-column: span 6;
+  grid-row: span 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-2);
+  background: linear-gradient(135deg, var(--color-brand-primary), var(--color-brand-secondary));
+  color: var(--color-text-on-brand);
+  border: none;
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+}
+.bento-small {
+  grid-column: span 2;
+}
+.bento-medium {
+  grid-column: span 3;
+}
+.bento-wide {
+  grid-column: span 12;
+}
+/* 차트 카드 — 가독 위해 반폭(span6) × 2행 높이 */
+.bento-chart {
+  grid-column: span 6;
+  grid-row: span 2;
+  display: flex;
+  flex-direction: column;
+}
+@media (max-width: 1024px) {
+  .bento-grid {
+    grid-template-columns: repeat(6, 1fr);
+  }
+  .bento-hero {
+    grid-column: span 6;
+  }
+  .bento-medium,
+  .bento-small {
+    grid-column: span 3;
+  }
+  .bento-chart {
+    grid-column: span 6;
+  }
+}
+@media (max-width: 640px) {
+  .bento-grid {
+    grid-template-columns: 1fr;
+  }
+  .bento-hero,
+  .bento-medium,
+  .bento-small,
+  .bento-wide,
+  .bento-chart {
+    grid-column: span 1;
+    grid-row: auto;
+  }
+}
+
+/* ---- KPI Card (DESIGN_SYSTEM §3 / PDF §4.4) ---- */
+.kpi-card {
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-xs);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.kpi-card.dash-link-card {
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition: transform var(--duration-fast) var(--ease-decelerate),
+    box-shadow var(--duration-base) var(--ease-standard),
+    border-color var(--duration-fast) var(--ease-standard);
+}
+.kpi-card.dash-link-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--color-border-strong);
+}
+.kpi__label {
+  font-size: var(--text-small);
+  color: var(--color-text-secondary);
+}
+.bento-hero .kpi__label {
+  color: rgba(255, 255, 255, 0.85);
+}
+.kpi__value {
+  font-size: var(--text-h2);
+  font-weight: var(--fw-bold);
+  color: var(--color-text-primary);
+  letter-spacing: var(--tracking-tight);
+  line-height: 1.1;
+}
+.bento-hero .kpi__value {
+  font-size: var(--text-display);
+  color: var(--color-text-on-brand);
+}
+.kpi__value .unit {
+  font-size: var(--text-body);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-tertiary);
+  margin-left: var(--space-1);
+}
+.bento-hero .kpi__value .unit {
+  color: rgba(255, 255, 255, 0.85);
+}
+.kpi__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-caption);
+  color: var(--color-text-tertiary);
+  margin-top: var(--space-1);
+}
+.bento-hero .kpi__meta {
+  color: rgba(255, 255, 255, 0.85);
+}
+.trend--up {
+  color: var(--color-success);
+  font-weight: var(--fw-semibold);
+}
+.trend--down {
+  color: var(--color-error);
+  font-weight: var(--fw-semibold);
+}
+/* 컬러 시맨틱 (D-day 임박도) */
+.kpi--danger .kpi__value {
+  color: var(--color-error);
+}
+.kpi--warning .kpi__value {
+  color: var(--color-warning);
+}
+.kpi--success .kpi__value {
+  color: var(--color-success);
+}
+
+/* ---- Progress Bar (native <progress>, PDF §4.10) ---- */
+.progress-bar {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 8px;
+  border: none;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.28);
+}
+.progress-bar::-webkit-progress-bar {
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: var(--radius-pill);
+}
+.progress-bar::-webkit-progress-value {
+  background: var(--color-text-on-brand);
+  border-radius: var(--radius-pill);
+  transition: width var(--duration-slow) var(--ease-decelerate);
+}
+.progress-bar::-moz-progress-bar {
+  background: var(--color-text-on-brand);
+  border-radius: var(--radius-pill);
+}
+
+/* ---- 차트 카드 본문 ---- */
+.dash-chart {
+  flex: 1;
+  min-height: 180px;
+  margin-top: var(--space-2);
+}
+.dash-chart-legend {
+  display: flex;
+  gap: var(--space-4);
+  font-size: var(--text-caption);
+  color: var(--color-text-secondary);
+  margin-top: var(--space-2);
+}
+.dash-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.dash-chart-legend i {
+  width: 14px;
+  height: 0;
+  border-top-width: 2px;
+  border-top-style: solid;
+}
+/* 마일스톤 칩(wide 카드) */
+.ms-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.ms-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 120px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle);
+}
+.ms-chip__d {
+  font-size: var(--text-h4);
+  font-weight: var(--fw-bold);
+  font-variant-numeric: tabular-nums;
+}
+.ms-chip__name {
+  font-size: var(--text-small);
+  color: var(--color-text-primary);
+}
+.ms-chip__date {
+  font-size: var(--text-caption);
+  color: var(--color-text-tertiary);
 }

@@ -3,6 +3,34 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 U2 — 디자인 시스템 Phase 3: 사업개요 Bento 대시보드 + Recharts (2026-07-02)
+> branch `claude/design-system-phase-1-lgw4oz`. typecheck·build 통과, /styleguide Bento 미리보기 라이트/다크 확인.
+> 기준: DESIGN_SYSTEM §2(Bento)·§3(KPI Card) + dataviz 스킬 원칙.
+
+### ✅ 한 일
+1. **Bento Grid 재배치**: `Dashboard.tsx` 를 6×1 균등그리드 → `.bento-grid`(12칸)로. hero(진행률, span6/row2,
+   그라데이션) + small×6(준공 D-day/착공 후/미해결 이슈/투입 인력/장비/통합모델, span2) + chart×2(span6/row2) +
+   wide(마일스톤 칩, span12). 반응형 ≤1024 6칸·≤640 1칸.
+2. **KPI 카드 + 컬러 시맨틱**: `.kpi-card`(__label/__value.tabular/__meta) + `.kpi--danger/warning/success`.
+   준공 D-day 임박도(`ddayKpiClass`: D-30↓ 위험/D-180↓ 주의/그 외 안전)로 색 자동. hero 는 `<progress
+   class="progress-bar">`(PDF §4.10). 전 수치 `.tabular`.
+3. **Recharts 도입**: `recharts` 설치. 인력 추이=AreaChart(단일 계열, 범례 없음, 그라데이션 fill),
+   기성 계획vs실적=LineChart(2계열, **one-axis**). **dataviz 원칙 준수**: 축/그리드=ink 토큰(`--chart-axis/grid`),
+   시리즈 색은 **검증 통과 팔레트**(`--chart-1`=brand 실적 solid, `--chart-2`=teal #0D9488 계획 dashed —
+   `validate_palette.js` 라이트/다크 ALL PASS) + **색+선유형 이중 인코딩** + 커스텀 HTML 범례. 툴팁 토큰색.
+   빈 데이터는 `.empty-state`.
+4. **정리**: 옛 `MiniChart` 사용 제거(대시보드), 옛 `.dash-progress/.dash-grid/.dash-stat/MilestoneCard` 경로 삭제.
+   /styleguide 에 Bento 대시보드 미리보기 섹션 추가(샘플 데이터, 라이트/다크 both).
+
+### 🔜 다음 할 일 / 미해결
+- 축 라벨 클리핑 회피 위해 기성 Y축 `unit="%"` 제거(제목이 % 명시). 실 데이터에서 축 눈금 범위 확인 권장.
+- U3(3D 뷰어 UI·V2/V3)는 이번 묶음에 없음 → 후속. U4(다크 마감·모바일 하단탭·모션·a11y)로 진행.
+- 번들 5MB 경고(recharts 포함 더 커짐) → Q1 코드 스플리팅 후속 과제.
+
+### 인수인계 한 줄
+U2 완료(Bento 대시보드·KPI 컬러시맨틱·Recharts 2차트, dataviz 팔레트 검증). /styleguide 미리보기 OK. U4로.
+
+---
 ## 📋 U-Shell — 디자인 시스템 Phase 2: 셸 라이트 전환 + 커스텀 12 아이콘 (2026-07-02)
 > branch `claude/design-system-phase-1-lgw4oz`(U1 병합된 main 위 재분기). typecheck·build 통과,
 > /styleguide 셸 미리보기로 라이트/다크·확장/collapse 확인. 기준: DESIGN_SYSTEM §2·§3·§4 + PDF §5.2.

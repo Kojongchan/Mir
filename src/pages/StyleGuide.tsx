@@ -1,8 +1,34 @@
 import { useState } from 'react';
 import { EmptyState } from '../components/EmptyState';
 import { ThemeToggle } from '../components/ThemeToggle';
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { Icon, type IconName } from '../components/icons/Icon';
 import { UiIcon } from '../components/icons/UiIcon';
+
+const MANPOWER = [
+  { d: '05-01', 인력: 42 },
+  { d: '05-08', 인력: 58 },
+  { d: '05-15', 인력: 51 },
+  { d: '05-22', 인력: 73 },
+  { d: '05-29', 인력: 88 },
+];
+const BILLING = [
+  { ym: '2026-02', 계획: 12, 실적: 10 },
+  { ym: '2026-03', 계획: 28, 실적: 24 },
+  { ym: '2026-04', 계획: 45, 실적: 47 },
+  { ym: '2026-05', 계획: 62, 실적: 58 },
+];
+const TIP = { background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border-default)', borderRadius: '8px', fontSize: '12px', boxShadow: 'var(--shadow-md)' };
 
 const DOMAIN_ICONS: { name: IconName; label: string }[] = [
   { name: 'dashboard', label: '사업개요' },
@@ -125,6 +151,87 @@ export function StyleGuide() {
               <div style={{ flex: 1, background: 'var(--color-bg-page)' }} />
             </div>
           </div>
+        </Section>
+
+        <Section title="Bento 대시보드 — hero KPI + 컬러 시맨틱 + 차트(Recharts)">
+          <section className="bento-grid">
+            <article className="bento-hero">
+              <div className="kpi__label">전체 진행률</div>
+              <div className="kpi__value tabular">67<span className="unit">%</span></div>
+              <progress className="progress-bar" value={67} max={100} />
+              <div className="kpi__meta">밀양강 교량 상·하부공 병행 시공 중</div>
+            </article>
+            <article className="bento-small kpi-card kpi--danger">
+              <div className="kpi__label">준공까지</div>
+              <div className="kpi__value tabular">D-28</div>
+              <div className="kpi__meta">2026-07-30</div>
+            </article>
+            <article className="bento-small kpi-card kpi--warning">
+              <div className="kpi__label">중간검사</div>
+              <div className="kpi__value tabular">D-96</div>
+              <div className="kpi__meta">2026-10-06</div>
+            </article>
+            <article className="bento-small kpi-card kpi--success">
+              <div className="kpi__label">착공 후</div>
+              <div className="kpi__value tabular">D+862</div>
+              <div className="kpi__meta">2024-02-20</div>
+            </article>
+            <article className="bento-small kpi-card">
+              <div className="kpi__label">투입 인력</div>
+              <div className="kpi__value tabular">88<span className="unit">명</span></div>
+              <div className="kpi__meta">2026-05-29</div>
+            </article>
+            <article className="bento-small kpi-card">
+              <div className="kpi__label">장비 현황</div>
+              <div className="kpi__value tabular">14<span className="unit">대</span></div>
+              <div className="kpi__meta">2026-05-29</div>
+            </article>
+            <article className="bento-small kpi-card">
+              <div className="kpi__label">미해결 이슈</div>
+              <div className="kpi__value tabular">7<span className="unit">건</span></div>
+              <div className="kpi__meta">협업 · 이슈 →</div>
+            </article>
+
+            <article className="bento-chart card">
+              <h3>공사일지 현황 <span className="muted">(투입 인력 추이)</span></h3>
+              <div className="dash-chart">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={MANPOWER} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+                    <defs>
+                      <linearGradient id="sg-grad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.25} />
+                        <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0.02} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+                    <XAxis dataKey="d" tick={{ fill: 'var(--chart-axis)', fontSize: 11 }} stroke="var(--chart-grid)" />
+                    <YAxis tick={{ fill: 'var(--chart-axis)', fontSize: 11 }} stroke="var(--chart-grid)" width={40} />
+                    <Tooltip contentStyle={TIP} labelStyle={{ color: 'var(--color-text-secondary)' }} itemStyle={{ color: 'var(--color-text-primary)' }} />
+                    <Area type="monotone" dataKey="인력" stroke="var(--chart-1)" strokeWidth={2} fill="url(#sg-grad)" dot={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </article>
+            <article className="bento-chart card">
+              <h3>기성 현황 <span className="muted">(계획 vs 실적 %)</span></h3>
+              <div className="dash-chart">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={BILLING} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+                    <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+                    <XAxis dataKey="ym" tick={{ fill: 'var(--chart-axis)', fontSize: 11 }} stroke="var(--chart-grid)" />
+                    <YAxis tick={{ fill: 'var(--chart-axis)', fontSize: 11 }} stroke="var(--chart-grid)" width={40} />
+                    <Tooltip contentStyle={TIP} labelStyle={{ color: 'var(--color-text-secondary)' }} itemStyle={{ color: 'var(--color-text-primary)' }} />
+                    <Line type="monotone" dataKey="계획" stroke="var(--chart-2)" strokeWidth={2} strokeDasharray="5 4" dot={false} />
+                    <Line type="monotone" dataKey="실적" stroke="var(--chart-1)" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="dash-chart-legend" aria-hidden>
+                <span><i style={{ borderTopColor: 'var(--chart-1)' }} /> 실적</span>
+                <span><i style={{ borderTopColor: 'var(--chart-2)', borderTopStyle: 'dashed' }} /> 계획</span>
+              </div>
+            </article>
+          </section>
         </Section>
 
         <Section title="컬러 토큰 — Brand / Semantic / Surface">
