@@ -5824,3 +5824,8 @@ textarea.input {
   font-size: var(--text-h4);
   font-weight: var(--fw-bold);
 }
+
+/* Q1 — 지연 로드 라우트 로딩 자리표시 */
+.route-loading {
+  padding: var(--space-6);
+}

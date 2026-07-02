@@ -3,6 +3,30 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 Q1 — 코드 스플리팅(초기 번들 5MB→93kB) (2026-07-02)
+> branch `claude/design-system-phase-1-lgw4oz`(U-Shell·U2·U4 병합된 main 위 재분기). typecheck·build 통과,
+> dev 서버로 지연 라우트 렌더 스모크(에러 0) 확인.
+
+### ✅ 한 일
+1. **라우트 지연 로드**: `App.tsx` 에서 무거운 의존성 페이지(AccModels/Drawings/Quantities/DocumentManager/
+   FileViewer/Admin/StyleGuide)를 `React.lazy` + `<Suspense fallback>`(skeleton)로 분리. 셸·경량 포털 페이지
+   (Dashboard/Schedule/일보/이슈/기성/하도급/게시판/구성원)는 즉시 로드 유지.
+2. **벤더 청크 분리**: `vite.config.ts` `manualChunks` — recharts→charts, pdfjs→pdf, web-ifc→webifc,
+   three(+mesh-bvh)→three, mammoth/xlsx→docs, @supabase→supabase, react/router→react.
+3. **결과(빌드 실측)**: 단일 `index.js` **5,064kB → 93kB**(gzip 26kB). web-ifc(3,070kB)·three(543kB)·
+   pdf(364kB)·docs(332kB)·charts(370kB)는 해당 기능 진입 시에만 로드. 초기 로드 = index+react+supabase+css
+   ≈ gzip ~140kB. (500kB 경고는 지연 벤더 청크에 남지만 초기 로드엔 영향 없음.)
+
+### 🔜 다음 할 일 / 미해결 (대부분 **실 환경 검증 필요** — 이 샌드박스는 auth·ACC·Supabase 없음)
+- **U3 V2/V3**(APS 뷰어 카메라 프리셋·표시품질): 실 ACC 모델 필요 → 실 환경에서 구현·검증 권장.
+- **F1**(관측점 DB 이관 0032~) · **F2**(이슈 협업) · **Q2**(canEdit 감사) · **Q3**(버그 스윕): 라이브 데이터/역할 필요.
+- **Lighthouse**(Perf≥90/A11y≥95): 실 배포 프리뷰 측정. axe 0 은 확인 완료.
+- 뷰어 툴바는 이미 토큰 기반(라이트/다크 적응) — 디자인 톤 큰 문제 없음(이모지→커스텀 아이콘 교체는 선택).
+
+### 인수인계 한 줄
+Q1 코드 스플리팅 완료(초기 번들 5MB→93kB, 지연 라우트 스모크 OK). 남은 U3-V2/V3·F/Q 는 실 인증·ACC 환경 검증 필요.
+
+---
 ## 📋 U4 — 디자인 시스템 Phase 4 마감: 다크·반응형·모션·a11y (2026-07-02)
 > branch `claude/design-system-phase-1-lgw4oz`. typecheck·build 통과. **axe-core 0 violations**
 > (/styleguide·/login 라이트·다크 모두 critical·serious·moderate 전부 0). U3(뷰어)는 이번 묶음에 없음.
