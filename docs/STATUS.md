@@ -3,6 +3,45 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 U-Shell — 디자인 시스템 Phase 2: 셸 라이트 전환 + 커스텀 12 아이콘 (2026-07-02)
+> branch `claude/design-system-phase-1-lgw4oz`(U1 병합된 main 위 재분기). typecheck·build 통과,
+> /styleguide 셸 미리보기로 라이트/다크·확장/collapse 확인. 기준: DESIGN_SYSTEM §2·§3·§4 + PDF §5.2.
+
+### ✅ 한 일
+1. **커스텀 도메인 아이콘 12종 + 확장 3종**: `src/components/icons/Icon.tsx` — PDF §5.2 실동작 SVG 12개
+   (dashboard/schedule/model-3d/schedule-4d/clash/qto/drawing/daily-report/weather/subcontract/board/files)를
+   React 컴포넌트로 wrap(Solid Geometric, stroke=currentColor, fill-opacity 0.12, 레드닷=`var(--color-brand-accent)`,
+   레드닷 위 흰 체크=`var(--color-text-on-brand)`). 메뉴가 14개라 세트에 없는 협업·이슈/기성내역/구성원은 동일
+   톤(레드닷·currentColor)의 확장 아이콘 `issue/billing/members` 신설. size·color props, currentColor 상속.
+   ⚠️ weather 는 현재 메뉴엔 없으나 세트 완성 위해 포함(추후 기상 모듈용).
+2. **Generic UI 스프라이트**: `src/components/icons/UiIcon.tsx` — chevron-down/-left·folder·bell·sun·moon·plus·x·
+   menu·logout 를 `<symbol>` defs 로 묶고 `<use href="#ui-*">` 참조(단일 정의). `<UiIconSprite/>` 를 App 루트에
+   1회 마운트.
+3. **사이드바 라이트 전환**: `.portal-nav*` → `.app-sidebar`/`.nav-item`(index.css). 배경 `--color-bg-surface`,
+   우측 border `--color-border-default`, 기본 텍스트 secondary, hover `--color-bg-subtle`. **활성만 brand 강조**
+   (`.is-active` 배경 `#EFF6FF`/다크 rgba(37,99,235,.18), 텍스트·아이콘 brand). NavLink 기본 `aria-current="page"` +
+   sr-only "(현재 페이지)".
+4. **collapse(240↔64)**: `.portal-body[data-sidebar]` grid-columns 전환(transition), collapse 시 `.nav-item__label`
+   숨김·아이콘 중앙정렬. TopBar 메뉴(≡) 버튼으로 토글, localStorage(`mir.sidebar.collapsed`) 기억. 태블릿(≤1024)
+   자동 collapse(모바일 하단탭은 U4).
+5. **TopBar 56px 재구성**: `.app-topbar` — 사이드바 토글(menu) + 브랜드 + **프로젝트 스위처**(btn--ghost, folder +
+   이름 + code + chevron-down → '/') + spacer + 알림(NotificationBell) + 테마토글 + 로그아웃(icon, aria-label) +
+   **아바타**(사용자 이니셜). 포털 grid-rows 48→56px(1fr 흡수). icon-only 버튼 aria-label + 내부 아이콘 aria-hidden.
+6. **데모**: /styleguide 에 아이콘 갤러리(15종 + UI 스프라이트) + Shell 미리보기(TopBar+사이드바 활성/일반)
+   섹션 추가 — 라이트/다크 both 확인.
+
+### 🔜 다음 할 일 / 미해결
+- U2(Bento 대시보드·Recharts) → U3(뷰어 UI·V2/V3) → U4(다크 마감·모바일 하단탭·모션·a11y QA).
+- 셸이 auth 뒤라 이 샌드박스(Supabase env 없음)에선 실 포털 진입 불가 → /styleguide 미리보기로 검증. 실 로그인
+  환경에서 전 메뉴 진입 눈확인 권장(특히 뷰어/자료관리 등 mod-fill 모듈이 56px 토바 아래 정상 배치되는지).
+- 옛 `--chrome*`(네이비) 토큰은 doc-viewer-bar·admin-top·백업 Workspace 가 아직 사용 → 보존. 그 화면들의
+  라이트 전환은 후속(범위 밖).
+
+### 인수인계 한 줄
+U-Shell 완료(사이드바 라이트+활성 brand, TopBar 재구성, 커스텀 12+3 아이콘, UI 스프라이트, collapse). /styleguide
+미리보기 라이트/다크 OK. 실 로그인 환경 전 메뉴 눈확인 후 U2로.
+
+---
 ## 📋 U1 — 디자인 시스템 Phase 1: 토큰 & 공통 컴포넌트 기반 (2026-07-02)
 > branch `claude/design-system-phase-1-lgw4oz`. typecheck·build 통과, 라이트/다크 스크린샷 확인.
 > 기준 문서 `docs/DESIGN_SYSTEM.md`(+원본 PDF) — 이 문서·PLANNING §0-I 은 기획 브랜치

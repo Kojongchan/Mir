@@ -1,6 +1,26 @@
 import { useState } from 'react';
 import { EmptyState } from '../components/EmptyState';
 import { ThemeToggle } from '../components/ThemeToggle';
+import { Icon, type IconName } from '../components/icons/Icon';
+import { UiIcon } from '../components/icons/UiIcon';
+
+const DOMAIN_ICONS: { name: IconName; label: string }[] = [
+  { name: 'dashboard', label: '사업개요' },
+  { name: 'schedule', label: '공정현황' },
+  { name: 'model-3d', label: '통합모델' },
+  { name: 'schedule-4d', label: '공정관리' },
+  { name: 'clash', label: '간섭검토' },
+  { name: 'qto', label: '물량산출' },
+  { name: 'drawing', label: '도면' },
+  { name: 'daily-report', label: '공사일보' },
+  { name: 'weather', label: '기상이력' },
+  { name: 'subcontract', label: '하도급' },
+  { name: 'board', label: '게시판' },
+  { name: 'files', label: '자료관리' },
+  { name: 'issue', label: '협업·이슈' },
+  { name: 'billing', label: '기성내역' },
+  { name: 'members', label: '구성원' },
+];
 
 /** U1 디자인 시스템 스타일가이드 (/styleguide) — 토큰·공통 컴포넌트 데모.
  *  DESIGN_SYSTEM.md §1~§3 수용기준 확인용(라이트/다크 전환 포함). 데이터 접근 없음. */
@@ -47,6 +67,65 @@ export function StyleGuide() {
           </div>
           <ThemeToggle />
         </div>
+
+        <Section title="아이콘 — 커스텀 도메인 12종 + 확장 3종 (레드닷 · currentColor)">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-4)' }}>
+            {DOMAIN_ICONS.map((d) => (
+              <div key={d.name} style={{ textAlign: 'center', width: 64 }}>
+                <Icon name={d.name} size={28} />
+                <div className="muted" style={{ fontSize: 'var(--text-micro)', marginTop: 'var(--space-1)' }}>{d.label}</div>
+              </div>
+            ))}
+          </div>
+          <p className="muted" style={{ fontSize: 'var(--text-caption)', marginTop: 'var(--space-3)' }}>
+            아래는 brand 색 상속(활성 메뉴 예시) · generic UI 스프라이트:
+          </p>
+          <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', color: 'var(--color-brand-primary)' }}>
+            <Icon name="dashboard" size={24} />
+            <Icon name="clash" size={24} />
+            <Icon name="model-3d" size={24} />
+            <span style={{ color: 'var(--color-text-secondary)', display: 'inline-flex', gap: 'var(--space-2)', marginLeft: 'var(--space-4)' }}>
+              <UiIcon name="folder" size={20} />
+              <UiIcon name="chevron-down" size={20} />
+              <UiIcon name="bell" size={20} />
+              <UiIcon name="sun" size={20} />
+              <UiIcon name="moon" size={20} />
+              <UiIcon name="plus" size={20} />
+              <UiIcon name="x" size={20} />
+              <UiIcon name="menu" size={20} />
+              <UiIcon name="logout" size={20} />
+            </span>
+          </div>
+        </Section>
+
+        <Section title="Shell 미리보기 — TopBar(라이트) + 사이드바(활성만 brand)">
+          <div style={{ border: '1px solid var(--color-border-default)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+            <div className="app-topbar" style={{ height: 56 }}>
+              <button className="btn btn--ghost btn--sm rail-toggle" aria-label="사이드바 접기"><UiIcon name="menu" /></button>
+              <button className="btn btn--ghost project-switcher" type="button">
+                <UiIcon name="folder" size={16} />
+                <span className="project-switcher__name">밀양강 교량 건설사업</span>
+                <span className="project-switcher__code">MG-2026</span>
+                <UiIcon name="chevron-down" size={16} />
+              </button>
+              <div className="spacer" />
+              <button className="btn btn--ghost btn--sm" aria-label="알림"><UiIcon name="bell" /></button>
+              <button className="btn btn--ghost btn--sm" aria-label="테마 전환"><UiIcon name="moon" /></button>
+              <span className="avatar" aria-hidden>관</span>
+            </div>
+            <div style={{ display: 'flex', height: 300 }}>
+              <nav className="app-sidebar" style={{ width: 240 }} aria-label="미리보기 네비게이션">
+                {DOMAIN_ICONS.slice(0, 8).map((d, i) => (
+                  <span key={d.name} className={`nav-item${i === 2 ? ' is-active' : ''}`}>
+                    <span className="nav-item__ico" aria-hidden><Icon name={d.name} size={20} /></span>
+                    <span className="nav-item__label">{d.label}</span>
+                  </span>
+                ))}
+              </nav>
+              <div style={{ flex: 1, background: 'var(--color-bg-page)' }} />
+            </div>
+          </div>
+        </Section>
 
         <Section title="컬러 토큰 — Brand / Semantic / Surface">
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)' }}>

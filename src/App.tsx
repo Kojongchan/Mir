@@ -19,6 +19,7 @@ import { ProjectMembers } from './pages/ProjectMembers';
 import { FileViewer } from './pages/FileViewer';
 import { AccModels } from './pages/AccModels';
 import { StyleGuide } from './pages/StyleGuide';
+import { UiIconSprite } from './components/icons/UiIcon';
 
 function Protected({ children }: { children: ReactElement }) {
   const { session, loading } = useAuth();
@@ -50,6 +51,7 @@ function AdminOnly({ children }: { children: ReactElement }) {
 export default function App() {
   return (
     <AuthProvider>
+      <UiIconSprite />
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
