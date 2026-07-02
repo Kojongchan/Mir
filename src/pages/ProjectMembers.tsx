@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { EmptyState } from '../components/EmptyState';
 import { useProjectRole, ROLE_LABEL } from '../auth/useProjectRole';
 import { errMessage } from '../lib/errors';
 import {
@@ -186,7 +187,7 @@ export function ProjectMembers() {
                   </tr>
                 );
               })}
-              {members.length === 0 && <tr><td colSpan={4} className="muted">배정된 멤버가 없습니다.</td></tr>}
+              {members.length === 0 && <tr><td colSpan={4}><EmptyState compact icon="👥" title="배정된 멤버가 없습니다" desc="아래에서 사용자를 배정하세요." /></td></tr>}
             </tbody>
           </table>
         </div>

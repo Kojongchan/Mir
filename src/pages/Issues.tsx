@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { EmptyState } from '../components/EmptyState';
 import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
 import {
@@ -210,7 +211,7 @@ export function Issues() {
                 />
               ))}
               {shown.length === 0 && (
-                <tr><td colSpan={7} className="muted empty">이슈가 없습니다.</td></tr>
+                <tr><td colSpan={7}><EmptyState compact icon="🗂" title="이슈가 없습니다" desc="새 이슈를 등록하면 여기에 표시됩니다." /></td></tr>
               )}
             </tbody>
           </table>
