@@ -3,6 +3,47 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 U1 — 디자인 시스템 Phase 1: 토큰 & 공통 컴포넌트 기반 (2026-07-02)
+> branch `claude/design-system-phase-1-lgw4oz`. typecheck·build 통과, 라이트/다크 스크린샷 확인.
+> 기준 문서 `docs/DESIGN_SYSTEM.md`(+원본 PDF) — 이 문서·PLANNING §0-I 은 기획 브랜치
+> `claude/magical-curie-d4relv`(main 미병합)를 본 브랜치에 병합해 포함시킴. **U1 병합 = 문서도 함께 main 입성.**
+
+### ✅ 한 일
+1. **토큰 도입(§1 전부)**: `src/index.css` 상단을 신규 토큰으로 재작성 — `--color-*`(브랜드/뉴트럴 11단계/
+   시맨틱/서피스/텍스트/보더/뱃지), 타이포(`--font-sans` Pretendard+Inter, `--text-*` 스케일, fw/lh/tracking),
+   `--space-1~16`·`--radius-xs~pill`·`--shadow-xs~lg`·모션(duration/ease)·`--z-*`. `[data-theme=dark]` 재정의
+   (§1.2 + 그림자 진하게 + 다크 hover 보정 #60A5FA). 기존 다크 토글(localStorage) 로직 무변경.
+2. **무중단 마이그레이션**: 옛 S11 토큰(`--bg/--panel/--panel-2/--border/--text/--muted/--accent*/--danger/--radius`)을
+   신규 토큰 **alias** 로 연결 → 기존 클래스 전부 그대로 동작하며 팔레트만 신계열로 전환. `--chrome*`(네이비 크롬)은
+   U-Shell 전환 전까지 보존. 옛 대형 `--shadow-md` 용례 8곳은 의미에 맞게 `--shadow-lg` 로 이관.
+3. **하드코딩 hex 전수 스윕(색 계열)**: index.css 내 토큰 블록 밖 hex/rgba 를 전부 var(--*) 로 치환
+   (semantic·on-brand·HUD/좌표축/스냅/도면종류는 보조 토큰 신설: `--hud-*`/`--axis-*`/`--snap-nearest`/`--kind-*`/
+   `--color-paper`/`--backdrop`/`--chrome-ghost*`). var() 폴백 hex 정리. 남은 hex = 토큰 정의뿐.
+4. **공통 컴포넌트(§3, BEM-lite)**: `.btn`(+primary/secondary/ghost/danger, sm/lg) · `.field`/`.input`(포커스
+   `--color-border-focus`·에러·disabled, select/textarea 겸용) · `.card--interactive`(hover -2px+shadow-md)/
+   `.card--hero`(그라데이션) · `.badge`(+info/success/warning/error, pill) · `.data-table`(sticky 헤더·hover·
+   `th[aria-sort]` 정렬표시·`.col-num` tabular) · `.empty-state`(아이콘+문구+CTA) · `.skeleton`(shimmer,
+   reduced-motion 대응) · `.toast`/`.toast-stack`(role=status/alert). 기존 `.cde-table`/`.acc-table` 헤더 bg 를
+   표준(bg-subtle)으로 일원화 + cde 행 hover 추가.
+5. **레이아웃/a11y**: `.content-narrow`(max-width 960, opt-in — wide 전역 cap 없음 §2 결정) · `:focus-visible`
+   outline(마우스 클릭 시 숨김) · `.sr-only` · `.tabular` 유틸. **로그인/프로젝트선택 격자배경 제거** → subtle
+   mesh gradient(§6.1).
+6. **적용/데모**: `src/components/EmptyState.tsx` 신설, 포털 8곳(이슈/게시판/일보/하도급/기성/멤버/도면/프로젝트
+   선택)의 "~없습니다" 텍스트를 empty-state 로 교체 + 프로젝트선택 로딩을 skeleton 으로. **`/styleguide` 데모
+   라우트**(StyleGuide.tsx, 데이터 접근 없음)에서 전 컴포넌트·토큰 확인 가능.
+
+### 🔜 다음 할 일 / 미해결
+- **U-Shell(Phase2)**: 사이드바 라이트 전환(네이비 폐기·활성만 brand) + TopBar + 커스텀 12 도메인 아이콘(PDF §5.2).
+  이후 U2(Bento 대시보드·Recharts) → U3(뷰어 UI·V2/V3) → U4(다크·반응형·a11y QA).
+- 화면별 리스킨/spacing px 치환은 U1 범위 밖(색 계열 우선 완료). 이번 토큰화로 라이트 배경이 청회색→중성
+  회백(#FAFAFB)으로, 다크가 더 깊은 검정 계열로 미세 전환됨 — 라이브 눈확인 권장.
+- ⚠️ 본 브랜치는 **먼저 단독으로 main 병합**(전 화면 공유 CSS). 이후 다른 작업은 rebase.
+
+### 인수인계 한 줄
+U1 완료(토큰+alias 무중단 전환·hex 전수 스윕·공통 컴포넌트·격자 제거·/styleguide 데모, typecheck/build/라이트·다크 OK).
+빠른 main 병합 후 U-Shell(사이드바 라이트+12아이콘)부터.
+
+---
 ## 📋 V1 — 3D 뷰어 회전을 "커서(피벗) 기준"으로 (ACC 조작감 일치) (2026-06-30)
 > branch `claude/3d-viewer-pivot-rotation-ymsocr`. typecheck·build 통과. 대상 `src/pages/AccModels.tsx` 뷰어 초기화부.
 > 통합/4D/간섭은 모두 같은 `AccModels` 초기화 경로를 쓰므로 한 곳 수정으로 세 모드 모두 적용됨.
