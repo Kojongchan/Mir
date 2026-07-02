@@ -73,8 +73,8 @@ function Swatch({ token, label }: { token: string; label?: string }) {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="card" style={{ marginBottom: 'var(--space-4)' }}>
-      <h3>{title}</h3>
+    <section className="card sg-section" style={{ marginBottom: 'var(--space-4)' }}>
+      <h2 className="sg-section__title">{title}</h2>
       {children}
     </section>
   );
@@ -84,7 +84,7 @@ export function StyleGuide() {
   const [showSkeleton, setShowSkeleton] = useState(true);
   const [showToast, setShowToast] = useState(true);
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--color-bg-page)' }}>
+    <main style={{ minHeight: '100vh', background: 'var(--color-bg-page)' }}>
       <div className="content-narrow dash">
         <div className="dash-head">
           <div>
@@ -394,6 +394,25 @@ export function StyleGuide() {
           )}
         </Section>
 
+        <Section title="모바일 하단 탭바 — .app-bottom-tabbar (<640)">
+          <div style={{ maxWidth: 380, margin: '0 auto', border: '1px solid var(--color-border-default)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+            <nav className="app-bottom-tabbar" style={{ display: 'flex', position: 'static', height: 64 }} aria-label="하단 탭바 미리보기">
+              {([
+                { name: 'dashboard', label: '사업개요', active: true },
+                { name: 'schedule', label: '공정' },
+                { name: 'model-3d', label: '3D' },
+                { name: 'daily-report', label: '일보' },
+                { name: 'issue', label: '이슈' },
+              ] as { name: IconName; label: string; active?: boolean }[]).map((t) => (
+                <span key={t.name} className={`bottom-tab${t.active ? ' is-active' : ''}`}>
+                  <span className="bottom-tab__ico" aria-hidden><Icon name={t.name} size={22} /></span>
+                  <span className="bottom-tab__label">{t.label}</span>
+                </span>
+              ))}
+            </nav>
+          </div>
+        </Section>
+
         <Section title="Toast — .toast (role=status/alert)">
           <label className="tl-check">
             <input type="checkbox" checked={showToast} onChange={(e) => setShowToast(e.target.checked)} /> 토스트 표시
@@ -413,6 +432,6 @@ export function StyleGuide() {
           <div className="toast toast--error" role="alert">업로드 실패 — 네트워크를 확인하세요.</div>
         </div>
       )}
-    </div>
+    </main>
   );
 }

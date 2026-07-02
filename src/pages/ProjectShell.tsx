@@ -5,6 +5,7 @@ import { BrandLogo } from '../components/BrandLogo';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { ProjectNav } from '../components/ProjectNav';
 import { NotificationBell } from '../components/NotificationBell';
+import { BottomTabBar } from '../components/BottomTabBar';
 import { UiIcon } from '../components/icons/UiIcon';
 import { getProject, type Project } from '../lib/api';
 
@@ -91,6 +92,8 @@ export function ProjectShell() {
           <Outlet context={{ project }} />
         </main>
       </div>
+
+      <BottomTabBar />
     </div>
   );
 }

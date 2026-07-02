@@ -28,12 +28,12 @@ export function Login() {
   };
 
   return (
-    <div className="auth-screen">
+    <main className="auth-screen">
       <div className="auth-toggle">
         <ThemeToggle />
       </div>
       <form className="auth-card" onSubmit={onSubmit}>
-        <div className="auth-brand"><BrandLogo size="lg" /></div>
+        <h1 className="auth-brand"><BrandLogo size="lg" /></h1>
         <p className="auth-sub">
           쌍용건설 <strong>스마트 건설기술 플랫폼</strong>에 오신 것을 환영합니다.
         </p>
@@ -82,6 +82,6 @@ export function Login() {
           </span>
         </span>
       </footer>
-    </div>
+    </main>
   );
 }

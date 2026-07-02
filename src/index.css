@@ -14,6 +14,9 @@
   --color-brand-primary-active: #1e40af;
   --color-brand-secondary: #4f46e5;
   --color-brand-accent: #ef4444;
+  /* 흰 글자 채움(버튼·아바타)용 brand — 다크에서 brand-primary 가 밝아져도(텍스트/액센트
+     용) 채움은 흰 글자 대비(≥4.5:1) 위해 짙게 고정. */
+  --color-brand-solid: #2563eb;
 
   /* ── Neutral Scale (11 steps) ── */
   --color-neutral-50: #fafafb;
@@ -586,6 +589,7 @@ body {
 }
 
 .auth-brand {
+  margin: 0;
   font-size: 26px;
   font-weight: 800;
   letter-spacing: 0.5px;
@@ -705,10 +709,13 @@ body {
   border-radius: var(--radius-sm);
   padding: 8px 10px;
   font-size: 12px;
+  color: var(--color-text-primary);
 }
 
 .auth-warn code {
-  color: var(--accent);
+  /* 연블루 틴트 배경 위 대비 확보 — 짙은 blue(badge info fg) */
+  color: var(--badge-info-fg);
+  font-weight: var(--fw-semibold);
 }
 
 .select-head {
@@ -1873,15 +1880,16 @@ button.danger:hover:not(:disabled) {
 }
 .modal-foot .primary,
 .primary {
-  background: var(--accent);
-  color: var(--accent-fg);
-  border-color: var(--accent);
+  /* 흰 글자 대비 위해 brand-solid(다크에서도 짙게 고정) */
+  background: var(--color-brand-solid);
+  color: var(--color-text-on-brand);
+  border-color: var(--color-brand-solid);
   font-weight: 600;
 }
 .modal-foot .primary:hover:not(:disabled),
 .primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
+  background: color-mix(in srgb, var(--color-brand-solid) 88%, var(--color-neutral-950));
+  border-color: color-mix(in srgb, var(--color-brand-solid) 88%, var(--color-neutral-950));
 }
 .map-table {
   width: 100%;
@@ -3277,7 +3285,11 @@ button.danger:hover:not(:disabled) {
 }
 :root[data-theme='dark'] .nav-item.is-active {
   background: rgba(37, 99, 235, 0.18);
-  color: var(--color-brand-primary);
+  /* 어두운 표면 위 brand 텍스트 대비 확보 — 한 단계 밝은 blue */
+  color: var(--color-brand-primary-hover);
+}
+:root[data-theme='dark'] .bottom-tab.is-active {
+  color: var(--color-brand-primary-hover);
 }
 .nav-item__ico {
   flex-shrink: 0;
@@ -3341,7 +3353,7 @@ button.danger:hover:not(:disabled) {
   flex-shrink: 0;
   font-size: var(--text-caption);
   font-weight: var(--fw-medium);
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
 }
 /* 아바타 — 사용자 이니셜 */
 .avatar {
@@ -3352,7 +3364,7 @@ button.danger:hover:not(:disabled) {
   width: 32px;
   height: 32px;
   border-radius: var(--radius-pill);
-  background: var(--color-brand-primary);
+  background: var(--color-brand-solid);
   color: var(--color-text-on-brand);
   font-size: var(--text-small);
   font-weight: var(--fw-semibold);
@@ -5143,17 +5155,17 @@ button.danger:hover:not(:disabled) {
   font-size: var(--text-body);
 }
 .btn--primary {
-  background: var(--color-brand-primary);
+  background: var(--color-brand-solid);
   color: var(--color-text-on-brand);
-  border-color: var(--color-brand-primary);
+  border-color: var(--color-brand-solid);
 }
 .btn--primary:hover:not(:disabled) {
-  background: var(--color-brand-primary-hover);
-  border-color: var(--color-brand-primary-hover);
+  background: color-mix(in srgb, var(--color-brand-solid) 88%, var(--color-neutral-950));
+  border-color: color-mix(in srgb, var(--color-brand-solid) 88%, var(--color-neutral-950));
 }
 .btn--primary:active:not(:disabled) {
-  background: var(--color-brand-primary-active);
-  border-color: var(--color-brand-primary-active);
+  background: color-mix(in srgb, var(--color-brand-solid) 78%, var(--color-neutral-950));
+  border-color: color-mix(in srgb, var(--color-brand-solid) 78%, var(--color-neutral-950));
 }
 .btn--secondary {
   background: var(--color-bg-surface);
@@ -5175,9 +5187,10 @@ button.danger:hover:not(:disabled) {
   border-color: transparent;
 }
 .btn--danger {
-  background: var(--color-error);
+  /* 흰 글자 대비(≥4.5:1) 위해 원색보다 짙은 red-600 급으로 */
+  background: color-mix(in srgb, var(--color-error) 82%, var(--color-neutral-950));
   color: var(--color-text-on-brand);
-  border-color: var(--color-error);
+  border-color: color-mix(in srgb, var(--color-error) 82%, var(--color-neutral-950));
 }
 .btn--danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--color-error) 85%, var(--color-neutral-950));
@@ -5238,7 +5251,7 @@ textarea.input {
 .field__helper {
   margin: 0;
   font-size: var(--text-caption);
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
 }
 .field--error .input {
   border-color: var(--color-error);
@@ -5246,7 +5259,7 @@ textarea.input {
 .field__error {
   margin: 0;
   font-size: var(--text-caption);
-  color: var(--color-error);
+  color: var(--badge-error-fg);
 }
 
 /* ---- Card 변형 (.card 는 기존 블록 재사용) ---- */
@@ -5359,7 +5372,7 @@ textarea.input {
   gap: var(--space-2);
   padding: var(--space-10) var(--space-6);
   text-align: center;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
 }
 .empty-state--compact {
   padding: var(--space-5) var(--space-4);
@@ -5589,7 +5602,7 @@ textarea.input {
   align-items: center;
   gap: var(--space-2);
   font-size: var(--text-caption);
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   margin-top: var(--space-1);
 }
 .bento-hero .kpi__meta {
@@ -5603,15 +5616,16 @@ textarea.input {
   color: var(--color-error);
   font-weight: var(--fw-semibold);
 }
-/* 컬러 시맨틱 (D-day 임박도) */
+/* 컬러 시맨틱 (D-day 임박도) — 표면 위 큰 수치는 대비 안전한 ink(badge fg 토큰).
+   원색 --color-warning/success 는 표면 대비 4.5:1 미달 → 텍스트엔 짙은 변형 사용. */
 .kpi--danger .kpi__value {
-  color: var(--color-error);
+  color: var(--badge-error-fg);
 }
 .kpi--warning .kpi__value {
-  color: var(--color-warning);
+  color: var(--badge-warning-fg);
 }
 .kpi--success .kpi__value {
-  color: var(--color-success);
+  color: var(--badge-success-fg);
 }
 
 /* ---- Progress Bar (native <progress>, PDF §4.10) ---- */
@@ -5691,4 +5705,122 @@ textarea.input {
 .ms-chip__date {
   font-size: var(--text-caption);
   color: var(--color-text-tertiary);
+}
+
+/* =====================================================================
+   U4 — 마감: 모바일 하단 탭바 + 모션 + reduced-motion (DESIGN_SYSTEM §2·§5)
+   ===================================================================== */
+
+/* 하단 탭바 — 기본 숨김, <640 에서만 노출 */
+.app-bottom-tabbar {
+  display: none;
+}
+@media (max-width: 640px) {
+  /* 사이드바 숨기고 본문 풀폭 + 하단 탭 공간 확보 */
+  .portal-body {
+    grid-template-columns: 1fr;
+  }
+  .app-sidebar {
+    display: none;
+  }
+  .portal-main {
+    padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  }
+  .rail-toggle {
+    display: none;
+  }
+  .app-bottom-tabbar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: calc(64px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    display: flex;
+    justify-content: space-around;
+    align-items: stretch;
+    background: var(--color-bg-surface);
+    border-top: 1px solid var(--color-border-default);
+    z-index: var(--z-fixed);
+  }
+  /* 모바일에서 프로젝트 스위처 폭 축소(브랜드/토바 압축) */
+  .app-topbar__brand {
+    display: none;
+  }
+  .project-switcher {
+    max-width: 52vw;
+  }
+}
+.bottom-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: var(--space-2) 0;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  font-size: var(--text-micro);
+}
+.bottom-tab.is-active {
+  color: var(--color-brand-primary);
+  font-weight: var(--fw-semibold);
+}
+.bottom-tab__ico {
+  display: inline-flex;
+}
+.bottom-tab__label {
+  line-height: 1;
+}
+
+/* ---- 모션 (transform/opacity 만 — reflow 금지) ---- */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* 페이지(포털 본문) 진입 fade */
+.dash {
+  animation: fade-in var(--duration-base) var(--ease-decelerate);
+}
+/* 모달 enter — backdrop fade + 카드 scale-up */
+.modal-backdrop {
+  animation: fade-in var(--duration-fast) var(--ease-standard);
+}
+.modal-backdrop .modal,
+.acc-modal-back .acc-modal {
+  animation: modal-in var(--duration-base) var(--ease-decelerate);
+}
+
+/* 접근성: 모션 최소화 선호 시 애니메이션/전환 축소 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* 스타일가이드 데모 섹션 제목(heading-order: h1→h2) */
+.sg-section__title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-h4);
+  font-weight: var(--fw-bold);
 }

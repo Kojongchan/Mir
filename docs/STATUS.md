@@ -3,6 +3,41 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 U4 — 디자인 시스템 Phase 4 마감: 다크·반응형·모션·a11y (2026-07-02)
+> branch `claude/design-system-phase-1-lgw4oz`. typecheck·build 통과. **axe-core 0 violations**
+> (/styleguide·/login 라이트·다크 모두 critical·serious·moderate 전부 0). U3(뷰어)는 이번 묶음에 없음.
+
+### ✅ 한 일
+1. **다크 마감 — 시스템 선호 초기값**: `theme.ts` `getStoredTheme` 이 저장값 없으면 `prefers-color-scheme`
+   따름 + `initTheme` 이 명시적 선택 없는 동안 시스템 테마 변경 실시간 반영. (localStorage 토글 유지.)
+2. **반응형 — 모바일 하단 탭바**: `BottomTabBar.tsx`(주요 5메뉴: 사업개요/공정/3D/일보/이슈, aria-current) +
+   `.app-bottom-tabbar` CSS. <640: 사이드바 숨김·본문 풀폭·하단탭 노출(fixed, z-fixed, safe-area 대응)·
+   토바 압축. 641~1024 사이드바 64px collapse(기존). >1440 풀폭 유지.
+3. **모션(transform/opacity만)**: `fade-in`(포털 본문 `.dash` 진입) + `modal-in`(모달/ACC모달 scale .96→1).
+   `@media (prefers-reduced-motion: reduce)` 전역 가드(애니메이션/전환 축소).
+4. **a11y QA(axe-core) — 전부 해소**: 초기 스캔 serious(대비)·moderate(landmark/heading/region) →
+   - **대비 안전 토큰화**: KPI 시맨틱 수치·`.field__error` → badge-fg(짙은 시맨틱), `.kpi__meta`·`.field__helper`·
+     `.empty-state`·`.bottom-tab`·`.project-switcher__code` 를 tertiary→secondary(tertiary=placeholder 전용, 짙은표면 4.5:1 미달).
+   - **brand-solid 신설**: 흰 글자 채움(버튼·아바타)은 다크에서 밝아지는 `--color-brand-primary`(텍스트용) 대신
+     짙게 고정한 `--color-brand-solid`(#2563EB) 사용 → `.btn--primary`/`.primary`/`.avatar` 흰 글자 대비 확보.
+     `.btn--danger` 도 red-600 급으로 짙게(color-mix). hover 는 color-mix 로 일관 다크닝.
+   - **다크 활성 nav/탭**: `.nav-item.is-active`/`.bottom-tab.is-active` 텍스트를 밝은 blue(hover 토큰)로.
+   - **랜드마크/제목**: `StyleGuide`·`Login` 을 `<main>` + `<h1>` 로(landmark-one-main·page-has-heading-one·
+     region 해소), 데모 Section 을 `<h2>`(heading-order). `.auth-warn code` 대비 개선.
+5. **데모**: /styleguide 에 모바일 하단 탭바 미리보기 섹션 추가.
+
+### 🔜 다음 할 일 / 미해결
+- Lighthouse(Perf≥90/A11y≥95) 는 이 샌드박스(원격·auth 없음)에서 미측정 → **실 배포 프리뷰에서 측정·기록 필요**.
+  axe-core 는 0(critical/serious/moderate) 확인 완료.
+- U3(3D 뷰어 UI 톤·V2 카메라 프리셋·V3 표시품질)은 별도 단계로 남음.
+- tertiary 는 이제 placeholder 전용 관례 — 신규 텍스트에 tertiary 쓰지 말 것(secondary 사용).
+- 모바일 하단탭/모션/다크는 auth 뒤라 실 포털에선 로그인 후 눈확인 권장.
+
+### 인수인계 한 줄
+U4 마감 완료(시스템 다크 초기값·모바일 하단탭·모션·reduced-motion, axe 0 violations, brand-solid 로 다크 버튼
+대비 해결). Lighthouse 는 실 프리뷰 측정만 남음. 후속은 U3(뷰어).
+
+---
 ## 📋 U2 — 디자인 시스템 Phase 3: 사업개요 Bento 대시보드 + Recharts (2026-07-02)
 > branch `claude/design-system-phase-1-lgw4oz`. typecheck·build 통과, /styleguide Bento 미리보기 라이트/다크 확인.
 > 기준: DESIGN_SYSTEM §2(Bento)·§3(KPI Card) + dataviz 스킬 원칙.
