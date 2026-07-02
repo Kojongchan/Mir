@@ -1,0 +1,232 @@
+import { useState } from 'react';
+import { EmptyState } from '../components/EmptyState';
+import { ThemeToggle } from '../components/ThemeToggle';
+
+/** U1 디자인 시스템 스타일가이드 (/styleguide) — 토큰·공통 컴포넌트 데모.
+ *  DESIGN_SYSTEM.md §1~§3 수용기준 확인용(라이트/다크 전환 포함). 데이터 접근 없음. */
+
+const NEUTRALS = ['50', '100', '200', '300', '400', '500', '600', '700', '800', '900', '950'];
+const SEMANTIC = ['success', 'warning', 'error', 'info'];
+const SURFACES = ['bg-page', 'bg-surface', 'bg-subtle', 'bg-elevated'];
+function Swatch({ token, label }: { token: string; label?: string }) {
+  return (
+    <div style={{ textAlign: 'center', fontSize: 'var(--text-micro)' }}>
+      <div
+        style={{
+          width: 56,
+          height: 36,
+          borderRadius: 'var(--radius-sm)',
+          border: '1px solid var(--color-border-default)',
+          background: `var(${token})`,
+        }}
+      />
+      <div className="muted" style={{ marginTop: 'var(--space-1)' }}>{label ?? token}</div>
+    </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="card" style={{ marginBottom: 'var(--space-4)' }}>
+      <h3>{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+export function StyleGuide() {
+  const [showSkeleton, setShowSkeleton] = useState(true);
+  const [showToast, setShowToast] = useState(true);
+  return (
+    <div style={{ minHeight: '100vh', background: 'var(--color-bg-page)' }}>
+      <div className="content-narrow dash">
+        <div className="dash-head">
+          <div>
+            <div className="dash-today">U1 — 토큰 &amp; 공통 컴포넌트 데모</div>
+            <h1 className="dash-h1">디자인 시스템 스타일가이드</h1>
+          </div>
+          <ThemeToggle />
+        </div>
+
+        <Section title="컬러 토큰 — Brand / Semantic / Surface">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)' }}>
+            <Swatch token="--color-brand-primary" label="brand" />
+            <Swatch token="--color-brand-secondary" label="secondary" />
+            <Swatch token="--color-brand-accent" label="accent" />
+            {SEMANTIC.map((s) => (
+              <Swatch key={s} token={`--color-${s}`} label={s} />
+            ))}
+            {SURFACES.map((s) => (
+              <Swatch key={s} token={`--color-${s}`} label={s} />
+            ))}
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-3)', marginTop: 'var(--space-3)' }}>
+            {NEUTRALS.map((n) => (
+              <Swatch key={n} token={`--color-neutral-${n}`} label={n} />
+            ))}
+          </div>
+        </Section>
+
+        <Section title="타이포그래피 · .tabular">
+          <p style={{ fontSize: 'var(--text-h3)', fontWeight: 'var(--fw-bold)', letterSpacing: 'var(--tracking-tight)', margin: 0 }}>
+            Pretendard Variable — 밀양강 교량 BIM 통합관리
+          </p>
+          <p style={{ fontSize: 'var(--text-body)', margin: 'var(--space-2) 0 0' }}>
+            본문 16px / <span style={{ fontSize: 'var(--text-small)' }}>small 14px</span> /{' '}
+            <span className="muted" style={{ fontSize: 'var(--text-caption)' }}>caption 12px</span>
+          </p>
+          <p className="tabular" style={{ fontSize: 'var(--text-h2)', fontWeight: 'var(--fw-bold)', margin: 'var(--space-2) 0 0' }}>
+            67.4% · D-142 · ₩1,284,000,000
+          </p>
+          <p className="muted" style={{ fontSize: 'var(--text-caption)' }}>
+            ↑ 수치는 .tabular(tabular-nums) — 자리수가 흔들리지 않음.
+          </p>
+        </Section>
+
+        <Section title="Button — .btn (--primary/--secondary/--ghost/--danger, --sm/--lg)">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)', alignItems: 'center' }}>
+            <button className="btn btn--primary">주요 액션</button>
+            <button className="btn btn--secondary">보조 액션</button>
+            <button className="btn btn--ghost">고스트</button>
+            <button className="btn btn--danger">삭제</button>
+            <button className="btn btn--primary" disabled>비활성</button>
+            <button className="btn btn--primary btn--sm">작게</button>
+            <button className="btn btn--secondary btn--lg">크게</button>
+          </div>
+        </Section>
+
+        <Section title="Form — .field / .input (포커스·에러·비활성)">
+          <div style={{ display: 'grid', gap: 'var(--space-4)', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }}>
+            <div className="field">
+              <label className="field__label" htmlFor="sg-id">아이디</label>
+              <input id="sg-id" className="input" type="text" placeholder="아이디를 입력하세요" aria-describedby="sg-id-help" />
+              <p id="sg-id-help" className="field__helper">이메일 또는 사번을 입력합니다.</p>
+            </div>
+            <div className="field field--error">
+              <label className="field__label" htmlFor="sg-pw">비밀번호</label>
+              <input id="sg-pw" className="input" type="password" aria-invalid="true" aria-describedby="sg-pw-err" />
+              <p id="sg-pw-err" className="field__error">비밀번호가 일치하지 않습니다.</p>
+            </div>
+            <div className="field">
+              <label className="field__label" htmlFor="sg-sel">공종 선택</label>
+              <select id="sg-sel" className="input">
+                <option>교량공</option>
+                <option>토공</option>
+              </select>
+            </div>
+            <div className="field">
+              <label className="field__label" htmlFor="sg-dis">비활성</label>
+              <input id="sg-dis" className="input" disabled value="수정 불가" readOnly />
+            </div>
+          </div>
+          <div className="field" style={{ marginTop: 'var(--space-4)' }}>
+            <label className="field__label" htmlFor="sg-ta">비고</label>
+            <textarea id="sg-ta" className="input" placeholder="내용을 입력하세요" />
+          </div>
+        </Section>
+
+        <Section title="Card — .card (--interactive hover / --hero 그라데이션)">
+          <div style={{ display: 'grid', gap: 'var(--space-4)', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))' }}>
+            <div className="card">
+              <h3>기본 카드</h3>
+              <p className="muted" style={{ margin: 0, fontSize: 'var(--text-small)' }}>surface + border + shadow-xs</p>
+            </div>
+            <div className="card card--interactive">
+              <h3>인터랙티브</h3>
+              <p className="muted" style={{ margin: 0, fontSize: 'var(--text-small)' }}>hover 시 -2px 부상 + shadow-md</p>
+            </div>
+            <div className="card card--hero">
+              <h3 style={{ color: 'inherit' }}>Hero</h3>
+              <p className="tabular" style={{ margin: 0, fontSize: 'var(--text-h2)', fontWeight: 'var(--fw-bold)' }}>67%</p>
+            </div>
+          </div>
+        </Section>
+
+        <Section title="Badge — .badge (--info/success/warning/error)">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
+            <span className="badge badge--info">검토중</span>
+            <span className="badge badge--success">승인</span>
+            <span className="badge badge--warning">D-30</span>
+            <span className="badge badge--error">지연</span>
+          </div>
+        </Section>
+
+        <Section title="Data Table — .data-table (sticky 헤더 · hover · 정렬 표시 · .tabular 수치열)">
+          <div style={{ maxHeight: 220, overflow: 'auto', border: '1px solid var(--color-border-default)', borderRadius: 'var(--radius-md)' }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th aria-sort="ascending">부재</th>
+                  <th>공종</th>
+                  <th aria-sort="none">상태</th>
+                  <th className="col-num">물량(㎥)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ['교각 P1', '교량공', <span key="b1" className="badge badge--success">완료</span>, '1,284.5'],
+                  ['교각 P2', '교량공', <span key="b2" className="badge badge--info">진행</span>, '982.0'],
+                  ['상판 S1', '상부공', <span key="b3" className="badge badge--warning">대기</span>, '2,410.8'],
+                  ['가시설 T1', '가설공', <span key="b4" className="badge badge--error">지연</span>, '110.2'],
+                ].map(([a, b, c, d], i) => (
+                  <tr key={i}>
+                    <td>{a}</td>
+                    <td>{b}</td>
+                    <td>{c}</td>
+                    <td className="col-num tabular">{d}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Section>
+
+        <Section title="Empty State — .empty-state">
+          <EmptyState
+            icon="🗂"
+            title="등록된 이슈가 없습니다"
+            desc="새 이슈를 등록하면 여기에 표시됩니다."
+            cta={<button className="btn btn--primary btn--sm">＋ 이슈 등록</button>}
+          />
+        </Section>
+
+        <Section title="Skeleton — .skeleton (로딩 shimmer)">
+          <label className="tl-check" style={{ marginBottom: 'var(--space-3)' }}>
+            <input type="checkbox" checked={showSkeleton} onChange={(e) => setShowSkeleton(e.target.checked)} /> 로딩 상태
+          </label>
+          {showSkeleton ? (
+            <div aria-busy="true" aria-live="polite">
+              <span className="sr-only">불러오는 중…</span>
+              <p><span className="skeleton skeleton--text" style={{ width: '14em' }}>자리</span></p>
+              <div className="skeleton skeleton--block" />
+            </div>
+          ) : (
+            <div>
+              <p>밀양강 교량 상세 공정 데이터</p>
+              <div className="card">로드 완료</div>
+            </div>
+          )}
+        </Section>
+
+        <Section title="Toast — .toast (role=status/alert)">
+          <label className="tl-check">
+            <input type="checkbox" checked={showToast} onChange={(e) => setShowToast(e.target.checked)} /> 토스트 표시
+          </label>
+        </Section>
+
+        <p className="muted" style={{ fontSize: 'var(--text-caption)' }}>
+          기준: docs/DESIGN_SYSTEM.md §1~§3 · 원본 PDF docs/design/MIR_SMART_Design_System_v1.pdf ·
+          라이트/다크는 우상단 토글로 전환.
+        </p>
+      </div>
+
+      {showToast && (
+        <div className="toast-stack">
+          <div className="toast" role="status">저장되었습니다.</div>
+          <div className="toast toast--success" role="status">기성 명세 12건 승인 완료.</div>
+          <div className="toast toast--error" role="alert">업로드 실패 — 네트워크를 확인하세요.</div>
+        </div>
+      )}
+    </div>
+  );
+}

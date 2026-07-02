@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { EmptyState } from '../components/EmptyState';
 import { errMessage } from '../lib/errors';
 import { useProjectRole } from '../auth/useProjectRole';
 import { MiniChart } from '../components/MiniChart';
@@ -214,7 +215,7 @@ function BillingItemsSection({ projectId, canEdit }: { projectId: string; canEdi
       )}
 
       {items.length === 0 ? (
-        <p className="muted" style={{ marginTop: 8 }}>등록된 공종별 명세가 없습니다.</p>
+        <EmptyState icon="🧾" title="등록된 공종별 명세가 없습니다" desc="기성 명세를 등록하면 여기에 표시됩니다." />
       ) : (
         <div className="cde-table-wrap" style={{ padding: 0, marginTop: 8 }}>
           <table className="cde-table">

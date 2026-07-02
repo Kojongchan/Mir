@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { EmptyState } from '../components/EmptyState';
 import * as pdfjsLib from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { useAuth } from '../auth/AuthProvider';
@@ -126,9 +127,12 @@ export function Drawings() {
             </div>
           )}
           {list.length === 0 ? (
-            <p className="muted draw-list-empty">
-              등록된 도면이 없습니다.{canEdit ? ' 상단에서 PDF/DXF를 업로드하세요.' : ''}
-            </p>
+            <EmptyState
+              compact
+              icon="📐"
+              title="등록된 도면이 없습니다"
+              desc={canEdit ? '상단에서 PDF/DXF를 업로드하세요.' : undefined}
+            />
           ) : (
             <ul className="draw-list-items">
               {list.map((d) => (

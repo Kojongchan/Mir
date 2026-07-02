@@ -18,6 +18,7 @@ import { Admin } from './pages/Admin';
 import { ProjectMembers } from './pages/ProjectMembers';
 import { FileViewer } from './pages/FileViewer';
 import { AccModels } from './pages/AccModels';
+import { StyleGuide } from './pages/StyleGuide';
 
 function Protected({ children }: { children: ReactElement }) {
   const { session, loading } = useAuth();
@@ -111,6 +112,8 @@ export default function App() {
               </Protected>
             }
           />
+          {/* U1 디자인 시스템 데모(토큰·공통 컴포넌트) — 데이터 접근 없음 */}
+          <Route path="/styleguide" element={<StyleGuide />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
