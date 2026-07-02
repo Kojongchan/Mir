@@ -3,6 +3,108 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 U4 — 디자인 시스템 Phase 4 마감: 다크·반응형·모션·a11y (2026-07-02)
+> branch `claude/design-system-phase-1-lgw4oz`. typecheck·build 통과. **axe-core 0 violations**
+> (/styleguide·/login 라이트·다크 모두 critical·serious·moderate 전부 0). U3(뷰어)는 이번 묶음에 없음.
+
+### ✅ 한 일
+1. **다크 마감 — 시스템 선호 초기값**: `theme.ts` `getStoredTheme` 이 저장값 없으면 `prefers-color-scheme`
+   따름 + `initTheme` 이 명시적 선택 없는 동안 시스템 테마 변경 실시간 반영. (localStorage 토글 유지.)
+2. **반응형 — 모바일 하단 탭바**: `BottomTabBar.tsx`(주요 5메뉴: 사업개요/공정/3D/일보/이슈, aria-current) +
+   `.app-bottom-tabbar` CSS. <640: 사이드바 숨김·본문 풀폭·하단탭 노출(fixed, z-fixed, safe-area 대응)·
+   토바 압축. 641~1024 사이드바 64px collapse(기존). >1440 풀폭 유지.
+3. **모션(transform/opacity만)**: `fade-in`(포털 본문 `.dash` 진입) + `modal-in`(모달/ACC모달 scale .96→1).
+   `@media (prefers-reduced-motion: reduce)` 전역 가드(애니메이션/전환 축소).
+4. **a11y QA(axe-core) — 전부 해소**: 초기 스캔 serious(대비)·moderate(landmark/heading/region) →
+   - **대비 안전 토큰화**: KPI 시맨틱 수치·`.field__error` → badge-fg(짙은 시맨틱), `.kpi__meta`·`.field__helper`·
+     `.empty-state`·`.bottom-tab`·`.project-switcher__code` 를 tertiary→secondary(tertiary=placeholder 전용, 짙은표면 4.5:1 미달).
+   - **brand-solid 신설**: 흰 글자 채움(버튼·아바타)은 다크에서 밝아지는 `--color-brand-primary`(텍스트용) 대신
+     짙게 고정한 `--color-brand-solid`(#2563EB) 사용 → `.btn--primary`/`.primary`/`.avatar` 흰 글자 대비 확보.
+     `.btn--danger` 도 red-600 급으로 짙게(color-mix). hover 는 color-mix 로 일관 다크닝.
+   - **다크 활성 nav/탭**: `.nav-item.is-active`/`.bottom-tab.is-active` 텍스트를 밝은 blue(hover 토큰)로.
+   - **랜드마크/제목**: `StyleGuide`·`Login` 을 `<main>` + `<h1>` 로(landmark-one-main·page-has-heading-one·
+     region 해소), 데모 Section 을 `<h2>`(heading-order). `.auth-warn code` 대비 개선.
+5. **데모**: /styleguide 에 모바일 하단 탭바 미리보기 섹션 추가.
+
+### 🔜 다음 할 일 / 미해결
+- Lighthouse(Perf≥90/A11y≥95) 는 이 샌드박스(원격·auth 없음)에서 미측정 → **실 배포 프리뷰에서 측정·기록 필요**.
+  axe-core 는 0(critical/serious/moderate) 확인 완료.
+- U3(3D 뷰어 UI 톤·V2 카메라 프리셋·V3 표시품질)은 별도 단계로 남음.
+- tertiary 는 이제 placeholder 전용 관례 — 신규 텍스트에 tertiary 쓰지 말 것(secondary 사용).
+- 모바일 하단탭/모션/다크는 auth 뒤라 실 포털에선 로그인 후 눈확인 권장.
+
+### 인수인계 한 줄
+U4 마감 완료(시스템 다크 초기값·모바일 하단탭·모션·reduced-motion, axe 0 violations, brand-solid 로 다크 버튼
+대비 해결). Lighthouse 는 실 프리뷰 측정만 남음. 후속은 U3(뷰어).
+
+---
+## 📋 U2 — 디자인 시스템 Phase 3: 사업개요 Bento 대시보드 + Recharts (2026-07-02)
+> branch `claude/design-system-phase-1-lgw4oz`. typecheck·build 통과, /styleguide Bento 미리보기 라이트/다크 확인.
+> 기준: DESIGN_SYSTEM §2(Bento)·§3(KPI Card) + dataviz 스킬 원칙.
+
+### ✅ 한 일
+1. **Bento Grid 재배치**: `Dashboard.tsx` 를 6×1 균등그리드 → `.bento-grid`(12칸)로. hero(진행률, span6/row2,
+   그라데이션) + small×6(준공 D-day/착공 후/미해결 이슈/투입 인력/장비/통합모델, span2) + chart×2(span6/row2) +
+   wide(마일스톤 칩, span12). 반응형 ≤1024 6칸·≤640 1칸.
+2. **KPI 카드 + 컬러 시맨틱**: `.kpi-card`(__label/__value.tabular/__meta) + `.kpi--danger/warning/success`.
+   준공 D-day 임박도(`ddayKpiClass`: D-30↓ 위험/D-180↓ 주의/그 외 안전)로 색 자동. hero 는 `<progress
+   class="progress-bar">`(PDF §4.10). 전 수치 `.tabular`.
+3. **Recharts 도입**: `recharts` 설치. 인력 추이=AreaChart(단일 계열, 범례 없음, 그라데이션 fill),
+   기성 계획vs실적=LineChart(2계열, **one-axis**). **dataviz 원칙 준수**: 축/그리드=ink 토큰(`--chart-axis/grid`),
+   시리즈 색은 **검증 통과 팔레트**(`--chart-1`=brand 실적 solid, `--chart-2`=teal #0D9488 계획 dashed —
+   `validate_palette.js` 라이트/다크 ALL PASS) + **색+선유형 이중 인코딩** + 커스텀 HTML 범례. 툴팁 토큰색.
+   빈 데이터는 `.empty-state`.
+4. **정리**: 옛 `MiniChart` 사용 제거(대시보드), 옛 `.dash-progress/.dash-grid/.dash-stat/MilestoneCard` 경로 삭제.
+   /styleguide 에 Bento 대시보드 미리보기 섹션 추가(샘플 데이터, 라이트/다크 both).
+
+### 🔜 다음 할 일 / 미해결
+- 축 라벨 클리핑 회피 위해 기성 Y축 `unit="%"` 제거(제목이 % 명시). 실 데이터에서 축 눈금 범위 확인 권장.
+- U3(3D 뷰어 UI·V2/V3)는 이번 묶음에 없음 → 후속. U4(다크 마감·모바일 하단탭·모션·a11y)로 진행.
+- 번들 5MB 경고(recharts 포함 더 커짐) → Q1 코드 스플리팅 후속 과제.
+
+### 인수인계 한 줄
+U2 완료(Bento 대시보드·KPI 컬러시맨틱·Recharts 2차트, dataviz 팔레트 검증). /styleguide 미리보기 OK. U4로.
+
+---
+## 📋 U-Shell — 디자인 시스템 Phase 2: 셸 라이트 전환 + 커스텀 12 아이콘 (2026-07-02)
+> branch `claude/design-system-phase-1-lgw4oz`(U1 병합된 main 위 재분기). typecheck·build 통과,
+> /styleguide 셸 미리보기로 라이트/다크·확장/collapse 확인. 기준: DESIGN_SYSTEM §2·§3·§4 + PDF §5.2.
+
+### ✅ 한 일
+1. **커스텀 도메인 아이콘 12종 + 확장 3종**: `src/components/icons/Icon.tsx` — PDF §5.2 실동작 SVG 12개
+   (dashboard/schedule/model-3d/schedule-4d/clash/qto/drawing/daily-report/weather/subcontract/board/files)를
+   React 컴포넌트로 wrap(Solid Geometric, stroke=currentColor, fill-opacity 0.12, 레드닷=`var(--color-brand-accent)`,
+   레드닷 위 흰 체크=`var(--color-text-on-brand)`). 메뉴가 14개라 세트에 없는 협업·이슈/기성내역/구성원은 동일
+   톤(레드닷·currentColor)의 확장 아이콘 `issue/billing/members` 신설. size·color props, currentColor 상속.
+   ⚠️ weather 는 현재 메뉴엔 없으나 세트 완성 위해 포함(추후 기상 모듈용).
+2. **Generic UI 스프라이트**: `src/components/icons/UiIcon.tsx` — chevron-down/-left·folder·bell·sun·moon·plus·x·
+   menu·logout 를 `<symbol>` defs 로 묶고 `<use href="#ui-*">` 참조(단일 정의). `<UiIconSprite/>` 를 App 루트에
+   1회 마운트.
+3. **사이드바 라이트 전환**: `.portal-nav*` → `.app-sidebar`/`.nav-item`(index.css). 배경 `--color-bg-surface`,
+   우측 border `--color-border-default`, 기본 텍스트 secondary, hover `--color-bg-subtle`. **활성만 brand 강조**
+   (`.is-active` 배경 `#EFF6FF`/다크 rgba(37,99,235,.18), 텍스트·아이콘 brand). NavLink 기본 `aria-current="page"` +
+   sr-only "(현재 페이지)".
+4. **collapse(240↔64)**: `.portal-body[data-sidebar]` grid-columns 전환(transition), collapse 시 `.nav-item__label`
+   숨김·아이콘 중앙정렬. TopBar 메뉴(≡) 버튼으로 토글, localStorage(`mir.sidebar.collapsed`) 기억. 태블릿(≤1024)
+   자동 collapse(모바일 하단탭은 U4).
+5. **TopBar 56px 재구성**: `.app-topbar` — 사이드바 토글(menu) + 브랜드 + **프로젝트 스위처**(btn--ghost, folder +
+   이름 + code + chevron-down → '/') + spacer + 알림(NotificationBell) + 테마토글 + 로그아웃(icon, aria-label) +
+   **아바타**(사용자 이니셜). 포털 grid-rows 48→56px(1fr 흡수). icon-only 버튼 aria-label + 내부 아이콘 aria-hidden.
+6. **데모**: /styleguide 에 아이콘 갤러리(15종 + UI 스프라이트) + Shell 미리보기(TopBar+사이드바 활성/일반)
+   섹션 추가 — 라이트/다크 both 확인.
+
+### 🔜 다음 할 일 / 미해결
+- U2(Bento 대시보드·Recharts) → U3(뷰어 UI·V2/V3) → U4(다크 마감·모바일 하단탭·모션·a11y QA).
+- 셸이 auth 뒤라 이 샌드박스(Supabase env 없음)에선 실 포털 진입 불가 → /styleguide 미리보기로 검증. 실 로그인
+  환경에서 전 메뉴 진입 눈확인 권장(특히 뷰어/자료관리 등 mod-fill 모듈이 56px 토바 아래 정상 배치되는지).
+- 옛 `--chrome*`(네이비) 토큰은 doc-viewer-bar·admin-top·백업 Workspace 가 아직 사용 → 보존. 그 화면들의
+  라이트 전환은 후속(범위 밖).
+
+### 인수인계 한 줄
+U-Shell 완료(사이드바 라이트+활성 brand, TopBar 재구성, 커스텀 12+3 아이콘, UI 스프라이트, collapse). /styleguide
+미리보기 라이트/다크 OK. 실 로그인 환경 전 메뉴 눈확인 후 U2로.
+
+---
 ## 📋 U1 — 디자인 시스템 Phase 1: 토큰 & 공통 컴포넌트 기반 (2026-07-02)
 > branch `claude/design-system-phase-1-lgw4oz`. typecheck·build 통과, 라이트/다크 스크린샷 확인.
 > 기준 문서 `docs/DESIGN_SYSTEM.md`(+원본 PDF) — 이 문서·PLANNING §0-I 은 기획 브랜치
