@@ -68,8 +68,10 @@
 - **★ 사이드바 라이트 전환(CHANGE)**: 기존 진한 네이비 사이드바 **폐기** → 배경 `--color-bg-surface`(흰색),
   **활성 메뉴만 brand color**(`.nav-item.is-active` 배경 `#EFF6FF`/다크 rgba(37,99,235,.18), 텍스트 brand).
   → 이건 사용자 **참고안**이므로 적용 전 톤 확인.
-- **반응형**: mobile(<640) 사이드바→하단 탭바(5), tablet(640~1024) 64px collapse, desktop(1024~1440) 240px,
-  wide(>1440) content 중앙정렬. (우리 §0-E "풀폭"과 조정: wide에서 1440 cap은 선택 — 사용자 확인.)
+- **반응형**: mobile(<640) 사이드바→하단 탭바(5), tablet(640~1024) 64px collapse, desktop(1024~1440) 240px.
+- **★ wide(>1440) 결정: 풀폭 유지(전역 1440 cap 미적용)** — 데이터밀도 높은 표 중심 CDE라 뷰포트를
+  채운다(§0-E "풀폭" 연장). 단 **폼·텍스트 위주 화면만** 가독 폭 래퍼(예: `.content-narrow` max-width
+  ~960px)로 **opt-in** 감싸 과확장 방지. 문서 원안(중앙정렬)은 우리 맥락에 맞게 이 결정으로 대체.
 - **Bento Grid 대시보드**: hero(span6/row2)·medium(span3)·small(span2)·wide(span12). KPI hero 강조.
 
 ## 3. 컴포넌트 (BEM-lite, 토큰만 참조)
