@@ -167,13 +167,18 @@ S48에서 자료관리가 ACC 단독이 되며 **Supabase BIM(IFC) 업로드 UI�
 > UI = **공통 기반부터**, 병행 기능 = 관측점 팀공유 · 이슈/협업 고도화 · 품질/버그/성능.
 
 ### 🎨 UI 리프레시 (U 시리즈 — 공통 기반 우선)
-- **U1(기반·최우선·단독·빠른 병합)**: 디자인 토큰 정리(spacing/radius/shadow/타이포 scale) +
-  공통 컴포넌트 일관화(버튼·입력·select·뱃지·카드) + **표 공통 스타일**(정렬·hover·zebra·sticky
-  header·빈행) + **빈 상태(empty)**·**로딩 스켈레톤**·토스트/에러 일관. `index.css` 토큰 + 소규모
-  공통 컴포넌트. 마이그 없음. ⚠️ **전 화면 공유 CSS**라 먼저 끝내고 바로 병합(뒤 작업이 이 위에 얹힘).
-- **U2** 대시보드·차트 고급화(사업개요 KPI·진행률·S-curve — dataviz 원칙 적용).
-- **U3** 3D 뷰어 UI 톤 정리 + **V2 카메라 프리셋**(ViewCube·홈·정투영·표준6면·fit) + **V3 표시품질**.
-- **U4** 셸/네비 구획·활성표시·breadcrumb + **다크모드 마감**.
+> **북극성 = `docs/DESIGN_SYSTEM.md`**(사용자 제공 명세 `docs/design/MIR_SMART_Design_System_v1.pdf`
+> 를 우리 스택에 맞게 조정). ★스택 결정: **Tailwind/SSR 안 씀**(Vite SPA+순수 CSS 유지), 토큰/컴포넌트
+> /아이콘/다크모드/a11y만 채택, Framer·Recharts는 필요 시. 아래 U는 그 문서의 4-phase 로드맵과 정렬.
+- **U1(Phase1 토큰&기반·최우선·단독·빠른 병합)**: 토큰 도입(colors/typography/spacing/radius/shadow/
+  motion/z) + Pretendard/Inter + **기존 hardcoded hex/px→`var(--*)` 치환** + 공통 컴포넌트
+  (btn·input·card·badge·**table**·**empty**·**skeleton**·toast) 정비 + 로그인/프로젝트선택 격자배경 제거.
+  ⚠️ 전 화면 공유 CSS라 먼저 끝내고 바로 병합.
+- **U-Shell(Phase2)**: **사이드바 라이트 전환**(진한 네이비 폐기, 활성만 brand — 톤 확인) + TopBar +
+  **커스텀 12 도메인 아이콘 교체**(PDF §5.2 SVG, generic 제거) + Button/Input/Card/Badge 정비.
+- **U2(Phase3)**: 사업개요 **Bento Grid** + KPI 컬러시맨틱 + 차트(Recharts) 비율 정상화(dataviz 원칙).
+- **U3**: 3D 뷰어 UI 톤 정리 + **V2 카메라 프리셋**(ViewCube·홈·정투영·표준6면·fit) + **V3 표시품질**.
+- **U4(Phase4 마감)**: 다크모드 토글 + 반응형(모바일 하단탭) + (선택)모션 + a11y QA(axe 0 critical·Lighthouse≥90).
 
 ### 🤝 협업 보완 (병렬 가능)
 - **F1 관측점·홈뷰 팀 공유**: 현재 localStorage(`lib/apsViewpoints`) → **DB 이관**(viewpoints에 APS
