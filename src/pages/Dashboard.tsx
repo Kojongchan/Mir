@@ -12,7 +12,7 @@ import {
   YAxis,
 } from 'recharts';
 import { errMessage } from '../lib/errors';
-import { useAuth } from '../auth/AuthProvider';
+import { useProjectRole } from '../auth/useProjectRole';
 import { EmptyState } from '../components/EmptyState';
 import { Icon } from '../components/icons/Icon';
 import { countOpenIssues } from '../lib/issues';
@@ -69,8 +69,10 @@ function ddayKpiClass(date: string | null): string {
 export function Dashboard() {
   const { projectId = '' } = useParams();
   const navigate = useNavigate();
-  const { profile } = useAuth();
-  const isAdmin = !!profile?.is_admin;
+  // 편집 게이팅 = 실무자(editor) 이상. RLS(0023) project_info/milestones/monthly_records
+  // 쓰기 정책(is_editor)과 일치 — 기존 시스템관리자(is_admin) 한정은 실무자·프로젝트관리자를
+  // 부당하게 막던 회귀(B1)라 canEdit 으로 정정.
+  const { canEdit } = useProjectRole(projectId);
 
   const [info, setInfo] = useState<ProjectInfo | null>(null);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
@@ -193,7 +195,7 @@ export function Dashboard() {
           <span className="dash-today">Today {new Date().toLocaleDateString('ko-KR', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' })}</span>
           <h1 className="dash-h1">사업개요</h1>
         </div>
-        {isAdmin && (
+        {canEdit && (
           <button className={edit ? 'primary' : ''} onClick={() => setEdit((e) => !e)}>
             {edit ? '편집 완료' : '편집'}
           </button>
