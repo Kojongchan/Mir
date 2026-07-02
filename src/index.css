@@ -3355,6 +3355,27 @@ button.danger:hover:not(:disabled) {
   font-weight: var(--fw-medium);
   color: var(--color-text-secondary);
 }
+/* 상단바 사용자 — 아바타 + 전체 이름(글자수 제한 없이 표시) */
+.topbar-user {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  padding-left: var(--space-1);
+}
+.topbar-user__name {
+  font-size: var(--text-small);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+/* 좁은 폭에서는 이름 숨기고 아바타만(공간 확보) */
+@media (max-width: 640px) {
+  .topbar-user__name {
+    display: none;
+  }
+}
+
 /* 아바타 — 사용자 이니셜 */
 .avatar {
   flex-shrink: 0;

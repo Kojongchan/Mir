@@ -137,7 +137,10 @@ export function StyleGuide() {
               <div className="spacer" />
               <button className="btn btn--ghost btn--sm" aria-label="알림"><UiIcon name="bell" /></button>
               <button className="btn btn--ghost btn--sm" aria-label="테마 전환"><UiIcon name="moon" /></button>
-              <span className="avatar" aria-hidden>관</span>
+              <span className="topbar-user">
+                <span className="avatar" aria-hidden>관</span>
+                <span className="topbar-user__name">관리자 홍길동</span>
+              </span>
             </div>
             <div style={{ display: 'flex', height: 300 }}>
               <nav className="app-sidebar" style={{ width: 240 }} aria-label="미리보기 네비게이션">

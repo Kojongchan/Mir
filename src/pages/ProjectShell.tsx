@@ -82,8 +82,10 @@ export function ProjectShell() {
         >
           <UiIcon name="logout" />
         </button>
-        <span className="avatar" title={displayName} aria-hidden>{initial}</span>
-        <span className="sr-only">{displayName}</span>
+        <span className="topbar-user" title={displayName}>
+          <span className="avatar" aria-hidden>{initial}</span>
+          <span className="topbar-user__name">{displayName}</span>
+        </span>
       </header>
 
       <div className="portal-body" data-sidebar={collapsed ? 'collapsed' : 'expanded'}>
