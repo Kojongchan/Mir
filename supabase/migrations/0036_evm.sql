@@ -19,6 +19,15 @@ create table if not exists public.cost_rates (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+-- 방어적 보강(멱등): cost_rates 가 이전에 다른 스키마로 이미 존재하면 create 가
+-- 건너뛰므로, 인덱스·정책이 참조하는 컬럼을 누락 없이 보강한다.
+alter table public.cost_rates add column if not exists project_id uuid references public.projects on delete cascade;
+alter table public.cost_rates add column if not exists category text;
+alter table public.cost_rates add column if not exists qty_basis text;
+alter table public.cost_rates add column if not exists unit_price numeric(16, 2) not null default 0;
+alter table public.cost_rates add column if not exists manual_qty numeric(16, 3) not null default 0;
+alter table public.cost_rates add column if not exists sort_order integer not null default 0;
+alter table public.cost_rates add column if not exists updated_at timestamptz not null default now();
 create index if not exists cost_rates_project_idx on public.cost_rates (project_id, sort_order);
 
 -- ---------- evm_actual (기준일별 PV·EV·AC 스냅샷) --------------------
@@ -34,6 +43,14 @@ create table if not exists public.evm_actual (
   created_by uuid references auth.users,
   created_at timestamptz not null default now()
 );
+-- 방어적 보강(멱등) — 위와 동일 사유.
+alter table public.evm_actual add column if not exists project_id uuid references public.projects on delete cascade;
+alter table public.evm_actual add column if not exists category text;
+alter table public.evm_actual add column if not exists as_of_date date;
+alter table public.evm_actual add column if not exists pv_amount numeric(16, 2) not null default 0;
+alter table public.evm_actual add column if not exists ev_amount numeric(16, 2) not null default 0;
+alter table public.evm_actual add column if not exists ac_amount numeric(16, 2) not null default 0;
+alter table public.evm_actual add column if not exists note text;
 create index if not exists evm_actual_project_idx on public.evm_actual (project_id, as_of_date);
 
 -- ---------- row level security ---------------------------------------
