@@ -46,6 +46,17 @@ const DOMAIN_ICONS: { name: IconName; label: string }[] = [
   { name: 'issue', label: '협업·이슈' },
   { name: 'billing', label: '기성내역' },
   { name: 'members', label: '구성원' },
+  { name: 'rfi', label: 'RFI' },
+  { name: 'punch', label: 'Punch' },
+  { name: 'meeting', label: '회의록' },
+  { name: 'submittal', label: '제출물' },
+  { name: 'evm', label: 'EVM' },
+  { name: 'hiboard', label: 'HIBoard' },
+  { name: 'search', label: '통합검색' },
+  { name: 'qr', label: '자재·자산' },
+  { name: 'asset', label: '자산' },
+  { name: 'remote', label: '원격지원' },
+  { name: 'company', label: '관계사' },
 ];
 
 /** U1 디자인 시스템 스타일가이드 (/styleguide) — 토큰·공통 컴포넌트 데모.

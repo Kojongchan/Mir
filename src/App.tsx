@@ -15,7 +15,6 @@ import { Meetings } from './pages/Meetings';
 import { PunchPage } from './pages/Punch';
 import { Submittals } from './pages/Submittals';
 import { Billing } from './pages/Billing';
-import { Subcontracts } from './pages/Subcontracts';
 import { Board } from './pages/Board';
 import { ProjectMembers } from './pages/ProjectMembers';
 
@@ -107,7 +106,6 @@ export default function App() {
             <Route path="hiboard" element={<HiBoard />} />
             <Route path="meetings" element={<Meetings />} />
             <Route path="billing" element={<Billing />} />
-            <Route path="subcontracts" element={<Subcontracts />} />
             <Route path="board" element={<Board />} />
             {/* Modules with their own sub-tree — rendered inside the shell so the
                 left module rail stays put and only the right side changes. */}

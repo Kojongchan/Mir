@@ -21,7 +21,20 @@ export type IconName =
   // 12개 세트 외 — 동일 톤(레드닷·currentColor)으로 채운 확장 아이콘
   | 'issue'
   | 'billing'
-  | 'members';
+  | 'members'
+  // R1~R7 협업/원가/대시보드 확장
+  | 'rfi'
+  | 'punch'
+  | 'meeting'
+  | 'submittal'
+  | 'evm'
+  | 'hiboard'
+  // R8~R12 통합검색·기상·QR·원격·관계사
+  | 'search'
+  | 'qr'
+  | 'asset'
+  | 'remote'
+  | 'company';
 
 const DOT = 'var(--color-brand-accent)';
 const ON = 'var(--color-text-on-brand)'; // 레드닷 위 흰 체크
@@ -146,6 +159,115 @@ const PATHS: Record<IconName, ReactNode> = {
       <circle cx="9" cy="8" r="3.2" />
       <path d="M3.5 20C3.5 16.4 6 14 9 14C12 14 14.5 16.4 14.5 20" />
       <circle cx="17.5" cy="9" r="2.4" fill={DOT} stroke="none" />
+    </>
+  ),
+  // ── R1~R7 (동일 톤: 외곽선 + 0.12 fill + 브랜드 레드닷) ──
+  // RFI: 말풍선 + 물음표(정보 요청). 레드닷 = 물음표 점.
+  rfi: (
+    <>
+      <path d="M4 4H20V15H12L7 19V15H4V4Z" fill="currentColor" fillOpacity="0.12" />
+      <path d="M4 4H20V15H12L7 19V15H4V4Z" />
+      <path d="M9.7 8.1C9.7 7.1 10.7 6.5 12 6.5C13.3 6.5 14.3 7.2 14.3 8.3C14.3 9.7 12 9.7 12 11.2" />
+      <circle cx="12" cy="13.2" r="1.2" fill={DOT} stroke="none" />
+    </>
+  ),
+  // Punch: 클립보드 체크리스트 + 경고 레드닷(하자·미완료).
+  punch: (
+    <>
+      <rect x="5" y="4" width="14" height="17" rx="1" fill="currentColor" fillOpacity="0.12" />
+      <rect x="5" y="4" width="14" height="17" rx="1" />
+      <rect x="9" y="2.5" width="6" height="3" rx="1" />
+      <path d="M8 11H13 M8 14.5H12" strokeOpacity="0.55" />
+      <circle cx="16.5" cy="15.2" r="2.6" fill={DOT} stroke="none" />
+      <path d="M16.5 13.8V15.4" stroke={ON} strokeWidth="1.3" />
+      <circle cx="16.5" cy="16.6" r="0.55" fill={ON} stroke="none" />
+    </>
+  ),
+  // 회의록: 두 개의 말풍선(논의·의사결정) + 레드닷.
+  meeting: (
+    <>
+      <path d="M3 5H14V13H8L5 16V13H3V5Z" fill="currentColor" fillOpacity="0.12" />
+      <path d="M3 5H14V13H8L5 16V13H3V5Z" />
+      <path d="M6.5 8.5H10.5" strokeOpacity="0.55" />
+      <path d="M10 10H21V17H15L13 19.5V17H10V10Z" />
+      <circle cx="18.5" cy="7" r="1.5" fill={DOT} stroke="none" />
+    </>
+  ),
+  // 제출물·승인: 문서 + 승인 스탬프(레드 원 + 흰 체크).
+  submittal: (
+    <>
+      <path d="M6 3H14L18 7V21H6V3Z" fill="currentColor" fillOpacity="0.12" />
+      <path d="M6 3H14L18 7V21H6V3Z M14 3V7H18 M9 11H15 M9 14H12" />
+      <circle cx="15.5" cy="16.5" r="3" fill={DOT} stroke="none" />
+      <path d="M14.1 16.5L15.2 17.6L16.9 15.7" stroke={ON} strokeWidth="1.3" />
+    </>
+  ),
+  // EVM: 원가 S-curve(면적 + 곡선) + 종점 레드닷.
+  evm: (
+    <>
+      <path d="M4 20L8 14L12 16L16 9L20 5V20H4Z" fill="currentColor" fillOpacity="0.12" stroke="none" />
+      <path d="M4 3V20H21" />
+      <path d="M4 16L8 11L12 13L16 7L20 4" />
+      <circle cx="20" cy="4" r="1.7" fill={DOT} stroke="none" />
+    </>
+  ),
+  // HIBoard: 실시간 위젯 그리드(벤토) + LIVE 레드닷.
+  hiboard: (
+    <>
+      <rect x="3" y="3" width="8" height="8" fill="currentColor" fillOpacity="0.12" />
+      <rect x="3" y="3" width="8" height="8" />
+      <rect x="13" y="3" width="8" height="5" />
+      <rect x="3" y="13" width="8" height="8" />
+      <rect x="13" y="10" width="8" height="11" />
+      <circle cx="19" cy="5.5" r="1.6" fill={DOT} stroke="none" />
+    </>
+  ),
+  // ── R8~R12 ──
+  // 통합검색: 돋보기 + 레드닷.
+  search: (
+    <>
+      <circle cx="10.5" cy="10.5" r="6.5" fill="currentColor" fillOpacity="0.12" />
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <path d="M15.5 15.5L21 21" />
+      <circle cx="19" cy="5" r="1.5" fill={DOT} stroke="none" />
+    </>
+  ),
+  // QR: 코드 사각형 3코너 + 레드닷 모듈.
+  qr: (
+    <>
+      <rect x="3" y="3" width="18" height="18" fill="currentColor" fillOpacity="0.12" />
+      <rect x="3" y="3" width="18" height="18" />
+      <rect x="6" y="6" width="4" height="4" />
+      <rect x="14" y="6" width="4" height="4" />
+      <rect x="6" y="14" width="4" height="4" />
+      <rect x="14.5" y="14.5" width="3" height="3" fill={DOT} stroke="none" />
+    </>
+  ),
+  // 자재·자산: 상자(패키지) + 레드닷 태그.
+  asset: (
+    <>
+      <path d="M12 3L20 7V17L12 21L4 17V7L12 3Z" fill="currentColor" fillOpacity="0.12" />
+      <path d="M12 3L20 7V17L12 21L4 17V7L12 3Z M4 7L12 11L20 7 M12 11V21" />
+      <circle cx="8" cy="6" r="1.5" fill={DOT} stroke="none" />
+    </>
+  ),
+  // 원격지원: 모니터/화면 + 재생 + 레드닷.
+  remote: (
+    <>
+      <rect x="3" y="4" width="18" height="12" rx="1" fill="currentColor" fillOpacity="0.12" />
+      <rect x="3" y="4" width="18" height="12" rx="1" />
+      <path d="M8 20H16 M12 16V20" />
+      <path d="M10.5 8L14 10L10.5 12V8Z" fill="currentColor" stroke="none" />
+      <circle cx="18" cy="6.5" r="1.4" fill={DOT} stroke="none" />
+    </>
+  ),
+  // 관계사(회사·조직): 빌딩 + 레드닷.
+  company: (
+    <>
+      <path d="M4 21V5H13V21 M13 9H20V21" fill="currentColor" fillOpacity="0.12" />
+      <path d="M4 21V5H13V9H20V21 M3 21H21" />
+      <path d="M7 8H10 M7 11H10 M7 14H10 M16 13H17.5 M16 16H17.5" strokeOpacity="0.55" />
+      <circle cx="18" cy="7" r="1.3" fill={DOT} stroke="none" />
     </>
   ),
 };
