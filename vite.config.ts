@@ -18,6 +18,7 @@ export default defineConfig({
           if (id.includes('web-ifc')) return 'webifc';
           if (id.includes('/three/') || id.includes('three-mesh-bvh')) return 'three';
           if (id.includes('mammoth') || id.includes('xlsx')) return 'docs';
+          if (id.includes('qrcode') || id.includes('/encode-utf8/') || id.includes('/dijkstrajs/')) return 'qrcode';
           if (id.includes('@supabase')) return 'supabase';
           if (id.includes('react-router') || id.includes('react-dom') || id.includes('/react/')) return 'react';
           return undefined;

@@ -6,7 +6,9 @@ import { ProjectNav } from '../components/ProjectNav';
 import { NotificationBell } from '../components/NotificationBell';
 import { BottomTabBar } from '../components/BottomTabBar';
 import { TopUserMenu } from '../components/TopUserMenu';
+import { CommandPalette } from '../components/CommandPalette';
 import { UiIcon } from '../components/icons/UiIcon';
+import { Icon } from '../components/icons/Icon';
 import { getProject, type Project } from '../lib/api';
 
 const RAIL_KEY = 'mir.sidebar.collapsed';
@@ -67,6 +69,17 @@ export function ProjectShell() {
 
         <div className="spacer" />
 
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm cmdk-trigger"
+          onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', metaKey: true }))}
+          title="통합검색 (Cmd/Ctrl+K)"
+          aria-label="통합검색"
+        >
+          <Icon name="search" size={16} />
+          <span className="cmdk-trigger__label">검색</span>
+          <kbd className="cmdk-kbd">⌘K</kbd>
+        </button>
         <NotificationBell />
         <ThemeToggle />
         <TopUserMenu projectId={projectId} />
@@ -80,6 +93,7 @@ export function ProjectShell() {
       </div>
 
       <BottomTabBar />
+      <CommandPalette projectId={projectId} />
     </div>
   );
 }

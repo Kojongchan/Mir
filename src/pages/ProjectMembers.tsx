@@ -16,6 +16,17 @@ import {
   type MemberRow,
   type ProfileRow,
 } from '../lib/admin';
+import {
+  ROLE_TAG_PRESETS,
+  addMemberRole,
+  listCompanies,
+  listMemberCompanies,
+  listMemberRoles,
+  removeMemberRole,
+  setMemberCompany,
+  type Company,
+  type MemberRoleTag,
+} from '../lib/companies';
 
 /**
  * 구성원·권한 — 프로젝트 단위 멤버/역할 관리 (S48).
@@ -40,9 +51,30 @@ export function ProjectMembers() {
   // 신규 계정 생성
   const [nu, setNu] = useState({ username: '', fullName: '', password: '', role: 'viewer' as MemberRole });
 
+  // R12 — 관계사·다중역할(0041 미적용 시 빈 값 폴백).
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [roleTags, setRoleTags] = useState<Map<string, MemberRoleTag[]>>(new Map());
+  const [memberCompany, setMemberCompanyMap] = useState<Map<string, string | null>>(new Map());
+
   const reload = () => {
     listMembers(projectId).then(setMembers).catch(() => setMembers([]));
     listAssignableUsers(projectId).then((r) => setUsers(r.users)).catch(() => setUsers([]));
+    listCompanies(projectId).then(setCompanies).catch(() => setCompanies([]));
+    listMemberRoles(projectId).then(setRoleTags).catch(() => setRoleTags(new Map()));
+    listMemberCompanies(projectId).then(setMemberCompanyMap).catch(() => setMemberCompanyMap(new Map()));
+  };
+
+  const onSetCompany = async (userId: string, companyId: string) => {
+    try { await setMemberCompany(projectId, userId, companyId || null); reload(); } catch (e) { err(e); }
+  };
+  const onAddTag = async (userId: string) => {
+    const preset = ROLE_TAG_PRESETS.join(', ');
+    const tag = window.prompt(`도메인 역할 태그 추가 (예: ${preset})`);
+    if (!tag || !tag.trim()) return;
+    try { await addMemberRole(projectId, userId, tag.trim()); reload(); } catch (e) { err(e); }
+  };
+  const onRemoveTag = async (id: string) => {
+    try { await removeMemberRole(id); reload(); } catch (e) { err(e); }
   };
 
   useEffect(() => {
@@ -154,7 +186,7 @@ export function ProjectMembers() {
         <div className="admin-table-wrap">
           <table className="admin-table">
             <thead>
-              <tr><th>아이디</th><th>표시이름</th><th>역할</th><th className="right">관리</th></tr>
+              <tr><th>아이디</th><th>표시이름</th><th>접근권한</th><th>소속(관계사)</th><th>도메인 역할</th><th className="right">관리</th></tr>
             </thead>
             <tbody>
               {members.map((m) => {
@@ -173,6 +205,25 @@ export function ProjectMembers() {
                         </select>
                       )}
                     </td>
+                    <td>
+                      {sys ? <span className="muted">—</span> : (
+                        <select value={memberCompany.get(m.user_id) ?? ''} onChange={(e) => onSetCompany(m.user_id, e.target.value)}>
+                          <option value="">미지정</option>
+                          {companies.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.role_type})</option>)}
+                        </select>
+                      )}
+                    </td>
+                    <td>
+                      <div className="role-tags">
+                        {(roleTags.get(m.user_id) ?? []).map((t) => (
+                          <span className="role-tag" key={t.id}>
+                            {t.role_tag}
+                            {!sys && <button className="role-tag-x" title="제거" onClick={() => onRemoveTag(t.id)}>×</button>}
+                          </span>
+                        ))}
+                        {!sys && <button className="role-tag-add" onClick={() => onAddTag(m.user_id)}>＋</button>}
+                      </div>
+                    </td>
                     <td className="right nowrap">
                       {sys ? (
                         <span className="muted" title="시스템 관리자는 Supabase에서만 관리">🔒</span>
@@ -187,7 +238,7 @@ export function ProjectMembers() {
                   </tr>
                 );
               })}
-              {members.length === 0 && <tr><td colSpan={4}><EmptyState compact icon="👥" title="배정된 멤버가 없습니다" desc="아래에서 사용자를 배정하세요." /></td></tr>}
+              {members.length === 0 && <tr><td colSpan={6}><EmptyState compact icon="👥" title="배정된 멤버가 없습니다" desc="아래에서 사용자를 배정하세요." /></td></tr>}
             </tbody>
           </table>
         </div>

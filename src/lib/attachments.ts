@@ -8,7 +8,15 @@ import { extensionOf } from './files';
 
 const BUCKET = 'docs';
 
-export type AttachTarget = 'daily_log' | 'post' | 'issue' | 'rfi' | 'meeting' | 'punch';
+export type AttachTarget =
+  | 'daily_log'
+  | 'post'
+  | 'issue'
+  | 'rfi'
+  | 'meeting'
+  | 'punch'
+  | 'asset'
+  | 'remote';
 
 export interface Attachment {
   id: string;

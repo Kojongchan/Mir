@@ -22,7 +22,9 @@ export type NotificationType =
   | 'punch_assigned'
   // R4+R5 승인 워크플로우 · Submittals
   | 'submittal_turn'
-  | 'submittal_rejected';
+  | 'submittal_rejected'
+  // R9 기상알림
+  | 'weather_alert';
 
 export interface AppNotification {
   id: string;

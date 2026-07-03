@@ -29,6 +29,7 @@ export function ProjectNav() {
     { to: `${base}/quantities`, icon: 'qto', label: '물량 산출 (QTO)' },
     { to: `${base}/drawings`, icon: 'drawing', label: '도면 (2D)' },
     { to: `${base}/logs`, icon: 'daily-report', label: '공사일보' },
+    { to: `${base}/weather`, icon: 'weather', label: '기상알림' },
     { to: `${base}/issues`, icon: 'issue', label: '협업 · 이슈' },
     { to: `${base}/rfi`, icon: 'rfi', label: 'RFI · 정보요청서' },
     { to: `${base}/punch`, icon: 'punch', label: 'Punch List' },
@@ -36,8 +37,11 @@ export function ProjectNav() {
     { to: `${base}/submittals`, icon: 'submittal', label: '제출물 · 승인' },
     { to: `${base}/billing`, icon: 'billing', label: '기성내역' },
     { to: `${base}/evm`, icon: 'evm', label: 'EVM 원가관리' },
+    { to: `${base}/assets`, icon: 'qr', label: '자재·자산 (QR)' },
+    { to: `${base}/remote`, icon: 'remote', label: '원격지원' },
     { to: `${base}/board`, icon: 'board', label: '게시판' },
     { to: `${base}/docs`, icon: 'files', label: '자료 관리' },
+    { to: `${base}/companies`, icon: 'company', label: '관계사', manageOnly: true },
     { to: `${base}/members`, icon: 'members', label: '구성원·권한', manageOnly: true },
   ];
 

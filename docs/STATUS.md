@@ -3,6 +3,47 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 UI/DB 수정 3종 + R8~R12 (통합검색·기상·QR·원격·관계사) (2026-07-03)
+> branch `claude/rfi-management-system-2bw5lp`. typecheck·build 통과. 마이그 0038·0039·0040·0041(추가형).
+> 무비용 원칙: 신규 유료 서비스 0 — open-meteo(무료·키X)·qrcode(무료 npm)·native BarcodeDetector·자체 퍼지검색.
+> ⚠️ 라이브(로그인/네트워크) 눈확인 필요. 각 모듈 마이그 미적용 시 "미활성" 폴백.
+
+### ✅ 즉시 수정(사용자 피드백)
+1. **신규 메뉴 커스텀 아이콘**(`icons/Icon.tsx`): RFI/Punch/회의록/제출물/EVM/HIBoard 가 기존 아이콘 재사용하던 것을
+   도메인별 커스텀 SVG 로 교체(Solid Geometric·0.12 fill·브랜드 레드닷 톤 유지). search/qr/asset/remote/company 도 추가.
+2. **마이그 0036 재정립**: 기존 cost_rates 충돌로 sort_order 인덱스 실패 → 방어적 `add column if not exists` 로 해결.
+   0035/0037 은 이미 멱등이라 **수정된 0036 재실행만으로 EVM 활성화**.
+3. **하도급내역 삭제**: 메뉴·라우트·`Subcontracts.tsx` 제거(lib/DB 는 비파괴 보존).
+
+### ✅ R8~R12
+- **R8 통합검색(Cmd+K)** — `lib/search.ts`·`components/CommandPalette.tsx`(ProjectShell 마운트): 이슈·RFI·Punch·회의록·
+  제출물·도면·파일 통합 검색. **자체 퍼지 스코어러**(subsequence+연속/경계 가산, Fuse.js 미사용). ⌘/Ctrl+K 전역 토글·
+  상단바 검색 버튼·바로가기·키보드 네비. 각 소스 폴백.
+- **R9 기상알림(0038)** — `weather_alert_rule`+`weather_alert_log`·`lib/weather.ts`·`pages/WeatherAlerts.tsx`: 임계치
+  규칙(강수/풍속/기온/적설·이상·이하) CRUD. **open-meteo(무료)** 로 좌표별 예보 조회→초과 시 담당자 **인앱 알림 + 이력**.
+  "지금 점검"·화면진입 트리거. (Vercel Cron/카카오는 배포 인프라 필요 → 후속.)
+- **R10 QR 자재·자산(0039)** — `asset`·`lib/assets.ts`·`pages/Assets.tsx`: 자재 CRUD + **QR 생성(qrcode, 무료·별도 청크)**
+  + **스캔(native BarcodeDetector, 무비용)**. QR=딥링크(`?asset=`)→상세 이동. 시험성적서=attachments('asset'). 반입일·투입위치.
+- **R11 원격지원(0040)** — `remote_session`·`lib/remote.ts`·`pages/RemoteSupport.tsx`: Teams/Meet 링크 + 화면캡처
+  첨부(attachments 'remote') 아카이브·조회.
+- **R12 관계사·다중역할(0041)** — `company`+`project_members.company_id`+`member_role`·`lib/companies.ts`·
+  `pages/Companies.tsx` + `ProjectMembers` 확장: 관계사 CRUD(구분·담당·표시토글·CSV) · 구성원 화면에 **소속(회사)
+  드롭다운 + 도메인 역할 태그(다중, +N)** 편집. **접근권한(viewer/editor/admin)과 도메인역할 분리**. RLS 쓰기=is_project_admin,
+  시스템관리자 보호 유지.
+- **공통**: attachments 제약에 asset/remote 추가(0039), NotificationType(weather_alert), qrcode vite 청크 분리, CSS.
+
+### 🔜 다음 할 일 / 미해결
+- **라이브 검증**: Cmd+K 각 모듈 이동 · open-meteo 실호출(좌표 입력 후 "지금 점검") · QR 스캔(모바일 크롬 카메라 권한) ·
+  관계사↔구성원 소속/역할 편집(0041 적용 후).
+- **후속**: 기상 자동 스케줄(Supabase Edge Function cron 또는 Vercel Cron·무료 티어)·카카오 알림톡 · 담당배정 드롭다운을
+  관계사/역할 기반으로 확장 · R-AI(재해예측, LLM 키·비용 승인 필요 — 별도 설계 세션).
+- 마이그 순서: 0035~0037(직전 배치) → **0038·0039·0040·0041** 순 적용.
+
+### 인수인계 한 줄
+UI 수정 3종 + R8~R12(무비용 통합검색·기상·QR·원격·관계사) 완료(0038~0041, typecheck·build 통과). 남은 건 로그인/
+네트워크 라이브 확인 + 기상 스케줄 자동화(무료 cron)·R-AI 별도 세션.
+
+---
 ## 📋 R4·R5·R6·R7 — 승인워크플로우 · Submittals · EVM · HIBoard (2026-07-03)
 > branch `claude/rfi-management-system-2bw5lp`. typecheck·build 통과. 마이그 0035·0036·0037(추가형).
 > ⚠️ 원격 샌드박스는 Supabase/ACC/Realtime 미연결 → 라이브(로그인 후) 눈확인 필요. 각 페이지 0035~0037
