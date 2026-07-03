@@ -46,6 +46,7 @@ export function TopUserMenu({ projectId }: { projectId: string }) {
         className="user-menu__trigger"
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={`${displayName} 계정 메뉴`}
         onClick={() => setOpen((o) => !o)}
         title={displayName}
       >

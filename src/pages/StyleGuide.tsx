@@ -138,7 +138,7 @@ export function StyleGuide() {
               <button className="btn btn--ghost btn--sm" aria-label="알림"><UiIcon name="bell" /></button>
               <button className="btn btn--ghost btn--sm" aria-label="테마 전환"><UiIcon name="moon" /></button>
               <div className="user-menu">
-                <button type="button" className="user-menu__trigger" aria-expanded>
+                <button type="button" className="user-menu__trigger" aria-expanded aria-label="관리자 홍길동 계정 메뉴">
                   <span className="avatar" aria-hidden>관</span>
                   <span className="topbar-user__name">관리자 홍길동</span>
                   <UiIcon name="chevron-down" size={16} />
