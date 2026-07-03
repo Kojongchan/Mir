@@ -19,7 +19,10 @@ export type NotificationType =
   | 'action_assigned'
   // R3 Punch List(하자)
   | 'punch_status'
-  | 'punch_assigned';
+  | 'punch_assigned'
+  // R4+R5 승인 워크플로우 · Submittals
+  | 'submittal_turn'
+  | 'submittal_rejected';
 
 export interface AppNotification {
   id: string;

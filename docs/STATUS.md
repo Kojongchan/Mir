@@ -3,6 +3,52 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 R4·R5·R6·R7 — 승인워크플로우 · Submittals · EVM · HIBoard (2026-07-03)
+> branch `claude/rfi-management-system-2bw5lp`. typecheck·build 통과. 마이그 0035·0036·0037(추가형).
+> ⚠️ 원격 샌드박스는 Supabase/ACC/Realtime 미연결 → 라이브(로그인 후) 눈확인 필요. 각 페이지 0035~0037
+> 미적용 시 "모듈 미활성" 폴백(앱 안 깨짐).
+
+### ✅ 한 일
+1. **R4+R5 ISO19650 승인 워크플로우 + Submittals — `0035`·`lib/approvals.ts`·`pages/Submittals.tsx`**:
+   - `approval_flow`(append-only 감사로그) + `submittal`(ball-in-court·revision·상태머신·연결 파일·held_since).
+   - **★ 서버측 상태머신(수주 결정요인)**: 상태전환은 오직 SECURITY DEFINER RPC `rpc_submittal_transition`
+     (액션 submit/start_review/approve/conditional/reject/resubmit/close)로만. ① 전환 합법성(from→to) ②
+     승인단계별 권한(결정성 액션=프로젝트 관리자 또는 볼 보유자, 그 외 실무자)을 모두 검증, 불법/무단 전환은
+     `raise exception`. **직접 UPDATE 차단**: `submittal_guard` 트리거가 status/holder/revision 직접변경을
+     거부(RPC 만 세션 플래그 `app.submittal_bypass`로 우회, 클라는 REST 로 설정 불가) + `approval_flow` INSERT
+     정책 없음(감사 무결성). `rpc_file_status_transition`(WIP→Shared→Published→Archived, Published↑·역행은
+     관리자 승인)도 추가.
+   - UI: 상태배지·전환버튼(권한 게이팅·사유입력) · **Ball-in-Court 병목 Top5(보유일·지연)** · 내차례 필터 ·
+     **승인 감사 타임라인**(누가·언제·왜·decision 칩) · Revision 표기 · 내차례/반려 알림(notify 재사용).
+2. **R6 EVM 원가관리(5D) — `0036`·`lib/evm.ts`·`pages/Evm.tsx`**:
+   - `cost_rates`(공종 단가×물량=BAC) + `evm_actual`(기준일별 PV/EV/AC 스냅샷). RLS 쓰기=editor.
+   - CPI=EV/AC·SPI=EV/PV·CV·SV·EAC=BAC/CPI·ETC·VAC 계산 · **3선 S-curve**(Recharts, PV teal파선/EV brand실선/
+     AC amber점선 = 색+선유형 이중인코딩, `--chart-3` 신설) · **공종별 지표표** · KPI 카드(지수<0.95 위험 컬러) ·
+     단가·물량 인라인 편집 · 스냅샷 입력 + **CSV 업로드**(경량 파서, Papa 대체) · **기성내역(0011) 대사**(EV−기성).
+3. **R7 HIBoard 실시간 위젯 대시보드 — `0037`·`lib/widgets.ts`·`pages/HiBoard.tsx`**:
+   - `dashboard_widget`(type·position·config jsonb). RLS 쓰기=is_project_admin. 0037 이 소스 테이블을
+     `supabase_realtime` publication 에 등록(멱등).
+   - 위젯 카탈로그(KPI 이슈/RFI/제출물/Punch준공률/기성·진행률바·최근이슈 리스트) · **드래그 재배치**(HTML5 DnD,
+     순서 자동저장) · 너비(3/4/6/12칸) 선택 · **Realtime 구독**(postgres_changes, 이슈/RFI/Punch/기성/일보/제출물
+     변경→자동갱신) · **★구독 누수 방지**: 프로젝트당 채널 1개 + **디바운스(400ms)** + effect cleanup 에서
+     `removeChannel`(언마운트 해제) · LIVE 배지 · 빈 상태.
+4. **공통 배선**: `ProjectNav` 메뉴 4개(HIBoard·제출물·EVM 추가), `App.tsx` 라우트(evm·hiboard 는 recharts/
+   realtime 무거워 lazy), `NotificationType` 확장(submittal_turn/rejected). 신규 CSS(승인 타임라인·EVM·HIBoard).
+
+### 🔜 다음 할 일 / 미해결 (라이브·후속)
+- **라이브 검증(로그인 필요)**: ① 제출물 전환 권한 게이팅 + **무단 전환 차단**(직접 UPDATE 가 트리거로 거부되는지
+  실 DB 확인) ② Ball-in-court 지연 집계 ③ EVM 3선/CSV/기성 대사 ④ HIBoard Realtime 자동갱신·구독 해제(누수 0).
+- **후속**: EVM 물량을 QTO(quantities)·4D 진도와 자동 연동(현재 수동 manual_qty + 스냅샷) · 승인흐름 시각화(그래프) ·
+  파일/모델 상태전환 UI 를 DocumentManager 에 연결(현재 RPC·lib 준비, 제출물 화면 우선) · react-grid-layout 정식
+  그리드(현재 HTML5 DnD).
+- **★무단 전환 차단 테스트**: RPC/트리거로 서버측 강제 구현 완료. 자동화 테스트 하네스는 없음(실 DB 대상 수동 검증
+  권장 — supabase.from('submittal').update({status}) 가 거부되는지).
+
+### 인수인계 한 줄
+R4~R7(승인워크플로우+Submittals 서버측 상태머신·EVM 5D·HIBoard Realtime) 신규 구현 완료(0035~0037 추가형,
+typecheck·build 통과, 미적용 폴백). 남은 건 로그인·Realtime 라이브 눈확인 + 무단전환 차단 실 DB 검증.
+
+---
 ## 📋 R1·R2·R3 — 협업 확장 3종(RFI · 회의록 · Punch List) (2026-07-03)
 > branch `claude/rfi-management-system-2bw5lp`. typecheck·build 통과. 마이그레이션 0032·0033·0034(추가형).
 > 이슈 트래커(0007/0013/S30)·첨부(0010)·알림·APS GlobalId 이슈핀(S49) 인프라를 그대로 재사용.

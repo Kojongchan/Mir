@@ -21,6 +21,7 @@ export function ProjectNav() {
 
   const items: Item[] = [
     { to: base, icon: 'dashboard', label: '사업개요', end: true },
+    { to: `${base}/hiboard`, icon: 'dashboard', label: 'HIBoard (실시간)' },
     { to: `${base}/schedule`, icon: 'schedule', label: '공정현황' },
     { to: `${base}/model`, icon: 'model-3d', label: '통합모델 (3D)' },
     { to: `${base}/viewer`, icon: 'schedule-4d', label: '공정관리 (4D)' },
@@ -32,7 +33,9 @@ export function ProjectNav() {
     { to: `${base}/rfi`, icon: 'issue', label: 'RFI · 정보요청서' },
     { to: `${base}/punch`, icon: 'issue', label: 'Punch List' },
     { to: `${base}/meetings`, icon: 'board', label: '회의록 · 의사결정' },
+    { to: `${base}/submittals`, icon: 'files', label: '제출물 · 승인' },
     { to: `${base}/billing`, icon: 'billing', label: '기성내역' },
+    { to: `${base}/evm`, icon: 'qto', label: 'EVM 원가관리' },
     { to: `${base}/subcontracts`, icon: 'subcontract', label: '하도급내역' },
     { to: `${base}/board`, icon: 'board', label: '게시판' },
     { to: `${base}/docs`, icon: 'files', label: '자료 관리' },

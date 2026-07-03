@@ -13,6 +13,7 @@ import { Issues } from './pages/Issues';
 import { RfiPage } from './pages/Rfi';
 import { Meetings } from './pages/Meetings';
 import { PunchPage } from './pages/Punch';
+import { Submittals } from './pages/Submittals';
 import { Billing } from './pages/Billing';
 import { Subcontracts } from './pages/Subcontracts';
 import { Board } from './pages/Board';
@@ -29,6 +30,9 @@ const Admin = lazy(() => named(import('./pages/Admin'), 'Admin'));
 const FileViewer = lazy(() => named(import('./pages/FileViewer'), 'FileViewer'));
 const AccModels = lazy(() => named(import('./pages/AccModels'), 'AccModels'));
 const StyleGuide = lazy(() => named(import('./pages/StyleGuide'), 'StyleGuide'));
+// EVM(recharts)·HIBoard(recharts+realtime)는 무거운 의존성 → 지연 로드.
+const Evm = lazy(() => named(import('./pages/Evm'), 'Evm'));
+const HiBoard = lazy(() => named(import('./pages/HiBoard'), 'HiBoard'));
 
 /** 지연 로드 라우트의 로딩 자리표시(Suspense fallback). */
 function RouteFallback() {
@@ -98,6 +102,9 @@ export default function App() {
             <Route path="issues" element={<Issues />} />
             <Route path="rfi" element={<RfiPage />} />
             <Route path="punch" element={<PunchPage />} />
+            <Route path="submittals" element={<Submittals />} />
+            <Route path="evm" element={<Evm />} />
+            <Route path="hiboard" element={<HiBoard />} />
             <Route path="meetings" element={<Meetings />} />
             <Route path="billing" element={<Billing />} />
             <Route path="subcontracts" element={<Subcontracts />} />
