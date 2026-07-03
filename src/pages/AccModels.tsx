@@ -10,6 +10,7 @@ import { listIssues, createIssue, STATUS_LABEL, type Issue } from '../lib/issues
 import { createRfi } from '../lib/rfi';
 import { createPunch } from '../lib/punch';
 import { ApsClashPanel } from '../components/ApsClashPanel';
+import { ApsQtoPanel } from '../components/ApsQtoPanel';
 import { ApsIssuePins } from '../components/ApsIssuePins';
 import { Timeline } from '../components/Timeline';
 import { useStore } from '../store/useStore';
@@ -161,7 +162,7 @@ function updateFolder(nodes: FolderNode[], id: string, fn: (n: FolderNode) => Fo
   });
 }
 
-export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: boolean; mode4d?: boolean } = {}) {
+export function AccModels({ autoClash = false, mode4d = false, qto = false }: { autoClash?: boolean; mode4d?: boolean; qto?: boolean } = {}) {
   const { projectId = '' } = useParams();
   const navigate = useNavigate();
   const { profile } = useAuth();
@@ -169,7 +170,8 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   const { canEdit } = useProjectRole(projectId);
   const authorName = profile?.full_name ?? profile?.username ?? null;
   // 통합모델(3D) 전용: IFC 뷰어에서 이식한 홈뷰·관측점(시점 북마크) — S52.
-  const integrated = !mode4d && !autoClash;
+  // 물량산출(QTO)도 통합 모델(acc_default)을 열지만 전용 패널을 쓰므로 integrated 에서 제외.
+  const integrated = !mode4d && !autoClash && !qto;
   const [vpOpen, setVpOpen] = useState(false);
   const [params] = useSearchParams();
   const urnFromUrl = params.get('urn') ?? '';
@@ -199,6 +201,9 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
 
   // 4D 시공 시뮬레이션 이식(S50): APS 요소 열거 + 속성매칭 선택 + Timeline 어댑터.
   const mode4dRef = useRef(mode4d);
+  // 물량산출(QTO) 이식(옵션 A): 요소 열거 + 속성 기반 물량 패널.
+  const qtoRef = useRef(qto);
+  const [qtoOpen, setQtoOpen] = useState(qto);
   const [apsElements, setApsElements] = useState<ApsElement[]>([]);
   const [propertyOptions, setPropertyOptions] = useState<string[]>([]);
   const [matching4d, setMatching4d] = useState(false);
@@ -885,9 +890,8 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
                 }
               }
             }
-            if (mode4dRef.current) {
-              // 뷰어 설정은 ACC 네이티브 기본값을 그대로 둔다(조작감 일치 — #6).
-              // 시뮬 표현은 apsFourdView 의 isolate/도색으로만 처리.
+            if (mode4dRef.current || qtoRef.current) {
+              // 4D 시뮬·QTO 물량 모두 요소 열거가 필요하다(속성 매칭/수량 합산).
               enumerateApsElements(m)
                 .then((els) => {
                   if (cancelled) return;
@@ -1003,11 +1007,16 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
           alignItems: 'center',
         }}
       >
-        <strong style={{ fontSize: 13 }}>{autoClash ? '🔍 간섭검토' : mode4d ? '🏗 공정관리(4D)' : '🧊 통합모델(3D)'}</strong>
+        <strong style={{ fontSize: 13 }}>{qto ? '🧮 물량산출(QTO)' : autoClash ? '🔍 간섭검토' : mode4d ? '🏗 공정관리(4D)' : '🧊 통합모델(3D)'}</strong>
+        {qto && !qtoOpen && (
+          <button onClick={() => setQtoOpen(true)} style={{ ...btnStyle, fontWeight: 700 }} title="물량 산출 패널 열기">
+            🧮 물량
+          </button>
+        )}
         {/* 4D 매칭(규칙 편집기)은 하단 타임라인의 "공정표 임포트" 옆 버튼으로 통합(#3b). */}
         {/* 간섭 도구를 좌측에(#5). clash 모드에서는 폴더트리를 숨긴다(#1). 공정관리(4D)
             화면에선 간섭·이슈핀을 보지 않는다는 요청에 따라 4D 모드에서는 숨김. */}
-        {!mode4d && mapping && (
+        {!mode4d && !qto && mapping && (
           <>
             {/* 간섭 검토 팝업은 간섭검토 메뉴에서만 — 통합모델(3D)에서는 제거(연동 분리). */}
             {autoClash && (
@@ -1241,7 +1250,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             />
           )}
           {/* 이슈 핀 오버레이(S49 Step 2) — GlobalId 앵커를 화면좌표 마커로. 4D 모드에선 숨김. */}
-          {!mode4d && pinsOn && mapping && !!modelRef.current && (
+          {!mode4d && !qto && pinsOn && mapping && !!modelRef.current && (
             <ApsIssuePins
               viewer={viewerRef.current}
               model={modelRef.current}
@@ -1307,6 +1316,17 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
               canEdit={canEdit}
               onIssueCreated={reloadIssues}
               onClose={() => setClashOpen(false)}
+            />
+          )}
+          {/* 물량산출(QTO) 패널 — APS 속성 기반 공종별 물량(옵션 A). */}
+          {qto && qtoOpen && !!modelRef.current && (
+            <ApsQtoPanel
+              viewer={viewerRef.current}
+              model={modelRef.current}
+              elements={apsElements}
+              projectId={projectId}
+              canEdit={canEdit}
+              onClose={() => setQtoOpen(false)}
             />
           )}
           {docView && (

@@ -25,7 +25,6 @@ const named = <T extends string>(p: Promise<Record<T, ComponentType<any>>>, key:
   p.then((m) => ({ default: m[key] }));
 const DocumentManager = lazy(() => named(import('./pages/DocumentManager'), 'DocumentManager'));
 const Drawings = lazy(() => named(import('./pages/Drawings'), 'Drawings'));
-const Quantities = lazy(() => named(import('./pages/Quantities'), 'Quantities'));
 const Admin = lazy(() => named(import('./pages/Admin'), 'Admin'));
 const FileViewer = lazy(() => named(import('./pages/FileViewer'), 'FileViewer'));
 const AccModels = lazy(() => named(import('./pages/AccModels'), 'AccModels'));
@@ -125,7 +124,8 @@ export default function App() {
             <Route path="viewer" element={<AccModels key="fourd" mode4d />} />
             {/* 간섭검토 = APS(ACC) 모델 위 간섭(S49). */}
             <Route path="clash" element={<AccModels key="clash" autoClash />} />
-            <Route path="quantities" element={<Quantities />} />
+            {/* 물량 산출(QTO) = APS(ACC) 모델 위 속성 기반 물량(옵션 A, 통합모델 재사용). */}
+            <Route path="quantities" element={<AccModels key="qto" qto />} />
             <Route path="drawings" element={<Drawings />} />
             <Route path="docs" element={<DocumentManager />} />
             <Route path="members" element={<ProjectMembers />} />

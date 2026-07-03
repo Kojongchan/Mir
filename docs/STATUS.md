@@ -3,6 +3,33 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 QTO(물량산출) ACC 이전 — 옵션 A (2026-07-03)
+> branch `claude/rfi-management-system-2bw5lp`. typecheck·build 통과. 마이그 변경 없음.
+
+### ✅ 한 일
+- **원인**: 물량산출(QTO)만 레거시 web-ifc 뷰어(`IfcViewer`+`models` 테이블 IFC 업로드)에 남아있어, ACC 전환된
+  프로젝트에선 "표시할 모델 없음"이 떴다(3D/4D/간섭은 S49~S52에 APS 이전 완료, QTO만 누락).
+- **옵션 A로 APS 이전**: `AccModels` 에 **`qto` 모드** 추가 — 통합 모델(acc_default)을 그대로 열고 요소를 열거,
+  전용 **`ApsQtoPanel`** 패널을 띄운다.
+  - `lib/apsQuantities.ts`: `getBulkProperties2` 로 요소별 **Volume/Area/Length 속성**을 읽어 **미터법 정규화**
+    (ft/mm/cm→m)·**공종(카테고리)별 집계**. 속성 없으면 개수만(소스 내역 투명 표기).
+  - `components/ApsQtoPanel.tsx`: 공종 필터 · 물량 산출 · 표(개수/체적/면적/길이 + 합계) · 공종 클릭 시 3D 격리·확대 ·
+    **"→ 기성" 기성내역 연동**(`createBillingItem`).
+  - `AccModels`: `qto` prop·`qtoRef`·`qtoOpen`, 요소 열거 트리거에 qto 포함, 툴바 타이틑/버튼, 이슈핀·간섭 버튼은
+    qto 에서 숨김(`!qto`). `integrated = !mode4d && !autoClash && !qto`.
+  - `App.tsx`: `quantities` 라우트를 `<AccModels key="qto" qto />` 로 교체. **레거시 `Quantities.tsx` 삭제**
+    (web-ifc 의존 감소 → webifc 청크 3.0MB→0.86MB).
+
+### 🔜 다음 할 일 / 미해결
+- 라이브 확인: QTO 메뉴 진입 → 통합모델 로드 → "물량 산출" → 공종별 수량 표시(모델에 Volume/Area 속성이 있어야
+  수량이 나옴, 없으면 개수만). "→ 기성" 후 원가·기성 탭에서 금액 입력.
+- 후속: 속성이 없는 모델용 메시 기반 근사(옵션 B)는 필요 시. 물량×단가→금액 자동 연동(현재는 기성 라인만 생성).
+
+### 인수인계 한 줄
+QTO 를 web-ifc → APS(ACC) 로 이전 완료(옵션 A, AccModels qto 모드 + ApsQtoPanel + apsQuantities). 통합모델 재사용,
+속성 기반 물량·공종 집계·기성 연동. 레거시 Quantities 제거.
+
+---
 ## 📋 메뉴 정리(탭 병합·삭제·위젯화) (2026-07-03)
 > branch `claude/rfi-management-system-2bw5lp`. typecheck·build 통과. 마이그 변경 없음(프론트만).
 > 사이드바 메뉴 23 → 18개로 축소.

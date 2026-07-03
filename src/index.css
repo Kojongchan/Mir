@@ -4395,6 +4395,23 @@ button.danger:hover:not(:disabled) {
 .hb-weather-nums strong { font-size: 22px; }
 .hb-weather-actions { display: flex; gap: 10px; align-items: center; }
 .hb-weather-link { font-size: 12px; color: var(--accent); text-decoration: none; }
+
+/* ---- APS 물량산출(QTO) 패널 ---- */
+.aps-qto-panel {
+  position: absolute; top: 10px; right: 10px; bottom: 10px; width: 460px; max-width: calc(100% - 20px);
+  z-index: 30; display: flex; flex-direction: column;
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg); padding: 12px; overflow: hidden;
+}
+.aps-qto-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.aps-qto-head button { border: none; background: none; cursor: pointer; font-size: 16px; color: var(--muted); }
+.aps-qto-controls { display: flex; gap: 10px; align-items: flex-end; margin-bottom: 10px; flex-wrap: wrap; }
+.aps-qto-controls label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--muted); flex: 1; }
+.aps-qto-controls select { background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 7px 9px; color: var(--text); font-size: 13px; }
+.aps-qto-table-wrap { flex: 1; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.aps-qto-table { font-size: 13px; }
+.aps-qto-msg { font-size: 12px; margin: 8px 0 0; }
 @media (max-width: 1024px) { .hb-grid { grid-template-columns: repeat(6, 1fr); } .hb-widget { grid-column: span 3; } }
 @media (max-width: 640px) { .hb-grid { grid-template-columns: 1fr; } .hb-widget { grid-column: span 1 !important; } }
 
