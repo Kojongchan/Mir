@@ -4001,6 +4001,244 @@ button.danger:hover:not(:disabled) {
   min-width: 0;
 }
 
+/* =====================================================================
+   R1 RFI · R2 회의록 · R3 Punch List — 협업 확장 모듈 공통 스타일.
+   이슈 트래커(.issue-*)의 뱃지·테이블·상세 패턴을 재사용하고, 각 모듈의
+   상태칩·툴바·스레드만 추가한다.
+   ===================================================================== */
+
+/* 목록 상단 검색·필터 툴바(공용) */
+.rfi-toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0 0 12px;
+}
+.rfi-search {
+  flex: 1;
+  min-width: 200px;
+  max-width: 360px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  color: var(--text);
+  font-size: 13px;
+}
+.rfi-search:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.rfi-toolbar select {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+/* RFI 상태칩 — 이슈 뱃지 형태 재사용 */
+.rfi-open {
+  background: var(--chip-temp-bg);
+  color: var(--chip-temp-fg);
+}
+.rfi-answered {
+  background: var(--chip-construct-bg);
+  color: var(--chip-construct-fg);
+}
+.rfi-closed {
+  background: var(--chip-neutral-bg);
+  color: var(--chip-neutral-fg);
+}
+.rfi-void {
+  background: var(--chip-neutral-bg);
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+/* 질의/응답 스레드 블록 */
+.rfi-thread-block {
+  margin: 0 0 10px;
+}
+.rfi-thread-block .issue-desc {
+  margin: 4px 0 0;
+}
+.rfi-answer {
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+}
+.rfi-thread-tag {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 8px;
+}
+.rfi-thread-q {
+  background: var(--chip-temp-bg);
+  color: var(--chip-temp-fg);
+}
+.rfi-thread-a {
+  background: var(--chip-construct-bg);
+  color: var(--chip-construct-fg);
+}
+.rfi-answer-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  margin: 0 0 12px;
+}
+.rfi-answer-form textarea {
+  width: 100%;
+  max-width: 640px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+}
+.rfi-answer-form textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* R3 Punch List 상태칩 */
+.punch-open {
+  background: var(--chip-temp-bg);
+  color: var(--chip-temp-fg);
+}
+.punch-in_progress {
+  background: var(--chip-equip-bg);
+  color: var(--chip-equip-fg);
+}
+.punch-verified {
+  background: var(--chip-construct-bg);
+  color: var(--chip-construct-fg);
+}
+.punch-closed {
+  background: var(--chip-neutral-bg);
+  color: var(--chip-neutral-fg);
+}
+/* Punch 심각도 */
+.punch-sev {
+  font-size: 12px;
+  font-weight: 600;
+}
+.punch-sev-low {
+  color: var(--muted);
+}
+.punch-sev-normal {
+  color: var(--text);
+}
+.punch-sev-high {
+  color: var(--chip-temp-fg);
+}
+.punch-sev-critical {
+  color: var(--danger);
+}
+/* Punch before/after 사진 그리드는 첨부(.attach-*) 재사용 */
+
+/* 준공률 위젯(공용 미니 게이지) */
+.punch-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 14px;
+}
+.punch-progress .progress-bar {
+  flex: 1;
+  max-width: 360px;
+}
+.punch-progress-num {
+  font-weight: 700;
+  font-size: 18px;
+}
+
+/* R2 회의록 */
+.meeting-body {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 8px 0;
+}
+.meeting-decision {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin: 0 0 6px;
+}
+.meeting-decision-text {
+  flex: 1;
+  min-width: 0;
+}
+.decision-type {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 8px;
+  background: var(--chip-neutral-bg);
+  color: var(--chip-neutral-fg);
+  flex-shrink: 0;
+}
+.action-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+.action-item-text {
+  flex: 1;
+  min-width: 0;
+}
+.action-status {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 8px;
+}
+.action-todo {
+  background: var(--chip-temp-bg);
+  color: var(--chip-temp-fg);
+}
+.action-doing {
+  background: var(--chip-equip-bg);
+  color: var(--chip-equip-fg);
+}
+.action-done {
+  background: var(--chip-construct-bg);
+  color: var(--chip-construct-fg);
+}
+.attendee-chip {
+  display: inline-block;
+  font-size: 12px;
+  padding: 2px 9px;
+  border-radius: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  margin: 0 4px 4px 0;
+}
+
 /* ---- 알림 종 (상단바) ---- */
 .notif {
   position: relative;

@@ -6,7 +6,20 @@ import { supabase } from './supabase';
 // notifications RLS: 본인 것만 읽기/표시변경, 생성은 프로젝트 멤버.
 // =====================================================================
 
-export type NotificationType = 'issue_status' | 'issue_assigned' | 'issue_comment';
+export type NotificationType =
+  | 'issue_status'
+  | 'issue_assigned'
+  | 'issue_comment'
+  // R1 RFI(정보요청서)
+  | 'rfi_status'
+  | 'rfi_assigned'
+  | 'rfi_answered'
+  | 'rfi_comment'
+  // R2 회의록·액션아이템
+  | 'action_assigned'
+  // R3 Punch List(하자)
+  | 'punch_status'
+  | 'punch_assigned';
 
 export interface AppNotification {
   id: string;

@@ -10,6 +10,9 @@ import { Dashboard } from './pages/Dashboard';
 import { Schedule } from './pages/Schedule';
 import { DailyLogs } from './pages/DailyLogs';
 import { Issues } from './pages/Issues';
+import { RfiPage } from './pages/Rfi';
+import { Meetings } from './pages/Meetings';
+import { PunchPage } from './pages/Punch';
 import { Billing } from './pages/Billing';
 import { Subcontracts } from './pages/Subcontracts';
 import { Board } from './pages/Board';
@@ -93,6 +96,9 @@ export default function App() {
             <Route path="schedule" element={<Schedule />} />
             <Route path="logs" element={<DailyLogs />} />
             <Route path="issues" element={<Issues />} />
+            <Route path="rfi" element={<RfiPage />} />
+            <Route path="punch" element={<PunchPage />} />
+            <Route path="meetings" element={<Meetings />} />
             <Route path="billing" element={<Billing />} />
             <Route path="subcontracts" element={<Subcontracts />} />
             <Route path="board" element={<Board />} />

@@ -3,6 +3,50 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 R1·R2·R3 — 협업 확장 3종(RFI · 회의록 · Punch List) (2026-07-03)
+> branch `claude/rfi-management-system-2bw5lp`. typecheck·build 통과. 마이그레이션 0032·0033·0034(추가형).
+> 이슈 트래커(0007/0013/S30)·첨부(0010)·알림·APS GlobalId 이슈핀(S49) 인프라를 그대로 재사용.
+> ⚠️ 원격 샌드박스는 Supabase/ACC 미연결 → 라이브(로그인 후) 눈확인 필요. 0032~0034 미적용 시 각 페이지는
+> "모듈 미활성" 안내로 폴백(앱 안 깨짐).
+
+### ✅ 한 일
+1. **R1 RFI(정보요청서) — `0032_rfi.sql`·`lib/rfi.ts`·`pages/Rfi.tsx`**:
+   - 테이블 `rfi`(project별 `rfi_no` 시퀀스 트리거·공종·상대처(발주/감리/설계/시공)·담당·SLA `due_date`·
+     상태 open/answered/void/closed·`answer`/`answered_at`·`global_id`(부재)·`drawing_id`+핀좌표) +
+     `rfi_comments`(질의/응답 스레드) + `rfi_events`(활동 로그). RLS 읽기=is_member/쓰기=is_editor(+담당자 update).
+   - 목록: 번호·제목·상대처·공종·상태칩·담당·**SLA 배지(임박≤3d/지연, D-표기, .tabular)**, 상태·공종·담당 필터 + 검색.
+   - 상세: 질의/응답 블록·응답 작성(→answered 전환)·담당 배정·활동로그·첨부(target_type='rfi')·코멘트·
+     **"위치 보기"→`/model?focusGlobalId=`**(기존 isolate/fit 재사용)·연결 도면 열기.
+   - **3D 연동**: 통합모델(3D) 툴바에 **"＋ RFI"**(선택 부재 dbId→GlobalId 앵커로 생성, createIssueHere 패턴 복제).
+   - 알림: 담당 배정·상태·응답·코멘트 시 `notify()` 재사용(신규 type rfi_*).
+2. **R2 회의록·의사결정 — `0033_meetings.sql`·`lib/meetings.ts`·`pages/Meetings.tsx`**:
+   - `meeting`(참석자 jsonb·본문 md) + `meeting_decision`(유형 결정/합의/보류/공유) + `action_item`(담당·기한·
+     상태 todo/doing/done·`linked_issue_id`). RLS 쓰기=is_editor(세 테이블 모두 project_id 직접 보유).
+   - 회의록 CRUD(마크다운·참석자 칩·첨부) · 결정 추가 · **결정→"액션아이템"(담당·기한)→"이슈 승격"**
+     (`promoteActionToIssue`=createIssue 재사용 + linked_issue_id 역연결·알림) · **전문검색**(제목/본문/결정
+     ilike, 매치 위치·스니펫).
+3. **R3 Punch List(하자) — `0034_punch.sql`·`lib/punch.ts`·`pages/Punch.tsx`**:
+   - `punch`(project별 `punch_no`·위치서술·`global_id`/도면핀·상태 open/in_progress/verified/closed·심각도·
+     담당 협력사/담당자). RLS 읽기=is_member/쓰기=is_editor(+담당자 update).
+   - **준공률 위젯(closed/total, progress-bar)** · 목록(상태/심각도/협력사 필터·검색) · 상세(사진 첨부
+     target_type='punch'·상태전이·담당 협력사 배정·"위치 보기") · **3D 툴바 "＋ Punch"**(선택 부재→GlobalId).
+4. **공통 배선**: `ProjectNav` 에 RFI·Punch·회의록 메뉴 3개 추가. `App.tsx` 라우트 rfi/punch/meetings.
+   `attachments.target_type` 체크제약 확장(0032: +rfi/meeting/punch) + `AttachTarget` 타입·`NotificationType`
+   확장. 신규 CSS(rfi/punch/meeting 상태칩·툴바·스레드·준공률·액션아이템, index.css).
+
+### 🔜 다음 할 일 / 미해결 (라이브·후속)
+- **라이브 검증(로그인·ACC 필요)**: ① RFI/Punch 생성·필터·상세·상태전이·권한 게이팅 ② SLA 배지 임박/지연
+  정확도 ③ 통합모델 "＋ RFI/＋ Punch"→해당 메뉴 노출 + "위치 보기" 부재 이동 ④ 회의록 결정→액션→이슈 승격
+  ⑤ 알림 종에 rfi_*/punch_*/action_* 표시(현재 issue_id 없어 딥링크는 없음).
+- **후속(범위 밖)**: 2D 도면 위 핀 직접 찍기(drawing_pins 패턴, 컬럼은 준비됨) · Punch before/after 사진
+  라벨 분리 · 회의록 FTS 정식(현재 ilike) · RFI↔BCF 표준 내보내기 · Submittals(R5)/ISO19650(R4).
+- 게시판(Board)은 **유지**했고 회의록은 신규 메뉴로 추가(데이터 파괴 없이 병행). 완전 이관은 사용자 확인 후.
+
+### 인수인계 한 줄
+R1 RFI·R2 회의록·R3 Punch 3종 신규 구현 완료(마이그 0032~0034 추가형, 이슈/첨부/알림/APS핀 재사용,
+typecheck·build 통과, 미적용 폴백). 남은 건 로그인·ACC 라이브 눈확인.
+
+---
 ## 📋 상단바 개선 + Lighthouse 실측 (A·C·D) (2026-07-03)
 > branch `claude/design-system-phase-1-lgw4oz`(PR #107). 사용자 라이브 피드백 반영. typecheck·build 통과,
 > /styleguide 미리보기 라이트/다크 + Lighthouse(로컬 프로덕션 빌드) 확인.

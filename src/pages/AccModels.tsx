@@ -7,6 +7,8 @@ import { getProjectAcc, setProjectAcc, getOrCreateApsModelRow } from '../lib/api
 import { buildApsMapping, type ApsMapping } from '../lib/apsMapping';
 import { isolateAndFit, showApsClash } from '../lib/apsClashView';
 import { listIssues, createIssue, STATUS_LABEL, type Issue } from '../lib/issues';
+import { createRfi } from '../lib/rfi';
+import { createPunch } from '../lib/punch';
 import { ApsClashPanel } from '../components/ApsClashPanel';
 import { ApsIssuePins } from '../components/ApsIssuePins';
 import { Timeline } from '../components/Timeline';
@@ -619,6 +621,44 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
     }
   };
 
+  // 3D 에서 선택한 부재 위치에 RFI(정보요청서) 생성(선택 dbId → GlobalId 앵커, R1).
+  const createRfiHere = async () => {
+    const m = modelRef.current as any;
+    if (selDbId == null || !mapping || !m) return;
+    const gid = mapping.dbIdToGlobalId.get(selDbId);
+    if (!gid) {
+      setStatus('이 부재의 GlobalId 를 찾지 못했습니다.');
+      return;
+    }
+    const title = window.prompt('RFI 제목(정보요청 내용 요약)');
+    if (!title) return;
+    try {
+      await createRfi(projectId, { title, priority: 'normal', global_id: gid }, authorName);
+      setStatus('RFI 생성됨 — RFI 메뉴에서 상세를 확인하세요.');
+    } catch (e) {
+      setStatus(`RFI 생성 실패: ${(e as Error).message}`);
+    }
+  };
+
+  // 3D 에서 선택한 부재 위치에 Punch(하자) 생성(선택 dbId → GlobalId 앵커, R3).
+  const createPunchHere = async () => {
+    const m = modelRef.current as any;
+    if (selDbId == null || !mapping || !m) return;
+    const gid = mapping.dbIdToGlobalId.get(selDbId);
+    if (!gid) {
+      setStatus('이 부재의 GlobalId 를 찾지 못했습니다.');
+      return;
+    }
+    const title = window.prompt('Punch(하자·미완료) 제목');
+    if (!title) return;
+    try {
+      await createPunch(projectId, { title, severity: 'normal', global_id: gid }, authorName);
+      setStatus('Punch 생성됨 — Punch List 메뉴에서 사진 첨부·상세를 확인하세요.');
+    } catch (e) {
+      setStatus(`Punch 생성 실패: ${(e as Error).message}`);
+    }
+  };
+
   // 이슈 핀 클릭 → 위치 보기. 간섭 이슈(A·B)면 간섭뷰 복원(#9), 아니면 단일 격리+줌.
   const focusIssue = (issue: Issue) => {
     const m = modelRef.current as any;
@@ -981,6 +1021,16 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             {canEdit && selDbId != null && (
               <button onClick={() => void createIssueHere()} style={btnStyle} title="선택 객체 위치에 이슈 생성">
                 ＋ 이슈
+              </button>
+            )}
+            {integrated && canEdit && selDbId != null && (
+              <button onClick={() => void createRfiHere()} style={btnStyle} title="선택 부재 위치에 RFI(정보요청서) 생성">
+                ＋ RFI
+              </button>
+            )}
+            {integrated && canEdit && selDbId != null && (
+              <button onClick={() => void createPunchHere()} style={btnStyle} title="선택 부재 위치에 Punch(하자) 생성">
+                ＋ Punch
               </button>
             )}
           </>
