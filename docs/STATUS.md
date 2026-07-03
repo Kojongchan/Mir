@@ -3,6 +3,35 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 상단바 개선 + Lighthouse 실측 (A·C·D) (2026-07-03)
+> branch `claude/design-system-phase-1-lgw4oz`(PR #107). 사용자 라이브 피드백 반영. typecheck·build 통과,
+> /styleguide 미리보기 라이트/다크 + Lighthouse(로컬 프로덕션 빌드) 확인.
+
+### ✅ 한 일
+1. **상단바 사용자 전체 이름 노출**: 아바타 이니셜만 보이던 것 → 이름 전체를 아바타 옆에 표시(요청).
+2. **A. 아바타 계정 드롭다운 메뉴**(`TopUserMenu.tsx`): 아바타+이름 트리거 → 클릭 시 이름·**역할 뱃지**
+   (뷰어/실무자/관리자/시스템관리자, `useProjectRole`)·로그아웃 메뉴(외부클릭/Esc 닫힘). 별도 로그아웃
+   아이콘 통합. **버그 수정**: `.app-topbar` 의 `overflow:hidden` 제거 — 알림·계정 드롭다운(하단 펼침)이
+   잘리던 문제(알림 종도 영향). 모바일 트리거 `aria-label`(이름 숨김 시 접근 이름 확보).
+3. **C. Admin 콘솔·문서뷰어 상단바 라이트 전환**: `.admin-top`/`.admin-title`/`.doc-viewer-bar`/title/size 를
+   옛 네이비(--chrome*) → 라이트 토큰. 남은 --chrome = 3D 좌표 HUD(의도적 다크)·백업 Workspace(미라우팅)·
+   dash-ms(U2 대체 죽은 CSS). ⚠️ Admin/문서뷰어는 auth 뒤라 실 눈확인 권장(토큰 스왑 저위험).
+4. **D. Lighthouse 실측(로컬 프로덕션 빌드, chromium)**:
+   - **/login: Perf 91 · A11y 100 · BestPractices 96** — U4 목표(Perf≥90/A11y≥95) **충족** ✓ (LCP 2.8s·TBT 0·CLS 0)
+   - **/styleguide: Perf 75 · A11y 100 · BP 96** — 데모 페이지(전 컴포넌트+차트 2개 동시 로드 + 로컬 CDN 폰트
+     차단으로 FCP/LCP 부풀려짐)라 Perf 낮음. a11y 는 button-name 수정 후 100.
+   - ⚠️ 포털 내부 화면은 auth 필요라 미측정 — 실 배포 프리뷰(로그인)에서 측정 권장. 로컬은 Pretendard/Inter
+     CDN 이 프록시 차단이라 폰트 로드 실패(실 배포는 정상 → Perf 더 좋을 것).
+
+### 🔜 다음 할 일 / 미해결 (실 환경 검증 필요)
+- U3 V2/V3(APS 카메라 프리셋·표시품질)·F1·F2 = 실 ACC/데이터. B(역할 뱃지)는 A 메뉴에 포함됨.
+- E(프로젝트 스위처 인라인 드롭다운) 미착수. 포털 내부 Lighthouse 실측(로그인 후).
+
+### 인수인계 한 줄
+상단바 이름 노출 + 아바타 메뉴(역할·로그아웃) + 드롭다운 클리핑 버그 수정 + Admin/문서뷰어 라이트 전환 +
+Lighthouse(/login Perf91·A11y100) 완료(PR #107). 남은 건 실 인증·ACC 환경.
+
+---
 ## 📋 Q1 — 코드 스플리팅(초기 번들 5MB→93kB) (2026-07-02)
 > branch `claude/design-system-phase-1-lgw4oz`(U-Shell·U2·U4 병합된 main 위 재분기). typecheck·build 통과,
 > dev 서버로 지연 라우트 렌더 스모크(에러 0) 확인.
