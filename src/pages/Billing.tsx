@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
+import { ModuleTabs, costTabs } from '../components/ModuleTabs';
 import { errMessage } from '../lib/errors';
 import { useProjectRole } from '../auth/useProjectRole';
 import { MiniChart } from '../components/MiniChart';
@@ -62,9 +63,11 @@ export function Billing() {
   return (
     <div className="dash">
       <div className="dash-head">
-        <h1 className="dash-h1">기성내역</h1>
+        <h1 className="dash-h1">원가 · 기성</h1>
         <button onClick={() => navigate(`/project/${projectId}/schedule`)}>공정현황 →</button>
       </div>
+
+      <ModuleTabs tabs={costTabs(projectId)} />
 
       <section className="dash-grid">
         <div className="card dash-stat">

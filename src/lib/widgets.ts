@@ -16,14 +16,15 @@ export type WidgetType =
   | 'kpi_open_submittals'
   | 'kpi_billed'
   | 'list_recent_issues'
-  | 'progress_punch';
+  | 'progress_punch'
+  | 'weather_alerts';
 
 export interface WidgetMeta {
   type: WidgetType;
   label: string;
   desc: string;
   defaultSpan: number; // bento 12칸 기준
-  kind: 'kpi' | 'list' | 'progress';
+  kind: 'kpi' | 'list' | 'progress' | 'weather';
 }
 
 export const WIDGET_CATALOG: WidgetMeta[] = [
@@ -34,6 +35,7 @@ export const WIDGET_CATALOG: WidgetMeta[] = [
   { type: 'kpi_billed', label: '누적 기성', desc: '기성 청구 누계액', defaultSpan: 3, kind: 'kpi' },
   { type: 'progress_punch', label: 'Punch 진행률 바', desc: '준공률 게이지', defaultSpan: 6, kind: 'progress' },
   { type: 'list_recent_issues', label: '최근 이슈', desc: '최신 이슈 5건', defaultSpan: 6, kind: 'list' },
+  { type: 'weather_alerts', label: '기상알림', desc: '임계치 규칙·경보 현황', defaultSpan: 6, kind: 'weather' },
 ];
 
 export function widgetMeta(type: string): WidgetMeta | undefined {

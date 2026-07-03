@@ -15,7 +15,6 @@ import { Meetings } from './pages/Meetings';
 import { PunchPage } from './pages/Punch';
 import { Submittals } from './pages/Submittals';
 import { WeatherAlerts } from './pages/WeatherAlerts';
-import { RemoteSupport } from './pages/RemoteSupport';
 import { Billing } from './pages/Billing';
 import { Board } from './pages/Board';
 import { ProjectMembers } from './pages/ProjectMembers';
@@ -109,7 +108,6 @@ export default function App() {
             <Route path="hiboard" element={<HiBoard />} />
             <Route path="weather" element={<WeatherAlerts />} />
             <Route path="assets" element={<Assets />} />
-            <Route path="remote" element={<RemoteSupport />} />
             <Route path="meetings" element={<Meetings />} />
             <Route path="billing" element={<Billing />} />
             <Route path="board" element={<Board />} />

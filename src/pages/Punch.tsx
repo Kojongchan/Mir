@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
+import { ModuleTabs, collabTabs } from '../components/ModuleTabs';
 import { Attachments } from '../components/Attachments';
 import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
@@ -156,6 +157,8 @@ export function PunchPage() {
         subtitle="3D/도면 위치 · 사진 조치 전후 · 준공률"
         actions={canEdit && !unavailable ? <button className="primary" onClick={() => setShowForm((s) => !s)}>{showForm ? '취소' : '＋ Punch 등록'}</button> : undefined}
       />
+
+      <ModuleTabs tabs={collabTabs(projectId)} />
 
       {unavailable && (
         <EmptyState

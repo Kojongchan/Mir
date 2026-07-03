@@ -20,6 +20,7 @@ import { countOpenRfis } from '../lib/rfi';
 import { listPunches, punchProgress } from '../lib/punch';
 import { listSubmittals, SUBMITTAL_OPEN_STATUSES } from '../lib/approvals';
 import { billedToDate } from '../lib/evm';
+import { checkWeatherRules, listWeatherRules } from '../lib/weather';
 
 interface BoardData {
   openIssues: number;
@@ -29,6 +30,8 @@ interface BoardData {
   punchTotal: number;
   billed: number;
   recentIssues: Issue[];
+  weatherActive: number;
+  weatherTriggered: number;
 }
 
 const emptyData: BoardData = {
@@ -39,6 +42,8 @@ const emptyData: BoardData = {
   punchTotal: 0,
   billed: 0,
   recentIssues: [],
+  weatherActive: 0,
+  weatherTriggered: 0,
 };
 
 const won = (n: number) => `₩${Math.round(n).toLocaleString('ko-KR')}`;
@@ -70,15 +75,17 @@ export function HiBoard() {
 
   // 위젯이 참조하는 지표 일괄 로드(각 소스는 폴백 — 마이그 미적용/빈 데이터 허용).
   const loadData = useCallback(async () => {
-    const [issuesN, rfiN, subs, punches, billed, recent] = await Promise.all([
+    const [issuesN, rfiN, subs, punches, billed, recent, wRules] = await Promise.all([
       countOpenIssues(projectId).catch(() => 0),
       countOpenRfis(projectId).catch(() => 0),
       listSubmittals(projectId).catch(() => []),
       listPunches(projectId).catch(() => []),
       billedToDate(projectId).catch(() => 0),
       listIssues(projectId).catch(() => [] as Issue[]),
+      listWeatherRules(projectId).catch(() => []),
     ]);
     const prog = punchProgress(punches);
+    const today = new Date().toISOString().slice(0, 10);
     setData({
       openIssues: issuesN,
       openRfi: rfiN,
@@ -87,6 +94,8 @@ export function HiBoard() {
       punchTotal: prog.total,
       billed,
       recentIssues: recent.slice(0, 5),
+      weatherActive: wRules.filter((r) => r.active).length,
+      weatherTriggered: wRules.filter((r) => r.last_triggered_at?.slice(0, 10) === today).length,
     });
   }, [projectId]);
 
@@ -253,6 +262,32 @@ function WidgetBody({ type, data, projectId }: { type: WidgetType; data: BoardDa
         </div>
       );
     }
+    case 'weather_alerts':
+      return (
+        <div className="hb-weather">
+          <div className="hb-weather-nums">
+            <span><strong className="tabular">{data.weatherActive}</strong> 활성 규칙</span>
+            <span className={data.weatherTriggered > 0 ? 'bic-overdue' : ''}>
+              <strong className="tabular">{data.weatherTriggered}</strong> 오늘 경보
+            </span>
+          </div>
+          <div className="hb-weather-actions">
+            <button
+              onClick={async () => {
+                try {
+                  const r = await checkWeatherRules(projectId, null);
+                  alert(r.checked === 0 ? '점검할 활성 규칙(좌표)이 없습니다.' : `점검 ${r.checked} · 초과 ${r.triggered}`);
+                } catch {
+                  alert('점검 실패');
+                }
+              }}
+            >
+              🌦 지금 점검
+            </button>
+            <Link to={`/project/${projectId}/weather`} className="hb-weather-link">규칙 관리 →</Link>
+          </div>
+        </div>
+      );
     case 'list_recent_issues':
       return (
         <div className="hb-list">

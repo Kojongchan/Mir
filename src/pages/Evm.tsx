@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import { EmptyState } from '../components/EmptyState';
 import { PageHeader } from '../components/PageHeader';
+import { ModuleTabs, costTabs } from '../components/ModuleTabs';
 import { errMessage } from '../lib/errors';
 import { useProjectRole } from '../auth/useProjectRole';
 import {
@@ -137,7 +138,9 @@ export function Evm() {
 
   return (
     <div className="dash">
-      <PageHeader icon="evm" title="EVM · 원가관리 (5D)" subtitle="PV·EV·AC S-Curve · CPI/SPI/EAC · 기성 대사" />
+      <PageHeader icon="evm" title="원가 · 기성" subtitle="EVM · PV·EV·AC S-Curve · CPI/SPI/EAC · 기성 대사" />
+
+      <ModuleTabs tabs={costTabs(projectId)} />
 
       {unavailable && (
         <>

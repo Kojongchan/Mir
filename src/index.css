@@ -4390,6 +4390,11 @@ button.danger:hover:not(:disabled) {
 .hb-list-row { display: flex; align-items: center; gap: 8px; font-size: 13px; text-decoration: none; color: var(--text); }
 .hb-list-row:hover { color: var(--accent); }
 .hb-list-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hb-weather { display: flex; flex-direction: column; gap: 10px; }
+.hb-weather-nums { display: flex; gap: 20px; font-size: 14px; }
+.hb-weather-nums strong { font-size: 22px; }
+.hb-weather-actions { display: flex; gap: 10px; align-items: center; }
+.hb-weather-link { font-size: 12px; color: var(--accent); text-decoration: none; }
 @media (max-width: 1024px) { .hb-grid { grid-template-columns: repeat(6, 1fr); } .hb-widget { grid-column: span 3; } }
 @media (max-width: 640px) { .hb-grid { grid-template-columns: 1fr; } .hb-widget { grid-column: span 1 !important; } }
 
@@ -4493,6 +4498,15 @@ button.danger:hover:not(:disabled) {
 .page-header__text { min-width: 0; }
 .page-header__sub { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
 .page-header__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---- 모듈 내 탭(협업: 이슈/RFI/Punch · 원가: 기성/EVM) ---- */
+.mod-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin: 0 0 16px; flex-wrap: wrap; }
+.mod-tab {
+  padding: 8px 16px; font-size: 14px; font-weight: 600; color: var(--muted);
+  border-bottom: 2px solid transparent; text-decoration: none; white-space: nowrap;
+}
+.mod-tab:hover { color: var(--text); }
+.mod-tab.is-active { color: var(--accent); border-bottom-color: var(--accent); }
 
 /* ---- 알림 종 (상단바) ---- */
 .notif {

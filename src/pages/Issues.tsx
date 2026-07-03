@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
+import { ModuleTabs, collabTabs } from '../components/ModuleTabs';
 import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
 import {
@@ -144,6 +145,8 @@ export function Issues() {
           </button>
         )}
       </div>
+
+      <ModuleTabs tabs={collabTabs(projectId)} />
 
       {showForm && (
         <section className="card dash-edit">
