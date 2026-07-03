@@ -124,8 +124,8 @@ export function StyleGuide() {
           </div>
         </Section>
 
-        <Section title="Shell 미리보기 — TopBar(라이트) + 사이드바(활성만 brand)">
-          <div style={{ border: '1px solid var(--color-border-default)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+        <Section title="Shell 미리보기 — TopBar(라이트) + 사이드바(활성만 brand) + 계정 메뉴">
+          <div style={{ border: '1px solid var(--color-border-default)', borderRadius: 'var(--radius-lg)' }}>
             <div className="app-topbar" style={{ height: 56 }}>
               <button className="btn btn--ghost btn--sm rail-toggle" aria-label="사이드바 접기"><UiIcon name="menu" /></button>
               <button className="btn btn--ghost project-switcher" type="button">
@@ -137,10 +137,25 @@ export function StyleGuide() {
               <div className="spacer" />
               <button className="btn btn--ghost btn--sm" aria-label="알림"><UiIcon name="bell" /></button>
               <button className="btn btn--ghost btn--sm" aria-label="테마 전환"><UiIcon name="moon" /></button>
-              <span className="topbar-user">
-                <span className="avatar" aria-hidden>관</span>
-                <span className="topbar-user__name">관리자 홍길동</span>
-              </span>
+              <div className="user-menu">
+                <button type="button" className="user-menu__trigger" aria-expanded>
+                  <span className="avatar" aria-hidden>관</span>
+                  <span className="topbar-user__name">관리자 홍길동</span>
+                  <UiIcon name="chevron-down" size={16} />
+                </button>
+                <div className="user-menu__panel" role="menu">
+                  <div className="user-menu__head">
+                    <span className="avatar avatar--lg" aria-hidden>관</span>
+                    <div className="user-menu__id">
+                      <span className="user-menu__name">관리자 홍길동</span>
+                      <span className="badge badge--info">시스템 관리자</span>
+                    </div>
+                  </div>
+                  <button type="button" className="user-menu__item" role="menuitem">
+                    <UiIcon name="logout" size={16} /> 로그아웃
+                  </button>
+                </div>
+              </div>
             </div>
             <div style={{ display: 'flex', height: 300 }}>
               <nav className="app-sidebar" style={{ width: 240 }} aria-label="미리보기 네비게이션">

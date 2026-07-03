@@ -3326,7 +3326,9 @@ button.danger:hover:not(:disabled) {
   padding: 0 var(--space-4);
   background: var(--color-bg-surface);
   border-bottom: 1px solid var(--color-border-default);
-  overflow: hidden;
+  /* overflow: hidden 은 알림·계정 드롭다운(하단으로 펼침)을 잘라내므로 두지 않는다.
+     가로 넘침은 project-switcher 의 max-width + 이름 ellipsis 로 제어. */
+  min-width: 0;
 }
 .app-topbar__brand {
   flex-shrink: 0;
@@ -3390,6 +3392,87 @@ button.danger:hover:not(:disabled) {
   font-size: var(--text-small);
   font-weight: var(--fw-semibold);
   user-select: none;
+}
+.avatar--lg {
+  width: 40px;
+  height: 40px;
+  font-size: var(--text-body);
+}
+
+/* 계정 메뉴(아바타 드롭다운) */
+.user-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+.user-menu__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 40px;
+  padding: 0 var(--space-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  transition: background var(--duration-fast) var(--ease-standard);
+}
+.user-menu__trigger:hover {
+  background: var(--color-bg-subtle);
+}
+.user-menu__panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: var(--z-dropdown);
+  min-width: 220px;
+  padding: var(--space-2);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+.user-menu__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border-subtle);
+  margin-bottom: var(--space-2);
+}
+.user-menu__id {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.user-menu__name {
+  font-size: var(--text-small);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.user-menu__id .badge {
+  align-self: flex-start;
+}
+.user-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  font-size: var(--text-small);
+  text-align: left;
+  cursor: pointer;
+}
+.user-menu__item:hover {
+  background: var(--color-bg-subtle);
 }
 /* 토스트/알림/테마 등 셸 아이콘 버튼을 ghost 톤으로 (라이트 topbar 조화) */
 .app-topbar .notif-bell,

@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Outlet, useNavigate, useParams } from 'react-router-dom';
-import { useAuth } from '../auth/AuthProvider';
 import { BrandLogo } from '../components/BrandLogo';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { ProjectNav } from '../components/ProjectNav';
 import { NotificationBell } from '../components/NotificationBell';
 import { BottomTabBar } from '../components/BottomTabBar';
+import { TopUserMenu } from '../components/TopUserMenu';
 import { UiIcon } from '../components/icons/UiIcon';
 import { getProject, type Project } from '../lib/api';
 
@@ -22,7 +22,6 @@ const RAIL_KEY = 'mir.sidebar.collapsed';
 export function ProjectShell() {
   const { projectId = '' } = useParams();
   const navigate = useNavigate();
-  const { signOut, profile } = useAuth();
   const [project, setProject] = useState<Project | null>(null);
   const [collapsed, setCollapsed] = useState<boolean>(
     () => localStorage.getItem(RAIL_KEY) === '1',
@@ -39,9 +38,6 @@ export function ProjectShell() {
       return next;
     });
   };
-
-  const displayName = profile?.full_name ?? profile?.username ?? '사용자';
-  const initial = displayName.trim().charAt(0) || '·';
 
   return (
     <div className="portal">
@@ -73,19 +69,7 @@ export function ProjectShell() {
 
         <NotificationBell />
         <ThemeToggle />
-        <button
-          type="button"
-          className="btn btn--ghost btn--sm"
-          onClick={signOut}
-          aria-label="로그아웃"
-          title="로그아웃"
-        >
-          <UiIcon name="logout" />
-        </button>
-        <span className="topbar-user" title={displayName}>
-          <span className="avatar" aria-hidden>{initial}</span>
-          <span className="topbar-user__name">{displayName}</span>
-        </span>
+        <TopUserMenu projectId={projectId} />
       </header>
 
       <div className="portal-body" data-sidebar={collapsed ? 'collapsed' : 'expanded'}>
