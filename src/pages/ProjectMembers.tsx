@@ -22,11 +22,14 @@ import {
   listCompanies,
   listMemberCompanies,
   listMemberRoles,
+  listProjectRoster,
   removeMemberRole,
   setMemberCompany,
   type Company,
   type MemberRoleTag,
+  type RosterEntry,
 } from '../lib/companies';
+import { CompaniesPanel } from '../components/CompaniesPanel';
 
 /**
  * 구성원·권한 — 프로젝트 단위 멤버/역할 관리 (S48).
@@ -77,8 +80,11 @@ export function ProjectMembers() {
     try { await removeMemberRole(id); reload(); } catch (e) { err(e); }
   };
 
+  // 열람 전용 로스터(실무자·뷰어 포함 모든 멤버). 0042 로 열람 가능.
+  const [roster, setRoster] = useState<RosterEntry[]>([]);
   useEffect(() => {
     if (canManage) reload();
+    listProjectRoster(projectId).then(setRoster).catch(() => setRoster([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, canManage]);
 
@@ -136,10 +142,31 @@ export function ProjectMembers() {
   };
 
   if (loading) return <div className="mod-fill"><p className="muted" style={{ padding: 20 }}>불러오는 중…</p></div>;
+
+  // 실무자·뷰어: 열람 전용 로스터(누가·어느 관계사·어떤 역할인지). 편집·계정관리 없음.
   if (!canManage) {
     return (
-      <div className="mod-fill">
-        <p className="muted" style={{ padding: 20 }}>이 화면은 프로젝트 관리자 또는 시스템 관리자만 사용할 수 있습니다.</p>
+      <div className="mod-fill" style={{ overflow: 'auto', padding: 16 }}>
+        <h2 style={{ marginTop: 0 }}>구성원</h2>
+        <p className="muted" style={{ marginTop: 0, fontSize: 13 }}>이 프로젝트 구성원과 소속·역할입니다. (편집은 프로젝트 관리자)</p>
+        <section className="admin-card">
+          <div className="admin-table-wrap">
+            <table className="admin-table">
+              <thead><tr><th>이름</th><th>소속(관계사)</th><th>도메인 역할</th><th>접근권한</th></tr></thead>
+              <tbody>
+                {roster.map((r) => (
+                  <tr key={r.user_id}>
+                    <td>{r.name}</td>
+                    <td className="nowrap">{r.company_name || '—'}</td>
+                    <td><div className="role-tags">{r.tags.map((t, i) => <span className="role-tag" key={i}>{t}</span>)}{r.tags.length === 0 && <span className="muted">—</span>}</div></td>
+                    <td><span className="badge">{ROLE_LABEL[r.role]}</span></td>
+                  </tr>
+                ))}
+                {roster.length === 0 && <tr><td colSpan={4}><EmptyState compact icon="👥" title="구성원 정보를 불러올 수 없습니다" desc="마이그레이션(0042) 적용 후 표시됩니다." /></td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </section>
       </div>
     );
   }
@@ -147,6 +174,9 @@ export function ProjectMembers() {
   return (
     <div className="mod-fill" style={{ overflow: 'auto', padding: 16 }}>
       <h2 style={{ marginTop: 0 }}>구성원 · 권한</h2>
+
+      {/* R12 — 관계사 관리(구성원 화면에 통합). 프로젝트 관리자 전용. */}
+      <CompaniesPanel projectId={projectId} />
 
       {/* 기존 사용자 배정 */}
       <section className="admin-card">

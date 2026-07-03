@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 import { Attachments } from '../components/Attachments';
 import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
@@ -149,14 +150,12 @@ export function PunchPage() {
 
   return (
     <div className="dash">
-      <div className="dash-head">
-        <h1 className="dash-h1">Punch List · 하자/미완료</h1>
-        {canEdit && !unavailable && (
-          <button className="primary" onClick={() => setShowForm((s) => !s)}>
-            {showForm ? '취소' : '＋ Punch 등록'}
-          </button>
-        )}
-      </div>
+      <PageHeader
+        icon="punch"
+        title="Punch List · 하자/미완료"
+        subtitle="3D/도면 위치 · 사진 조치 전후 · 준공률"
+        actions={canEdit && !unavailable ? <button className="primary" onClick={() => setShowForm((s) => !s)}>{showForm ? '취소' : '＋ Punch 등록'}</button> : undefined}
+      />
 
       {unavailable && (
         <EmptyState

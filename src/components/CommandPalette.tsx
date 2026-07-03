@@ -31,7 +31,7 @@ export function CommandPalette({ projectId }: { projectId: string }) {
   const shortcuts: Shortcut[] = useMemo(
     () => [
       { label: '사업개요', to: base, icon: 'dashboard' },
-      { label: 'HIBoard (실시간)', to: `${base}/hiboard`, icon: 'hiboard' },
+      { label: 'MIR Board (실시간)', to: `${base}/hiboard`, icon: 'hiboard' },
       { label: '협업 · 이슈', to: `${base}/issues`, icon: 'issue' },
       { label: 'RFI · 정보요청서', to: `${base}/rfi`, icon: 'rfi' },
       { label: 'Punch List', to: `${base}/punch`, icon: 'punch' },

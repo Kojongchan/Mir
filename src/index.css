@@ -4474,6 +4474,26 @@ button.danger:hover:not(:disabled) {
 .role-tag-add:hover { border-color: var(--accent); color: var(--accent); }
 .linklike { border: none; background: none; padding: 0; cursor: pointer; }
 
+/* ---- 모듈 페이지 공통 헤더(아이콘+부제로 페이지 구분) ---- */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 0 18px;
+}
+.page-header__main { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.page-header__icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--accent-soft); color: var(--accent);
+}
+.page-header__text { min-width: 0; }
+.page-header__sub { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
+.page-header__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
 /* ---- 알림 종 (상단바) ---- */
 .notif {
   position: relative;

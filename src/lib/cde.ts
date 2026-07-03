@@ -216,6 +216,32 @@ export async function listCdeFiles(
 }
 
 /**
+ * 자료관리(CDE) 문서 전체를 폴더명과 함께 반환한다(제출물 연결 파일 선택 등).
+ * source='supabase' 인 실제 업로드 문서만 — ACC 모델 미러 행(*.ifc/*.nwd)은 제외.
+ * 0022 미적용(source 컬럼 없음)이면 필터 없이 폴백.
+ */
+export async function listCdeDocs(
+  projectId: string,
+): Promise<{ id: string; name: string; folder: string }[]> {
+  const folders = await listFolders(projectId).catch(() => [] as Folder[]);
+  const fname = new Map(folders.map((f) => [f.id, f.name]));
+  const base = () => supabase.from('files').select('id, name, folder_id').eq('project_id', projectId);
+  let rows: Array<{ id: string; name: string; folder_id: string | null }> = [];
+  const { data, error } = await base().eq('source', 'supabase').order('name', { ascending: true });
+  if (error) {
+    const legacy = await base().order('name', { ascending: true });
+    rows = (legacy.data ?? []) as any[];
+  } else {
+    rows = (data ?? []) as any[];
+  }
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    folder: r.folder_id ? fname.get(r.folder_id) ?? '기타' : '미분류',
+  }));
+}
+
+/**
  * ACC 업로드로 만든 메타 행을 ACC 아이템 URN 으로 키잉해 돌려준다(상태 뱃지·이력
  * 매핑용). 0022 미적용이면 빈 맵.
  */

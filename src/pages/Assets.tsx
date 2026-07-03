@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import QRCode from 'qrcode';
 import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 import { Attachments } from '../components/Attachments';
 import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
@@ -89,13 +90,17 @@ export function Assets() {
 
   return (
     <div className="dash">
-      <div className="dash-head">
-        <h1 className="dash-h1">자재·자산 (QR)</h1>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {!unavailable && <button onClick={() => setScanning(true)}>📷 QR 스캔</button>}
-          {canEdit && !unavailable && <button className="primary" onClick={() => setShowForm((s) => !s)}>{showForm ? '취소' : '＋ 자재 등록'}</button>}
-        </div>
-      </div>
+      <PageHeader
+        icon="qr"
+        title="자재·자산 (QR)"
+        subtitle="QR 부착·스캔으로 반입일·시험성적서·투입위치 조회"
+        actions={
+          <>
+            {!unavailable && <button onClick={() => setScanning(true)}>📷 QR 스캔</button>}
+            {canEdit && !unavailable && <button className="primary" onClick={() => setShowForm((s) => !s)}>{showForm ? '취소' : '＋ 자재 등록'}</button>}
+          </>
+        }
+      />
 
       {unavailable && (
         <EmptyState icon="🏷" title="자재·자산 모듈이 아직 활성화되지 않았습니다" desc="마이그레이션(0039) 적용 후 QR 자산 관리를 사용할 수 있습니다." />

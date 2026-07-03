@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 import { Attachments } from '../components/Attachments';
 import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
@@ -69,10 +70,12 @@ export function RemoteSupport() {
 
   return (
     <div className="dash">
-      <div className="dash-head">
-        <h1 className="dash-h1">원격지원</h1>
-        {canEdit && !unavailable && <button className="primary" onClick={() => setShowForm((s) => !s)}>{showForm ? '취소' : '＋ 세션 등록'}</button>}
-      </div>
+      <PageHeader
+        icon="remote"
+        title="원격지원"
+        subtitle="Teams·Meet 원격검토 링크와 화면캡처 아카이브"
+        actions={canEdit && !unavailable ? <button className="primary" onClick={() => setShowForm((s) => !s)}>{showForm ? '취소' : '＋ 세션 등록'}</button> : undefined}
+      />
 
       {unavailable && (
         <EmptyState icon="🖥" title="원격지원 모듈이 아직 활성화되지 않았습니다" desc="마이그레이션(0040) 적용 후 원격지원 아카이브를 사용할 수 있습니다." />

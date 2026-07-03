@@ -125,3 +125,43 @@ export async function listMemberCompanies(projectId: string): Promise<Map<string
 
 /** 자주 쓰는 도메인 역할 프리셋(자유 입력도 가능). */
 export const ROLE_TAG_PRESETS = ['현장대리인', '안전관리자', '품질관리', '공무', '공사', '설계담당', '감리원', '발주담당'];
+
+// ---------- 구성원 로스터(열람 전용) ---------------------------------
+// 0042 로 project_members·profiles 를 같은 프로젝트 멤버가 읽을 수 있게 확장한
+// 뒤라, 실무자·뷰어도 이 로스터를 볼 수 있다(쓰기는 여전히 프로젝트 관리자).
+
+export type AccessRole = 'viewer' | 'editor' | 'admin';
+export interface RosterEntry {
+  user_id: string;
+  name: string;
+  role: AccessRole;
+  company_id: string | null;
+  company_name: string | null;
+  tags: string[];
+}
+
+export async function listProjectRoster(projectId: string): Promise<RosterEntry[]> {
+  const [{ data: members }, companies, roleMap] = await Promise.all([
+    supabase.from('project_members').select('user_id, role, company_id').eq('project_id', projectId),
+    listCompanies(projectId).catch(() => [] as Company[]),
+    listMemberRoles(projectId).catch(() => new Map<string, MemberRoleTag[]>()),
+  ]);
+  const rows = members ?? [];
+  const ids = rows.map((m) => m.user_id as string);
+  const nameById = new Map<string, string>();
+  if (ids.length) {
+    const { data: profs } = await supabase.from('profiles').select('id, username, full_name').in('id', ids);
+    for (const p of profs ?? []) nameById.set(p.id as string, (p.full_name as string) || (p.username as string) || '—');
+  }
+  const companyById = new Map(companies.map((c) => [c.id, c.name]));
+  return rows
+    .map((m) => ({
+      user_id: m.user_id as string,
+      name: nameById.get(m.user_id as string) ?? (m.user_id as string).slice(0, 8),
+      role: (m.role as AccessRole) ?? 'viewer',
+      company_id: (m.company_id as string | null) ?? null,
+      company_name: m.company_id ? companyById.get(m.company_id as string) ?? null : null,
+      tags: (roleMap.get(m.user_id as string) ?? []).map((t) => t.role_tag),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+}

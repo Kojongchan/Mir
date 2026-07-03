@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 import { Attachments } from '../components/Attachments';
 import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
@@ -174,14 +175,12 @@ export function RfiPage() {
 
   return (
     <div className="dash">
-      <div className="dash-head">
-        <h1 className="dash-h1">RFI · 정보요청서</h1>
-        {canEdit && !unavailable && (
-          <button className="primary" onClick={() => setShowForm((s) => !s)}>
-            {showForm ? '취소' : '＋ RFI 등록'}
-          </button>
-        )}
-      </div>
+      <PageHeader
+        icon="rfi"
+        title="RFI · 정보요청서"
+        subtitle="발주·감리·설계 정보요청 · SLA 응답 추적"
+        actions={canEdit && !unavailable ? <button className="primary" onClick={() => setShowForm((s) => !s)}>{showForm ? '취소' : '＋ RFI 등록'}</button> : undefined}
+      />
 
       {unavailable && (
         <EmptyState

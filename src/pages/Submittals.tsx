@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
 import { useProjectRole } from '../auth/useProjectRole';
 import { formatDate } from '../lib/dashboard';
 import { listProjectMembers, type ProjectMember } from '../lib/members';
-import { listProjectFiles } from '../lib/cde';
+import { listCdeDocs } from '../lib/cde';
 import {
   ACTION_LABEL,
   APPROVER_ACTIONS,
@@ -36,7 +37,7 @@ export function Submittals() {
 
   const [subs, setSubs] = useState<Submittal[]>([]);
   const [members, setMembers] = useState<ProjectMember[]>([]);
-  const [files, setFiles] = useState<Array<{ id: string; name: string }>>([]);
+  const [files, setFiles] = useState<Array<{ id: string; name: string; folder: string }>>([]);
   const [statusFilter, setStatusFilter] = useState<SubmittalStatus | 'all' | 'ballmine'>('all');
   const [openId, setOpenId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -49,7 +50,7 @@ export function Submittals() {
   useEffect(() => {
     refresh();
     listProjectMembers(projectId).then(setMembers).catch(() => setMembers([]));
-    listProjectFiles(projectId).then((f) => setFiles(f.map((x) => ({ id: x.id, name: x.name })))).catch(() => setFiles([]));
+    listCdeDocs(projectId).then(setFiles).catch(() => setFiles([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
@@ -119,14 +120,12 @@ export function Submittals() {
 
   return (
     <div className="dash">
-      <div className="dash-head">
-        <h1 className="dash-h1">제출물 · 승인 워크플로우</h1>
-        {canEdit && !unavailable && (
-          <button className="primary" onClick={() => setShowForm((s) => !s)}>
-            {showForm ? '취소' : '＋ 제출물 등록'}
-          </button>
-        )}
-      </div>
+      <PageHeader
+        icon="submittal"
+        title="제출물 · 승인"
+        subtitle="ISO19650 승인 워크플로우 · Ball-in-Court · 리비전"
+        actions={canEdit && !unavailable ? <button className="primary" onClick={() => setShowForm((s) => !s)}>{showForm ? '취소' : '＋ 제출물 등록'}</button> : undefined}
+      />
 
       {unavailable && (
         <EmptyState
@@ -187,11 +186,20 @@ export function Submittals() {
                   </select>
                 </label>
                 <label>
-                  연결 파일(CDE)
+                  연결 파일(자료관리)
                   <select value={form.file_id} onChange={(e) => setForm({ ...form, file_id: e.target.value })}>
                     <option value="">없음</option>
-                    {files.map((f) => (
-                      <option key={f.id} value={f.id}>{f.name}</option>
+                    {Object.entries(
+                      files.reduce<Record<string, typeof files>>((acc, f) => {
+                        (acc[f.folder] ??= []).push(f);
+                        return acc;
+                      }, {}),
+                    ).map(([folder, list]) => (
+                      <optgroup key={folder} label={`📁 ${folder}`}>
+                        {list.map((f) => (
+                          <option key={f.id} value={f.id}>{f.name}</option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
                 </label>

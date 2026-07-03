@@ -11,6 +11,7 @@ import {
   YAxis,
 } from 'recharts';
 import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 import { errMessage } from '../lib/errors';
 import { useProjectRole } from '../auth/useProjectRole';
 import {
@@ -46,6 +47,7 @@ export function Evm() {
   const [billed, setBilled] = useState<number | null>(null);
   const [msg, setMsg] = useState('');
   const [unavailable, setUnavailable] = useState(false);
+  const [errDetail, setErrDetail] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [snap, setSnap] = useState({ as_of_date: new Date().toISOString().slice(0, 10), pv: '', ev: '', ac: '', category: '' });
@@ -57,15 +59,17 @@ export function Evm() {
   }, [projectId]);
 
   const refresh = async () => {
-    try {
-      const [r, a] = await Promise.all([listCostRates(projectId), listEvmActuals(projectId)]);
-      setRates(r);
-      setActuals(a);
-      setUnavailable(false);
-    } catch {
-      setRates([]);
-      setActuals([]);
+    // 두 테이블을 독립 로드 — 하나만 없거나 실패해도 원인을 표면화한다.
+    const [rRes, aRes] = await Promise.allSettled([listCostRates(projectId), listEvmActuals(projectId)]);
+    const firstErr = [rRes, aRes].find((x) => x.status === 'rejected') as PromiseRejectedResult | undefined;
+    setRates(rRes.status === 'fulfilled' ? rRes.value : []);
+    setActuals(aRes.status === 'fulfilled' ? aRes.value : []);
+    if (rRes.status === 'rejected' && aRes.status === 'rejected') {
       setUnavailable(true);
+      setErrDetail(errMessage(firstErr?.reason));
+    } else {
+      setUnavailable(false);
+      setErrDetail(firstErr ? `일부 로드 실패: ${errMessage(firstErr.reason)}` : '');
     }
   };
 
@@ -133,13 +137,21 @@ export function Evm() {
 
   return (
     <div className="dash">
-      <div className="dash-head">
-        <h1 className="dash-h1">EVM · 원가관리 (5D)</h1>
-      </div>
+      <PageHeader icon="evm" title="EVM · 원가관리 (5D)" subtitle="PV·EV·AC S-Curve · CPI/SPI/EAC · 기성 대사" />
 
       {unavailable && (
-        <EmptyState icon="📉" title="EVM 모듈이 아직 활성화되지 않았습니다" desc="마이그레이션(0036) 적용 후 원가·획득가치 관리를 사용할 수 있습니다." />
+        <>
+          <EmptyState icon="📉" title="EVM 모듈이 아직 활성화되지 않았습니다" desc="마이그레이션(0036) 적용 후 원가·획득가치 관리를 사용할 수 있습니다." />
+          {errDetail && (
+            <p className="auth-error" style={{ fontSize: 12, marginTop: 8 }}>
+              원인: {errDetail}
+              <br />
+              → <code>cost_rates</code>/<code>evm_actual</code> 테이블이 없으면 수정된 <code>0036_evm.sql</code> 을 다시 실행하세요.
+            </p>
+          )}
+        </>
       )}
+      {!unavailable && errDetail && <p className="muted" style={{ fontSize: 12 }}>{errDetail}</p>}
 
       {!unavailable && (
         <>

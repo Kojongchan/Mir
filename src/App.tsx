@@ -16,7 +16,6 @@ import { PunchPage } from './pages/Punch';
 import { Submittals } from './pages/Submittals';
 import { WeatherAlerts } from './pages/WeatherAlerts';
 import { RemoteSupport } from './pages/RemoteSupport';
-import { Companies } from './pages/Companies';
 import { Billing } from './pages/Billing';
 import { Board } from './pages/Board';
 import { ProjectMembers } from './pages/ProjectMembers';
@@ -131,7 +130,6 @@ export default function App() {
             <Route path="quantities" element={<Quantities />} />
             <Route path="drawings" element={<Drawings />} />
             <Route path="docs" element={<DocumentManager />} />
-            <Route path="companies" element={<Companies />} />
             <Route path="members" element={<ProjectMembers />} />
           </Route>
           <Route

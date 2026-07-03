@@ -144,7 +144,7 @@ export function HiBoard() {
     <div className="dash">
       <div className="dash-head">
         <h1 className="dash-h1">
-          HIBoard
+          MIR Board
           <span className={`hb-live${live ? ' is-live' : ''}`} title={live ? '실시간 연결됨' : '실시간 대기'}>
             ● {live ? 'LIVE' : '대기'}
           </span>

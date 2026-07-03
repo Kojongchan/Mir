@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 import { Attachments } from '../components/Attachments';
 import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
@@ -133,14 +134,12 @@ export function Meetings() {
 
   return (
     <div className="dash">
-      <div className="dash-head">
-        <h1 className="dash-h1">회의록 · 의사결정</h1>
-        {canEdit && !unavailable && (
-          <button className="primary" onClick={showForm ? () => setShowForm(false) : startCreate}>
-            {showForm ? '취소' : '＋ 회의록 작성'}
-          </button>
-        )}
-      </div>
+      <PageHeader
+        icon="meeting"
+        title="회의록 · 의사결정"
+        subtitle="결정사항 → 액션아이템 → 이슈 승격 · 전문검색"
+        actions={canEdit && !unavailable ? <button className="primary" onClick={showForm ? () => setShowForm(false) : startCreate}>{showForm ? '취소' : '＋ 회의록 작성'}</button> : undefined}
+      />
 
       {unavailable && (
         <EmptyState

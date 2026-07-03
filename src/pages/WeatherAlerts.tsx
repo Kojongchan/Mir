@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
+import { PageHeader } from '../components/PageHeader';
 import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
 import { useProjectRole } from '../auth/useProjectRole';
@@ -123,13 +124,17 @@ export function WeatherAlerts() {
 
   return (
     <div className="dash">
-      <div className="dash-head">
-        <h1 className="dash-h1">기상알림</h1>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {!unavailable && <button onClick={onCheck} disabled={checking}>{checking ? '점검 중…' : '🌦 지금 점검'}</button>}
-          {canEdit && !unavailable && <button className="primary" onClick={() => setShowForm((s) => !s)}>{showForm ? '취소' : '＋ 규칙 추가'}</button>}
-        </div>
-      </div>
+      <PageHeader
+        icon="weather"
+        title="기상알림"
+        subtitle="강수·풍속·기온 임계치 초과 시 담당자 자동 알림"
+        actions={
+          <>
+            {!unavailable && <button onClick={onCheck} disabled={checking}>{checking ? '점검 중…' : '🌦 지금 점검'}</button>}
+            {canEdit && !unavailable && <button className="primary" onClick={() => setShowForm((s) => !s)}>{showForm ? '취소' : '＋ 규칙 추가'}</button>}
+          </>
+        }
+      />
 
       {unavailable && (
         <EmptyState icon="🌦" title="기상알림 모듈이 아직 활성화되지 않았습니다" desc="마이그레이션(0038) 적용 후 기상 임계치 알림을 사용할 수 있습니다." />
