@@ -906,9 +906,23 @@ button:disabled {
   gap: 12px;
   padding: 0 18px;
   height: 48px;
-  background: var(--chrome);
-  color: var(--chrome-text);
-  border-bottom: 1px solid var(--chrome-border);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border-default);
+}
+/* Admin 상단바 라이트화(C) — 안의 버튼·muted 를 라이트 톤으로 재정의(공유 chrome 규칙 위). */
+.admin-top button {
+  background: transparent;
+  color: var(--color-text-secondary);
+  border-color: var(--color-border-default);
+}
+.admin-top button:hover:not(:disabled) {
+  background: var(--color-bg-subtle);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+.admin-top .muted {
+  color: var(--color-text-secondary);
 }
 
 .admin-top > div:first-child {
@@ -920,7 +934,7 @@ button:disabled {
 .admin-title {
   margin-left: 12px;
   font-size: 14px;
-  color: var(--chrome-text);
+  color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1935,16 +1949,16 @@ button.danger:hover:not(:disabled) {
   align-items: center;
   gap: 16px;
   padding: 0 14px;
-  background: var(--chrome);
-  color: var(--chrome-text);
-  border-bottom: 1px solid var(--chrome-border);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border-default);
   overflow: hidden;
 }
 
 .doc-viewer-title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--chrome-text);
+  color: var(--color-text-primary);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1952,7 +1966,7 @@ button.danger:hover:not(:disabled) {
 }
 
 .doc-viewer-size {
-  color: var(--chrome-muted);
+  color: var(--color-text-secondary);
   flex-shrink: 0;
 }
 
