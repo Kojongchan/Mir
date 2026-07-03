@@ -906,9 +906,23 @@ button:disabled {
   gap: 12px;
   padding: 0 18px;
   height: 48px;
-  background: var(--chrome);
-  color: var(--chrome-text);
-  border-bottom: 1px solid var(--chrome-border);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border-default);
+}
+/* Admin 상단바 라이트화(C) — 안의 버튼·muted 를 라이트 톤으로 재정의(공유 chrome 규칙 위). */
+.admin-top button {
+  background: transparent;
+  color: var(--color-text-secondary);
+  border-color: var(--color-border-default);
+}
+.admin-top button:hover:not(:disabled) {
+  background: var(--color-bg-subtle);
+  border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
+}
+.admin-top .muted {
+  color: var(--color-text-secondary);
 }
 
 .admin-top > div:first-child {
@@ -920,7 +934,7 @@ button:disabled {
 .admin-title {
   margin-left: 12px;
   font-size: 14px;
-  color: var(--chrome-text);
+  color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1935,16 +1949,16 @@ button.danger:hover:not(:disabled) {
   align-items: center;
   gap: 16px;
   padding: 0 14px;
-  background: var(--chrome);
-  color: var(--chrome-text);
-  border-bottom: 1px solid var(--chrome-border);
+  background: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border-default);
   overflow: hidden;
 }
 
 .doc-viewer-title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--chrome-text);
+  color: var(--color-text-primary);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1952,7 +1966,7 @@ button.danger:hover:not(:disabled) {
 }
 
 .doc-viewer-size {
-  color: var(--chrome-muted);
+  color: var(--color-text-secondary);
   flex-shrink: 0;
 }
 
@@ -3326,7 +3340,9 @@ button.danger:hover:not(:disabled) {
   padding: 0 var(--space-4);
   background: var(--color-bg-surface);
   border-bottom: 1px solid var(--color-border-default);
-  overflow: hidden;
+  /* overflow: hidden 은 알림·계정 드롭다운(하단으로 펼침)을 잘라내므로 두지 않는다.
+     가로 넘침은 project-switcher 의 max-width + 이름 ellipsis 로 제어. */
+  min-width: 0;
 }
 .app-topbar__brand {
   flex-shrink: 0;
@@ -3355,6 +3371,27 @@ button.danger:hover:not(:disabled) {
   font-weight: var(--fw-medium);
   color: var(--color-text-secondary);
 }
+/* 상단바 사용자 — 아바타 + 전체 이름(글자수 제한 없이 표시) */
+.topbar-user {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  padding-left: var(--space-1);
+}
+.topbar-user__name {
+  font-size: var(--text-small);
+  font-weight: var(--fw-medium);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+/* 좁은 폭에서는 이름 숨기고 아바타만(공간 확보) */
+@media (max-width: 640px) {
+  .topbar-user__name {
+    display: none;
+  }
+}
+
 /* 아바타 — 사용자 이니셜 */
 .avatar {
   flex-shrink: 0;
@@ -3369,6 +3406,87 @@ button.danger:hover:not(:disabled) {
   font-size: var(--text-small);
   font-weight: var(--fw-semibold);
   user-select: none;
+}
+.avatar--lg {
+  width: 40px;
+  height: 40px;
+  font-size: var(--text-body);
+}
+
+/* 계정 메뉴(아바타 드롭다운) */
+.user-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+.user-menu__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 40px;
+  padding: 0 var(--space-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  transition: background var(--duration-fast) var(--ease-standard);
+}
+.user-menu__trigger:hover {
+  background: var(--color-bg-subtle);
+}
+.user-menu__panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: var(--z-dropdown);
+  min-width: 220px;
+  padding: var(--space-2);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+.user-menu__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border-subtle);
+  margin-bottom: var(--space-2);
+}
+.user-menu__id {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+.user-menu__name {
+  font-size: var(--text-small);
+  font-weight: var(--fw-semibold);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.user-menu__id .badge {
+  align-self: flex-start;
+}
+.user-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  font-size: var(--text-small);
+  text-align: left;
+  cursor: pointer;
+}
+.user-menu__item:hover {
+  background: var(--color-bg-subtle);
 }
 /* 토스트/알림/테마 등 셸 아이콘 버튼을 ghost 톤으로 (라이트 topbar 조화) */
 .app-topbar .notif-bell,
@@ -5823,4 +5941,9 @@ textarea.input {
   margin: 0 0 var(--space-3);
   font-size: var(--text-h4);
   font-weight: var(--fw-bold);
+}
+
+/* Q1 — 지연 로드 라우트 로딩 자리표시 */
+.route-loading {
+  padding: var(--space-6);
 }
