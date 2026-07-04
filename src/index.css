@@ -2537,6 +2537,24 @@ button.danger:hover:not(:disabled) {
 .viewer-fill {
   display: flex;
 }
+/* 통합/4D/간섭 3D 뷰어 루트(AccModels) — portal-main(relative) 을 채우는 절대 레이어.
+   inline 스타일이던 것을 클래스로 승격(모바일에서 하단탭 위로 띄우기 위함). */
+.acc-viewer-root {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* 뷰어 상단 툴바(모드제목 + 도구 버튼들). 데스크톱은 기존 그대로. */
+.viewer-topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: var(--panel);
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
 .cde-embed {
   display: grid;
   grid-template-columns: 248px 1fr;
@@ -5946,4 +5964,93 @@ textarea.input {
 /* Q1 — 지연 로드 라우트 로딩 자리표시 */
 .route-loading {
   padding: var(--space-6);
+}
+
+/* =====================================================================
+   M1 — 모바일 실사용 마감(<640): 뷰어 크롬·전체화면 모듈·모달 바텀시트·
+   표 스크롤·터치타깃·폼 확대방지. U4(하단탭)에 이은 후속. 전부 <640
+   미디어쿼리 안이라 데스크톱/태블릿 레이아웃엔 영향 없음.
+   ===================================================================== */
+@media (max-width: 640px) {
+  /* iOS 입력 포커스 자동 확대(폰트<16px) 방지 + 가로 넘침 차단 */
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    overflow-x: hidden;
+  }
+  input,
+  select,
+  textarea,
+  .input {
+    font-size: 16px;
+  }
+
+  /* 터치 타깃 — 주요 버튼 최소 높이 확보(WCAG 2.5.5 근접) */
+  .btn {
+    min-height: 40px;
+  }
+  .btn.btn--sm {
+    min-height: 34px;
+  }
+
+  /* 표 — 관성 스크롤(가로 스크롤 컨테이너는 이미 각 페이지에 존재) */
+  .cde-table-wrap,
+  .acc-fm-table-wrap,
+  .admin-table-wrap {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* 전체화면 모듈(자료관리·물량·구성원)과 3D 뷰어 루트를 하단 탭바 위로 띄운다.
+     (absolute inset:0 자식은 portal-main 패딩을 무시하므로 bottom 을 직접 올린다.) */
+  .mod-fill,
+  .acc-viewer-root {
+    bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* 3D 뷰어 상단 툴바 — 좁은 폭에서 버튼이 잘리지 않게 가로 스크롤 */
+  .viewer-topbar {
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .viewer-topbar::-webkit-scrollbar {
+    display: none;
+  }
+  .viewer-topbar > * {
+    flex-shrink: 0;
+  }
+
+  /* --- 공용 모달을 바텀 시트로(엄지 도달·전체폭) --- */
+  .modal-backdrop {
+    align-items: flex-end;
+  }
+  .modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 92dvh;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-bottom: none;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  /* 푸터 버튼 세로 스택·전체폭(주 액션이 아래=엄지 근처) */
+  .modal-foot {
+    flex-direction: column;
+  }
+  .modal-foot > * {
+    width: 100%;
+  }
+
+  /* ACC 내부 모달(뷰어 위 절대배치)도 하단 시트로 */
+  .acc-modal-back {
+    align-items: flex-end;
+  }
+  .acc-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 88%;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
 }

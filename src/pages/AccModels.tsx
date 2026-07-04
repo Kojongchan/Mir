@@ -951,18 +951,8 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   }, [showBrowser, panelW]);
 
   return (
-    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
-      <div
-        style={{
-          display: 'flex',
-          gap: 8,
-          padding: 8,
-          background: 'var(--panel)',
-          color: 'var(--text)',
-          borderBottom: '1px solid var(--border)',
-          alignItems: 'center',
-        }}
-      >
+    <div className="acc-viewer-root">
+      <div className="viewer-topbar">
         <strong style={{ fontSize: 13 }}>{autoClash ? '🔍 간섭검토' : mode4d ? '🏗 공정관리(4D)' : '🧊 통합모델(3D)'}</strong>
         {/* 4D 매칭(규칙 편집기)은 하단 타임라인의 "공정표 임포트" 옆 버튼으로 통합(#3b). */}
         {/* 간섭 도구를 좌측에(#5). clash 모드에서는 폴더트리를 숨긴다(#1). 공정관리(4D)

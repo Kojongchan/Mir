@@ -3,6 +3,34 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 M1 — 모바일 실사용 마감(뷰어 크롬·바텀시트·표·터치타깃) (2026-07-04)
+> branch `claude/mobile-version-update-v810fd`. typecheck·build 통과. Playwright(390px) 계산스타일 +
+> 시각 캡처로 모바일 규칙 실적용 확인, 데스크톱(1200px)은 무영향 확인. U4(하단탭)에 이은 후속 마감.
+> **모든 변경은 `@media (max-width:640px)` 안이라 데스크톱/태블릿 레이아웃 무영향.**
+
+### ✅ 한 일 (`src/index.css` 말미 M1 블록 + `src/pages/AccModels.tsx`)
+1. **3D 뷰어 하단탭 겹침 해소**: AccModels 뷰어 루트(inline `absolute;inset:0`)를 `.acc-viewer-root`
+   클래스로 승격 + 툴바를 `.viewer-topbar` 클래스로. 모바일에서 `.acc-viewer-root`/`.mod-fill`(자료관리·
+   물량·구성원 등 전체화면 모듈)의 `bottom` 을 `calc(64px + safe-area)` 로 올려 **하단 탭바 위로** 띄움
+   (absolute inset:0 자식이 portal-main 패딩을 무시해 컨트롤이 탭 뒤로 숨던 문제).
+2. **뷰어 툴바 버튼 클립 → 가로 스크롤**: `.viewer-topbar` 가 좁은 폭에서 `overflow-x:auto`(관성,
+   스크롤바 숨김)로 버튼이 잘리지 않고 스와이프. 데스크톱은 기존대로 한 줄.
+3. **공용 모달 → 바텀 시트**: `.modal`/`.acc-modal` 이 모바일에서 전체폭·하단 도달(`align-items:flex-end`)·
+   상단만 라운드·`max-height:92dvh`·safe-area 패딩. `.modal-foot` 는 세로 스택·전체폭 버튼(엄지 도달).
+4. **터치 타깃·폼**: `.btn` min-height 40px(`--sm` 34px), `input/select/textarea` 16px(iOS 포커스 자동
+   확대 방지), `body{overflow-x:hidden}`(가로 넘침 차단), 표 래퍼 관성 스크롤(`-webkit-overflow-scrolling`).
+
+### 🔜 다음 할 일 / 미해결 (실 인증 환경 눈확인 권장)
+- 바텀시트·뷰어 툴바 스크롤·하단탭 겹침 해소는 auth 뒤 화면이라 이 샌드박스에선 합성 DOM/계산스타일로만
+  검증 — **실 로그인 후 각 모달·3D 뷰어(통합/4D/간섭)·자료관리에서 눈확인** 권장.
+- 뷰어 좌측 ACC 폴더/카테고리 트리 패널의 모바일 폭(현재 데스크톱 폭 유지)은 이번 범위 밖 — 필요 시 후속에
+  드로어(오버레이) 전환 검토. Lighthouse 모바일 실측도 실 프리뷰에서.
+
+### 인수인계 한 줄
+M1 모바일 마감 완료(뷰어/전체화면 모듈 하단탭 겹침 해소·툴바 가로스크롤·모달 바텀시트·터치타깃/폼 16px,
+전부 <640 스코프라 데스크톱 무영향). 실 인증 화면 눈확인 + 뷰어 좌측 트리 드로어화가 후속.
+
+---
 ## 📋 상단바 개선 + Lighthouse 실측 (A·C·D) (2026-07-03)
 > branch `claude/design-system-phase-1-lgw4oz`(PR #107). 사용자 라이브 피드백 반영. typecheck·build 통과,
 > /styleguide 미리보기 라이트/다크 + Lighthouse(로컬 프로덕션 빌드) 확인.
