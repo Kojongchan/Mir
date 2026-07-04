@@ -25,20 +25,32 @@ export interface ApsQtyResult {
   total: ApsCategoryQty;
 }
 
-// 수량 속성 후보(표시명, 소문자 비교). Revit/IFC 파생 명칭 다양성 대응.
-const VOL_NAMES = ['volume', 'gross volume', 'net volume', '체적', '부피'];
-const AREA_NAMES = ['area', 'gross area', 'net area', 'surface area', '면적'];
-const LEN_NAMES = ['length', 'cut length', '길이'];
+// 수량 속성 분류 — 정확 일치가 아니라 표시명 '부분일치'로 판단한다. Revit/IFC 파생
+// 모델의 다양한 명칭(NetVolume·Gross Volume·Material Volume·면적 등)을 폭넓게 포착.
+type QtyKind = 'volume' | 'area' | 'length';
 
-const ALL_CANDIDATES = [
-  'Volume', 'Gross Volume', 'Net Volume',
-  'Area', 'Gross Area', 'Net Area', 'Surface Area',
-  'Length', 'Cut Length',
-  '체적', '부피', '면적', '길이',
-];
+function classifyProp(displayName: string): QtyKind | null {
+  const n = (displayName || '').toLowerCase();
+  if (!n) return null;
+  // 부피(체적) — area/length 보다 먼저 검사(‘volume’ 우선).
+  if (n.includes('volume') || n.includes('체적') || n.includes('부피')) return 'volume';
+  if (n.includes('area') || n.includes('면적')) return 'area';
+  if (n.includes('length') || n.includes('길이') || n.includes('perimeter') || n.includes('둘레')) {
+    return n.includes('perimeter') || n.includes('둘레') ? null : 'length'; // 둘레는 길이합에서 제외
+  }
+  return null;
+}
+
+/** 같은 종류 속성이 여럿일 때 우선순위(정확히 'volume'/'area'/'length' 인 것을 최우선). */
+function propPriority(displayName: string): number {
+  const n = (displayName || '').toLowerCase().trim();
+  if (n === 'volume' || n === 'area' || n === 'length' || n === '체적' || n === '면적' || n === '길이') return 3;
+  if (n.startsWith('net ') || n.startsWith('gross ')) return 2;
+  return 1;
+}
 
 function num(v: unknown): number {
-  const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/[, ]/g, ''));
+  const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/[^0-9.eE+-]/g, ''));
   return Number.isFinite(n) ? n : NaN;
 }
 
@@ -72,7 +84,11 @@ interface RawQty {
   length?: number;
 }
 
-function bulkQtyProps(model: ApsModel, dbIds: number[]): Promise<Map<number, RawQty>> {
+type ApsProp = { displayName: string; displayValue: any; units?: string };
+
+/** 한 배치의 dbId 들에 대해 '모든' 속성을 받아 수량으로 분류. propFilter 를 걸지
+ *  않아야(전체 조회) NetVolume·면적 등 변형 명칭까지 포착된다. */
+function bulkBatch(model: ApsModel, dbIds: number[]): Promise<Map<number, RawQty>> {
   return new Promise((resolve) => {
     const out = new Map<number, RawQty>();
     if (!dbIds.length || typeof model.getBulkProperties2 !== 'function') {
@@ -81,19 +97,28 @@ function bulkQtyProps(model: ApsModel, dbIds: number[]): Promise<Map<number, Raw
     }
     model.getBulkProperties2(
       dbIds,
-      { propFilter: ALL_CANDIDATES },
-      (results: Array<{ dbId: number; properties?: Array<{ displayName: string; displayValue: any; units?: string }> }>) => {
+      { ignoreHidden: true },
+      (results: Array<{ dbId: number; properties?: ApsProp[] }>) => {
         for (const r of results) {
-          const q: RawQty = {};
+          // 종류별로 우선순위가 가장 높은 속성 1개만 채택(중복 합산 방지).
+          const best: Record<QtyKind, { prio: number; value: number } | undefined> = {
+            volume: undefined, area: undefined, length: undefined,
+          };
           for (const p of r.properties ?? []) {
-            const name = (p.displayName || '').toLowerCase();
+            const kind = classifyProp(p.displayName);
+            if (!kind) continue;
             const v = num(p.displayValue);
             if (!Number.isFinite(v) || v <= 0) continue;
             const units = p.units || '';
-            if (q.volume == null && VOL_NAMES.includes(name)) q.volume = volumeToM3(v, units);
-            else if (q.area == null && AREA_NAMES.includes(name)) q.area = areaToM2(v, units);
-            else if (q.length == null && LEN_NAMES.includes(name)) q.length = lengthToM(v, units);
+            const norm = kind === 'volume' ? volumeToM3(v, units) : kind === 'area' ? areaToM2(v, units) : lengthToM(v, units);
+            const prio = propPriority(p.displayName);
+            const cur = best[kind];
+            if (!cur || prio > cur.prio) best[kind] = { prio, value: norm };
           }
+          const q: RawQty = {};
+          if (best.volume) q.volume = best.volume.value;
+          if (best.area) q.area = best.area.value;
+          if (best.length) q.length = best.length.value;
           out.set(r.dbId, q);
         }
         resolve(out);
@@ -101,6 +126,18 @@ function bulkQtyProps(model: ApsModel, dbIds: number[]): Promise<Map<number, Raw
       () => resolve(out),
     );
   });
+}
+
+/** 대형 모델에서도 안전하도록 배치로 나눠 전체 속성을 조회한다. */
+async function bulkQtyProps(model: ApsModel, dbIds: number[]): Promise<Map<number, RawQty>> {
+  const out = new Map<number, RawQty>();
+  const CHUNK = 1500;
+  for (let i = 0; i < dbIds.length; i += CHUNK) {
+    const batch = dbIds.slice(i, i + CHUNK);
+    const part = await bulkBatch(model, batch).catch(() => new Map<number, RawQty>());
+    for (const [k, v] of part) out.set(k, v);
+  }
+  return out;
 }
 
 function emptyCat(category: string): ApsCategoryQty {
