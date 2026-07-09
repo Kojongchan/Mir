@@ -3,6 +3,29 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 C9 — 내용편집 양식통일·다운로드 진행률·미리보기·더보기(10) (2026-07-09)
+> branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과. 라이브 UX 피드백.
+
+### ✅ 한 일
+1. **내용 편집 버튼 우측 정렬(속성 양식과 통일)**: `.issue-block__chev` 를 전역 `margin-left:auto` 로 바꿔
+   내용의 '✏ 편집'도 속성의 '설정 편집'처럼 헤더 우측에 배치.
+2. **관련 자료 다운로드 진행률(0~100%)**: `downloadAccItemProgress`(스트림 리더로 loaded/total) 추가 → 버튼에
+   `⬇ N%` 표시(Content-Length 없으면 `⬇ …` 불확정). 완료 시 저장.
+3. **관련 자료 인라인 미리보기**: 다운로드 **좌측에 '👁 미리보기'** → `AccFilePreview`(신규) 오버레이. AccBrowser
+   문서 미리보기와 동일 경로(blob/서명/리다이렉트 + 우리 뷰어). 모델은 '3D 뷰어로 열기' 안내.
+4. **헤더 표기 통일**: '관련 자료 (파일 개수 : N)' → **'관련 자료 · N'**(코멘트·변경이력과 동일 양식).
+5. **코멘트·변경이력 더보기(기본 10)**: 각각 최근 10개만 보이고 '이전 … 더 보기'로 전체 펼침
+   (`showAllComments`/`showAllEvents`). 변경이력 넘버링은 전체 기준 유지.
+
+### 🔜 다음 할 일 / 미해결
+- **실 ACC 환경 검증**: 미리보기(이미지/PDF/office/영상), 다운로드 진행률(프록시 Content-Length 여부), 폴더 딥링크.
+- 반영된 추가제안: 코멘트/이력 페이지네이션·관련자료 미리보기(완료). 나머지 제안은 사용자 기각.
+
+### 인수인계 한 줄
+내용편집 우측정렬·다운로드 진행률·관련자료 인라인 미리보기(AccFilePreview)·헤더 '· N' 통일·코멘트/이력 더보기(10)
+완료. typecheck·build OK. 실 ACC 눈확인.
+
+---
 ## 📋 C8 — 이슈 상세 개선 8건(내용편집·관련자료·다운로드·이력확장·섹션순서) (2026-07-09)
 > branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과. 라이브 UX 피드백.
 

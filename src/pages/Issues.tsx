@@ -34,8 +34,9 @@ import { formatDate } from '../lib/dashboard';
 import { Attachments } from '../components/Attachments';
 import { MentionInput } from '../components/MentionInput';
 import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
+import { AccFilePreview } from '../components/AccFilePreview';
 import { addIssueFile, listIssueFiles, removeIssueFile, type IssueFileLink } from '../lib/issueFiles';
-import { downloadAccItem, isAccModel } from '../lib/aps';
+import { downloadAccItemProgress, isAccModel } from '../lib/aps';
 import { useProjectRole } from '../auth/useProjectRole';
 
 /** 협업 · 이슈/지적 관리 — 상태 워크플로우·담당자·마감 추적 트래커. */
@@ -407,7 +408,10 @@ function IssueDetail({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editContent, setEditContent] = useState(false);
   const [descDraft, setDescDraft] = useState(issue.description ?? '');
-  const [dlBusy, setDlBusy] = useState<string | null>(null);
+  const [dl, setDl] = useState<{ id: string; pct: number | null } | null>(null);
+  const [previewFile, setPreviewFile] = useState<IssueFileLink | null>(null);
+  const [showAllComments, setShowAllComments] = useState(false);
+  const [showAllEvents, setShowAllEvents] = useState(false);
   const hasLocation = !!issue.model_id && issue.express_id != null;
   const hasGlobal = !!issue.global_id; // APS/ACC 앵커(S49) — GlobalId→dbId 위치보기
 
@@ -453,15 +457,17 @@ function IssueDetail({
   const refreshEvents = () => listEvents(issue.id).then(setEvents).catch(() => {});
 
   const onDownloadFile = async (f: IssueFileLink) => {
-    setDlBusy(f.id);
+    setDl({ id: f.id, pct: 0 });
     try {
-      await downloadAccItem(f.acc_project_id, f.acc_item_id, f.name);
+      await downloadAccItemProgress(f.acc_project_id, f.acc_item_id, f.name, (frac) =>
+        setDl({ id: f.id, pct: frac == null ? null : Math.round(frac * 100) }),
+      );
       await logIssueEvent(issue.id, issue.project_id, 'file_download', f.name, authorName);
       refreshEvents();
     } catch (e) {
       alert(`다운로드 실패: ${errMessage(e)}`);
     } finally {
-      setDlBusy(null);
+      setDl(null);
     }
   };
 
@@ -593,34 +599,38 @@ function IssueDetail({
         </div>
       </section>
 
-      {/* 관련 자료 — 자료관리(ACC) 파일 링크. 다운로드 + 파일 위치(폴더 이동) */}
+      {/* 관련 자료 — 자료관리(ACC) 파일 링크. 미리보기 + 다운로드(진행률) + 파일 위치 */}
       <section className="issue-block">
-        <div className="issue-block__h">관련 자료 (파일 개수 : {files.length})</div>
+        <div className="issue-block__h">관련 자료 · {files.length}</div>
         <div className="issue-block__b">
           {files.length === 0 && <p className="muted" style={{ margin: 0 }}>연결된 파일이 없습니다.</p>}
-          {files.map((f) => (
-            <div className="issue-file" key={f.id}>
-              <span className="issue-file-name" title={f.name}>{isAccModel(f.name) ? '🧱' : '📄'} {f.name}</span>
-              <button className="issue-file-dl" disabled={dlBusy === f.id} title="이 파일 다운로드" onClick={() => void onDownloadFile(f)}>
-                {dlBusy === f.id ? '…' : '⬇ 다운로드'}
-              </button>
-              <span className="issue-file-locwrap">
-                파일 위치 :
-                <button
-                  className="issue-file-loc"
-                  title="자료관리에서 이 파일이 있는 폴더 열기"
-                  onClick={() =>
-                    navigate(`/project/${issue.project_id}/docs`, {
-                      state: { openFolderIds: f.folder_ids, openFolderNames: f.folder_names },
-                    })
-                  }
-                >
-                  📁 {f.folder_names.length ? f.folder_names.join(' / ') : '위치'} ›
+          {files.map((f) => {
+            const dling = dl?.id === f.id;
+            return (
+              <div className="issue-file" key={f.id}>
+                <span className="issue-file-name" title={f.name}>{isAccModel(f.name) ? '🧱' : '📄'} {f.name}</span>
+                <button className="issue-file-dl" title="미리보기" onClick={() => setPreviewFile(f)}>👁 미리보기</button>
+                <button className="issue-file-dl" disabled={dling} title="이 파일 다운로드" onClick={() => void onDownloadFile(f)}>
+                  {dling ? (dl.pct == null ? '⬇ …' : `⬇ ${dl.pct}%`) : '⬇ 다운로드'}
                 </button>
-              </span>
-              {canEdit && <button className="issue-file-del" title="첨부 해제" onClick={() => onRemoveFile(f.id)}>✕</button>}
-            </div>
-          ))}
+                <span className="issue-file-locwrap">
+                  파일 위치 :
+                  <button
+                    className="issue-file-loc"
+                    title="자료관리에서 이 파일이 있는 폴더 열기"
+                    onClick={() =>
+                      navigate(`/project/${issue.project_id}/docs`, {
+                        state: { openFolderIds: f.folder_ids, openFolderNames: f.folder_names },
+                      })
+                    }
+                  >
+                    📁 {f.folder_names.length ? f.folder_names.join(' / ') : '위치'} ›
+                  </button>
+                </span>
+                {canEdit && <button className="issue-file-del" title="첨부 해제" onClick={() => onRemoveFile(f.id)}>✕</button>}
+              </div>
+            );
+          })}
           {canEdit && (
             <button style={{ marginTop: 8 }} onClick={() => setPickerOpen(true)}>＋ 자료관리에서 첨부</button>
           )}
@@ -630,13 +640,28 @@ function IssueDetail({
       {pickerOpen && (
         <AccFilePicker projectId={issue.project_id} canEdit={canEdit} onPick={onPickFile} onClose={() => setPickerOpen(false)} />
       )}
+      {previewFile && (
+        <AccFilePreview
+          projectId={issue.project_id}
+          accProject={previewFile.acc_project_id}
+          itemId={previewFile.acc_item_id}
+          name={previewFile.name}
+          urn={previewFile.acc_urn}
+          onClose={() => setPreviewFile(null)}
+        />
+      )}
 
       {/* 코멘트 */}
       <section className="issue-block issue-block--pop">
         <div className="issue-block__h">코멘트 · {comments.length}</div>
         <div className="issue-block__b">
           <div className="issue-comments">
-            {comments.map((c) => (
+            {comments.length > 10 && !showAllComments && (
+              <button className="issue-more" onClick={() => setShowAllComments(true)}>
+                이전 코멘트 {comments.length - 10}개 더 보기
+              </button>
+            )}
+            {(showAllComments ? comments : comments.slice(-10)).map((c) => (
               <div className="issue-comment" key={c.id}>
                 <span className="issue-comment-author">{c.author_name || '익명'}</span>
                 <span className="issue-comment-body">{renderCommentBody(c.body, members)}</span>
@@ -670,13 +695,21 @@ function IssueDetail({
         {histOpen && (
           <div className="issue-block__b">
             {events.length === 0 && <p className="muted" style={{ margin: 0 }}>이력이 없습니다.</p>}
-            {events.map((ev, i) => (
-              <div className="issue-event" key={ev.id}>
-                <span className="issue-event-no">#{i + 1}</span>
-                <span className="issue-event-text">{eventText(ev)}</span>
-                <span className="muted issue-event-meta">{ev.actor_name || '—'} · {fmtDateTime(ev.created_at)}</span>
-              </div>
-            ))}
+            {events.length > 10 && !showAllEvents && (
+              <button className="issue-more" onClick={() => setShowAllEvents(true)}>
+                이전 이력 {events.length - 10}개 더 보기
+              </button>
+            )}
+            {(showAllEvents ? events : events.slice(-10)).map((ev) => {
+              const i = events.indexOf(ev);
+              return (
+                <div className="issue-event" key={ev.id}>
+                  <span className="issue-event-no">#{i + 1}</span>
+                  <span className="issue-event-text">{eventText(ev)}</span>
+                  <span className="muted issue-event-meta">{ev.actor_name || '—'} · {fmtDateTime(ev.created_at)}</span>
+                </div>
+              );
+            })}
           </div>
         )}
       </section>

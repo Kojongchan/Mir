@@ -4166,9 +4166,11 @@ button.issue-block__h,
   border: 0;
   border-bottom: 1px solid var(--border);
 }
-.issue-block__toggle .issue-block__chev {
+.issue-block__chev {
   margin-left: auto;
   color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
 }
 .issue-block__b {
   padding: 10px 12px;
@@ -4226,6 +4228,22 @@ button.issue-block__h,
 .mention-tag {
   color: var(--accent);
   font-weight: 600;
+}
+/* 코멘트·이력 '더 보기' */
+.issue-more {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+.issue-more:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 /* 자료관리 파일 링크 행 */
 .issue-file {

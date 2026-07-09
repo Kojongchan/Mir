@@ -105,11 +105,7 @@ export async function accFileSignedUrl(project: string, item: string, name?: str
   return body.url as string;
 }
 
-/** ACC 원본 파일을 디스크로 저장(다운로드 — 실무자 이상 UI 에서만 호출). */
-export async function downloadAccItem(project: string, item: string, fileName: string): Promise<void> {
-  const res = await fetch(accFileBase(project, item), { headers: await authHeader() });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `다운로드 실패(${res.status})`);
-  const blob = await res.blob();
+function saveBlob(blob: Blob, fileName: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -118,6 +114,49 @@ export async function downloadAccItem(project: string, item: string, fileName: s
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+/** ACC 원본 파일을 디스크로 저장(다운로드 — 실무자 이상 UI 에서만 호출). */
+export async function downloadAccItem(project: string, item: string, fileName: string): Promise<void> {
+  const res = await fetch(accFileBase(project, item), { headers: await authHeader() });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `다운로드 실패(${res.status})`);
+  saveBlob(await res.blob(), fileName);
+}
+
+/**
+ * 진행률(0~1)을 보고하며 다운로드한다. Content-Length 가 없으면 fraction=null(불확정).
+ * 응답 바디를 스트림으로 읽어 loaded/total 을 계산한다.
+ */
+export async function downloadAccItemProgress(
+  project: string,
+  item: string,
+  fileName: string,
+  onProgress?: (fraction: number | null) => void,
+): Promise<void> {
+  const res = await fetch(accFileBase(project, item), { headers: await authHeader() });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `다운로드 실패(${res.status})`);
+  const total = Number(res.headers.get('content-length') || 0);
+  if (!res.body || !total) {
+    onProgress?.(null); // 길이/스트림 없음 → 불확정
+    saveBlob(await res.blob(), fileName);
+    onProgress?.(1);
+    return;
+  }
+  const reader = res.body.getReader();
+  const chunks: BlobPart[] = [];
+  let loaded = 0;
+  onProgress?.(0);
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      chunks.push(value);
+      loaded += value.length;
+      onProgress?.(Math.min(1, loaded / total));
+    }
+  }
+  saveBlob(new Blob(chunks), fileName);
+  onProgress?.(1);
 }
 
 /** ACC 아이템의 버전 이력. */
