@@ -3,6 +3,27 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 C10 — 관련자료 모델 인라인 3D 미리보기 + 다운로드 % 실동작 (2026-07-09)
+> branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과. 라이브 UX 피드백.
+
+### ✅ 한 일
+1. **모델(rvt·nwd·ifc…) 인라인 3D 미리보기**: 관련 자료 '미리보기'가 이제 파일의 **3D 뷰를 그 자리 오버레이에
+   직접 렌더**(ACC 처럼). 신규 `ApsMiniViewer`(GuiViewer3D, 스크립트/Initializer 페이지당 1회 로드, urn 로드).
+   `AccFilePreview` 가 모델이면 `ApsMiniViewer` 를 띄우고, urn 없으면 '변환 전' 안내. (기존 '3D 뷰어로 열기'
+   전체화면 버튼은 헤더에 유지.)
+2. **다운로드 진행률 % 실동작**: 프록시(`api/aps-file`)가 스트림만 넘기고 **content-length 를 안 넘겨** 항상
+   불확정(`…`)이던 문제 → S3 원본의 `content-length` 를 응답에 그대로 전달하도록 수정 → 클라이언트가 총량을
+   알아 `⬇ N%` 표시. (플랫폼이 청크 전송으로 재작성하면 여전히 `…` 폴백.)
+
+### 🔜 다음 할 일 / 미해결 (실 ACC 검증)
+- 인라인 3D: 대형 모델 로드 성능·토큰 만료, 여러 번 열고 닫을 때 뷰어 정리(finish) 확인.
+- 다운로드 %: Vercel edge 가 content-length 를 유지하는지(안 되면 대안 = ACC 파일크기 메타 저장 후 전달).
+
+### 인수인계 한 줄
+관련자료 모델 미리보기를 인라인 3D(ApsMiniViewer)로, 다운로드 %는 프록시 content-length 전달로 실동작.
+typecheck·build OK. 실 ACC 눈확인.
+
+---
 ## 📋 C9 — 내용편집 양식통일·다운로드 진행률·미리보기·더보기(10) (2026-07-09)
 > branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과. 라이브 UX 피드백.
 

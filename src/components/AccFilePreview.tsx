@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { accFileBlobUrl, accFileRedirectUrl, accFileSignedUrl, isAccModel } from '../lib/aps';
 import { viewerKindFor, type ViewerKind, type FileRecord } from '../lib/files';
+import { ApsMiniViewer } from './ApsMiniViewer';
 import { ImageViewer } from './viewers/ImageViewer';
 import { VideoViewer } from './viewers/VideoViewer';
 import { AudioViewer } from './viewers/AudioViewer';
@@ -44,6 +45,11 @@ export function AccFilePreview({
     let alive = true;
     (async () => {
       const kind = viewerKindFor(name);
+      // 모델(rvt·nwd·ifc…)은 인라인 3D 뷰어로 직접 띄운다(urn 있을 때).
+      if (isAccModel(name)) {
+        setStatus(urn ? 'model3d' : 'model');
+        return;
+      }
       if (kind === 'unsupported' && model) {
         setStatus('model');
         return;
@@ -96,9 +102,11 @@ export function AccFilePreview({
         <button onClick={onClose}>✕ 닫기</button>
       </div>
       <div className="acc-doc-body">
-        {status === 'model' ? (
+        {status === 'model3d' && urn ? (
+          <ApsMiniViewer urn={urn} />
+        ) : status === 'model' ? (
           <div className="muted" style={{ padding: 24, textAlign: 'center' }}>
-            3D 모델은 인라인 미리보기를 지원하지 않습니다.{urn ? ' 위의 ‘3D 뷰어로 열기’를 사용하세요.' : ' (변환된 3D 뷰 없음)'}
+            변환된 3D 뷰가 아직 없습니다(ACC 처리 중이거나 권한 없음).
           </div>
         ) : status ? (
           <div className="muted" style={{ padding: 24 }}>{status}</div>
