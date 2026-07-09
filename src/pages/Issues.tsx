@@ -398,6 +398,7 @@ function IssueDetail({
   const [body, setBody] = useState('');
   const [mentions, setMentions] = useState<string[]>([]);
   const [histOpen, setHistOpen] = useState(false);
+  const [propOpen, setPropOpen] = useState(false);
   const hasLocation = !!issue.model_id && issue.express_id != null;
   const hasGlobal = !!issue.global_id; // APS/ACC 앵커(S49) — GlobalId→dbId 위치보기
 
@@ -421,7 +422,7 @@ function IssueDetail({
 
   return (
     <div className="issue-detail issue-report">
-      {/* 내용 */}
+      {/* 내용 (+ 위치 보기) */}
       <section className="issue-block">
         <div className="issue-block__h">내용</div>
         <div className="issue-block__b">
@@ -433,37 +434,6 @@ function IssueDetail({
           <p className="muted issue-meta" style={{ margin: '8px 0 0' }}>
             등록 {issue.created_by_name || '—'} · {formatDate(issue.created_at.slice(0, 10))}
           </p>
-        </div>
-      </section>
-
-      {/* 속성 — 상태·우선순위·담당(소속/담당업무)·마감 + 편집 */}
-      <section className="issue-block">
-        <div className="issue-block__h">속성</div>
-        <div className="issue-block__b">
-          <div className="issue-facts">
-            <span><b>상태</b> <span className={`issue-badge issue-${issue.status}`}>{STATUS_LABEL[issue.status]}</span></span>
-            <span><b>우선순위</b> <span className={`issue-prio issue-prio-${issue.priority}`}>{PRIORITY_LABEL[issue.priority]}</span></span>
-            <span><b>담당</b> {assignedMember ? memberLabel(assignedMember) : issue.assignee_name || '미지정'}</span>
-            <span><b>마감</b> {issue.due_date ? formatDate(issue.due_date) : '—'}</span>
-          </div>
-          {canEdit && (
-            <div className="issue-assign-row" style={{ marginTop: 10 }}>
-              <label>담당자 배정
-                <select value={issue.assignee_id ?? ''} onChange={(e) => onAssign(issue, e.target.value)}>
-                  <option value="">미지정</option>
-                  {members.map((m) => <option key={m.id} value={m.id}>{memberLabel(m)}</option>)}
-                </select>
-              </label>
-              <label>우선순위
-                <select value={issue.priority} onChange={(e) => onMeta(issue, { priority: e.target.value as IssuePriority })}>
-                  {ISSUE_PRIORITIES.map((p) => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
-                </select>
-              </label>
-              <label>마감일
-                <input type="date" value={issue.due_date ?? ''} onChange={(e) => onMeta(issue, { due_date: e.target.value || null })} />
-              </label>
-            </div>
-          )}
           {hasAnyLocation && (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
               {hasGlobal && (
@@ -504,6 +474,40 @@ function IssueDetail({
         </div>
       </section>
 
+      {/* 속성 — 요약(상태·우선순위·담당·마감)은 항상, 편집은 펼쳐서 */}
+      <section className="issue-block">
+        <button className="issue-block__h issue-block__toggle" onClick={() => setPropOpen((o) => !o)} aria-expanded={propOpen}>
+          <span>속성</span>
+          {canEdit && <span className="issue-block__chev">{propOpen ? '▾ 설정 접기' : '▸ 설정 편집'}</span>}
+        </button>
+        <div className="issue-block__b">
+          <div className="issue-facts">
+            <span><b>상태</b> <span className={`issue-badge issue-${issue.status}`}>{STATUS_LABEL[issue.status]}</span></span>
+            <span><b>우선순위</b> <span className={`issue-prio issue-prio-${issue.priority}`}>{PRIORITY_LABEL[issue.priority]}</span></span>
+            <span><b>담당</b> {assignedMember ? memberLabel(assignedMember) : issue.assignee_name || '미지정'}</span>
+            <span><b>마감</b> {issue.due_date ? formatDate(issue.due_date) : '—'}</span>
+          </div>
+          {canEdit && propOpen && (
+            <div className="issue-assign-row" style={{ marginTop: 10 }}>
+              <label>담당자 배정
+                <select value={issue.assignee_id ?? ''} onChange={(e) => onAssign(issue, e.target.value)}>
+                  <option value="">미지정</option>
+                  {members.map((m) => <option key={m.id} value={m.id}>{memberLabel(m)}</option>)}
+                </select>
+              </label>
+              <label>우선순위
+                <select value={issue.priority} onChange={(e) => onMeta(issue, { priority: e.target.value as IssuePriority })}>
+                  {ISSUE_PRIORITIES.map((p) => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
+                </select>
+              </label>
+              <label>마감일
+                <input type="date" value={issue.due_date ?? ''} onChange={(e) => onMeta(issue, { due_date: e.target.value || null })} />
+              </label>
+            </div>
+          )}
+        </div>
+      </section>
+
       {/* 첨부 — Attachments 자체 헤더를 섹션 헤더로 사용 */}
       <section className="issue-block issue-block--attach">
         <Attachments
@@ -516,7 +520,7 @@ function IssueDetail({
       </section>
 
       {/* 코멘트 */}
-      <section className="issue-block">
+      <section className="issue-block issue-block--pop">
         <div className="issue-block__h">코멘트 · {comments.length}</div>
         <div className="issue-block__b">
           <div className="issue-comments">

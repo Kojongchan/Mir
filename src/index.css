@@ -4173,6 +4173,13 @@ button.issue-block__h,
 .issue-block__b {
   padding: 10px 12px;
 }
+/* 팝오버(멘션 드롭다운)가 블록 밖으로 나와도 잘리지 않도록 */
+.issue-block--pop {
+  overflow: visible;
+}
+.issue-block--pop .issue-block__h {
+  border-radius: var(--radius-md, 8px) var(--radius-md, 8px) 0 0;
+}
 /* 첨부 블록: Attachments 자체 헤더를 섹션 헤더처럼 */
 .issue-block--attach .attach {
   padding: 0;
