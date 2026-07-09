@@ -41,7 +41,8 @@ export function NotificationBell() {
       refreshCount();
     }
     setOpen(false);
-    if (n.issue_id) navigate(`/project/${n.project_id}/issues`);
+    if (n.clash_id) navigate(`/project/${n.project_id}/clash`);
+    else if (n.issue_id) navigate(`/project/${n.project_id}/issues`);
   };
 
   const onMarkAll = async () => {

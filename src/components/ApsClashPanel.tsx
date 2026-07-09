@@ -31,6 +31,9 @@ import { downloadCsv } from '../lib/clash';
 import { uploadAttachment } from '../lib/attachments';
 import { createIssue, ISSUE_PRIORITIES, PRIORITY_LABEL, type IssuePriority } from '../lib/issues';
 import type { ApsMapping } from '../lib/apsMapping';
+import { ApsClashCoordination } from './ApsClashCoordination';
+import { listCoordSummaries, type ClashCoordSummary } from '../lib/clashCoordination';
+import { listProjectMembers, type ProjectMember } from '../lib/members';
 import { useAuth } from '../auth/AuthProvider';
 
 interface Props {
@@ -129,6 +132,10 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
   const [tests, setTests] = useState<ClashTestMeta[]>([]);
   const [selTest, setSelTest] = useState('');
   const [issueFor, setIssueFor] = useState<ClashRow | null>(null);
+  // 코디네이션 룸(#1) — 저장된 간섭별 협의 요약 + 열린 상세.
+  const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [coordSummaries, setCoordSummaries] = useState<Map<string, ClashCoordSummary>>(new Map());
+  const [coordFor, setCoordFor] = useState<ClashRow | null>(null);
   const [reportBusy, setReportBusy] = useState(false);
   const [saveName, setSaveName] = useState('');
 
@@ -140,9 +147,27 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
 
   useEffect(() => {
     listClashTests(projectId).then(setTests).catch(() => {});
+    // 담당 배정·멘션용 구성원 목록(profiles RLS 상 관리자만 채워짐 — 비면 라벨로 대체).
+    listProjectMembers(projectId).then(setMembers).catch(() => {});
     return () => clearApsClashView(viewer, model);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 저장된 테스트의 협의 요약(담당·기한·코멘트·미읽음)을 불러와 리스트 뱃지에 반영.
+  const refreshCoord = async (testId: string) => {
+    if (!testId) {
+      setCoordSummaries(new Map());
+      return;
+    }
+    try {
+      const m = await listCoordSummaries(testId);
+      setCoordSummaries(m);
+      // 코디네이션에서 바뀐 상태를 리스트 행에 승계(해소/검증/재오픈 반영).
+      setRows((rs) => rs.map((r) => (m.has(r.id) ? { ...r, status: m.get(r.id)!.status } : r)));
+    } catch {
+      /* 요약은 편의 — 실패해도 리스트는 동작 */
+    }
+  };
 
   // 선택 노드 → leaf dbId + 메타(이름=부재, 카테고리=상위 그룹).
   const buildMeta = (leaves: number[]): ApsMetaResolver => {
@@ -186,7 +211,8 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
       setDbBacked(false);
       setSelTest('');
       setActiveId(null);
-      setStatus(`간섭 ${next.length}건${inherited ? ` (상태 승계 ${inherited}건)` : ''}`);
+      setCoordSummaries(new Map());
+      setStatus(`간섭 ${next.length}건${inherited ? ` (상태 승계 ${inherited}건)` : ''} — 저장 후 협의 가능`);
     } catch (e) {
       setStatus(`검사 실패: ${(e as Error).message}`);
     } finally {
@@ -223,9 +249,10 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
         rows,
         mappings: mappingsMap,
       });
-      setDbBacked(true);
-      setSelTest(id);
       await listClashTests(projectId).then(setTests);
+      // 저장 직후 DB 에서 다시 불러와 각 행 id 를 실제 clashes.id 로 교체한다
+      // (협의·상태 갱신이 저장된 실 행을 가리키도록 — loadTest 가 refreshCoord 포함).
+      await loadTest(id);
       setStatus('저장 완료');
     } catch (e) {
       setStatus(`저장 실패: ${(e as Error).message}`);
@@ -241,6 +268,7 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
       setRows(loadedApsToRows(loaded, [mapping]));
       setDbBacked(true);
       setActiveId(null);
+      await refreshCoord(testId);
       setStatus(`불러옴 ${loaded.length}건`);
     } catch (e) {
       setStatus(`불러오기 실패: ${(e as Error).message}`);
@@ -537,12 +565,44 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
                         </span>
                         <span style={{ color: 'var(--muted)' }}>{r.depth.toFixed(3)}m</span>
                       </div>
-                      <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center' }}>
+                      <div style={{ display: 'flex', gap: 6, marginTop: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                         <select value={r.status} onChange={(e) => void changeStatus(r, e.target.value as ClashStatus)} disabled={!canEdit} style={{ ...sel, width: 'auto', fontSize: 11 }}>
                           {CLASH_STATUSES.map((s) => (
                             <option key={s} value={s}>{CLASH_STATUS_LABEL[s]}</option>
                           ))}
                         </select>
+                        {dbBacked ? (
+                          <button onClick={() => setCoordFor(r)} style={{ ...btn, fontSize: 11 }} title="담당·기한·코멘트·해소/검증">
+                            💬 협의
+                            {(() => {
+                              const s = coordSummaries.get(r.id);
+                              if (!s) return null;
+                              return (
+                                <>
+                                  {s.commentCount > 0 && <span style={{ marginLeft: 4 }}>{s.commentCount}</span>}
+                                  {s.unread && <span style={{ marginLeft: 3, color: '#dc2626' }}>●</span>}
+                                </>
+                              );
+                            })()}
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: 10, color: 'var(--muted)' }}>저장 후 협의</span>
+                        )}
+                        {(() => {
+                          const s = coordSummaries.get(r.id);
+                          if (!s) return null;
+                          const who = s.assignee_label || (s.assignee ? '담당 지정' : null);
+                          return (
+                            <>
+                              {who && <span style={{ fontSize: 10, color: 'var(--muted)' }}>👤 {who}</span>}
+                              {s.due_date && (
+                                <span style={{ fontSize: 10, color: new Date(s.due_date) < new Date(new Date().toDateString()) && s.status !== 'approved' ? '#dc2626' : 'var(--muted)' }}>
+                                  📅 {s.due_date}
+                                </span>
+                              )}
+                            </>
+                          );
+                        })()}
                         {r.issueId ? (
                           <span style={{ fontSize: 11, color: 'var(--accent)' }}>이슈 연결됨</span>
                         ) : (
@@ -558,6 +618,18 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
 
         <div style={{ marginTop: 8, fontSize: 12, color: 'var(--muted)' }}>{status}</div>
       </div>
+
+      {coordFor && (
+        <ApsClashCoordination
+          clashDbId={coordFor.id}
+          projectId={projectId}
+          title={`${coordFor.a.name || coordFor.a.category} ↔ ${coordFor.b.name || coordFor.b.category} · ${coordFor.depth.toFixed(3)}m`}
+          canEdit={canEdit}
+          members={members}
+          onClose={() => setCoordFor(null)}
+          onChanged={() => void refreshCoord(selTest)}
+        />
+      )}
 
       {issueFor && (
         <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8 }}>

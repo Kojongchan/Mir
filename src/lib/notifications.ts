@@ -6,7 +6,14 @@ import { supabase } from './supabase';
 // notifications RLS: 본인 것만 읽기/표시변경, 생성은 프로젝트 멤버.
 // =====================================================================
 
-export type NotificationType = 'issue_status' | 'issue_assigned' | 'issue_comment';
+export type NotificationType =
+  | 'issue_status'
+  | 'issue_assigned'
+  | 'issue_comment'
+  | 'clash_assigned'
+  | 'clash_comment'
+  | 'clash_mention'
+  | 'clash_status';
 
 export interface AppNotification {
   id: string;
@@ -16,13 +23,14 @@ export interface AppNotification {
   title: string;
   body: string | null;
   issue_id: string | null;
+  clash_id: string | null;
   actor_name: string | null;
   is_read: boolean;
   created_at: string;
 }
 
 const COLS =
-  'id, project_id, user_id, type, title, body, issue_id, actor_name, is_read, created_at';
+  'id, project_id, user_id, type, title, body, issue_id, clash_id, actor_name, is_read, created_at';
 
 /** Recent notifications for the signed-in user (newest first). */
 export async function listNotifications(limit = 30): Promise<AppNotification[]> {
@@ -76,6 +84,7 @@ interface NotifyInput {
   title: string;
   body?: string;
   issueId?: string;
+  clashId?: string;
   actorName?: string | null;
 }
 
@@ -98,6 +107,7 @@ export async function notify(input: NotifyInput): Promise<void> {
     title: input.title,
     body: input.body ?? null,
     issue_id: input.issueId ?? null,
+    clash_id: input.clashId ?? null,
     actor_name: input.actorName ?? null,
   }));
   try {

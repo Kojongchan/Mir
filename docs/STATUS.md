@@ -3,6 +3,47 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 C1 — 간섭 코디네이션 룸(플랫폼 내 완결 #1 핵심) (2026-07-09)
+> branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과.
+> **대전제**: MIR SMART 안에서 간섭 협의·해소·검증·이력까지 끝낸다(Navisworks/Solibri 왕복 X).
+> 우선순위 #1 항목 5개 중 **#1 코디네이션 룸(핵심)** 을 완결 슬라이스로 구현. 나머지(#2 회사양식
+> 보고서·#3 규칙셋 재검사·#4 뷰어중심 UI·#5 BCF import)는 후속.
+
+### ✅ 한 일
+1. **마이그레이션 0032_clash_coordination.sql(추가형)**:
+   - `clashes` 확장: `assignee`(담당 FK)·`assignee_label`(관계사/역할 자유텍스트 R12)·`due_date`(기한)·
+     `resolved_by/at`·`verified_by/at`(해소→검증 감사).
+   - `clash_comment`(clash_id·author·author_name·body·`mentions uuid[]`·created_at) — 간섭별 코멘트 스레드.
+   - `clash_read`(clash_id·user_id·last_read_at, PK 복합) — 스레드 **읽음** 표시(사용자별).
+   - `notifications.clash_id` 추가 — 배정·코멘트·멘션·검증 알림도 상단 종에 뜨고 클릭 시 `/clash` 이동.
+   - RLS: 쓰기 = **is_editor**(0023), 읽기 = 멤버(부모 clashes→clash_tests.project_id 로 판정). clash_read 는 본인만.
+2. **`lib/clashCoordination.ts`(신규)**: 담당 배정(`assignClash`)·기한(`setClashDue`)·코멘트
+   (`list/add/deleteClashComment`, @멘션→알림)·읽음(`markClashRead` upsert)·해소(`resolveClash`)·
+   검증(`verifyClash`)·재오픈(`reopenClash`)·요약(`listCoordSummaries` = 담당/기한/코멘트수/미읽음). 알림은
+   `notifications`(clash_id) 재사용 — 배정 시 담당자, 멘션 시 멘션대상, 코멘트 시 담당자, 검증 시 담당자에게.
+3. **`components/ApsClashCoordination.tsx`(신규)**: 저장된 간섭 1건의 협의 상세(우측 시트).
+   담당자(구성원 드롭다운)+관계사/역할 라벨+기한 · 상태흐름(신규→검토중→**해결**(담당)→**승인**(검토자 검증),
+   해소/검증 감사줄·해소처리/검증완료/재검토 버튼) · **코멘트 스레드**(작성자·시각·@멘션 칩·삭제, 열람 시 읽음처리).
+4. **`ApsClashPanel` 연동**: 각 결과 행에 **💬 협의** 버튼(dbBacked 일 때) + 코멘트수/미읽음(●)·담당·기한 뱃지.
+   저장 직후 **DB 재로드**로 행 id 를 실 `clashes.id` 로 교체(협의·상태갱신이 실 행을 가리키도록 — 기존
+   changeStatus id 불일치 잠재버그도 함께 해소). 코디네이션 변경 시 요약 재조회 + 리스트 상태 승계.
+   `NotificationBell` 이 `clash_id` 알림을 `/clash` 로 라우팅.
+
+### 🔜 다음 할 일 / 미해결 (라이브 검증 필요 — 이 샌드박스는 auth·ACC·Supabase 없음)
+- **0032 마이그레이션 적용 필수**. 적용 후 라이브에서: 간섭 저장→💬 협의→담당/기한/코멘트/멘션 알림/해소→검증
+  전 과정이 플랫폼 안에서 도는지, 재검사 상태승계(S40)와 협의 상태가 함께 유지되는지 눈확인.
+- **구성원 드롭다운·@멘션 대상은 profiles RLS(본인+admin) 상 관리자/PM 에게만 채워짐**. 비-admin 실무자는
+  **관계사/역할 라벨(자유텍스트)** 로 담당 표기(기존 issues 배정과 동일 제약). 멤버 이름 공유가 필요하면
+  후속 마이그(멤버 간 profiles 이름 SELECT 허용) 검토.
+- **기한 알림**은 배정/기한설정 시 담당자 인앱 알림으로 구현(즉시성). 기한 임박 스케줄 리마인더(cron)는 후속.
+- 남은 고도화: #2 회사양식 보고서(docxtemplater, S38 양식 대기)·#3 규칙셋 저장/정기 재검사(clash_rule)·
+  #4 리스트↔3D 동기화 좌측 도킹 UI·#5 BCF import(선택). 3D 뷰포인트/마크업 저장은 코멘트 다음 슬라이스.
+
+### 인수인계 한 줄
+간섭 코디네이션 룸(#1 핵심) 완결: 0032(담당·기한·코멘트@멘션·읽음·해소/검증 감사)+API+우측시트 UI, 알림
+연동, 저장 후 DB 재로드로 실 행 id 정합. typecheck·build OK. 다음은 라이브 검증 + #3 규칙셋/재검사 또는 뷰포인트/마크업.
+
+---
 ## 📋 M1 — 모바일 실사용 마감(뷰어 크롬·바텀시트·표·터치타깃) (2026-07-04)
 > branch `claude/mobile-version-update-v810fd`. typecheck·build 통과. Playwright(390px) 계산스타일 +
 > 시각 캡처로 모바일 규칙 실적용 확인, 데스크톱(1200px)은 무영향 확인. U4(하단탭)에 이은 후속 마감.
