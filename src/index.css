@@ -3917,6 +3917,50 @@ button.danger:hover:not(:disabled) {
   flex-shrink: 0;
   font-size: 11px;
 }
+.clash-shell-dots {
+  display: inline-block;
+  animation: clash-shell-pulse 1s ease-in-out infinite;
+  color: var(--accent);
+}
+@keyframes clash-shell-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .clash-shell-dots { animation: none; }
+}
+.issue-comment-mentions {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+.issue-comment-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.issue-mention-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  font-size: 12px;
+}
+.issue-mention-chip {
+  padding: 1px 8px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.issue-mention-chip.is-on {
+  opacity: 1;
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .issue-comment-add {
   display: flex;
   gap: 8px;

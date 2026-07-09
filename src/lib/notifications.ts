@@ -10,6 +10,7 @@ export type NotificationType =
   | 'issue_status'
   | 'issue_assigned'
   | 'issue_comment'
+  | 'issue_mention'
   | 'clash_assigned'
   | 'clash_comment'
   | 'clash_mention'

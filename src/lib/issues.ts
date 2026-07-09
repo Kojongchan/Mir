@@ -62,6 +62,7 @@ export interface IssueComment {
   issue_id: string;
   body: string;
   author_name: string | null;
+  mentions: string[];
   created_at: string;
 }
 
@@ -258,17 +259,18 @@ export async function listEvents(issueId: string): Promise<IssueEvent[]> {
 export async function listComments(issueId: string): Promise<IssueComment[]> {
   const { data, error } = await supabase
     .from('issue_comments')
-    .select('id, issue_id, body, author_name, created_at')
+    .select('id, issue_id, body, author_name, mentions, created_at')
     .eq('issue_id', issueId)
     .order('created_at', { ascending: true });
   if (error) throw error;
-  return data ?? [];
+  return (data ?? []).map((c) => ({ ...c, mentions: (c.mentions as string[]) ?? [] })) as IssueComment[];
 }
 
 export async function addComment(
   issue: Issue,
   body: string,
   authorName: string | null,
+  mentions: string[] = [],
 ): Promise<void> {
   const { data: userData } = await supabase.auth.getUser();
   const { error } = await supabase.from('issue_comments').insert({
@@ -276,18 +278,78 @@ export async function addComment(
     body,
     author: userData.user?.id ?? null,
     author_name: authorName,
+    mentions,
   });
   if (error) throw error;
 
+  const preview = body.length > 60 ? `${body.slice(0, 60)}…` : body;
+  // @멘션 대상엔 멘션 알림, 담당자·작성자(멘션 제외)엔 코멘트 알림.
+  if (mentions.length) {
+    await notify({
+      projectId: issue.project_id,
+      recipients: mentions,
+      type: 'issue_mention',
+      title: `이슈 코멘트에서 멘션: ${issue.title}`,
+      body: preview,
+      issueId: issue.id,
+      actorName: authorName,
+    });
+  }
   await notify({
     projectId: issue.project_id,
-    recipients: [issue.assignee_id, issue.created_by],
+    recipients: [issue.assignee_id, issue.created_by].filter((r) => !r || !mentions.includes(r)),
     type: 'issue_comment',
     title: `이슈 새 코멘트: ${issue.title}`,
-    body: body.length > 60 ? `${body.slice(0, 60)}…` : body,
+    body: preview,
     issueId: issue.id,
     actorName: authorName,
   });
+}
+
+// ---------- 읽음/안읽음 (issue_read, 0033) --------------------------
+
+/** 이슈 상세를 지금 읽음으로 표시(사용자별 upsert). 미적용(0033 전)이면 무시. */
+export async function markIssueRead(issueId: string): Promise<void> {
+  const { data: userData } = await supabase.auth.getUser();
+  const uid = userData.user?.id;
+  if (!uid) return;
+  try {
+    await supabase
+      .from('issue_read')
+      .upsert(
+        { issue_id: issueId, user_id: uid, last_read_at: new Date().toISOString() },
+        { onConflict: 'issue_id,user_id' },
+      );
+  } catch {
+    /* non-fatal — 읽음 표시는 편의 레이어 */
+  }
+}
+
+/**
+ * 주어진 이슈들 중 "안읽음"(내 마지막 열람 이후 새 코멘트가 있는) 이슈 id 집합.
+ * 코멘트가 있고 한 번도 안 읽었거나, 마지막 열람보다 최신 코멘트가 있으면 안읽음.
+ */
+export async function listUnreadIssues(issueIds: string[]): Promise<Set<string>> {
+  const unread = new Set<string>();
+  if (issueIds.length === 0) return unread;
+  const { data: userData } = await supabase.auth.getUser();
+  const uid = userData.user?.id;
+  if (!uid) return unread;
+
+  const [{ data: comments }, { data: reads }] = await Promise.all([
+    supabase.from('issue_comments').select('issue_id, created_at').in('issue_id', issueIds),
+    supabase.from('issue_read').select('issue_id, last_read_at').eq('user_id', uid).in('issue_id', issueIds),
+  ]);
+
+  const lastRead = new Map<string, string>();
+  for (const r of (reads ?? []) as { issue_id: string; last_read_at: string }[]) {
+    lastRead.set(r.issue_id, r.last_read_at);
+  }
+  for (const c of (comments ?? []) as { issue_id: string; created_at: string }[]) {
+    const seen = lastRead.get(c.issue_id);
+    if (!seen || new Date(c.created_at) > new Date(seen)) unread.add(c.issue_id);
+  }
+  return unread;
 }
 
 // ---------- 마감일 상태(임박/지연) ----------------------------------

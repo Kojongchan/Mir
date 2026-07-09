@@ -186,7 +186,9 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   // 고유기능 이식(S49): dbId↔GlobalId 매핑 + 이슈 핀 + 간섭검토.
   const [mapping, setMapping] = useState<ApsMapping | null>(null);
   const [issues, setIssues] = useState<Issue[]>([]);
-  const [clashOpen, setClashOpen] = useState(false);
+  // 간섭검토(autoClash) 진입 시 창을 즉시 '열림' 상태로 시작해, 모델 트리가 준비되기
+  // 전까지 로딩 셸을 먼저 보여준다(체감 지연 완화 — 트리 로드는 3D 지오메트리보다 늦다).
+  const [clashOpen, setClashOpen] = useState(autoClash);
   const [pinsOn, setPinsOn] = useState(true);
   const [popIssue, setPopIssue] = useState<Issue | null>(null);
   const [selDbId, setSelDbId] = useState<number | null>(null);
@@ -1248,6 +1250,38 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
               onIssueCreated={reloadIssues}
               onClose={() => setClashOpen(false)}
             />
+          )}
+          {/* 로딩 셸 — 창이 즉시 뜨도록(모델 트리·매핑 준비 전). */}
+          {!mode4d && clashOpen && !(mapping && modelRef.current) && (
+            <div
+              style={{
+                position: 'fixed',
+                left: 80,
+                top: 64,
+                width: 320,
+                background: 'var(--panel)',
+                color: 'var(--text)',
+                border: '1px solid var(--border)',
+                borderRadius: 8,
+                zIndex: 600,
+                boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
+                padding: '12px 14px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <strong style={{ fontSize: 13 }}>🔍 간섭검토</strong>
+                <span style={{ flex: 1 }} />
+                <button
+                  onClick={() => setClashOpen(false)}
+                  style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}
+                >
+                  ✕
+                </button>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 10 }}>
+                모델 트리 준비 중… <span className="clash-shell-dots">●</span>
+              </div>
+            </div>
           )}
           {docView && (
             <div

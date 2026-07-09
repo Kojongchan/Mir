@@ -18,6 +18,8 @@ import {
   listComments,
   listEvents,
   listIssues,
+  listUnreadIssues,
+  markIssueRead,
   setIssueStatus,
   type Issue,
   type IssueComment,
@@ -41,6 +43,7 @@ export function Issues() {
 
   const [issues, setIssues] = useState<Issue[]>([]);
   const [members, setMembers] = useState<ProjectMember[]>([]);
+  const [unread, setUnread] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<IssueStatus | 'all'>('all');
   const [msg, setMsg] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
@@ -60,6 +63,8 @@ export function Issues() {
 
   useEffect(() => {
     refresh();
+    // 담당 배정·@멘션 후보 목록 — 뷰어를 뺀 모두(실무자·관리자)가 배정 가능(0033: 같은
+    // 프로젝트 멤버끼리 이름 조회 허용). 뷰어는 canEdit=false 라 목록을 받지 않는다.
     if (canEdit) listProjectMembers(projectId).then(setMembers).catch(() => setMembers([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
@@ -68,7 +73,29 @@ export function Issues() {
     if (focusIssueId) setOpenId(focusIssueId);
   }, [focusIssueId]);
 
-  const refresh = () => listIssues(projectId).then(setIssues).catch(() => setIssues([]));
+  const refresh = async () => {
+    try {
+      const list = await listIssues(projectId);
+      setIssues(list);
+      listUnreadIssues(list.map((i) => i.id))
+        .then(setUnread)
+        .catch(() => setUnread(new Set()));
+    } catch {
+      setIssues([]);
+    }
+  };
+
+  // 이슈 상세를 열 때 읽음 처리 후 안읽음 배지 갱신.
+  const onRead = (issueId: string) => {
+    markIssueRead(issueId).then(() =>
+      setUnread((prev) => {
+        if (!prev.has(issueId)) return prev;
+        const next = new Set(prev);
+        next.delete(issueId);
+        return next;
+      }),
+    );
+  };
 
   const onCreate = async () => {
     if (!form.title.trim()) {
@@ -200,14 +227,20 @@ export function Issues() {
                   num={numberOf.get(it.id) ?? 0}
                   issue={it}
                   open={openId === it.id}
+                  unread={unread.has(it.id)}
                   canEdit={canEdit}
                   myId={myId}
                   members={members}
                   authorName={authorName}
-                  onToggle={() => setOpenId(openId === it.id ? null : it.id)}
+                  onToggle={() => {
+                    const opening = openId !== it.id;
+                    setOpenId(opening ? it.id : null);
+                    if (opening) onRead(it.id);
+                  }}
                   onStatus={onStatus}
                   onAssign={onAssign}
                   onDelete={onDelete}
+                  onCommented={() => onRead(it.id)}
                 />
               ))}
               {shown.length === 0 && (
@@ -241,6 +274,7 @@ function IssueRow({
   num,
   issue,
   open,
+  unread,
   canEdit,
   myId,
   members,
@@ -249,10 +283,12 @@ function IssueRow({
   onStatus,
   onAssign,
   onDelete,
+  onCommented,
 }: {
   num: number;
   issue: Issue;
   open: boolean;
+  unread: boolean;
   canEdit: boolean;
   myId: string | null;
   members: ProjectMember[];
@@ -261,6 +297,7 @@ function IssueRow({
   onStatus: (issue: Issue, s: IssueStatus) => void;
   onAssign: (issue: Issue, assigneeId: string) => void;
   onDelete: (id: string) => void;
+  onCommented: () => void;
 }) {
   // 담당자 본인도 자기 이슈의 상태를 변경할 수 있다(S30 결정).
   const canStatus = canEdit || (!!myId && issue.assignee_id === myId);
@@ -269,7 +306,16 @@ function IssueRow({
       <tr>
         <td className="nowrap" style={{ color: 'var(--muted)', textAlign: 'center' }}>#{num}</td>
         <td className="cde-fname">
-          <button className="cde-link" onClick={onToggle}>{open ? '▾ ' : '▸ '}{issue.title}</button>
+          <button className="cde-link" onClick={onToggle}>
+            {open ? '▾ ' : '▸ '}
+            {unread && !open && (
+              <span
+                title="새 코멘트(안읽음)"
+                style={{ display: 'inline-block', width: 7, height: 7, borderRadius: 999, background: 'var(--color-brand-accent, #dc2626)', marginRight: 6, verticalAlign: 'middle' }}
+              />
+            )}
+            <span style={{ fontWeight: unread && !open ? 700 : 400 }}>{issue.title}</span>
+          </button>
         </td>
         <td><span className={`issue-badge issue-${issue.status}`}>{STATUS_LABEL[issue.status]}</span></td>
         <td><span className={`issue-prio issue-prio-${issue.priority}`}>{PRIORITY_LABEL[issue.priority]}</span></td>
@@ -295,6 +341,7 @@ function IssueRow({
               members={members}
               authorName={authorName}
               onAssign={onAssign}
+              onCommented={onCommented}
             />
           </td>
         </tr>
@@ -309,30 +356,45 @@ function IssueDetail({
   members,
   authorName,
   onAssign,
+  onCommented,
 }: {
   issue: Issue;
   canEdit: boolean;
   members: ProjectMember[];
   authorName: string | null;
   onAssign: (issue: Issue, assigneeId: string) => void;
+  onCommented: () => void;
 }) {
   const navigate = useNavigate();
   const [comments, setComments] = useState<IssueComment[]>([]);
   const [events, setEvents] = useState<IssueEvent[]>([]);
   const [body, setBody] = useState('');
+  const [mentions, setMentions] = useState<Set<string>>(new Set());
   const hasLocation = !!issue.model_id && issue.express_id != null;
   const hasGlobal = !!issue.global_id; // APS/ACC 앵커(S49) — GlobalId→dbId 위치보기
+
+  const nameOf = (id: string) => members.find((m) => m.id === id)?.name ?? '구성원';
 
   useEffect(() => {
     listComments(issue.id).then(setComments).catch(() => setComments([]));
     listEvents(issue.id).then(setEvents).catch(() => setEvents([]));
   }, [issue.id, issue.status, issue.assignee_id]);
 
+  const toggleMention = (id: string) =>
+    setMentions((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
   const onAdd = async () => {
     if (!body.trim()) return;
-    await addComment(issue, body.trim(), authorName);
+    await addComment(issue, body.trim(), authorName, [...mentions]);
     setBody('');
+    setMentions(new Set());
     setComments(await listComments(issue.id));
+    onCommented();
   };
 
   return (
@@ -419,16 +481,39 @@ function IssueDetail({
         {comments.map((c) => (
           <div className="issue-comment" key={c.id}>
             <span className="issue-comment-author">{c.author_name || '익명'}</span>
-            <span className="issue-comment-body">{c.body}</span>
+            <span className="issue-comment-body">
+              {c.body}
+              {c.mentions.length > 0 && (
+                <span className="issue-comment-mentions"> @{c.mentions.map(nameOf).join(', @')}</span>
+              )}
+            </span>
             <span className="muted issue-comment-when">{new Date(c.created_at).toLocaleString('ko-KR')}</span>
           </div>
         ))}
         {comments.length === 0 && <p className="muted">코멘트가 없습니다.</p>}
       </div>
       {canEdit && (
-        <div className="issue-comment-add">
-          <input value={body} placeholder="코멘트 입력" onChange={(e) => setBody(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && onAdd()} />
-          <button onClick={onAdd}>등록</button>
+        <div className="issue-comment-compose">
+          {members.length > 0 && (
+            <div className="issue-mention-chips">
+              <span className="muted">멘션:</span>
+              {members.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`issue-mention-chip${mentions.has(m.id) ? ' is-on' : ''}`}
+                  onClick={() => toggleMention(m.id)}
+                  aria-pressed={mentions.has(m.id)}
+                >
+                  @{m.name}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="issue-comment-add">
+            <input value={body} placeholder="코멘트 입력 (아래 칩으로 @멘션)" onChange={(e) => setBody(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && onAdd()} />
+            <button onClick={onAdd}>등록</button>
+          </div>
         </div>
       )}
     </div>
