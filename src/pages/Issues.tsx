@@ -22,6 +22,7 @@ import {
   markIssueRead,
   setIssueStatus,
   updateIssueMeta,
+  logIssueEvent,
   type Issue,
   type IssueComment,
   type IssueEvent,
@@ -34,7 +35,7 @@ import { Attachments } from '../components/Attachments';
 import { MentionInput } from '../components/MentionInput';
 import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
 import { addIssueFile, listIssueFiles, removeIssueFile, type IssueFileLink } from '../lib/issueFiles';
-import { isAccModel } from '../lib/aps';
+import { downloadAccItem, isAccModel } from '../lib/aps';
 import { useProjectRole } from '../auth/useProjectRole';
 
 /** 협업 · 이슈/지적 관리 — 상태 워크플로우·담당자·마감 추적 트래커. */
@@ -159,9 +160,9 @@ export function Issues() {
     }
   };
 
-  const onMeta = async (issue: Issue, fields: { priority?: IssuePriority; due_date?: string | null }) => {
+  const onMeta = async (issue: Issue, fields: { priority?: IssuePriority; due_date?: string | null; description?: string | null }) => {
     try {
-      await updateIssueMeta(issue.id, fields);
+      await updateIssueMeta(issue, fields, authorName);
       await refresh();
     } catch (e) {
       setMsg(`수정 실패: ${errMessage(e)}`);
@@ -322,7 +323,7 @@ function IssueRow({
   onToggle: () => void;
   onStatus: (issue: Issue, s: IssueStatus) => void;
   onAssign: (issue: Issue, assigneeId: string) => void;
-  onMeta: (issue: Issue, fields: { priority?: IssuePriority; due_date?: string | null }) => void;
+  onMeta: (issue: Issue, fields: { priority?: IssuePriority; due_date?: string | null; description?: string | null }) => Promise<void> | void;
   onDelete: (id: string) => void;
   onCommented: () => void;
 }) {
@@ -392,7 +393,7 @@ function IssueDetail({
   members: ProjectMember[];
   authorName: string | null;
   onAssign: (issue: Issue, assigneeId: string) => void;
-  onMeta: (issue: Issue, fields: { priority?: IssuePriority; due_date?: string | null }) => void;
+  onMeta: (issue: Issue, fields: { priority?: IssuePriority; due_date?: string | null; description?: string | null }) => Promise<void> | void;
   onCommented: () => void;
 }) {
   const navigate = useNavigate();
@@ -404,6 +405,9 @@ function IssueDetail({
   const [propOpen, setPropOpen] = useState(false);
   const [files, setFiles] = useState<IssueFileLink[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [editContent, setEditContent] = useState(false);
+  const [descDraft, setDescDraft] = useState(issue.description ?? '');
+  const [dlBusy, setDlBusy] = useState<string | null>(null);
   const hasLocation = !!issue.model_id && issue.express_id != null;
   const hasGlobal = !!issue.global_id; // APS/ACC 앵커(S49) — GlobalId→dbId 위치보기
 
@@ -431,6 +435,7 @@ function IssueDetail({
       });
       setFiles((fs) => [...fs, link]);
       setPickerOpen(false);
+      refreshEvents();
     } catch (e) {
       alert(`첨부 실패: ${errMessage(e)}`);
     }
@@ -445,12 +450,34 @@ function IssueDetail({
     }
   };
 
+  const refreshEvents = () => listEvents(issue.id).then(setEvents).catch(() => {});
+
+  const onDownloadFile = async (f: IssueFileLink) => {
+    setDlBusy(f.id);
+    try {
+      await downloadAccItem(f.acc_project_id, f.acc_item_id, f.name);
+      await logIssueEvent(issue.id, issue.project_id, 'file_download', f.name, authorName);
+      refreshEvents();
+    } catch (e) {
+      alert(`다운로드 실패: ${errMessage(e)}`);
+    } finally {
+      setDlBusy(null);
+    }
+  };
+
+  const saveContent = async () => {
+    await onMeta(issue, { description: descDraft.trim() || null });
+    setEditContent(false);
+    refreshEvents();
+  };
+
   const onAdd = async () => {
     if (!body.trim()) return;
     await addComment(issue, body.trim(), authorName, mentions);
     setBody('');
     setMentions([]);
     setComments(await listComments(issue.id));
+    refreshEvents();
     onCommented();
   };
 
@@ -458,11 +485,58 @@ function IssueDetail({
 
   return (
     <div className="issue-detail issue-report">
-      {/* 내용 (+ 위치 보기) */}
+      {/* 속성 — 요약(상태·우선순위·담당·마감)은 항상, 편집은 펼쳐서 */}
       <section className="issue-block">
-        <div className="issue-block__h">내용</div>
+        <button className="issue-block__h issue-block__toggle" onClick={() => setPropOpen((o) => !o)} aria-expanded={propOpen}>
+          <span>속성</span>
+          {canEdit && <span className="issue-block__chev">{propOpen ? '▾ 설정 접기' : '▸ 설정 편집'}</span>}
+        </button>
         <div className="issue-block__b">
-          {issue.description ? (
+          <div className="issue-facts">
+            <span><b>상태</b> <span className={`issue-badge issue-${issue.status}`}>{STATUS_LABEL[issue.status]}</span></span>
+            <span><b>우선순위</b> <span className={`issue-prio issue-prio-${issue.priority}`}>{PRIORITY_LABEL[issue.priority]}</span></span>
+            <span><b>담당</b> {assignedMember ? memberLabel(assignedMember) : issue.assignee_name || '미지정'}</span>
+            <span><b>마감</b> {issue.due_date ? formatDate(issue.due_date) : '—'}</span>
+          </div>
+          {canEdit && propOpen && (
+            <div className="issue-assign-row" style={{ marginTop: 10 }}>
+              <label>담당자 배정
+                <select value={issue.assignee_id ?? ''} onChange={(e) => onAssign(issue, e.target.value)}>
+                  <option value="">미지정</option>
+                  {members.map((m) => <option key={m.id} value={m.id}>{memberLabel(m)}</option>)}
+                </select>
+              </label>
+              <label>우선순위
+                <select value={issue.priority} onChange={async (e) => { await onMeta(issue, { priority: e.target.value as IssuePriority }); refreshEvents(); }}>
+                  {ISSUE_PRIORITIES.map((p) => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
+                </select>
+              </label>
+              <label>마감일
+                <input type="date" value={issue.due_date ?? ''} onChange={async (e) => { await onMeta(issue, { due_date: e.target.value || null }); refreshEvents(); }} />
+              </label>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* 내용 (+ 편집 + 위치 보기) */}
+      <section className="issue-block">
+        <div className="issue-block__h">
+          <span>내용</span>
+          {canEdit && !editContent && (
+            <span className="issue-block__chev" style={{ cursor: 'pointer' }} onClick={() => { setDescDraft(issue.description ?? ''); setEditContent(true); }}>✏ 편집</span>
+          )}
+        </div>
+        <div className="issue-block__b">
+          {editContent ? (
+            <div>
+              <textarea value={descDraft} onChange={(e) => setDescDraft(e.target.value)} style={{ width: '100%', minHeight: 90, resize: 'vertical' }} placeholder="내용을 입력하세요" />
+              <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                <button className="primary" onClick={() => void saveContent()}>저장</button>
+                <button onClick={() => setEditContent(false)}>취소</button>
+              </div>
+            </div>
+          ) : issue.description ? (
             <p className="issue-desc">{issue.description}</p>
           ) : (
             <p className="muted" style={{ margin: 0 }}>내용 없음</p>
@@ -510,59 +584,40 @@ function IssueDetail({
         </div>
       </section>
 
-      {/* 속성 — 요약(상태·우선순위·담당·마감)은 항상, 편집은 펼쳐서 */}
+      {/* 간섭 검토 이미지 — 간섭검토에서 이슈 생성 시 자동 첨부(읽기전용) */}
       <section className="issue-block">
-        <button className="issue-block__h issue-block__toggle" onClick={() => setPropOpen((o) => !o)} aria-expanded={propOpen}>
-          <span>속성</span>
-          {canEdit && <span className="issue-block__chev">{propOpen ? '▾ 설정 접기' : '▸ 설정 편집'}</span>}
-        </button>
+        <div className="issue-block__h">간섭 검토 이미지</div>
         <div className="issue-block__b">
-          <div className="issue-facts">
-            <span><b>상태</b> <span className={`issue-badge issue-${issue.status}`}>{STATUS_LABEL[issue.status]}</span></span>
-            <span><b>우선순위</b> <span className={`issue-prio issue-prio-${issue.priority}`}>{PRIORITY_LABEL[issue.priority]}</span></span>
-            <span><b>담당</b> {assignedMember ? memberLabel(assignedMember) : issue.assignee_name || '미지정'}</span>
-            <span><b>마감</b> {issue.due_date ? formatDate(issue.due_date) : '—'}</span>
-          </div>
-          {canEdit && propOpen && (
-            <div className="issue-assign-row" style={{ marginTop: 10 }}>
-              <label>담당자 배정
-                <select value={issue.assignee_id ?? ''} onChange={(e) => onAssign(issue, e.target.value)}>
-                  <option value="">미지정</option>
-                  {members.map((m) => <option key={m.id} value={m.id}>{memberLabel(m)}</option>)}
-                </select>
-              </label>
-              <label>우선순위
-                <select value={issue.priority} onChange={(e) => onMeta(issue, { priority: e.target.value as IssuePriority })}>
-                  {ISSUE_PRIORITIES.map((p) => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
-                </select>
-              </label>
-              <label>마감일
-                <input type="date" value={issue.due_date ?? ''} onChange={(e) => onMeta(issue, { due_date: e.target.value || null })} />
-              </label>
-            </div>
-          )}
+          <p className="muted" style={{ margin: '0 0 6px', fontSize: 12 }}>간섭 검토에서 이슈 생성 시 자동으로 추가됩니다.</p>
+          <Attachments projectId={issue.project_id} targetType="issue" targetId={issue.id} canEdit={false} label="" />
         </div>
       </section>
 
-      {/* 자료관리(ACC) 파일 링크 — 개인 파일 대신 자료관리 파일만 첨부 */}
+      {/* 관련 자료 — 자료관리(ACC) 파일 링크. 다운로드 + 파일 위치(폴더 이동) */}
       <section className="issue-block">
-        <div className="issue-block__h">자료관리 파일 · {files.length}</div>
+        <div className="issue-block__h">관련 자료 (파일 개수 : {files.length})</div>
         <div className="issue-block__b">
           {files.length === 0 && <p className="muted" style={{ margin: 0 }}>연결된 파일이 없습니다.</p>}
           {files.map((f) => (
             <div className="issue-file" key={f.id}>
               <span className="issue-file-name" title={f.name}>{isAccModel(f.name) ? '🧱' : '📄'} {f.name}</span>
-              <button
-                className="issue-file-loc"
-                title="자료관리에서 이 파일이 있는 폴더 열기"
-                onClick={() =>
-                  navigate(`/project/${issue.project_id}/docs`, {
-                    state: { openFolderIds: f.folder_ids, openFolderNames: f.folder_names },
-                  })
-                }
-              >
-                📁 {f.folder_names.length ? f.folder_names.join(' / ') : '위치'} ›
+              <button className="issue-file-dl" disabled={dlBusy === f.id} title="이 파일 다운로드" onClick={() => void onDownloadFile(f)}>
+                {dlBusy === f.id ? '…' : '⬇ 다운로드'}
               </button>
+              <span className="issue-file-locwrap">
+                파일 위치 :
+                <button
+                  className="issue-file-loc"
+                  title="자료관리에서 이 파일이 있는 폴더 열기"
+                  onClick={() =>
+                    navigate(`/project/${issue.project_id}/docs`, {
+                      state: { openFolderIds: f.folder_ids, openFolderNames: f.folder_names },
+                    })
+                  }
+                >
+                  📁 {f.folder_names.length ? f.folder_names.join(' / ') : '위치'} ›
+                </button>
+              </span>
               {canEdit && <button className="issue-file-del" title="첨부 해제" onClick={() => onRemoveFile(f.id)}>✕</button>}
             </div>
           ))}
@@ -570,17 +625,6 @@ function IssueDetail({
             <button style={{ marginTop: 8 }} onClick={() => setPickerOpen(true)}>＋ 자료관리에서 첨부</button>
           )}
         </div>
-      </section>
-
-      {/* 기존 직접 첨부(간섭 자동 캡처 등) — 읽기전용 */}
-      <section className="issue-block issue-block--attach">
-        <Attachments
-          projectId={issue.project_id}
-          targetType="issue"
-          targetId={issue.id}
-          canEdit={false}
-          label="이미지·자동 캡처(기존)"
-        />
       </section>
 
       {pickerOpen && (
@@ -664,7 +708,16 @@ function renderCommentBody(text: string, members: ProjectMember[]): React.ReactN
 }
 
 function eventText(ev: IssueEvent): string {
-  if (ev.kind === 'created') return `이슈 생성 — ${ev.to_value ?? ''}`;
-  if (ev.kind === 'status') return `상태 ${ev.from_value} → ${ev.to_value}`;
-  return `담당자 ${ev.from_value} → ${ev.to_value}`;
+  switch (ev.kind) {
+    case 'created': return `이슈 생성 — ${ev.to_value ?? ''}`;
+    case 'status': return `상태 ${ev.from_value} → ${ev.to_value}`;
+    case 'assign': return `담당자 ${ev.from_value} → ${ev.to_value}`;
+    case 'priority': return `우선순위 ${ev.from_value} → ${ev.to_value}`;
+    case 'due': return `마감일 ${ev.from_value} → ${ev.to_value}`;
+    case 'content': return '내용 수정';
+    case 'file_add': return `관련 자료 추가 — ${ev.to_value ?? ''}`;
+    case 'file_download': return `자료 다운로드 — ${ev.to_value ?? ''}`;
+    case 'comment': return `코멘트 — ${ev.to_value ?? ''}`;
+    default: return ev.kind;
+  }
 }

@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { logIssueEvent } from './issues';
 
 // =====================================================================
 // 이슈 첨부 = 자료관리(ACC) 파일 링크 (migration 0035_issue_file_link.sql).
@@ -70,6 +71,7 @@ export async function addIssueFile(input: AddIssueFileInput): Promise<IssueFileL
     .select(COLS)
     .single();
   if (error) throw error;
+  await logIssueEvent(input.issueId, input.projectId, 'file_add', input.name, input.addedByName ?? null);
   return {
     ...(data as IssueFileLink),
     folder_ids: (data.folder_ids as string[]) ?? [],

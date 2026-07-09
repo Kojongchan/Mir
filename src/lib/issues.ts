@@ -66,7 +66,16 @@ export interface IssueComment {
   created_at: string;
 }
 
-export type IssueEventKind = 'created' | 'status' | 'assign';
+export type IssueEventKind =
+  | 'created'
+  | 'status'
+  | 'assign'
+  | 'content'
+  | 'priority'
+  | 'due'
+  | 'file_add'
+  | 'file_download'
+  | 'comment';
 export interface IssueEvent {
   id: string;
   issue_id: string;
@@ -222,16 +231,38 @@ export async function deleteIssue(id: string): Promise<void> {
   if (error) throw error;
 }
 
-/** 우선순위·마감일 등 이슈 상세 필드 갱신(상태/담당자는 별도 함수). */
+/** 우선순위·마감일·내용 갱신 + 변경이력 기록(상태/담당자는 별도 함수). */
 export async function updateIssueMeta(
-  issueId: string,
+  issue: Issue,
   fields: { priority?: IssuePriority; due_date?: string | null; description?: string | null },
+  actorName: string | null,
 ): Promise<void> {
   const { error } = await supabase
     .from('issues')
     .update({ ...fields, updated_at: new Date().toISOString() })
-    .eq('id', issueId);
+    .eq('id', issue.id);
   if (error) throw error;
+
+  if (fields.priority !== undefined && fields.priority !== issue.priority) {
+    await logEvent(issue.id, issue.project_id, 'priority', PRIORITY_LABEL[issue.priority], PRIORITY_LABEL[fields.priority], actorName);
+  }
+  if (fields.due_date !== undefined && (fields.due_date ?? null) !== (issue.due_date ?? null)) {
+    await logEvent(issue.id, issue.project_id, 'due', issue.due_date || '없음', fields.due_date || '없음', actorName);
+  }
+  if (fields.description !== undefined && (fields.description ?? '') !== (issue.description ?? '')) {
+    await logEvent(issue.id, issue.project_id, 'content', null, '내용 수정', actorName);
+  }
+}
+
+/** 외부(첨부 링크·다운로드 등)에서 이슈 변경이력을 남기기 위한 공개 헬퍼. */
+export async function logIssueEvent(
+  issueId: string,
+  projectId: string,
+  kind: IssueEventKind,
+  toValue: string | null,
+  actorName: string | null,
+): Promise<void> {
+  await logEvent(issueId, projectId, kind, null, toValue, actorName);
 }
 
 async function logEvent(
@@ -295,6 +326,7 @@ export async function addComment(
   if (error) throw error;
 
   const preview = body.length > 60 ? `${body.slice(0, 60)}…` : body;
+  await logEvent(issue.id, issue.project_id, 'comment', null, preview, authorName);
   // @멘션 대상엔 멘션 알림, 담당자·작성자(멘션 제외)엔 코멘트 알림.
   if (mentions.length) {
     await notify({

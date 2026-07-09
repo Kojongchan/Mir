@@ -4246,9 +4246,31 @@ button.issue-block__h,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.issue-file-loc {
+.issue-file-dl {
   flex-shrink: 0;
-  max-width: 45%;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.issue-file-dl:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.issue-file-locwrap {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 40%;
+  font-size: 11px;
+  color: var(--muted);
+}
+.issue-file-loc {
+  max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
