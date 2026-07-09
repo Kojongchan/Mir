@@ -32,6 +32,9 @@ import { listProjectMembers, memberLabel, type ProjectMember } from '../lib/memb
 import { formatDate } from '../lib/dashboard';
 import { Attachments } from '../components/Attachments';
 import { MentionInput } from '../components/MentionInput';
+import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
+import { addIssueFile, listIssueFiles, removeIssueFile, type IssueFileLink } from '../lib/issueFiles';
+import { isAccModel } from '../lib/aps';
 import { useProjectRole } from '../auth/useProjectRole';
 
 /** 협업 · 이슈/지적 관리 — 상태 워크플로우·담당자·마감 추적 트래커. */
@@ -399,6 +402,8 @@ function IssueDetail({
   const [mentions, setMentions] = useState<string[]>([]);
   const [histOpen, setHistOpen] = useState(false);
   const [propOpen, setPropOpen] = useState(false);
+  const [files, setFiles] = useState<IssueFileLink[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const hasLocation = !!issue.model_id && issue.express_id != null;
   const hasGlobal = !!issue.global_id; // APS/ACC 앵커(S49) — GlobalId→dbId 위치보기
 
@@ -407,7 +412,38 @@ function IssueDetail({
   useEffect(() => {
     listComments(issue.id).then(setComments).catch(() => setComments([]));
     listEvents(issue.id).then(setEvents).catch(() => setEvents([]));
+    listIssueFiles(issue.id).then(setFiles).catch(() => setFiles([]));
   }, [issue.id, issue.status, issue.assignee_id]);
+
+  const onPickFile = async (f: PickedAccFile) => {
+    try {
+      const link = await addIssueFile({
+        projectId: issue.project_id,
+        issueId: issue.id,
+        accProjectId: f.accProjectId,
+        accItemId: f.accItemId,
+        accUrn: f.accUrn,
+        name: f.name,
+        folderId: f.folderId,
+        folderIds: f.folderIds,
+        folderNames: f.folderNames,
+        addedByName: authorName,
+      });
+      setFiles((fs) => [...fs, link]);
+      setPickerOpen(false);
+    } catch (e) {
+      alert(`첨부 실패: ${errMessage(e)}`);
+    }
+  };
+  const onRemoveFile = async (id: string) => {
+    if (!window.confirm('이 첨부 링크를 해제할까요? (자료관리 원본 파일은 유지됩니다)')) return;
+    try {
+      await removeIssueFile(id);
+      setFiles((fs) => fs.filter((x) => x.id !== id));
+    } catch (e) {
+      alert(`해제 실패: ${errMessage(e)}`);
+    }
+  };
 
   const onAdd = async () => {
     if (!body.trim()) return;
@@ -508,16 +544,48 @@ function IssueDetail({
         </div>
       </section>
 
-      {/* 첨부 — Attachments 자체 헤더를 섹션 헤더로 사용 */}
+      {/* 자료관리(ACC) 파일 링크 — 개인 파일 대신 자료관리 파일만 첨부 */}
+      <section className="issue-block">
+        <div className="issue-block__h">자료관리 파일 · {files.length}</div>
+        <div className="issue-block__b">
+          {files.length === 0 && <p className="muted" style={{ margin: 0 }}>연결된 파일이 없습니다.</p>}
+          {files.map((f) => (
+            <div className="issue-file" key={f.id}>
+              <span className="issue-file-name" title={f.name}>{isAccModel(f.name) ? '🧱' : '📄'} {f.name}</span>
+              <button
+                className="issue-file-loc"
+                title="자료관리에서 이 파일이 있는 폴더 열기"
+                onClick={() =>
+                  navigate(`/project/${issue.project_id}/docs`, {
+                    state: { openFolderIds: f.folder_ids, openFolderNames: f.folder_names },
+                  })
+                }
+              >
+                📁 {f.folder_names.length ? f.folder_names.join(' / ') : '위치'} ›
+              </button>
+              {canEdit && <button className="issue-file-del" title="첨부 해제" onClick={() => onRemoveFile(f.id)}>✕</button>}
+            </div>
+          ))}
+          {canEdit && (
+            <button style={{ marginTop: 8 }} onClick={() => setPickerOpen(true)}>＋ 자료관리에서 첨부</button>
+          )}
+        </div>
+      </section>
+
+      {/* 기존 직접 첨부(간섭 자동 캡처 등) — 읽기전용 */}
       <section className="issue-block issue-block--attach">
         <Attachments
           projectId={issue.project_id}
           targetType="issue"
           targetId={issue.id}
-          canEdit={canEdit}
-          label="첨부 문서·사진"
+          canEdit={false}
+          label="이미지·자동 캡처(기존)"
         />
       </section>
+
+      {pickerOpen && (
+        <AccFilePicker projectId={issue.project_id} canEdit={canEdit} onPick={onPickFile} onClose={() => setPickerOpen(false)} />
+      )}
 
       {/* 코멘트 */}
       <section className="issue-block issue-block--pop">

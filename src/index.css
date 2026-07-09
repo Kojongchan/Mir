@@ -4227,6 +4227,89 @@ button.issue-block__h,
   color: var(--accent);
   font-weight: 600;
 }
+/* 자료관리 파일 링크 행 */
+.issue-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.issue-file:last-of-type {
+  border-bottom: 0;
+}
+.issue-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.issue-file-loc {
+  flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--accent-soft, var(--panel-2));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill, 999px);
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.issue-file-del {
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  padding: 2px 8px;
+}
+/* ACC 파일 선택기 */
+.acc-picker-list {
+  max-height: 46vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-top: 6px;
+}
+.acc-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+}
+.acc-picker-row:hover {
+  background: var(--panel-2);
+}
+.acc-picker-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acc-picker-go {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.acc-picker-row:not(.folder) .acc-picker-go {
+  color: var(--accent);
+  font-weight: 600;
+}
 
 /* ---- 알림 종 (상단바) ---- */
 .notif {

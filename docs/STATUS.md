@@ -3,6 +3,33 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 C7 — 이슈 첨부 = 자료관리(ACC) 파일 링크 + 폴더 딥링크 (2026-07-09)
+> branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과. **ACC 의존 → 실환경 검증 필요**.
+> 사용자 결정: (1) 전면 전환(개인 업로드 X, 자료관리 파일만 링크) (2) 클릭 시 정확한 폴더까지 이동.
+
+### ✅ 한 일
+1. **마이그레이션 0035_issue_file_link.sql(추가형)**: `issue_file_link`(issue↔ACC 아이템 링크) —
+   acc_project_id·acc_item_id·acc_urn·name + **폴더 경로(folder_ids[]·folder_names[])** 로 딥링크 지원.
+   RLS: 읽기=멤버, 쓰기=is_editor.
+2. **`lib/issueFiles.ts`**: list/add/removeIssueFile.
+3. **`components/AccFilePicker.tsx`(신규)**: 자료관리(ACC) 폴더 탐색 → 파일 선택(폴더 경로 함께 반환). 실무자는
+   **현재 폴더로 직접 업로드**(uploadToAcc)→즉시 링크. getProjectAcc 로 ACC 프로젝트/루트 확인, 미지정 시 안내.
+4. **이슈 상세**: '첨부 문서·사진(직접 업로드)' → **'자료관리 파일'** 섹션으로 전환. 파일별 **폴더 경로 칩**(클릭 시
+   자료관리 해당 폴더로 이동) + 해제(실무자). '＋ 자료관리에서 첨부' 로 피커. 기존 직접첨부(간섭 자동캡처 등)는
+   **읽기전용 '이미지·자동 캡처(기존)'** 섹션으로 보존(회귀 방지).
+5. **자료관리 폴더 딥링크**: `AccBrowser` 에 `initialPath`(폴더 id 체인) 추가 — 진입 시 그 폴더까지 순차 펼쳐 선택.
+   `DocumentManager` 가 라우트 state(`openFolderIds`)를 받아 전달. 이슈 첨부의 '위치 열기'가 정확한 폴더를 연다.
+
+### 🔜 다음 할 일 / 미해결 (라이브 검증 — 이 샌드박스는 ACC 불가)
+- **0035 적용 + 실 ACC 환경 검증 필수**: 피커에서 폴더 탐색·파일 선택·현재폴더 업로드, 첨부 링크 표시, '위치
+  열기'가 자료관리의 정확한 폴더를 펼치는지, 대형 폴더 성능. ACC 미지정 프로젝트에선 피커가 안내만 표시.
+- 클래시 자동캡처 스냅샷은 여전히 attachments(docs) 경로 — '기존' 섹션에 읽기전용 노출. 필요 시 ACC 이관은 후속.
+
+### 인수인계 한 줄
+이슈 첨부를 자료관리(ACC) 파일 링크로 전면 전환(0035) + ACC 폴더 피커 + 정확 폴더 딥링크(AccBrowser initialPath).
+typecheck·build OK. 실 ACC 환경 눈확인 필요.
+
+---
 ## 📋 C6 — 이슈 상세 UX 보정(멘션 잘림·속성 접기·위치보기 이동) (2026-07-09)
 > branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과. 라이브 UX 피드백.
 
