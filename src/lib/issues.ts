@@ -222,6 +222,18 @@ export async function deleteIssue(id: string): Promise<void> {
   if (error) throw error;
 }
 
+/** 우선순위·마감일 등 이슈 상세 필드 갱신(상태/담당자는 별도 함수). */
+export async function updateIssueMeta(
+  issueId: string,
+  fields: { priority?: IssuePriority; due_date?: string | null; description?: string | null },
+): Promise<void> {
+  const { error } = await supabase
+    .from('issues')
+    .update({ ...fields, updated_at: new Date().toISOString() })
+    .eq('id', issueId);
+  if (error) throw error;
+}
+
 async function logEvent(
   issueId: string,
   projectId: string,

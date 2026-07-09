@@ -21,13 +21,14 @@ import {
   listUnreadIssues,
   markIssueRead,
   setIssueStatus,
+  updateIssueMeta,
   type Issue,
   type IssueComment,
   type IssueEvent,
   type IssuePriority,
   type IssueStatus,
 } from '../lib/issues';
-import { listProjectMembers, type ProjectMember } from '../lib/members';
+import { listProjectMembers, memberLabel, type ProjectMember } from '../lib/members';
 import { formatDate } from '../lib/dashboard';
 import { Attachments } from '../components/Attachments';
 import { MentionInput } from '../components/MentionInput';
@@ -64,11 +65,17 @@ export function Issues() {
 
   useEffect(() => {
     refresh();
-    // 담당 배정·@멘션 후보 목록 — 뷰어를 뺀 모두(실무자·관리자)가 배정 가능(0033: 같은
-    // 프로젝트 멤버끼리 이름 조회 허용). 뷰어는 canEdit=false 라 목록을 받지 않는다.
-    if (canEdit) listProjectMembers(projectId).then(setMembers).catch(() => setMembers([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  // 담당 배정·@멘션 후보 목록 — 뷰어를 뺀 모두(실무자·관리자)가 배정 가능(0033: 같은
+  // 프로젝트 멤버끼리 이름 조회 허용). canEdit 은 역할 로딩 후 갱신되므로 별도 effect 로
+  // canEdit 이 true 가 되는 시점에 반드시 다시 불러온다(초기 false 캡처로 목록이 비던 버그 수정).
+  useEffect(() => {
+    if (canEdit) listProjectMembers(projectId).then(setMembers).catch(() => setMembers([]));
+    else setMembers([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, canEdit]);
 
   useEffect(() => {
     if (focusIssueId) {
@@ -149,6 +156,15 @@ export function Issues() {
     }
   };
 
+  const onMeta = async (issue: Issue, fields: { priority?: IssuePriority; due_date?: string | null }) => {
+    try {
+      await updateIssueMeta(issue.id, fields);
+      await refresh();
+    } catch (e) {
+      setMsg(`수정 실패: ${errMessage(e)}`);
+    }
+  };
+
   const onDelete = async (id: string) => {
     if (!window.confirm('이 이슈를 삭제할까요?')) return;
     await deleteIssue(id);
@@ -190,7 +206,7 @@ export function Issues() {
             <label>담당자
               <select value={form.assignee_id} onChange={(e) => setForm({ ...form, assignee_id: e.target.value })}>
                 <option value="">미지정</option>
-                {members.map((m) => <option key={m.id} value={m.id}>{m.name}{m.company ? ` · ${m.company}` : ''}</option>)}
+                {members.map((m) => <option key={m.id} value={m.id}>{memberLabel(m)}</option>)}
               </select>
             </label>
             <label>마감일<input type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} /></label>
@@ -244,6 +260,7 @@ export function Issues() {
                   }}
                   onStatus={onStatus}
                   onAssign={onAssign}
+                  onMeta={onMeta}
                   onDelete={onDelete}
                   onCommented={() => onRead(it.id)}
                 />
@@ -287,6 +304,7 @@ function IssueRow({
   onToggle,
   onStatus,
   onAssign,
+  onMeta,
   onDelete,
   onCommented,
 }: {
@@ -301,6 +319,7 @@ function IssueRow({
   onToggle: () => void;
   onStatus: (issue: Issue, s: IssueStatus) => void;
   onAssign: (issue: Issue, assigneeId: string) => void;
+  onMeta: (issue: Issue, fields: { priority?: IssuePriority; due_date?: string | null }) => void;
   onDelete: (id: string) => void;
   onCommented: () => void;
 }) {
@@ -346,6 +365,7 @@ function IssueRow({
               members={members}
               authorName={authorName}
               onAssign={onAssign}
+              onMeta={onMeta}
               onCommented={onCommented}
             />
           </td>
@@ -361,6 +381,7 @@ function IssueDetail({
   members,
   authorName,
   onAssign,
+  onMeta,
   onCommented,
 }: {
   issue: Issue;
@@ -368,6 +389,7 @@ function IssueDetail({
   members: ProjectMember[];
   authorName: string | null;
   onAssign: (issue: Issue, assigneeId: string) => void;
+  onMeta: (issue: Issue, fields: { priority?: IssuePriority; due_date?: string | null }) => void;
   onCommented: () => void;
 }) {
   const navigate = useNavigate();
@@ -379,6 +401,7 @@ function IssueDetail({
   const hasGlobal = !!issue.global_id; // APS/ACC 앵커(S49) — GlobalId→dbId 위치보기
 
   const nameOf = (id: string) => members.find((m) => m.id === id)?.name ?? '구성원';
+  const assignedMember = members.find((m) => m.id === issue.assignee_id) ?? null;
 
   useEffect(() => {
     listComments(issue.id).then(setComments).catch(() => setComments([]));
@@ -401,13 +424,32 @@ function IssueDetail({
         등록 {issue.created_by_name || '—'} · {formatDate(issue.created_at.slice(0, 10))}
       </p>
 
+      {/* 상세 요약 — 상태·우선순위·담당(소속/담당업무)·마감 */}
+      <div className="issue-facts">
+        <span><b>상태</b> {STATUS_LABEL[issue.status]}</span>
+        <span><b>우선순위</b> {PRIORITY_LABEL[issue.priority]}</span>
+        <span>
+          <b>담당</b>{' '}
+          {assignedMember ? memberLabel(assignedMember) : issue.assignee_name || '미지정'}
+        </span>
+        <span><b>마감</b> {issue.due_date ? formatDate(issue.due_date) : '—'}</span>
+      </div>
+
       {canEdit && (
         <div className="issue-assign-row">
           <label>담당자 배정
             <select value={issue.assignee_id ?? ''} onChange={(e) => onAssign(issue, e.target.value)}>
               <option value="">미지정</option>
-              {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              {members.map((m) => <option key={m.id} value={m.id}>{memberLabel(m)}</option>)}
             </select>
+          </label>
+          <label>우선순위
+            <select value={issue.priority} onChange={(e) => onMeta(issue, { priority: e.target.value as IssuePriority })}>
+              {ISSUE_PRIORITIES.map((p) => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
+            </select>
+          </label>
+          <label>마감일
+            <input type="date" value={issue.due_date ?? ''} onChange={(e) => onMeta(issue, { due_date: e.target.value || null })} />
           </label>
         </div>
       )}

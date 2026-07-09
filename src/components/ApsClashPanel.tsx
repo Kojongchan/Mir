@@ -31,9 +31,7 @@ import { downloadCsv } from '../lib/clash';
 import { uploadAttachment } from '../lib/attachments';
 import { createIssue, ISSUE_PRIORITIES, PRIORITY_LABEL, type IssuePriority } from '../lib/issues';
 import type { ApsMapping } from '../lib/apsMapping';
-import { ApsClashCoordination } from './ApsClashCoordination';
-import { listCoordSummaries, type ClashCoordSummary } from '../lib/clashCoordination';
-import { listProjectMembers, type ProjectMember } from '../lib/members';
+import { listProjectMembers, memberLabel, type ProjectMember } from '../lib/members';
 import { useAuth } from '../auth/AuthProvider';
 
 interface Props {
@@ -132,10 +130,8 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
   const [tests, setTests] = useState<ClashTestMeta[]>([]);
   const [selTest, setSelTest] = useState('');
   const [issueFor, setIssueFor] = useState<ClashRow | null>(null);
-  // 코디네이션 룸(#1) — 저장된 간섭별 협의 요약 + 열린 상세.
+  // 담당 배정용 구성원 목록(간섭→이슈 모달에서 담당자·멘션에 사용).
   const [members, setMembers] = useState<ProjectMember[]>([]);
-  const [coordSummaries, setCoordSummaries] = useState<Map<string, ClashCoordSummary>>(new Map());
-  const [coordFor, setCoordFor] = useState<ClashRow | null>(null);
   const [reportBusy, setReportBusy] = useState(false);
   const [saveName, setSaveName] = useState('');
 
@@ -152,22 +148,6 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
     return () => clearApsClashView(viewer, model);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // 저장된 테스트의 협의 요약(담당·기한·코멘트·미읽음)을 불러와 리스트 뱃지에 반영.
-  const refreshCoord = async (testId: string) => {
-    if (!testId) {
-      setCoordSummaries(new Map());
-      return;
-    }
-    try {
-      const m = await listCoordSummaries(testId);
-      setCoordSummaries(m);
-      // 코디네이션에서 바뀐 상태를 리스트 행에 승계(해소/검증/재오픈 반영).
-      setRows((rs) => rs.map((r) => (m.has(r.id) ? { ...r, status: m.get(r.id)!.status } : r)));
-    } catch {
-      /* 요약은 편의 — 실패해도 리스트는 동작 */
-    }
-  };
 
   // 선택 노드 → leaf dbId + 메타(이름=부재, 카테고리=상위 그룹).
   const buildMeta = (leaves: number[]): ApsMetaResolver => {
@@ -211,8 +191,7 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
       setDbBacked(false);
       setSelTest('');
       setActiveId(null);
-      setCoordSummaries(new Map());
-      setStatus(`간섭 ${next.length}건${inherited ? ` (상태 승계 ${inherited}건)` : ''} — 저장 후 협의 가능`);
+      setStatus(`간섭 ${next.length}건${inherited ? ` (상태 승계 ${inherited}건)` : ''}`);
     } catch (e) {
       setStatus(`검사 실패: ${(e as Error).message}`);
     } finally {
@@ -250,8 +229,8 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
         mappings: mappingsMap,
       });
       await listClashTests(projectId).then(setTests);
-      // 저장 직후 DB 에서 다시 불러와 각 행 id 를 실제 clashes.id 로 교체한다
-      // (협의·상태 갱신이 저장된 실 행을 가리키도록 — loadTest 가 refreshCoord 포함).
+      // 저장 직후 DB 에서 다시 불러와 각 행 id 를 실제 clashes.id 로 교체(상태 갱신·이슈연결이
+      // 저장된 실 행을 가리키도록).
       await loadTest(id);
       setStatus('저장 완료');
     } catch (e) {
@@ -268,7 +247,6 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
       setRows(loadedApsToRows(loaded, [mapping]));
       setDbBacked(true);
       setActiveId(null);
-      await refreshCoord(testId);
       setStatus(`불러옴 ${loaded.length}건`);
     } catch (e) {
       setStatus(`불러오기 실패: ${(e as Error).message}`);
@@ -324,6 +302,8 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
   const [issueTitle, setIssueTitle] = useState('');
   const [issueDesc, setIssueDesc] = useState('');
   const [issuePriority, setIssuePriority] = useState<IssuePriority>('high');
+  const [issueAssignee, setIssueAssignee] = useState('');
+  const [issueDue, setIssueDue] = useState('');
   const [issueShots, setIssueShots] = useState<string[]>([]);
   const [issueShotSel, setIssueShotSel] = useState<Set<number>>(new Set());
   const [issueCapturing, setIssueCapturing] = useState(false);
@@ -334,12 +314,14 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
     setIssueTitle(`간섭: ${r.a.name || r.a.category} ↔ ${r.b.name || r.b.category}`);
     setIssueDesc(`간섭 검출 (관통깊이 ${r.depth.toFixed(3)}m)\nA: ${r.a.name || r.a.category}\nB: ${r.b.name || r.b.category}`);
     setIssuePriority('high');
-    // 4컷 캡처(#7) — 사용자가 원하는 뷰를 골라 이슈에 첨부.
+    setIssueAssignee('');
+    setIssueDue('');
+    // 현재 뷰 1컷만 캡처(나머지 각도는 뷰가 엇나가고 느려서 제외).
     setIssueShots([]);
     setIssueShotSel(new Set());
     setIssueCapturing(true);
     try {
-      const shots = (await captureClashAngles(viewer, model, r.a.expressID, r.b.expressID, 4)).filter(Boolean);
+      const shots = (await captureClashAngles(viewer, model, r.a.expressID, r.b.expressID, 1)).filter(Boolean);
       setIssueShots(shots);
       setIssueShotSel(new Set(shots.map((_, i) => i)));
     } catch {
@@ -354,10 +336,20 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
     setIssueSaving(true);
     const globalId = mapping.dbIdToGlobalId.get(r.a.expressID) ?? null;
     const globalIdB = mapping.dbIdToGlobalId.get(r.b.expressID) ?? null;
+    const assignee = members.find((m) => m.id === issueAssignee);
     try {
       const issueId = await createIssue(
         projectId,
-        { title: issueTitle, description: issueDesc, priority: issuePriority, global_id: globalId, global_id_b: globalIdB },
+        {
+          title: issueTitle,
+          description: issueDesc,
+          priority: issuePriority,
+          assignee_id: issueAssignee || null,
+          assignee_name: assignee?.name,
+          due_date: issueDue || null,
+          global_id: globalId,
+          global_id_b: globalIdB,
+        },
         authorName,
       );
       // 선택한 스냅샷을 이슈 첨부로 업로드(#7).
@@ -571,42 +563,10 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
                             <option key={s} value={s}>{CLASH_STATUS_LABEL[s]}</option>
                           ))}
                         </select>
-                        {dbBacked ? (
-                          <button onClick={() => setCoordFor(r)} style={{ ...btn, fontSize: 11 }} title="담당·기한·코멘트·해소/검증">
-                            💬 협의
-                            {(() => {
-                              const s = coordSummaries.get(r.id);
-                              if (!s) return null;
-                              return (
-                                <>
-                                  {s.commentCount > 0 && <span style={{ marginLeft: 4 }}>{s.commentCount}</span>}
-                                  {s.unread && <span style={{ marginLeft: 3, color: '#dc2626' }}>●</span>}
-                                </>
-                              );
-                            })()}
-                          </button>
-                        ) : (
-                          <span style={{ fontSize: 10, color: 'var(--muted)' }}>저장 후 협의</span>
-                        )}
-                        {(() => {
-                          const s = coordSummaries.get(r.id);
-                          if (!s) return null;
-                          const who = s.assignee_label || (s.assignee ? '담당 지정' : null);
-                          return (
-                            <>
-                              {who && <span style={{ fontSize: 10, color: 'var(--muted)' }}>👤 {who}</span>}
-                              {s.due_date && (
-                                <span style={{ fontSize: 10, color: new Date(s.due_date) < new Date(new Date().toDateString()) && s.status !== 'approved' ? '#dc2626' : 'var(--muted)' }}>
-                                  📅 {s.due_date}
-                                </span>
-                              )}
-                            </>
-                          );
-                        })()}
                         {r.issueId ? (
-                          <span style={{ fontSize: 11, color: 'var(--accent)' }}>이슈 연결됨</span>
+                          <span style={{ fontSize: 11, color: 'var(--accent)' }}>✅ 이슈 등록됨(협업·이슈에서 협의)</span>
                         ) : (
-                          canEdit && <button onClick={() => openIssue(r)} style={{ ...btn, fontSize: 11 }}>이슈 생성</button>
+                          canEdit && <button onClick={() => openIssue(r)} style={{ ...btnPrimary, fontSize: 11 }}>이슈로 등록</button>
                         )}
                       </div>
                     </div>
@@ -619,18 +579,6 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
         <div style={{ marginTop: 8, fontSize: 12, color: 'var(--muted)' }}>{status}</div>
       </div>
 
-      {coordFor && (
-        <ApsClashCoordination
-          clashDbId={coordFor.id}
-          projectId={projectId}
-          title={`${coordFor.a.name || coordFor.a.category} ↔ ${coordFor.b.name || coordFor.b.category} · ${coordFor.depth.toFixed(3)}m`}
-          canEdit={canEdit}
-          members={members}
-          onClose={() => setCoordFor(null)}
-          onChanged={() => void refreshCoord(selTest)}
-        />
-      )}
-
       {issueFor && (
         <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8 }}>
           <div style={{ background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 8, padding: 14, width: '88%' }}>
@@ -639,13 +587,31 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
             <input value={issueTitle} onChange={(e) => setIssueTitle(e.target.value)} style={sel} />
             <label style={lbl}>내용</label>
             <textarea value={issueDesc} onChange={(e) => setIssueDesc(e.target.value)} style={{ ...sel, height: 80, resize: 'vertical' }} />
-            <label style={lbl}>우선순위</label>
-            <select value={issuePriority} onChange={(e) => setIssuePriority(e.target.value as IssuePriority)} style={sel}>
-              {ISSUE_PRIORITIES.map((p) => (
-                <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <label style={lbl}>우선순위</label>
+                <select value={issuePriority} onChange={(e) => setIssuePriority(e.target.value as IssuePriority)} style={sel}>
+                  {ISSUE_PRIORITIES.map((p) => (
+                    <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={lbl}>마감일</label>
+                <input type="date" value={issueDue} onChange={(e) => setIssueDue(e.target.value)} style={sel} />
+              </div>
+            </div>
+            <label style={lbl}>담당자</label>
+            <select value={issueAssignee} onChange={(e) => setIssueAssignee(e.target.value)} style={sel}>
+              <option value="">미지정</option>
+              {members.map((m) => (
+                <option key={m.id} value={m.id}>{memberLabel(m)}</option>
               ))}
             </select>
-            {/* 4컷 스냅샷(#7) — 첨부할 뷰 선택 */}
+            {members.length === 0 && (
+              <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>구성원 목록이 비어 있습니다(구성원·권한에서 배정 필요).</div>
+            )}
+            {/* 현재 뷰 스냅샷 첨부 */}
             <label style={lbl}>첨부 사진 {issueCapturing ? '(캡처 중…)' : `(${issueShotSel.size}/${issueShots.length} 선택)`}</label>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginTop: 4 }}>
               {issueShots.map((s, i) => (

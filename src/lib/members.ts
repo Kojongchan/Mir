@@ -12,6 +12,11 @@ export interface ProjectMember {
   duty: string | null; // 담당업무(현장 공무팀/BIM 관리자 …), 0034
 }
 
+/** 드롭다운 표기: "표시이름 - 소속 - 담당업무"(있는 것만). */
+export function memberLabel(m: ProjectMember): string {
+  return [m.name, m.company, m.duty].filter(Boolean).join(' - ');
+}
+
 export async function listProjectMembers(projectId: string): Promise<ProjectMember[]> {
   // 0034(company/duty) 미적용 환경에서도 동작하도록 폴백.
   type MemberOrgRow = { user_id: string; company?: string | null; duty?: string | null };

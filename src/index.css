@@ -3929,6 +3929,22 @@ button.danger:hover:not(:disabled) {
 @media (prefers-reduced-motion: reduce) {
   .clash-shell-dots { animation: none; }
 }
+.issue-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+.issue-facts b {
+  color: var(--muted);
+  font-weight: 600;
+  margin-right: 4px;
+}
 .issue-comment-mentions {
   color: var(--accent);
   font-size: 12px;
