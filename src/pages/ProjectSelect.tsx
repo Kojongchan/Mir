@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { EmptyState } from '../components/EmptyState';
 import { listProjects, type Project } from '../lib/api';
 import { useAuth } from '../auth/AuthProvider';
 import { ThemeToggle } from '../components/ThemeToggle';
@@ -36,10 +37,16 @@ export function ProjectSelect() {
           </div>
         </div>
 
-        {loading && <p className="muted">불러오는 중…</p>}
+        {loading && (
+          <div aria-busy="true" aria-live="polite">
+            <span className="sr-only">불러오는 중…</span>
+            <div className="skeleton skeleton--block" style={{ height: 56, marginBottom: 8 }} />
+            <div className="skeleton skeleton--block" style={{ height: 56 }} />
+          </div>
+        )}
         {error && <div className="auth-error">{error}</div>}
         {!loading && !error && projects.length === 0 && (
-          <p className="muted">접근 가능한 프로젝트가 없습니다. 관리자에게 문의하세요.</p>
+          <EmptyState icon="🗃" title="접근 가능한 프로젝트가 없습니다" desc="관리자에게 문의하세요." />
         )}
 
         <ul className="project-list">

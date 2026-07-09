@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { EmptyState } from '../components/EmptyState';
 import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
 import { useProjectRole } from '../auth/useProjectRole';
@@ -92,7 +93,7 @@ export function Board() {
             )}
           </article>
         ))}
-        {posts.length === 0 && <p className="muted">게시글이 없습니다.</p>}
+        {posts.length === 0 && <EmptyState icon="📋" title="게시글이 없습니다" desc="공지·알림 글을 등록하면 여기에 표시됩니다." />}
       </section>
 
       {msg && <p className="muted dash-msg">{msg}</p>}

@@ -1,6 +1,8 @@
-import type { ReactElement } from 'react';
+import { lazy, Suspense, type ComponentType, type ReactElement } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
+import { UiIconSprite } from './components/icons/UiIcon';
+// 셸/경량 페이지는 즉시 로드(첫 진입 지연 최소화).
 import { Login } from './pages/Login';
 import { ProjectSelect } from './pages/ProjectSelect';
 import { ProjectShell } from './pages/ProjectShell';
@@ -11,13 +13,29 @@ import { Issues } from './pages/Issues';
 import { Billing } from './pages/Billing';
 import { Subcontracts } from './pages/Subcontracts';
 import { Board } from './pages/Board';
-import { DocumentManager } from './pages/DocumentManager';
-import { Drawings } from './pages/Drawings';
-import { Quantities } from './pages/Quantities';
-import { Admin } from './pages/Admin';
 import { ProjectMembers } from './pages/ProjectMembers';
-import { FileViewer } from './pages/FileViewer';
-import { AccModels } from './pages/AccModels';
+
+// Q1 코드 스플리팅 — 무거운 의존성(APS 뷰어·web-ifc·pdfjs·mammoth/xlsx·recharts)을 안은
+// 페이지는 지연 로드해 초기 번들에서 분리한다. named export → default 로 감싼다.
+const named = <T extends string>(p: Promise<Record<T, ComponentType<any>>>, key: T) =>
+  p.then((m) => ({ default: m[key] }));
+const DocumentManager = lazy(() => named(import('./pages/DocumentManager'), 'DocumentManager'));
+const Drawings = lazy(() => named(import('./pages/Drawings'), 'Drawings'));
+const Quantities = lazy(() => named(import('./pages/Quantities'), 'Quantities'));
+const Admin = lazy(() => named(import('./pages/Admin'), 'Admin'));
+const FileViewer = lazy(() => named(import('./pages/FileViewer'), 'FileViewer'));
+const AccModels = lazy(() => named(import('./pages/AccModels'), 'AccModels'));
+const StyleGuide = lazy(() => named(import('./pages/StyleGuide'), 'StyleGuide'));
+
+/** 지연 로드 라우트의 로딩 자리표시(Suspense fallback). */
+function RouteFallback() {
+  return (
+    <div className="route-loading" aria-busy="true" aria-live="polite">
+      <span className="sr-only">불러오는 중…</span>
+      <div className="skeleton skeleton--block" style={{ height: 40, maxWidth: 320 }} />
+    </div>
+  );
+}
 
 function Protected({ children }: { children: ReactElement }) {
   const { session, loading } = useAuth();
@@ -49,7 +67,9 @@ function AdminOnly({ children }: { children: ReactElement }) {
 export default function App() {
   return (
     <AuthProvider>
+      <UiIconSprite />
       <BrowserRouter>
+        <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route
@@ -111,8 +131,11 @@ export default function App() {
               </Protected>
             }
           />
+          {/* U1 디자인 시스템 데모(토큰·공통 컴포넌트) — 데이터 접근 없음 */}
+          <Route path="/styleguide" element={<StyleGuide />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
       </BrowserRouter>
     </AuthProvider>
   );

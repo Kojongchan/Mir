@@ -3,6 +3,242 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 M1 — 모바일 실사용 마감(뷰어 크롬·바텀시트·표·터치타깃) (2026-07-04)
+> branch `claude/mobile-version-update-v810fd`. typecheck·build 통과. Playwright(390px) 계산스타일 +
+> 시각 캡처로 모바일 규칙 실적용 확인, 데스크톱(1200px)은 무영향 확인. U4(하단탭)에 이은 후속 마감.
+> **모든 변경은 `@media (max-width:640px)` 안이라 데스크톱/태블릿 레이아웃 무영향.**
+
+### ✅ 한 일 (`src/index.css` 말미 M1 블록 + `src/pages/AccModels.tsx`)
+1. **3D 뷰어 하단탭 겹침 해소**: AccModels 뷰어 루트(inline `absolute;inset:0`)를 `.acc-viewer-root`
+   클래스로 승격 + 툴바를 `.viewer-topbar` 클래스로. 모바일에서 `.acc-viewer-root`/`.mod-fill`(자료관리·
+   물량·구성원 등 전체화면 모듈)의 `bottom` 을 `calc(64px + safe-area)` 로 올려 **하단 탭바 위로** 띄움
+   (absolute inset:0 자식이 portal-main 패딩을 무시해 컨트롤이 탭 뒤로 숨던 문제).
+2. **뷰어 툴바 버튼 클립 → 가로 스크롤**: `.viewer-topbar` 가 좁은 폭에서 `overflow-x:auto`(관성,
+   스크롤바 숨김)로 버튼이 잘리지 않고 스와이프. 데스크톱은 기존대로 한 줄.
+3. **공용 모달 → 바텀 시트**: `.modal`/`.acc-modal` 이 모바일에서 전체폭·하단 도달(`align-items:flex-end`)·
+   상단만 라운드·`max-height:92dvh`·safe-area 패딩. `.modal-foot` 는 세로 스택·전체폭 버튼(엄지 도달).
+4. **터치 타깃·폼**: `.btn` min-height 40px(`--sm` 34px), `input/select/textarea` 16px(iOS 포커스 자동
+   확대 방지), `body{overflow-x:hidden}`(가로 넘침 차단), 표 래퍼 관성 스크롤(`-webkit-overflow-scrolling`).
+
+### 🔜 다음 할 일 / 미해결 (실 인증 환경 눈확인 권장)
+- 바텀시트·뷰어 툴바 스크롤·하단탭 겹침 해소는 auth 뒤 화면이라 이 샌드박스에선 합성 DOM/계산스타일로만
+  검증 — **실 로그인 후 각 모달·3D 뷰어(통합/4D/간섭)·자료관리에서 눈확인** 권장.
+- 뷰어 좌측 ACC 폴더/카테고리 트리 패널의 모바일 폭(현재 데스크톱 폭 유지)은 이번 범위 밖 — 필요 시 후속에
+  드로어(오버레이) 전환 검토. Lighthouse 모바일 실측도 실 프리뷰에서.
+
+### 인수인계 한 줄
+M1 모바일 마감 완료(뷰어/전체화면 모듈 하단탭 겹침 해소·툴바 가로스크롤·모달 바텀시트·터치타깃/폼 16px,
+전부 <640 스코프라 데스크톱 무영향). 실 인증 화면 눈확인 + 뷰어 좌측 트리 드로어화가 후속.
+
+---
+## 📋 상단바 개선 + Lighthouse 실측 (A·C·D) (2026-07-03)
+> branch `claude/design-system-phase-1-lgw4oz`(PR #107). 사용자 라이브 피드백 반영. typecheck·build 통과,
+> /styleguide 미리보기 라이트/다크 + Lighthouse(로컬 프로덕션 빌드) 확인.
+
+### ✅ 한 일
+1. **상단바 사용자 전체 이름 노출**: 아바타 이니셜만 보이던 것 → 이름 전체를 아바타 옆에 표시(요청).
+2. **A. 아바타 계정 드롭다운 메뉴**(`TopUserMenu.tsx`): 아바타+이름 트리거 → 클릭 시 이름·**역할 뱃지**
+   (뷰어/실무자/관리자/시스템관리자, `useProjectRole`)·로그아웃 메뉴(외부클릭/Esc 닫힘). 별도 로그아웃
+   아이콘 통합. **버그 수정**: `.app-topbar` 의 `overflow:hidden` 제거 — 알림·계정 드롭다운(하단 펼침)이
+   잘리던 문제(알림 종도 영향). 모바일 트리거 `aria-label`(이름 숨김 시 접근 이름 확보).
+3. **C. Admin 콘솔·문서뷰어 상단바 라이트 전환**: `.admin-top`/`.admin-title`/`.doc-viewer-bar`/title/size 를
+   옛 네이비(--chrome*) → 라이트 토큰. 남은 --chrome = 3D 좌표 HUD(의도적 다크)·백업 Workspace(미라우팅)·
+   dash-ms(U2 대체 죽은 CSS). ⚠️ Admin/문서뷰어는 auth 뒤라 실 눈확인 권장(토큰 스왑 저위험).
+4. **D. Lighthouse 실측(로컬 프로덕션 빌드, chromium)**:
+   - **/login: Perf 91 · A11y 100 · BestPractices 96** — U4 목표(Perf≥90/A11y≥95) **충족** ✓ (LCP 2.8s·TBT 0·CLS 0)
+   - **/styleguide: Perf 75 · A11y 100 · BP 96** — 데모 페이지(전 컴포넌트+차트 2개 동시 로드 + 로컬 CDN 폰트
+     차단으로 FCP/LCP 부풀려짐)라 Perf 낮음. a11y 는 button-name 수정 후 100.
+   - ⚠️ 포털 내부 화면은 auth 필요라 미측정 — 실 배포 프리뷰(로그인)에서 측정 권장. 로컬은 Pretendard/Inter
+     CDN 이 프록시 차단이라 폰트 로드 실패(실 배포는 정상 → Perf 더 좋을 것).
+
+### 🔜 다음 할 일 / 미해결 (실 환경 검증 필요)
+- U3 V2/V3(APS 카메라 프리셋·표시품질)·F1·F2 = 실 ACC/데이터. B(역할 뱃지)는 A 메뉴에 포함됨.
+- E(프로젝트 스위처 인라인 드롭다운) 미착수. 포털 내부 Lighthouse 실측(로그인 후).
+
+### 인수인계 한 줄
+상단바 이름 노출 + 아바타 메뉴(역할·로그아웃) + 드롭다운 클리핑 버그 수정 + Admin/문서뷰어 라이트 전환 +
+Lighthouse(/login Perf91·A11y100) 완료(PR #107). 남은 건 실 인증·ACC 환경.
+
+---
+## 📋 Q1 — 코드 스플리팅(초기 번들 5MB→93kB) (2026-07-02)
+> branch `claude/design-system-phase-1-lgw4oz`(U-Shell·U2·U4 병합된 main 위 재분기). typecheck·build 통과,
+> dev 서버로 지연 라우트 렌더 스모크(에러 0) 확인.
+
+### ✅ 한 일
+1. **라우트 지연 로드**: `App.tsx` 에서 무거운 의존성 페이지(AccModels/Drawings/Quantities/DocumentManager/
+   FileViewer/Admin/StyleGuide)를 `React.lazy` + `<Suspense fallback>`(skeleton)로 분리. 셸·경량 포털 페이지
+   (Dashboard/Schedule/일보/이슈/기성/하도급/게시판/구성원)는 즉시 로드 유지.
+2. **벤더 청크 분리**: `vite.config.ts` `manualChunks` — recharts→charts, pdfjs→pdf, web-ifc→webifc,
+   three(+mesh-bvh)→three, mammoth/xlsx→docs, @supabase→supabase, react/router→react.
+3. **결과(빌드 실측)**: 단일 `index.js` **5,064kB → 93kB**(gzip 26kB). web-ifc(3,070kB)·three(543kB)·
+   pdf(364kB)·docs(332kB)·charts(370kB)는 해당 기능 진입 시에만 로드. 초기 로드 = index+react+supabase+css
+   ≈ gzip ~140kB. (500kB 경고는 지연 벤더 청크에 남지만 초기 로드엔 영향 없음.)
+
+### 🔜 다음 할 일 / 미해결 (대부분 **실 환경 검증 필요** — 이 샌드박스는 auth·ACC·Supabase 없음)
+- **U3 V2/V3**(APS 뷰어 카메라 프리셋·표시품질): 실 ACC 모델 필요 → 실 환경에서 구현·검증 권장.
+- **F1**(관측점 DB 이관 0032~) · **F2**(이슈 협업) · **Q2**(canEdit 감사) · **Q3**(버그 스윕): 라이브 데이터/역할 필요.
+- **Lighthouse**(Perf≥90/A11y≥95): 실 배포 프리뷰 측정. axe 0 은 확인 완료.
+- 뷰어 툴바는 이미 토큰 기반(라이트/다크 적응) — 디자인 톤 큰 문제 없음(이모지→커스텀 아이콘 교체는 선택).
+
+### ✅ 안전 슬라이스 추가(Q2·Q3 — 코드/빌드로 검증 가능한 것만, 사용자 결정 "안전한 것만 지금")
+- **Q3 도면 'Invalid Date' 수정**(`lib/dashboard.formatDate`): `created_at` 같은 전체 타임스탬프에
+  `T00:00:00` 을 덧붙여 Invalid Date 가 되던 버그 → date-only 만 로컬 자정 파싱, 타임스탬프는 그대로,
+  실패 시 '미정'. 단위 검증(타임스탬프/date-only/쓰레기 입력) 통과.
+- **Q2 게이팅 감사 → 사업개요 정정**: RLS(0023) `project_info/project_milestones/monthly_records` 쓰기는
+  `is_editor`(실무자+) 허용인데 Dashboard 편집 버튼만 `is_admin`(시스템관리자) 한정 → 실무자·프로젝트관리자
+  편집 불가 회귀(B1). `useProjectRole().canEdit` 로 정정(RLS 일치). 다른 페이지는 이미 canEdit, AccModels 의
+  `isAdmin` 은 모델 고정·홈뷰 등 관리 설정(정당), Quantities 기성제안은 S51 의도적 admin — 변경 안 함.
+- **잔여 라이트 전환(문서뷰어 바·Admin 상단바 네이비→라이트)**: 이 샌드박스에서 시각 검증 불가 + STATUS 상
+  의도적 보류 항목이라 **미적용**(후속). 뷰어 툴바는 이미 토큰 기반이라 큰 문제 없음.
+
+### 인수인계 한 줄
+Q1 코드 스플리팅(5MB→93kB) + Q2 사업개요 게이팅 정정 + Q3 도면 날짜 버그 완료(PR #107). 남은 U3-V2/V3·
+F1·F2·Lighthouse·잔여 라이트 전환은 실 인증·ACC 환경 검증 필요.
+
+---
+## 📋 U4 — 디자인 시스템 Phase 4 마감: 다크·반응형·모션·a11y (2026-07-02)
+> branch `claude/design-system-phase-1-lgw4oz`. typecheck·build 통과. **axe-core 0 violations**
+> (/styleguide·/login 라이트·다크 모두 critical·serious·moderate 전부 0). U3(뷰어)는 이번 묶음에 없음.
+
+### ✅ 한 일
+1. **다크 마감 — 시스템 선호 초기값**: `theme.ts` `getStoredTheme` 이 저장값 없으면 `prefers-color-scheme`
+   따름 + `initTheme` 이 명시적 선택 없는 동안 시스템 테마 변경 실시간 반영. (localStorage 토글 유지.)
+2. **반응형 — 모바일 하단 탭바**: `BottomTabBar.tsx`(주요 5메뉴: 사업개요/공정/3D/일보/이슈, aria-current) +
+   `.app-bottom-tabbar` CSS. <640: 사이드바 숨김·본문 풀폭·하단탭 노출(fixed, z-fixed, safe-area 대응)·
+   토바 압축. 641~1024 사이드바 64px collapse(기존). >1440 풀폭 유지.
+3. **모션(transform/opacity만)**: `fade-in`(포털 본문 `.dash` 진입) + `modal-in`(모달/ACC모달 scale .96→1).
+   `@media (prefers-reduced-motion: reduce)` 전역 가드(애니메이션/전환 축소).
+4. **a11y QA(axe-core) — 전부 해소**: 초기 스캔 serious(대비)·moderate(landmark/heading/region) →
+   - **대비 안전 토큰화**: KPI 시맨틱 수치·`.field__error` → badge-fg(짙은 시맨틱), `.kpi__meta`·`.field__helper`·
+     `.empty-state`·`.bottom-tab`·`.project-switcher__code` 를 tertiary→secondary(tertiary=placeholder 전용, 짙은표면 4.5:1 미달).
+   - **brand-solid 신설**: 흰 글자 채움(버튼·아바타)은 다크에서 밝아지는 `--color-brand-primary`(텍스트용) 대신
+     짙게 고정한 `--color-brand-solid`(#2563EB) 사용 → `.btn--primary`/`.primary`/`.avatar` 흰 글자 대비 확보.
+     `.btn--danger` 도 red-600 급으로 짙게(color-mix). hover 는 color-mix 로 일관 다크닝.
+   - **다크 활성 nav/탭**: `.nav-item.is-active`/`.bottom-tab.is-active` 텍스트를 밝은 blue(hover 토큰)로.
+   - **랜드마크/제목**: `StyleGuide`·`Login` 을 `<main>` + `<h1>` 로(landmark-one-main·page-has-heading-one·
+     region 해소), 데모 Section 을 `<h2>`(heading-order). `.auth-warn code` 대비 개선.
+5. **데모**: /styleguide 에 모바일 하단 탭바 미리보기 섹션 추가.
+
+### 🔜 다음 할 일 / 미해결
+- Lighthouse(Perf≥90/A11y≥95) 는 이 샌드박스(원격·auth 없음)에서 미측정 → **실 배포 프리뷰에서 측정·기록 필요**.
+  axe-core 는 0(critical/serious/moderate) 확인 완료.
+- U3(3D 뷰어 UI 톤·V2 카메라 프리셋·V3 표시품질)은 별도 단계로 남음.
+- tertiary 는 이제 placeholder 전용 관례 — 신규 텍스트에 tertiary 쓰지 말 것(secondary 사용).
+- 모바일 하단탭/모션/다크는 auth 뒤라 실 포털에선 로그인 후 눈확인 권장.
+
+### 인수인계 한 줄
+U4 마감 완료(시스템 다크 초기값·모바일 하단탭·모션·reduced-motion, axe 0 violations, brand-solid 로 다크 버튼
+대비 해결). Lighthouse 는 실 프리뷰 측정만 남음. 후속은 U3(뷰어).
+
+---
+## 📋 U2 — 디자인 시스템 Phase 3: 사업개요 Bento 대시보드 + Recharts (2026-07-02)
+> branch `claude/design-system-phase-1-lgw4oz`. typecheck·build 통과, /styleguide Bento 미리보기 라이트/다크 확인.
+> 기준: DESIGN_SYSTEM §2(Bento)·§3(KPI Card) + dataviz 스킬 원칙.
+
+### ✅ 한 일
+1. **Bento Grid 재배치**: `Dashboard.tsx` 를 6×1 균등그리드 → `.bento-grid`(12칸)로. hero(진행률, span6/row2,
+   그라데이션) + small×6(준공 D-day/착공 후/미해결 이슈/투입 인력/장비/통합모델, span2) + chart×2(span6/row2) +
+   wide(마일스톤 칩, span12). 반응형 ≤1024 6칸·≤640 1칸.
+2. **KPI 카드 + 컬러 시맨틱**: `.kpi-card`(__label/__value.tabular/__meta) + `.kpi--danger/warning/success`.
+   준공 D-day 임박도(`ddayKpiClass`: D-30↓ 위험/D-180↓ 주의/그 외 안전)로 색 자동. hero 는 `<progress
+   class="progress-bar">`(PDF §4.10). 전 수치 `.tabular`.
+3. **Recharts 도입**: `recharts` 설치. 인력 추이=AreaChart(단일 계열, 범례 없음, 그라데이션 fill),
+   기성 계획vs실적=LineChart(2계열, **one-axis**). **dataviz 원칙 준수**: 축/그리드=ink 토큰(`--chart-axis/grid`),
+   시리즈 색은 **검증 통과 팔레트**(`--chart-1`=brand 실적 solid, `--chart-2`=teal #0D9488 계획 dashed —
+   `validate_palette.js` 라이트/다크 ALL PASS) + **색+선유형 이중 인코딩** + 커스텀 HTML 범례. 툴팁 토큰색.
+   빈 데이터는 `.empty-state`.
+4. **정리**: 옛 `MiniChart` 사용 제거(대시보드), 옛 `.dash-progress/.dash-grid/.dash-stat/MilestoneCard` 경로 삭제.
+   /styleguide 에 Bento 대시보드 미리보기 섹션 추가(샘플 데이터, 라이트/다크 both).
+
+### 🔜 다음 할 일 / 미해결
+- 축 라벨 클리핑 회피 위해 기성 Y축 `unit="%"` 제거(제목이 % 명시). 실 데이터에서 축 눈금 범위 확인 권장.
+- U3(3D 뷰어 UI·V2/V3)는 이번 묶음에 없음 → 후속. U4(다크 마감·모바일 하단탭·모션·a11y)로 진행.
+- 번들 5MB 경고(recharts 포함 더 커짐) → Q1 코드 스플리팅 후속 과제.
+
+### 인수인계 한 줄
+U2 완료(Bento 대시보드·KPI 컬러시맨틱·Recharts 2차트, dataviz 팔레트 검증). /styleguide 미리보기 OK. U4로.
+
+---
+## 📋 U-Shell — 디자인 시스템 Phase 2: 셸 라이트 전환 + 커스텀 12 아이콘 (2026-07-02)
+> branch `claude/design-system-phase-1-lgw4oz`(U1 병합된 main 위 재분기). typecheck·build 통과,
+> /styleguide 셸 미리보기로 라이트/다크·확장/collapse 확인. 기준: DESIGN_SYSTEM §2·§3·§4 + PDF §5.2.
+
+### ✅ 한 일
+1. **커스텀 도메인 아이콘 12종 + 확장 3종**: `src/components/icons/Icon.tsx` — PDF §5.2 실동작 SVG 12개
+   (dashboard/schedule/model-3d/schedule-4d/clash/qto/drawing/daily-report/weather/subcontract/board/files)를
+   React 컴포넌트로 wrap(Solid Geometric, stroke=currentColor, fill-opacity 0.12, 레드닷=`var(--color-brand-accent)`,
+   레드닷 위 흰 체크=`var(--color-text-on-brand)`). 메뉴가 14개라 세트에 없는 협업·이슈/기성내역/구성원은 동일
+   톤(레드닷·currentColor)의 확장 아이콘 `issue/billing/members` 신설. size·color props, currentColor 상속.
+   ⚠️ weather 는 현재 메뉴엔 없으나 세트 완성 위해 포함(추후 기상 모듈용).
+2. **Generic UI 스프라이트**: `src/components/icons/UiIcon.tsx` — chevron-down/-left·folder·bell·sun·moon·plus·x·
+   menu·logout 를 `<symbol>` defs 로 묶고 `<use href="#ui-*">` 참조(단일 정의). `<UiIconSprite/>` 를 App 루트에
+   1회 마운트.
+3. **사이드바 라이트 전환**: `.portal-nav*` → `.app-sidebar`/`.nav-item`(index.css). 배경 `--color-bg-surface`,
+   우측 border `--color-border-default`, 기본 텍스트 secondary, hover `--color-bg-subtle`. **활성만 brand 강조**
+   (`.is-active` 배경 `#EFF6FF`/다크 rgba(37,99,235,.18), 텍스트·아이콘 brand). NavLink 기본 `aria-current="page"` +
+   sr-only "(현재 페이지)".
+4. **collapse(240↔64)**: `.portal-body[data-sidebar]` grid-columns 전환(transition), collapse 시 `.nav-item__label`
+   숨김·아이콘 중앙정렬. TopBar 메뉴(≡) 버튼으로 토글, localStorage(`mir.sidebar.collapsed`) 기억. 태블릿(≤1024)
+   자동 collapse(모바일 하단탭은 U4).
+5. **TopBar 56px 재구성**: `.app-topbar` — 사이드바 토글(menu) + 브랜드 + **프로젝트 스위처**(btn--ghost, folder +
+   이름 + code + chevron-down → '/') + spacer + 알림(NotificationBell) + 테마토글 + 로그아웃(icon, aria-label) +
+   **아바타**(사용자 이니셜). 포털 grid-rows 48→56px(1fr 흡수). icon-only 버튼 aria-label + 내부 아이콘 aria-hidden.
+6. **데모**: /styleguide 에 아이콘 갤러리(15종 + UI 스프라이트) + Shell 미리보기(TopBar+사이드바 활성/일반)
+   섹션 추가 — 라이트/다크 both 확인.
+
+### 🔜 다음 할 일 / 미해결
+- U2(Bento 대시보드·Recharts) → U3(뷰어 UI·V2/V3) → U4(다크 마감·모바일 하단탭·모션·a11y QA).
+- 셸이 auth 뒤라 이 샌드박스(Supabase env 없음)에선 실 포털 진입 불가 → /styleguide 미리보기로 검증. 실 로그인
+  환경에서 전 메뉴 진입 눈확인 권장(특히 뷰어/자료관리 등 mod-fill 모듈이 56px 토바 아래 정상 배치되는지).
+- 옛 `--chrome*`(네이비) 토큰은 doc-viewer-bar·admin-top·백업 Workspace 가 아직 사용 → 보존. 그 화면들의
+  라이트 전환은 후속(범위 밖).
+
+### 인수인계 한 줄
+U-Shell 완료(사이드바 라이트+활성 brand, TopBar 재구성, 커스텀 12+3 아이콘, UI 스프라이트, collapse). /styleguide
+미리보기 라이트/다크 OK. 실 로그인 환경 전 메뉴 눈확인 후 U2로.
+
+---
+## 📋 U1 — 디자인 시스템 Phase 1: 토큰 & 공통 컴포넌트 기반 (2026-07-02)
+> branch `claude/design-system-phase-1-lgw4oz`. typecheck·build 통과, 라이트/다크 스크린샷 확인.
+> 기준 문서 `docs/DESIGN_SYSTEM.md`(+원본 PDF) — 이 문서·PLANNING §0-I 은 기획 브랜치
+> `claude/magical-curie-d4relv`(main 미병합)를 본 브랜치에 병합해 포함시킴. **U1 병합 = 문서도 함께 main 입성.**
+
+### ✅ 한 일
+1. **토큰 도입(§1 전부)**: `src/index.css` 상단을 신규 토큰으로 재작성 — `--color-*`(브랜드/뉴트럴 11단계/
+   시맨틱/서피스/텍스트/보더/뱃지), 타이포(`--font-sans` Pretendard+Inter, `--text-*` 스케일, fw/lh/tracking),
+   `--space-1~16`·`--radius-xs~pill`·`--shadow-xs~lg`·모션(duration/ease)·`--z-*`. `[data-theme=dark]` 재정의
+   (§1.2 + 그림자 진하게 + 다크 hover 보정 #60A5FA). 기존 다크 토글(localStorage) 로직 무변경.
+2. **무중단 마이그레이션**: 옛 S11 토큰(`--bg/--panel/--panel-2/--border/--text/--muted/--accent*/--danger/--radius`)을
+   신규 토큰 **alias** 로 연결 → 기존 클래스 전부 그대로 동작하며 팔레트만 신계열로 전환. `--chrome*`(네이비 크롬)은
+   U-Shell 전환 전까지 보존. 옛 대형 `--shadow-md` 용례 8곳은 의미에 맞게 `--shadow-lg` 로 이관.
+3. **하드코딩 hex 전수 스윕(색 계열)**: index.css 내 토큰 블록 밖 hex/rgba 를 전부 var(--*) 로 치환
+   (semantic·on-brand·HUD/좌표축/스냅/도면종류는 보조 토큰 신설: `--hud-*`/`--axis-*`/`--snap-nearest`/`--kind-*`/
+   `--color-paper`/`--backdrop`/`--chrome-ghost*`). var() 폴백 hex 정리. 남은 hex = 토큰 정의뿐.
+4. **공통 컴포넌트(§3, BEM-lite)**: `.btn`(+primary/secondary/ghost/danger, sm/lg) · `.field`/`.input`(포커스
+   `--color-border-focus`·에러·disabled, select/textarea 겸용) · `.card--interactive`(hover -2px+shadow-md)/
+   `.card--hero`(그라데이션) · `.badge`(+info/success/warning/error, pill) · `.data-table`(sticky 헤더·hover·
+   `th[aria-sort]` 정렬표시·`.col-num` tabular) · `.empty-state`(아이콘+문구+CTA) · `.skeleton`(shimmer,
+   reduced-motion 대응) · `.toast`/`.toast-stack`(role=status/alert). 기존 `.cde-table`/`.acc-table` 헤더 bg 를
+   표준(bg-subtle)으로 일원화 + cde 행 hover 추가.
+5. **레이아웃/a11y**: `.content-narrow`(max-width 960, opt-in — wide 전역 cap 없음 §2 결정) · `:focus-visible`
+   outline(마우스 클릭 시 숨김) · `.sr-only` · `.tabular` 유틸. **로그인/프로젝트선택 격자배경 제거** → subtle
+   mesh gradient(§6.1).
+6. **적용/데모**: `src/components/EmptyState.tsx` 신설, 포털 8곳(이슈/게시판/일보/하도급/기성/멤버/도면/프로젝트
+   선택)의 "~없습니다" 텍스트를 empty-state 로 교체 + 프로젝트선택 로딩을 skeleton 으로. **`/styleguide` 데모
+   라우트**(StyleGuide.tsx, 데이터 접근 없음)에서 전 컴포넌트·토큰 확인 가능.
+
+### 🔜 다음 할 일 / 미해결
+- **U-Shell(Phase2)**: 사이드바 라이트 전환(네이비 폐기·활성만 brand) + TopBar + 커스텀 12 도메인 아이콘(PDF §5.2).
+  이후 U2(Bento 대시보드·Recharts) → U3(뷰어 UI·V2/V3) → U4(다크·반응형·a11y QA).
+- 화면별 리스킨/spacing px 치환은 U1 범위 밖(색 계열 우선 완료). 이번 토큰화로 라이트 배경이 청회색→중성
+  회백(#FAFAFB)으로, 다크가 더 깊은 검정 계열로 미세 전환됨 — 라이브 눈확인 권장.
+- ⚠️ 본 브랜치는 **먼저 단독으로 main 병합**(전 화면 공유 CSS). 이후 다른 작업은 rebase.
+
+### 인수인계 한 줄
+U1 완료(토큰+alias 무중단 전환·hex 전수 스윕·공통 컴포넌트·격자 제거·/styleguide 데모, typecheck/build/라이트·다크 OK).
+빠른 main 병합 후 U-Shell(사이드바 라이트+12아이콘)부터.
+
+---
 ## 📋 V1 — 3D 뷰어 회전을 "커서(피벗) 기준"으로 (ACC 조작감 일치) (2026-06-30)
 > branch `claude/3d-viewer-pivot-rotation-ymsocr`. typecheck·build 통과. 대상 `src/pages/AccModels.tsx` 뷰어 초기화부.
 > 통합/4D/간섭은 모두 같은 `AccModels` 초기화 경로를 쓰므로 한 곳 수정으로 세 모드 모두 적용됨.

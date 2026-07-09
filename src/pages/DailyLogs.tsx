@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { EmptyState } from '../components/EmptyState';
 import { errMessage } from '../lib/errors';
 import { useProjectRole } from '../auth/useProjectRole';
 import {
@@ -120,7 +121,7 @@ export function DailyLogs() {
                 </Fragment>
               ))}
               {logs.length === 0 && (
-                <tr><td colSpan={6} className="muted empty">등록된 일보가 없습니다.</td></tr>
+                <tr><td colSpan={6}><EmptyState compact icon="📝" title="등록된 일보가 없습니다" desc="공사일보를 등록하면 여기에 표시됩니다." /></td></tr>
               )}
             </tbody>
           </table>

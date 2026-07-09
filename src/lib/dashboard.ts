@@ -198,7 +198,11 @@ export function ddayLabel(date: string | null): string {
 
 export function formatDate(date: string | null): string {
   if (!date) return '미정';
-  return new Date(date + 'T00:00:00').toLocaleDateString('ko-KR');
+  // date-only(YYYY-MM-DD)는 로컬 자정으로 파싱(타임존 밀림 방지), 이미 시각이 포함된
+  // 타임스탬프(예: created_at)는 그대로 파싱. 파싱 실패 시 'Invalid Date' 대신 '미정'.
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(date) ? `${date}T00:00:00` : date;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '미정' : d.toLocaleDateString('ko-KR');
 }
 
 export function formatAmount(won: number): string {

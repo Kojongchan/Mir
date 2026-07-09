@@ -1,8 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { errMessage } from '../lib/errors';
-import { useAuth } from '../auth/AuthProvider';
-import { MiniChart } from '../components/MiniChart';
+import { useProjectRole } from '../auth/useProjectRole';
+import { EmptyState } from '../components/EmptyState';
+import { Icon } from '../components/icons/Icon';
 import { countOpenIssues } from '../lib/issues';
 import {
   addMilestone,
@@ -26,6 +38,28 @@ import {
   type ProjectInfo,
 } from '../lib/dashboard';
 
+// Recharts 툴팁 — 토큰 기반(라이트/다크 자동). 텍스트는 ink 토큰, 마크만 계열색.
+const TOOLTIP_STYLE = {
+  background: 'var(--color-bg-elevated)',
+  border: '1px solid var(--color-border-default)',
+  borderRadius: '8px',
+  fontSize: '12px',
+  boxShadow: 'var(--shadow-md)',
+};
+const TOOLTIP_LABEL = { color: 'var(--color-text-secondary)' };
+const TOOLTIP_ITEM = { color: 'var(--color-text-primary)' };
+
+/** D-day 임박도 → KPI 컬러 시맨틱 클래스(DESIGN_SYSTEM §6.3):
+ *  D-30 이하 위험 · D-31~180 주의 · 그 외 안전 · 경과(D+)는 기본. */
+function ddayKpiClass(date: string | null): string {
+  if (!date) return '';
+  const d = Math.ceil((new Date(`${date}T00:00:00`).getTime() - Date.now()) / 86_400_000);
+  if (d < 0) return '';
+  if (d <= 30) return 'kpi--danger';
+  if (d <= 180) return 'kpi--warning';
+  return 'kpi--success';
+}
+
 /**
  * 사업개요 — the project portal landing. A construction PMIS dashboard:
  * 착공/준공 D-day, 전체 진행률, 마일스톤, 공사일지·기성 현황 차트, 투입인력·
@@ -35,8 +69,10 @@ import {
 export function Dashboard() {
   const { projectId = '' } = useParams();
   const navigate = useNavigate();
-  const { profile } = useAuth();
-  const isAdmin = !!profile?.is_admin;
+  // 편집 게이팅 = 실무자(editor) 이상. RLS(0023) project_info/milestones/monthly_records
+  // 쓰기 정책(is_editor)과 일치 — 기존 시스템관리자(is_admin) 한정은 실무자·프로젝트관리자를
+  // 부당하게 막던 회귀(B1)라 canEdit 으로 정정.
+  const { canEdit } = useProjectRole(projectId);
 
   const [info, setInfo] = useState<ProjectInfo | null>(null);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
@@ -145,6 +181,12 @@ export function Dashboard() {
   const progress = info ? Number(info.progress_pct) : 0;
   const sinceStart = daysSince(info?.start_date ?? null);
   const latest = logs[0];
+  const manpowerData = logsAsc.map((l) => ({ d: l.log_date.slice(5), 인력: l.manpower }));
+  const monthlyData = monthly.map((m) => ({
+    ym: m.ym,
+    계획: Number(m.planned_pct),
+    실적: Number(m.actual_pct),
+  }));
 
   return (
     <div className="dash">
@@ -153,37 +195,147 @@ export function Dashboard() {
           <span className="dash-today">Today {new Date().toLocaleDateString('ko-KR', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' })}</span>
           <h1 className="dash-h1">사업개요</h1>
         </div>
-        {isAdmin && (
+        {canEdit && (
           <button className={edit ? 'primary' : ''} onClick={() => setEdit((e) => !e)}>
             {edit ? '편집 완료' : '편집'}
           </button>
         )}
       </div>
 
-      {/* ---- 마일스톤 / D-day 띠 ---- */}
-      <section className="dash-milestones">
-        <MilestoneCard
-          label="착공일"
-          date={info?.start_date ?? null}
-          big={sinceStart !== null ? `D+${sinceStart}` : '—'}
-          note={sinceStart !== null ? `${sinceStart}일 경과` : '착공일 미설정'}
-        />
-        {milestones.map((m) => (
-          <MilestoneCard
-            key={m.id}
-            label={m.name}
-            date={m.target_date}
-            big={ddayLabel(m.target_date)}
-            note={formatDate(m.target_date)}
-            onDelete={edit ? () => deleteMilestone(m.id).then(() => listMilestones(projectId).then(setMilestones)) : undefined}
-          />
-        ))}
-        <MilestoneCard
-          label="준공 예정"
-          date={info?.end_date ?? null}
-          big={ddayLabel(info?.end_date ?? null)}
-          note={formatDate(info?.end_date ?? null)}
-        />
+      {/* ---- Bento 대시보드 (U2) ---- */}
+      <section className="bento-grid">
+        {/* HERO — 전체 진행률 */}
+        <article className="bento-hero">
+          <div className="kpi__label">전체 진행률</div>
+          <div className="kpi__value tabular">
+            {progress.toFixed(0)}<span className="unit">%</span>
+          </div>
+          <progress className="progress-bar" value={Math.min(100, progress)} max={100} />
+          {info?.summary && <div className="kpi__meta">{info.summary}</div>}
+        </article>
+
+        {/* SMALL — 준공 D-day (컬러 시맨틱) */}
+        <article className={`bento-small kpi-card ${ddayKpiClass(info?.end_date ?? null)}`}>
+          <div className="kpi__label">준공까지</div>
+          <div className="kpi__value tabular">{ddayLabel(info?.end_date ?? null)}</div>
+          <div className="kpi__meta">{formatDate(info?.end_date ?? null)}</div>
+        </article>
+        {/* SMALL — 착공 후 */}
+        <article className="bento-small kpi-card">
+          <div className="kpi__label">착공 후</div>
+          <div className="kpi__value tabular">{sinceStart !== null ? `D+${sinceStart}` : '—'}</div>
+          <div className="kpi__meta">{formatDate(info?.start_date ?? null)}</div>
+        </article>
+        {/* SMALL — 미해결 이슈 */}
+        <button
+          className="bento-small kpi-card dash-link-card"
+          onClick={() => navigate(`/project/${projectId}/issues`)}
+        >
+          <div className="kpi__label">미해결 이슈</div>
+          <div className="kpi__value tabular">{openIssues}<span className="unit">건</span></div>
+          <div className="kpi__meta">협업 · 이슈 관리 →</div>
+        </button>
+        {/* SMALL — 투입 인력 */}
+        <article className="bento-small kpi-card">
+          <div className="kpi__label">투입 인력</div>
+          <div className="kpi__value tabular">{latest?.manpower ?? 0}<span className="unit">명</span></div>
+          <div className="kpi__meta">{latest ? formatDate(latest.log_date) : '일보 없음'}</div>
+        </article>
+        {/* SMALL — 장비 현황 */}
+        <article className="bento-small kpi-card">
+          <div className="kpi__label">장비 현황</div>
+          <div className="kpi__value tabular">{latest?.equipment ?? 0}<span className="unit">대</span></div>
+          <div className="kpi__meta">{latest ? formatDate(latest.log_date) : '일보 없음'}</div>
+        </article>
+        {/* SMALL — 통합모델 링크 */}
+        <button
+          className="bento-small kpi-card dash-link-card"
+          onClick={() => navigate(`/project/${projectId}/model`)}
+        >
+          <div className="kpi__label">통합모델 (3D)</div>
+          <div className="kpi__value" style={{ color: 'var(--color-brand-primary)' }}>
+            <Icon name="model-3d" size={32} />
+          </div>
+          <div className="kpi__meta">3D 통합모델 · 이슈 →</div>
+        </button>
+
+        {/* CHART — 공사일지 인력 추이 (단일 계열: 범례 없음) */}
+        <article className="bento-chart card">
+          <h3>공사일지 현황 <span className="muted">(투입 인력 추이)</span></h3>
+          <div className="dash-chart">
+            {manpowerData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={manpowerData} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+                  <defs>
+                    <linearGradient id="grad-manpower" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.25} />
+                      <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+                  <XAxis dataKey="d" tick={{ fill: 'var(--chart-axis)', fontSize: 11 }} stroke="var(--chart-grid)" />
+                  <YAxis tick={{ fill: 'var(--chart-axis)', fontSize: 11 }} stroke="var(--chart-grid)" width={40} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL} itemStyle={TOOLTIP_ITEM} />
+                  <Area
+                    type="monotone"
+                    dataKey="인력"
+                    stroke="var(--chart-1)"
+                    strokeWidth={2}
+                    fill="url(#grad-manpower)"
+                    dot={false}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <EmptyState compact icon="📈" title="공사일보 데이터가 없습니다" desc="일보를 입력하면 인력 추이가 표시됩니다." />
+            )}
+          </div>
+          <p className="muted dash-hint">
+            공사일보 {logs.length}건 · <button className="cde-link" onClick={() => navigate(`/project/${projectId}/logs`)}>일보 입력 →</button>
+          </p>
+        </article>
+
+        {/* CHART — 기성 계획 vs 실적 (2계열: 범례 + 색+선유형 이중 인코딩) */}
+        <article className="bento-chart card">
+          <h3>기성 현황 <span className="muted">(계획 vs 실적 %)</span></h3>
+          <div className="dash-chart">
+            {monthlyData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={monthlyData} margin={{ top: 8, right: 8, bottom: 0, left: -16 }}>
+                  <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+                  <XAxis dataKey="ym" tick={{ fill: 'var(--chart-axis)', fontSize: 11 }} stroke="var(--chart-grid)" />
+                  <YAxis tick={{ fill: 'var(--chart-axis)', fontSize: 11 }} stroke="var(--chart-grid)" width={40} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={TOOLTIP_LABEL} itemStyle={TOOLTIP_ITEM} />
+                  <Line type="monotone" dataKey="계획" stroke="var(--chart-2)" strokeWidth={2} strokeDasharray="5 4" dot={false} />
+                  <Line type="monotone" dataKey="실적" stroke="var(--chart-1)" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <EmptyState compact icon="📊" title="월별 기성 데이터가 없습니다" desc="편집에서 월별 계획·실적을 입력하세요." />
+            )}
+          </div>
+          <div className="dash-chart-legend" aria-hidden>
+            <span><i style={{ borderTopColor: 'var(--chart-1)' }} /> 실적</span>
+            <span><i style={{ borderTopColor: 'var(--chart-2)', borderTopStyle: 'dashed' }} /> 계획</span>
+            <span className="muted">누적 기성 {formatAmount(monthly.reduce((s, m) => s + Number(m.billing_amount), 0))}원</span>
+          </div>
+        </article>
+
+        {/* WIDE — 마일스톤 타임라인 */}
+        {milestones.length > 0 && (
+          <article className="bento-wide card">
+            <h3>마일스톤</h3>
+            <div className="ms-chips">
+              {milestones.map((m) => (
+                <div key={m.id} className={`ms-chip ${ddayKpiClass(m.target_date)}`}>
+                  <span className="ms-chip__d tabular">{ddayLabel(m.target_date)}</span>
+                  <span className="ms-chip__name">{m.name}</span>
+                  <span className="ms-chip__date">{formatDate(m.target_date)}</span>
+                </div>
+              ))}
+            </div>
+          </article>
+        )}
       </section>
 
       {edit && (
@@ -234,66 +386,6 @@ export function Dashboard() {
         </section>
       )}
 
-      {/* ---- 전체 진행률 ---- */}
-      <section className="card dash-progress">
-        <div className="dash-progress-head">
-          <h3>전체 진행률</h3>
-          <span className="dash-progress-pct">{progress.toFixed(0)}%</span>
-        </div>
-        <div className="dash-bar"><div className="dash-bar-fill" style={{ width: `${Math.min(100, progress)}%` }} /></div>
-        {info?.summary && <p className="muted dash-summary">{info.summary}</p>}
-      </section>
-
-      {/* ---- 차트 + 스탯 그리드 ---- */}
-      <section className="dash-grid">
-        <div className="card">
-          <h3>공사일지 현황 <span className="muted">(투입 인력 추이)</span></h3>
-          <MiniChart
-            series={[{ values: logsAsc.map((l) => l.manpower), color: 'var(--accent)', fill: true }]}
-            labels={logsAsc.length ? [logsAsc[0].log_date.slice(5), logsAsc[logsAsc.length - 1].log_date.slice(5)] : undefined}
-          />
-          <p className="muted dash-hint">공사일보 {logs.length}건 · <button className="cde-link" onClick={() => navigate(`/project/${projectId}/logs`)}>일보 입력 →</button></p>
-        </div>
-
-        <div className="card">
-          <h3>기성 현황 <span className="muted">(계획 vs 실적 %)</span></h3>
-          <MiniChart
-            series={[
-              { values: monthly.map((m) => Number(m.planned_pct)), color: 'var(--muted)' },
-              { values: monthly.map((m) => Number(m.actual_pct)), color: 'var(--accent)', fill: true },
-            ]}
-            labels={monthly.length ? [monthly[0].ym, monthly[monthly.length - 1].ym] : undefined}
-          />
-          <p className="muted dash-hint">
-            누적 기성 {formatAmount(monthly.reduce((s, m) => s + Number(m.billing_amount), 0))}원
-          </p>
-        </div>
-
-        <button className="card dash-stat dash-link-card" onClick={() => navigate(`/project/${projectId}/model`)}>
-          <h3>통합모델 (3D)</h3>
-          <div className="dash-stat-big">🧊</div>
-          <p className="muted">3D 통합모델 · 이슈 확인 →</p>
-        </button>
-
-        <div className="card dash-stat">
-          <h3>투입 인력</h3>
-          <div className="dash-stat-big">{latest?.manpower ?? 0}<small>명</small></div>
-          <p className="muted">{latest ? formatDate(latest.log_date) + ' 기준' : '일보 없음'}</p>
-        </div>
-
-        <div className="card dash-stat">
-          <h3>장비 현황</h3>
-          <div className="dash-stat-big">{latest?.equipment ?? 0}<small>대</small></div>
-          <p className="muted">{latest ? formatDate(latest.log_date) + ' 기준' : '일보 없음'}</p>
-        </div>
-
-        <button className="card dash-stat dash-link-card" onClick={() => navigate(`/project/${projectId}/issues`)}>
-          <h3>미해결 이슈</h3>
-          <div className="dash-stat-big">{openIssues}<small>건</small></div>
-          <p className="muted">협업 · 이슈 관리 →</p>
-        </button>
-      </section>
-
       {/* ---- 월별 실적 편집 표 ---- */}
       {edit && (
         <section className="dash-edit card">
@@ -325,28 +417,6 @@ export function Dashboard() {
       )}
 
       {msg && <p className="muted dash-msg">{msg}</p>}
-    </div>
-  );
-}
-
-function MilestoneCard({
-  label,
-  big,
-  note,
-  onDelete,
-}: {
-  label: string;
-  date: string | null;
-  big: string;
-  note: string;
-  onDelete?: () => void;
-}) {
-  return (
-    <div className="dash-ms">
-      <span className="dash-ms-label">{label}</span>
-      <span className="dash-ms-big">{big}</span>
-      <span className="dash-ms-note muted">{note}</span>
-      {onDelete && <button className="dash-ms-del danger" onClick={onDelete}>×</button>}
     </div>
   );
 }
