@@ -3934,36 +3934,82 @@ button.danger:hover:not(:disabled) {
   font-size: 12px;
   font-weight: 600;
 }
-.issue-comment-compose {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.issue-mention-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  align-items: center;
-  font-size: 12px;
-}
-.issue-mention-chip {
-  padding: 1px 8px;
-  border-radius: var(--radius-pill, 999px);
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
-  opacity: 0.6;
-}
-.issue-mention-chip.is-on {
-  opacity: 1;
-  border-color: var(--accent);
-  color: var(--accent);
-}
 .issue-comment-add {
   display: flex;
   gap: 8px;
+}
+.member-org-input {
+  width: 100%;
+  min-width: 110px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+.member-org-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* @멘션 자동완성 */
+.mention-input {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.mention-input input {
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  color: var(--text);
+  font-size: 13px;
+}
+.mention-input input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.mention-list {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 4px);
+  z-index: var(--z-popover, 60);
+  min-width: 200px;
+  max-width: 320px;
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.2));
+}
+.mention-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+}
+.mention-list li.is-hi {
+  background: var(--accent-soft, var(--panel-2));
+}
+.mention-name {
+  font-weight: 600;
+  color: var(--text);
+}
+.mention-company {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
 }
 .issue-comment-add input {
   flex: 1;

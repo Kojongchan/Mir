@@ -22,6 +22,8 @@ export interface ProfileRow {
 export interface MemberRow {
   user_id: string;
   role: MemberRole;
+  company: string | null; // 소속(회사/기관), 0034
+  duty: string | null; // 담당업무(직무), 0034
 }
 
 // ---------- profiles (users) -----------------------------------------
@@ -73,12 +75,32 @@ export async function deleteProject(id: string): Promise<void> {
 // ---------- memberships ----------------------------------------------
 
 export async function listMembers(projectId: string): Promise<MemberRow[]> {
+  // 0034(company/duty) 미적용 환경 폴백.
+  const withOrg = await supabase
+    .from('project_members')
+    .select('user_id, role, company, duty')
+    .eq('project_id', projectId);
+  if (!withOrg.error) return (withOrg.data ?? []) as MemberRow[];
   const { data, error } = await supabase
     .from('project_members')
     .select('user_id, role')
     .eq('project_id', projectId);
   if (error) throw error;
-  return (data ?? []) as MemberRow[];
+  return (data ?? []).map((r) => ({ ...r, company: null, duty: null })) as MemberRow[];
+}
+
+/** 소속·담당업무 갱신(프로젝트 관리자 이상 — RLS 0023 members_update). */
+export async function setMemberOrg(
+  projectId: string,
+  userId: string,
+  fields: { company?: string | null; duty?: string | null },
+): Promise<void> {
+  const { error } = await supabase
+    .from('project_members')
+    .update(fields)
+    .eq('project_id', projectId)
+    .eq('user_id', userId);
+  if (error) throw error;
 }
 
 /** Add a user to a project, or update their role if already a member. */

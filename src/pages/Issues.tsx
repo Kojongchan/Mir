@@ -30,6 +30,7 @@ import {
 import { listProjectMembers, type ProjectMember } from '../lib/members';
 import { formatDate } from '../lib/dashboard';
 import { Attachments } from '../components/Attachments';
+import { MentionInput } from '../components/MentionInput';
 import { useProjectRole } from '../auth/useProjectRole';
 
 /** 협업 · 이슈/지적 관리 — 상태 워크플로우·담당자·마감 추적 트래커. */
@@ -70,7 +71,11 @@ export function Issues() {
   }, [projectId]);
 
   useEffect(() => {
-    if (focusIssueId) setOpenId(focusIssueId);
+    if (focusIssueId) {
+      setOpenId(focusIssueId);
+      onRead(focusIssueId); // 알림에서 진입 시 읽음 처리
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusIssueId]);
 
   const refresh = async () => {
@@ -185,7 +190,7 @@ export function Issues() {
             <label>담당자
               <select value={form.assignee_id} onChange={(e) => setForm({ ...form, assignee_id: e.target.value })}>
                 <option value="">미지정</option>
-                {members.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                {members.map((m) => <option key={m.id} value={m.id}>{m.name}{m.company ? ` · ${m.company}` : ''}</option>)}
               </select>
             </label>
             <label>마감일<input type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} /></label>
@@ -369,7 +374,7 @@ function IssueDetail({
   const [comments, setComments] = useState<IssueComment[]>([]);
   const [events, setEvents] = useState<IssueEvent[]>([]);
   const [body, setBody] = useState('');
-  const [mentions, setMentions] = useState<Set<string>>(new Set());
+  const [mentions, setMentions] = useState<string[]>([]);
   const hasLocation = !!issue.model_id && issue.express_id != null;
   const hasGlobal = !!issue.global_id; // APS/ACC 앵커(S49) — GlobalId→dbId 위치보기
 
@@ -380,19 +385,11 @@ function IssueDetail({
     listEvents(issue.id).then(setEvents).catch(() => setEvents([]));
   }, [issue.id, issue.status, issue.assignee_id]);
 
-  const toggleMention = (id: string) =>
-    setMentions((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
   const onAdd = async () => {
     if (!body.trim()) return;
-    await addComment(issue, body.trim(), authorName, [...mentions]);
+    await addComment(issue, body.trim(), authorName, mentions);
     setBody('');
-    setMentions(new Set());
+    setMentions([]);
     setComments(await listComments(issue.id));
     onCommented();
   };
@@ -493,27 +490,16 @@ function IssueDetail({
         {comments.length === 0 && <p className="muted">코멘트가 없습니다.</p>}
       </div>
       {canEdit && (
-        <div className="issue-comment-compose">
-          {members.length > 0 && (
-            <div className="issue-mention-chips">
-              <span className="muted">멘션:</span>
-              {members.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  className={`issue-mention-chip${mentions.has(m.id) ? ' is-on' : ''}`}
-                  onClick={() => toggleMention(m.id)}
-                  aria-pressed={mentions.has(m.id)}
-                >
-                  @{m.name}
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="issue-comment-add">
-            <input value={body} placeholder="코멘트 입력 (아래 칩으로 @멘션)" onChange={(e) => setBody(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && onAdd()} />
-            <button onClick={onAdd}>등록</button>
-          </div>
+        <div className="issue-comment-add">
+          <MentionInput
+            value={body}
+            onChange={setBody}
+            members={members}
+            onMentionsChange={setMentions}
+            onEnter={onAdd}
+            placeholder="코멘트 입력 (@ 입력 시 구성원 선택)"
+          />
+          <button onClick={onAdd}>등록</button>
         </div>
       )}
     </div>

@@ -41,8 +41,10 @@ export function NotificationBell() {
       refreshCount();
     }
     setOpen(false);
+    // 클릭 시 해당 이슈/간섭으로 이동 — 이슈는 목록에서 그 항목을 펼치도록 state 전달.
     if (n.clash_id) navigate(`/project/${n.project_id}/clash`);
-    else if (n.issue_id) navigate(`/project/${n.project_id}/issues`);
+    else if (n.issue_id)
+      navigate(`/project/${n.project_id}/issues`, { state: { focusIssueId: n.issue_id } });
   };
 
   const onMarkAll = async () => {
