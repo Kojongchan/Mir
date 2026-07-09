@@ -4125,6 +4125,102 @@ button.danger:hover:not(:disabled) {
   min-width: 0;
 }
 
+/* ---- 이슈 상세 = 보고서형 블록 ---- */
+.issue-report {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 4px 12px;
+}
+.issue-block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--panel);
+  overflow: hidden;
+}
+.issue-block__h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+/* 첫 3px 컬러 액센트로 섹션 시작을 눈에 띄게 */
+.issue-block__h::before {
+  content: '';
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+button.issue-block__h,
+.issue-block__toggle {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+}
+.issue-block__toggle .issue-block__chev {
+  margin-left: auto;
+  color: var(--muted);
+}
+.issue-block__b {
+  padding: 10px 12px;
+}
+/* 첨부 블록: Attachments 자체 헤더를 섹션 헤더처럼 */
+.issue-block--attach .attach {
+  padding: 0;
+}
+.issue-block--attach .attach-head {
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+}
+.issue-block--attach .attach-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.issue-block--attach .attach-label::before {
+  content: '';
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.issue-block--attach .attach-grid,
+.issue-block--attach .attach > p {
+  padding: 10px 12px 0;
+}
+/* 변경이력 넘버링 + 우측 시간 */
+.issue-event-no {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-weight: 700;
+  min-width: 30px;
+}
+.issue-event-meta {
+  flex-shrink: 0;
+  font-size: 11px;
+  margin-left: auto;
+  text-align: right;
+}
+/* 코멘트 본문 인라인 @멘션 하이라이트 */
+.mention-tag {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* ---- 알림 종 (상단바) ---- */
 .notif {
   position: relative;

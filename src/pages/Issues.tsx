@@ -397,10 +397,10 @@ function IssueDetail({
   const [events, setEvents] = useState<IssueEvent[]>([]);
   const [body, setBody] = useState('');
   const [mentions, setMentions] = useState<string[]>([]);
+  const [histOpen, setHistOpen] = useState(false);
   const hasLocation = !!issue.model_id && issue.express_id != null;
   const hasGlobal = !!issue.global_id; // APS/ACC 앵커(S49) — GlobalId→dbId 위치보기
 
-  const nameOf = (id: string) => members.find((m) => m.id === id)?.name ?? '구성원';
   const assignedMember = members.find((m) => m.id === issue.assignee_id) ?? null;
 
   useEffect(() => {
@@ -417,135 +417,178 @@ function IssueDetail({
     onCommented();
   };
 
+  const hasAnyLocation = hasLocation || hasGlobal || !!issue.viewpoint_id;
+
   return (
-    <div className="issue-detail">
-      {issue.description && <p className="issue-desc">{issue.description}</p>}
-      <p className="muted issue-meta">
-        등록 {issue.created_by_name || '—'} · {formatDate(issue.created_at.slice(0, 10))}
-      </p>
-
-      {/* 상세 요약 — 상태·우선순위·담당(소속/담당업무)·마감 */}
-      <div className="issue-facts">
-        <span><b>상태</b> {STATUS_LABEL[issue.status]}</span>
-        <span><b>우선순위</b> {PRIORITY_LABEL[issue.priority]}</span>
-        <span>
-          <b>담당</b>{' '}
-          {assignedMember ? memberLabel(assignedMember) : issue.assignee_name || '미지정'}
-        </span>
-        <span><b>마감</b> {issue.due_date ? formatDate(issue.due_date) : '—'}</span>
-      </div>
-
-      {canEdit && (
-        <div className="issue-assign-row">
-          <label>담당자 배정
-            <select value={issue.assignee_id ?? ''} onChange={(e) => onAssign(issue, e.target.value)}>
-              <option value="">미지정</option>
-              {members.map((m) => <option key={m.id} value={m.id}>{memberLabel(m)}</option>)}
-            </select>
-          </label>
-          <label>우선순위
-            <select value={issue.priority} onChange={(e) => onMeta(issue, { priority: e.target.value as IssuePriority })}>
-              {ISSUE_PRIORITIES.map((p) => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
-            </select>
-          </label>
-          <label>마감일
-            <input type="date" value={issue.due_date ?? ''} onChange={(e) => onMeta(issue, { due_date: e.target.value || null })} />
-          </label>
+    <div className="issue-detail issue-report">
+      {/* 내용 */}
+      <section className="issue-block">
+        <div className="issue-block__h">내용</div>
+        <div className="issue-block__b">
+          {issue.description ? (
+            <p className="issue-desc">{issue.description}</p>
+          ) : (
+            <p className="muted" style={{ margin: 0 }}>내용 없음</p>
+          )}
+          <p className="muted issue-meta" style={{ margin: '8px 0 0' }}>
+            등록 {issue.created_by_name || '—'} · {formatDate(issue.created_at.slice(0, 10))}
+          </p>
         </div>
-      )}
+      </section>
 
-      {(hasLocation || hasGlobal || issue.viewpoint_id) && (
-        <p style={{ margin: '0 0 10px', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {hasGlobal && (
-            <button
-              onClick={() =>
-                navigate(
-                  issue.global_id_b
-                    ? `/project/${issue.project_id}/clash?focusClashA=${encodeURIComponent(issue.global_id!)}&focusClashB=${encodeURIComponent(issue.global_id_b)}`
-                    : `/project/${issue.project_id}/acc?focusGlobalId=${encodeURIComponent(issue.global_id!)}`,
-                )
-              }
-            >
-              📍 위치 보기 {issue.global_id_b ? '(간섭 뷰)' : '(ACC 모델)'}
-            </button>
-          )}
-          {hasLocation && (
-            <button
-              onClick={() =>
-                navigate(`/project/${issue.project_id}/model`, {
-                  state: { focus: { modelDbId: issue.model_id, expressID: issue.express_id } },
-                })
-              }
-            >
-              📍 위치 보기 (3D 객체 #{issue.express_id})
-            </button>
-          )}
-          {issue.viewpoint_id && (
-            <button
-              onClick={() =>
-                navigate(`/project/${issue.project_id}/model`, {
-                  state: { openViewpoint: issue.viewpoint_id },
-                })
-              }
-            >
-              📌 뷰포인트 열기
-            </button>
-          )}
-        </p>
-      )}
-
-      {events.length > 0 && (
-        <div className="issue-history">
-          <h4 className="issue-section-h">변경 이력</h4>
-          {events.map((ev) => (
-            <div className="issue-event" key={ev.id}>
-              <span className="issue-event-when">{new Date(ev.created_at).toLocaleString('ko-KR')}</span>
-              <span className="issue-event-text">{eventText(ev)}</span>
-              <span className="muted">{ev.actor_name || '—'}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <Attachments
-        projectId={issue.project_id}
-        targetType="issue"
-        targetId={issue.id}
-        canEdit={canEdit}
-        label="첨부 문서·사진"
-      />
-
-      <div className="issue-comments">
-        <h4 className="issue-section-h">코멘트</h4>
-        {comments.map((c) => (
-          <div className="issue-comment" key={c.id}>
-            <span className="issue-comment-author">{c.author_name || '익명'}</span>
-            <span className="issue-comment-body">
-              {c.body}
-              {c.mentions.length > 0 && (
-                <span className="issue-comment-mentions"> @{c.mentions.map(nameOf).join(', @')}</span>
-              )}
-            </span>
-            <span className="muted issue-comment-when">{new Date(c.created_at).toLocaleString('ko-KR')}</span>
+      {/* 속성 — 상태·우선순위·담당(소속/담당업무)·마감 + 편집 */}
+      <section className="issue-block">
+        <div className="issue-block__h">속성</div>
+        <div className="issue-block__b">
+          <div className="issue-facts">
+            <span><b>상태</b> <span className={`issue-badge issue-${issue.status}`}>{STATUS_LABEL[issue.status]}</span></span>
+            <span><b>우선순위</b> <span className={`issue-prio issue-prio-${issue.priority}`}>{PRIORITY_LABEL[issue.priority]}</span></span>
+            <span><b>담당</b> {assignedMember ? memberLabel(assignedMember) : issue.assignee_name || '미지정'}</span>
+            <span><b>마감</b> {issue.due_date ? formatDate(issue.due_date) : '—'}</span>
           </div>
-        ))}
-        {comments.length === 0 && <p className="muted">코멘트가 없습니다.</p>}
-      </div>
-      {canEdit && (
-        <div className="issue-comment-add">
-          <MentionInput
-            value={body}
-            onChange={setBody}
-            members={members}
-            onMentionsChange={setMentions}
-            onEnter={onAdd}
-            placeholder="코멘트 입력 (@ 입력 시 구성원 선택)"
-          />
-          <button onClick={onAdd}>등록</button>
+          {canEdit && (
+            <div className="issue-assign-row" style={{ marginTop: 10 }}>
+              <label>담당자 배정
+                <select value={issue.assignee_id ?? ''} onChange={(e) => onAssign(issue, e.target.value)}>
+                  <option value="">미지정</option>
+                  {members.map((m) => <option key={m.id} value={m.id}>{memberLabel(m)}</option>)}
+                </select>
+              </label>
+              <label>우선순위
+                <select value={issue.priority} onChange={(e) => onMeta(issue, { priority: e.target.value as IssuePriority })}>
+                  {ISSUE_PRIORITIES.map((p) => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
+                </select>
+              </label>
+              <label>마감일
+                <input type="date" value={issue.due_date ?? ''} onChange={(e) => onMeta(issue, { due_date: e.target.value || null })} />
+              </label>
+            </div>
+          )}
+          {hasAnyLocation && (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+              {hasGlobal && (
+                <button
+                  onClick={() =>
+                    navigate(
+                      issue.global_id_b
+                        ? `/project/${issue.project_id}/clash?focusClashA=${encodeURIComponent(issue.global_id!)}&focusClashB=${encodeURIComponent(issue.global_id_b)}`
+                        : `/project/${issue.project_id}/acc?focusGlobalId=${encodeURIComponent(issue.global_id!)}`,
+                    )
+                  }
+                >
+                  📍 위치 보기 {issue.global_id_b ? '(간섭 뷰)' : '(ACC 모델)'}
+                </button>
+              )}
+              {hasLocation && (
+                <button
+                  onClick={() =>
+                    navigate(`/project/${issue.project_id}/model`, {
+                      state: { focus: { modelDbId: issue.model_id, expressID: issue.express_id } },
+                    })
+                  }
+                >
+                  📍 위치 보기 (3D 객체 #{issue.express_id})
+                </button>
+              )}
+              {issue.viewpoint_id && (
+                <button
+                  onClick={() =>
+                    navigate(`/project/${issue.project_id}/model`, { state: { openViewpoint: issue.viewpoint_id } })
+                  }
+                >
+                  📌 뷰포인트 열기
+                </button>
+              )}
+            </div>
+          )}
         </div>
-      )}
+      </section>
+
+      {/* 첨부 — Attachments 자체 헤더를 섹션 헤더로 사용 */}
+      <section className="issue-block issue-block--attach">
+        <Attachments
+          projectId={issue.project_id}
+          targetType="issue"
+          targetId={issue.id}
+          canEdit={canEdit}
+          label="첨부 문서·사진"
+        />
+      </section>
+
+      {/* 코멘트 */}
+      <section className="issue-block">
+        <div className="issue-block__h">코멘트 · {comments.length}</div>
+        <div className="issue-block__b">
+          <div className="issue-comments">
+            {comments.map((c) => (
+              <div className="issue-comment" key={c.id}>
+                <span className="issue-comment-author">{c.author_name || '익명'}</span>
+                <span className="issue-comment-body">{renderCommentBody(c.body, members)}</span>
+                <span className="muted issue-comment-when">{fmtDateTime(c.created_at)}</span>
+              </div>
+            ))}
+            {comments.length === 0 && <p className="muted" style={{ margin: 0 }}>코멘트가 없습니다.</p>}
+          </div>
+          {canEdit && (
+            <div className="issue-comment-add" style={{ marginTop: 8 }}>
+              <MentionInput
+                value={body}
+                onChange={setBody}
+                members={members}
+                onMentionsChange={setMentions}
+                onEnter={onAdd}
+                placeholder="코멘트 입력 (@ 입력 시 구성원 선택)"
+              />
+              <button onClick={onAdd}>등록</button>
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* 변경이력 — 접기/펼치기(자주 바뀌면 길어져서 기본 접힘) */}
+      <section className="issue-block">
+        <button className="issue-block__h issue-block__toggle" onClick={() => setHistOpen((o) => !o)} aria-expanded={histOpen}>
+          <span>변경이력 · {events.length}</span>
+          <span className="issue-block__chev">{histOpen ? '▾' : '▸'}</span>
+        </button>
+        {histOpen && (
+          <div className="issue-block__b">
+            {events.length === 0 && <p className="muted" style={{ margin: 0 }}>이력이 없습니다.</p>}
+            {events.map((ev, i) => (
+              <div className="issue-event" key={ev.id}>
+                <span className="issue-event-no">#{i + 1}</span>
+                <span className="issue-event-text">{eventText(ev)}</span>
+                <span className="muted issue-event-meta">{ev.actor_name || '—'} · {fmtDateTime(ev.created_at)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
+}
+
+function fmtDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+/** 코멘트 본문의 @이름(구성원 일치, 경계)만 파랗게 인라인 하이라이트. */
+function renderCommentBody(text: string, members: ProjectMember[]): React.ReactNode {
+  const names = members.map((m) => m.name).filter(Boolean).sort((a, b) => b.length - a.length);
+  if (names.length === 0) return text;
+  const esc = names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  const re = new RegExp(`@(?:${esc.join('|')})(?=[\\s.,!?)\\]}·]|$)`, 'g');
+  const out: React.ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let k = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push(<span className="mention-tag" key={k++}>{m[0]}</span>);
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
 }
 
 function eventText(ev: IssueEvent): string {
