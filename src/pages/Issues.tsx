@@ -536,14 +536,16 @@ function IssueDetail({
         </div>
       </section>
 
-      {/* 내용 (+ 편집 + 위치 보기) */}
+      {/* 내용 (+ 편집 + 위치 보기) — 헤더 토글 양식은 속성과 동일 */}
       <section className="issue-block">
-        <div className="issue-block__h">
+        <button
+          className="issue-block__h issue-block__toggle"
+          onClick={() => { if (!canEdit) return; if (!editContent) setDescDraft(issue.description ?? ''); setEditContent((o) => !o); }}
+          aria-expanded={editContent}
+        >
           <span>내용</span>
-          {canEdit && !editContent && (
-            <span className="issue-block__chev" style={{ cursor: 'pointer' }} onClick={() => { setDescDraft(issue.description ?? ''); setEditContent(true); }}>✏ 편집</span>
-          )}
-        </div>
+          {canEdit && <span className="issue-block__chev">{editContent ? '▾ 편집 닫기' : '▸ 편집'}</span>}
+        </button>
         <div className="issue-block__b">
           {editContent ? (
             <div>
