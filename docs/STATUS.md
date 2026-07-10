@@ -3,6 +3,57 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 F2 — 협업·이슈 고도화(타입 분화·3뷰·뷰포인트·출력·현장등록) (2026-07-10)
+> branch `claude/issue-collaboration-upgrade-o4uzc0`. typecheck·build 통과.
+> .docx/xlsx 생성은 node 스모크 테스트로 실검증(3종 양식 렌더·이스케이프·잔여태그 0 확인).
+
+### ✅ 한 일
+1. **마이그레이션 0038_issue_types.sql(추가형)**: `issues.type`(general·rfi·punch·safety·quality) +
+   `issues.meta jsonb`(타입별 필드·현장 GPS 태그) + **`issue_viewpoints`**(camera_state jsonb·
+   markup jsonb·snapshot 데이터URL) + issue_events kind 확장(meta·viewpoint_add/del).
+   RLS 읽기=is_member·쓰기=is_editor.
+2. **타입 분화(`lib/issueTypes.ts` 선언형 레지스트리)**: 타입별 라벨·아이콘·색 + 전용 필드 스키마
+   (RFI=상대처·응답기한·응답 / 하자=위치·협력사·심각도 / 안전=위험요소·조치 / 품질=기준·부적합) +
+   타입별 워크플로우 상태 라벨(RFI: 질의 등록→회신 대기→회신 완료→종결 등 — DB 상태 키는 공통 유지).
+   폼·상세·칸반·엑셀·양식이 이 스키마 하나를 읽음(하드코딩 분산 없음).
+3. **3뷰 전환(`Issues.tsx` 개편)**: ☰ 리스트(유형 컬럼+**검색**(제목·내용·담당·타입필드)+**정렬**
+   (최신/오래된/마감임박/우선순위)+타입 칩 필터) · 📋 **칸반**(상태 5열, HTML5 DnD 카드 드래그로
+   상태 이동, 권한=canEdit 또는 담당자 본인) · 📍 **핀 뷰**(3D GlobalId 앵커 이슈 + 도면핀(0018)
+   이슈를 위치별로 모아 상호 점프). 뷰 선택은 localStorage 유지. 칸반/핀 뷰 상세=넓은 모달.
+4. **협의 완결 — 3D 뷰포인트/마크업**(`lib/issueViewpoints.ts`): 통합모델(3D)에서 이슈 생성 시
+   **현재 뷰 자동 저장**(카메라 getState+스냅샷), 이슈 핀 팝업에 '📌 현재 뷰 저장'. 이슈 상세
+   뷰포인트 그리드(스냅샷+마크업 오버레이) → **3D에서 열기**(navigation state `applyApsState` 로
+   restoreState — AccModels 가 마운트/기존화면 양쪽 처리) · **✏ 마크업 편집기**(MarkupOverlay 재사용,
+   선/사각형/화살표/텍스트+5색, markup jsonb 저장) · 삭제. 전부 변경이력 기록.
+5. **연결(상호 점프)**: 이슈 상세 '위치 보기' 의 **잔존 버그 수정 — 존재하지 않는 `/acc` 라우트 →
+   `/model`**. 이슈↔간섭(focusClashA/B, 기존 유지)·이슈↔도면(**listPinsForIssue** → '📐 도면에서
+   보기', Drawings 가 `openDrawingId` state 수용)·핀 뷰에서 3D/도면 진입. (이슈↔회의록은 회의록
+   기능(R2) 자체가 미구현이라 보류.)
+6. **출력/양식(`lib/issueExport.ts`)**: **엑셀 export**(xlsx, 현재 필터·정렬 그대로 반영, 타입별 정보·
+   GPS 컬럼 포함) + **RFI 질의서/지적통보서 .docx**(docxtemplater+pizzip — 런타임 생성 템플릿,
+   회사 양식 확정 시 템플릿만 교체) + **인쇄용 양식**(A4 CSS, 첨부사진·뷰포인트 스냅샷 포함 →
+   브라우저 'PDF로 저장'). 전부 dynamic import 로 코드 스플리팅 유지.
+7. **현장(모바일) 등록 + 오프라인**(`lib/issueDrafts.ts`): '📷 현장 등록' 모달 — 사진 촬영
+   (capture=environment, 1280px 다운스케일)·**GPS·시각 자동 태깅**(meta.site, 상세·엑셀·양식에 표시).
+   오프라인/실패 시 **localStorage 초안 큐** → 온라인 복귀·재진입 시 자동 동기화(이슈 생성+사진
+   attachments 업로드). 상단에 '초안 N건 대기' 뱃지.
+8. **기존 유지(회귀 방지)**: 코멘트 @멘션·읽음/안읽음·관련자료(ACC)·간섭 이미지·변경이력·담당/마감
+   편집 전부 그대로. `listIssues` 는 0038 미적용 DB 폴백(type=general·meta={}) — 마이그 전에도 동작.
+   '간섭 검토 이미지' 섹션은 현장 사진도 담게 되어 '사진·이미지'로 명칭 변경.
+
+### ⚠️ 적용/검증 필요 (이 샌드박스는 auth·Supabase·ACC 불가)
+- **0038 적용 필수**. 적용 전에도 기존 기능은 폴백으로 동작하나 타입/뷰포인트는 저장 안 됨.
+- 라이브 눈확인 권장: 칸반 드래그(담당자 본인 상태변경 포함), 3D '현재 뷰 저장'→상세 썸네일→
+  '3D에서 열기' 복원, 도면핀 상호 점프, 모바일 사진+GPS(HTTPS 필요), 오프라인 초안 동기화,
+  .docx 를 MS Word/한컴에서 열어 서식 확인(node 검증은 XML 유효성까지).
+- 신규 npm 의존성: docxtemplater·pizzip (양식 .docx).
+
+### 인수인계 한 줄
+이슈 고도화 완결(0038: 타입 5종+meta+뷰포인트 / 리스트·칸반·핀 3뷰 / 뷰포인트·마크업 / 엑셀·RFI·
+지적통보서 / 현장등록·오프라인 초안 / `/acc`→`/model` 버그픽스). typecheck·build·docx/xlsx 스모크 OK.
+다음은 0038 적용 후 라이브 검증.
+
+---
 ## 📋 C12 — 첨부 파일크기 저장 → 다운로드 % 계산(우회) (2026-07-09)
 > branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과.
 

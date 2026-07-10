@@ -6386,3 +6386,290 @@ textarea.input {
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   }
 }
+
+/* =====================================================================
+   협업·이슈 고도화 — 타입 뱃지 · 3뷰(리스트/칸반/핀) · 뷰포인트 · 현장등록
+   ===================================================================== */
+
+/* 이슈 타입 뱃지(색은 TYPE_COLOR 인라인 — 여기선 형태만) */
+.issue-type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* 툴바 — 뷰 전환 · 타입 칩 · 검색 · 정렬 */
+.issue-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 4px 0 10px;
+}
+.issue-view-switch {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.issue-view-switch button {
+  border: 0;
+  border-radius: 0;
+  padding: 6px 12px;
+  background: transparent;
+  font-size: 13px;
+}
+.issue-view-switch button + button {
+  border-left: 1px solid var(--border);
+}
+.issue-view-switch button.active {
+  background: var(--color-brand-solid);
+  color: var(--color-text-on-brand);
+  font-weight: 600;
+}
+.issue-type-chips {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.issue-type-chips button {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+.issue-type-chips button.active {
+  background: var(--color-brand-solid);
+  color: var(--color-text-on-brand);
+  border-color: var(--color-brand-solid);
+}
+.issue-search {
+  flex: 1;
+  min-width: 180px;
+  max-width: 340px;
+}
+.issue-draft-badge {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(217, 119, 6, 0.16);
+  color: #b45309;
+  font-weight: 600;
+}
+
+/* 칸반 보드 — 상태 열 + 드래그 카드 */
+.kanban-board {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(180px, 1fr));
+  gap: 10px;
+  align-items: start;
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+.kanban-col {
+  background: var(--panel-2, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+}
+.kanban-col.is-over {
+  outline: 2px dashed var(--color-brand-solid);
+  outline-offset: -2px;
+}
+.kanban-col__h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.kanban-col__b {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 60px;
+}
+.kanban-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: grab;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.08));
+}
+.kanban-card:active {
+  cursor: grabbing;
+}
+.kanban-card:hover {
+  border-color: var(--color-brand-solid);
+}
+.kanban-card__top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.kanban-card__title {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 4px 0;
+  word-break: break-all;
+}
+.kanban-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+.kanban-empty {
+  font-size: 12px;
+  text-align: center;
+  padding: 12px 0;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+.issue-unread-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--color-brand-accent, #dc2626);
+  margin-left: auto;
+}
+
+/* 핀 뷰 */
+.pinboard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.pinboard .issue-block {
+  padding: 0;
+}
+.pinboard-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+.pinboard-row:last-child {
+  border-bottom: 0;
+}
+.pinboard-group {
+  margin-bottom: 10px;
+}
+.pinboard-group__h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 6px 0;
+}
+
+/* 넓은 모달(칸반/핀 상세·마크업 편집) */
+.modal--wide {
+  width: min(880px, 96vw);
+}
+
+/* 이슈 3D 뷰포인트 그리드 + 마크업 편집기 */
+.issue-vp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+.issue-vp {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.issue-vp__shot {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: var(--panel-2, rgba(0, 0, 0, 0.05));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.issue-vp__shot img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.issue-vp__shot .markup-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.issue-vp__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.issue-vp__title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.issue-vp__acts {
+  display: flex;
+  gap: 6px;
+  padding: 0 8px 8px;
+  flex-wrap: wrap;
+}
+.issue-vp__acts button {
+  font-size: 12px;
+  padding: 3px 8px;
+}
+.issue-vp-editor {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.issue-vp-editor img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.issue-vp-editor .markup-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* 모바일(<=640) — 칸반 가로 스크롤 열 폭 고정, 툴바 줄바꿈 */
+@media (max-width: 640px) {
+  .kanban-board {
+    grid-template-columns: repeat(5, 78vw);
+  }
+  .issue-search {
+    max-width: none;
+    width: 100%;
+  }
+}

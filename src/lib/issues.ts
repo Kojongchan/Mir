@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { notify } from './notifications';
+import type { IssueType } from './issueTypes';
 
 // =====================================================================
 // 협업 · 이슈/지적 관리 데이터층 (Phase 12 / S22, 워크플로우 확장 S30).
@@ -37,6 +38,10 @@ export const OPEN_STATUSES: IssueStatus[] = ['open', 'in_progress', 'on_hold'];
 export interface Issue {
   id: string;
   project_id: string;
+  /** 이슈 타입(0038) — general·rfi·punch·safety·quality. 미적용 DB 폴백 = general. */
+  type: IssueType;
+  /** 타입별 전용 필드(0038, jsonb) — RFI 상대처/응답기한/답변, 현장 GPS 태그(site) 등. */
+  meta: Record<string, unknown>;
   title: string;
   description: string | null;
   status: IssueStatus;
@@ -75,7 +80,10 @@ export type IssueEventKind =
   | 'due'
   | 'file_add'
   | 'file_download'
-  | 'comment';
+  | 'comment'
+  | 'meta'
+  | 'viewpoint_add'
+  | 'viewpoint_del';
 export interface IssueEvent {
   id: string;
   issue_id: string;
@@ -88,15 +96,38 @@ export interface IssueEvent {
 
 const COLS =
   'id, project_id, title, description, status, priority, assignee_id, assignee_name, due_date, model_id, express_id, global_id, global_id_b, viewpoint_id, created_by, created_by_name, created_at, updated_at';
+// 0038(type·meta) 적용 DB 에서만 함께 조회 — 미적용이면 구 컬럼으로 폴백.
+const COLS_TYPED = `${COLS}, type, meta`;
+
+/** type/meta 미포함 행(0038 미적용 폴백)에 기본값을 채워 Issue 로 정규화. */
+function normalizeIssue(row: Record<string, unknown>): Issue {
+  return {
+    ...(row as unknown as Issue),
+    type: ((row.type as string) || 'general') as IssueType,
+    meta: (row.meta as Record<string, unknown>) ?? {},
+  };
+}
 
 export async function listIssues(projectId: string): Promise<Issue[]> {
-  const { data, error } = await supabase
+  const typed = await supabase
     .from('issues')
-    .select(COLS)
+    .select(COLS_TYPED)
     .eq('project_id', projectId)
     .order('created_at', { ascending: false });
-  if (error) throw error;
-  return (data ?? []) as Issue[];
+  let rows: Record<string, unknown>[];
+  if (typed.error) {
+    // 0038 미적용(컬럼 없음) 폴백 — 기존 컬럼만으로 재시도.
+    const legacy = await supabase
+      .from('issues')
+      .select(COLS)
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false });
+    if (legacy.error) throw legacy.error;
+    rows = (legacy.data ?? []) as unknown as Record<string, unknown>[];
+  } else {
+    rows = (typed.data ?? []) as unknown as Record<string, unknown>[];
+  }
+  return rows.map(normalizeIssue);
 }
 
 /** Count of issues not yet closed/resolved — for the dashboard card. */
@@ -115,6 +146,8 @@ export async function createIssue(
   input: {
     title: string;
     description?: string;
+    type?: IssueType;
+    meta?: Record<string, unknown>;
     priority: IssuePriority;
     assignee_id?: string | null;
     assignee_name?: string;
@@ -141,6 +174,9 @@ export async function createIssue(
     created_by: userData.user?.id ?? null,
     created_by_name: authorName,
   };
+  // type/meta 는 0038 컬럼 — 값이 있을 때만 포함(미적용 폴백).
+  if (input.type && input.type !== 'general') payload.type = input.type;
+  if (input.meta && Object.keys(input.meta).length) payload.meta = input.meta;
   // viewpoint_id 는 0017 에서 추가된 컬럼 — 값이 있을 때만 포함(미적용 폴백).
   if (input.viewpoint_id) payload.viewpoint_id = input.viewpoint_id;
   // global_id 는 0026(APS 앵커) — 값이 있을 때만 포함(미적용 폴백).
@@ -252,6 +288,22 @@ export async function updateIssueMeta(
   if (fields.description !== undefined && (fields.description ?? '') !== (issue.description ?? '')) {
     await logEvent(issue.id, issue.project_id, 'content', null, '내용 수정', actorName);
   }
+}
+
+/** 타입별 전용 필드(meta jsonb) 갱신 + 변경이력('meta') 기록. 0038 필요. */
+export async function updateIssueTypeFields(
+  issue: Issue,
+  patch: Record<string, unknown>,
+  changedLabel: string,
+  actorName: string | null,
+): Promise<void> {
+  const meta = { ...issue.meta, ...patch };
+  const { error } = await supabase
+    .from('issues')
+    .update({ meta, updated_at: new Date().toISOString() })
+    .eq('id', issue.id);
+  if (error) throw error;
+  await logEvent(issue.id, issue.project_id, 'meta', null, changedLabel, actorName);
 }
 
 /** 외부(첨부 링크·다운로드 등)에서 이슈 변경이력을 남기기 위한 공개 헬퍼. */

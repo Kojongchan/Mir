@@ -123,6 +123,37 @@ export async function listPins(drawingId: string): Promise<DrawingPin[]> {
   return (data ?? []) as DrawingPin[];
 }
 
+/** 프로젝트 전체에서 이슈가 연결된 도면 핀 목록(이슈 핀 뷰·상호 점프용). */
+export interface IssuePinRef extends DrawingPin {
+  drawing_name: string;
+}
+
+export async function listIssuePins(projectId: string): Promise<IssuePinRef[]> {
+  const { data, error } = await supabase
+    .from('drawing_pins')
+    .select(`${PIN_COLS}, drawings(name)`)
+    .eq('project_id', projectId)
+    .not('issue_id', 'is', null)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return ((data ?? []) as unknown as Array<DrawingPin & { drawings: { name: string } | null }>).map(
+    (r) => ({ ...r, drawing_name: r.drawings?.name ?? '도면' }),
+  );
+}
+
+/** 특정 이슈에 연결된 도면 핀(이슈 상세 → 도면 점프). */
+export async function listPinsForIssue(issueId: string): Promise<IssuePinRef[]> {
+  const { data, error } = await supabase
+    .from('drawing_pins')
+    .select(`${PIN_COLS}, drawings(name)`)
+    .eq('issue_id', issueId)
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+  return ((data ?? []) as unknown as Array<DrawingPin & { drawings: { name: string } | null }>).map(
+    (r) => ({ ...r, drawing_name: r.drawings?.name ?? '도면' }),
+  );
+}
+
 export async function createPin(input: {
   drawingId: string;
   projectId: string;
