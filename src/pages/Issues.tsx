@@ -417,8 +417,8 @@ export function Issues() {
           {(
             [
               ['list', '☰ 리스트'],
-              ['board', '📋 칸반'],
-              ['pins', '📍 핀'],
+              ['board', '🗂 카드'],
+              ['pins', '📍 핀(간섭)'],
             ] as [ViewMode, string][]
           ).map(([v, label]) => (
             <button key={v} role="tab" aria-selected={view === v} className={view === v ? 'active' : ''} onClick={() => setViewMode(v)}>
@@ -1083,8 +1083,9 @@ function IssueDetail({
 
   return (
     <div className="issue-detail issue-report">
-      {/* 속성 — 요약(유형·상태·우선순위·담당·마감)은 항상, 편집은 펼쳐서 */}
-      <section className="issue-block">
+      {/* 속성 — 요약(유형·상태·우선순위·담당·마감)은 항상, 편집은 펼쳐서.
+          --pop: 보고서 드롭다운이 블록 밖으로 온전히 뜨도록 overflow 개방. */}
+      <section className="issue-block issue-block--pop">
         <button className="issue-block__h issue-block__toggle" onClick={() => setPropOpen((o) => !o)} aria-expanded={propOpen}>
           <span>속성</span>
           {canEdit && <span className="issue-block__chev">{propOpen ? '▾ 설정 접기' : '▸ 설정 편집'}</span>}
@@ -1116,8 +1117,11 @@ function IssueDetail({
             </div>
           )}
           <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
-            <button onClick={onFormDocx} title="회사 양식(.docx)으로 저장 — RFI 는 질의서, 그 외 지적통보서">📄 양식(.docx)</button>
-            <button onClick={() => void onFormPrint()} title="인쇄 창에서 'PDF로 저장' 선택 시 양식 PDF">🖨 양식 인쇄·PDF</button>
+            <ReportMenu
+              formLabel={issue.type === 'rfi' ? 'RFI 질의서' : '지적통보서'}
+              onDocx={onFormDocx}
+              onPrint={() => void onFormPrint()}
+            />
           </div>
         </div>
       </section>
@@ -1437,6 +1441,67 @@ function IssueDetail({
           </div>
         )}
       </section>
+    </div>
+  );
+}
+
+// =====================================================================
+// 보고서 메뉴 — 양식 출력(.docx 다운로드 / 인쇄·PDF)을 '보고서' 하위로 묶는다.
+// =====================================================================
+function ReportMenu({
+  formLabel,
+  onDocx,
+  onPrint,
+}: {
+  formLabel: string;
+  onDocx: () => void;
+  onPrint: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // 바깥 클릭 / Esc 로 닫기.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const item = (label: string, desc: string, run: () => void) => (
+    <button
+      className="report-menu__item"
+      onClick={() => {
+        setOpen(false);
+        run();
+      }}
+    >
+      <span>{label}</span>
+      <span className="muted">{desc}</span>
+    </button>
+  );
+
+  return (
+    <div className="report-menu" ref={rootRef}>
+      <button onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}>
+        📑 보고서 {open ? '▴' : '▾'}
+      </button>
+      {open && (
+        <div className="report-menu__pop" role="menu">
+          <div className="report-menu__title">{formLabel}</div>
+          {item('📄 양식 다운로드 (.docx)', '회사 양식 문서로 저장', onDocx)}
+          {item('🖨 인쇄 / PDF 저장', '사진·3D 뷰 포함 인쇄 양식', onPrint)}
+        </div>
+      )}
     </div>
   );
 }

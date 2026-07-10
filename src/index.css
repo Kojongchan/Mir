@@ -6673,3 +6673,56 @@ textarea.input {
     width: 100%;
   }
 }
+
+/* 보고서 메뉴(이슈 상세 — 양식 출력 묶음) */
+.report-menu {
+  position: relative;
+  display: inline-block;
+}
+.report-menu__pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 60;
+  min-width: 240px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.18));
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.report-menu__title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.report-menu__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  padding: 7px 8px;
+  font-size: 13px;
+}
+.report-menu__item .muted {
+  font-size: 11px;
+}
+.report-menu__item:hover {
+  background: var(--color-brand-solid);
+  color: var(--color-text-on-brand);
+}
+.report-menu__item:hover .muted {
+  color: var(--color-text-on-brand);
+  opacity: 0.85;
+}
