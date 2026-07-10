@@ -30,10 +30,12 @@ export async function exportIssuesXlsx(
   projectName: string,
   issues: Issue[],
   all: Issue[],
+  categoryName: (id: string | null) => string = () => '',
 ): Promise<void> {
   const XLSX = await import('xlsx');
   const rows = issues.map((it) => ({
     번호: issueNoOf(it, all),
+    항목: categoryName(it.category_id) || '미지정',
     유형: TYPE_LABEL[it.type],
     제목: it.title,
     상태: statusLabelFor(it.type, it.status, STATUS_LABEL[it.status]),
@@ -51,7 +53,7 @@ export async function exportIssuesXlsx(
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
   ws['!cols'] = [
-    { wch: 6 }, { wch: 10 }, { wch: 40 }, { wch: 10 }, { wch: 8 },
+    { wch: 6 }, { wch: 12 }, { wch: 10 }, { wch: 40 }, { wch: 10 }, { wch: 8 },
     { wch: 14 }, { wch: 11 }, { wch: 12 }, { wch: 11 }, { wch: 50 }, { wch: 40 }, { wch: 22 },
   ];
   const wb = XLSX.utils.book_new();
@@ -134,6 +136,7 @@ export async function exportIssueFormDocx(
   all: Issue[],
   projectName: string,
   authorName: string | null,
+  categoryName = '',
 ): Promise<void> {
   const [{ default: PizZip }, { default: Docxtemplater }] = await Promise.all([
     import('pizzip'),
@@ -146,6 +149,7 @@ export async function exportIssueFormDocx(
     ['문서번호', 'doc_no'],
     ['공사명', 'project'],
     ['제목', 'title'],
+    ['항목', 'category'],
     ['유형', 'type'],
     ['상태', 'status'],
     ['우선순위', 'priority'],
@@ -169,6 +173,7 @@ export async function exportIssueFormDocx(
     doc_no: `${kind === 'rfi' ? 'RFI' : 'NTC'}-${String(no).padStart(4, '0')}`,
     project: projectName || '',
     title: issue.title,
+    category: categoryName || '미지정',
     type: TYPE_LABEL[issue.type],
     status: statusLabelFor(issue.type, issue.status, STATUS_LABEL[issue.status]),
     priority: PRIORITY_LABEL[issue.priority],
@@ -209,6 +214,7 @@ export async function openIssueFormPrint(
   projectName: string,
   attachments: Attachment[],
   viewpoints: IssueViewpoint[],
+  categoryName = '',
 ): Promise<void> {
   const kind = issue.type === 'rfi' ? 'RFI (질의서)' : '지적통보서';
   const no = issueNoOf(issue, all);
@@ -255,6 +261,7 @@ export async function openIssueFormPrint(
 <table>
   <tr><th>공사명</th><td>${esc(projectName)}</td></tr>
   <tr><th>제목</th><td>${esc(issue.title)}</td></tr>
+  <tr><th>항목 / 유형</th><td>${esc(categoryName || '미지정')} / ${esc(TYPE_LABEL[issue.type])}</td></tr>
   <tr><th>상태 / 우선순위</th><td>${esc(statusLabelFor(issue.type, issue.status, STATUS_LABEL[issue.status]))} / ${esc(PRIORITY_LABEL[issue.priority])}</td></tr>
   <tr><th>담당자</th><td>${esc(issue.assignee_name ?? '미지정')}</td></tr>
   <tr><th>마감일</th><td>${esc(fmt(issue.due_date) || '-')}</td></tr>

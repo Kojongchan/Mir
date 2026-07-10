@@ -6726,3 +6726,31 @@ textarea.input {
   color: var(--color-text-on-brand);
   opacity: 0.85;
 }
+
+/* 이슈 항목(공종·대상 분류) 뱃지 · 필터 · 관리 행 */
+.issue-cat-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--color-brand-solid, #2563eb) 12%, transparent);
+  color: var(--color-brand-solid, #2563eb);
+  border: 1px solid color-mix(in srgb, var(--color-brand-solid, #2563eb) 30%, transparent);
+  white-space: nowrap;
+}
+.issue-cat-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.issue-cat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.issue-cat-row:last-of-type {
+  border-bottom: 0;
+}

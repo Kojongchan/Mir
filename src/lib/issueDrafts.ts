@@ -18,6 +18,8 @@ export interface IssueDraft {
   type: IssueType;
   priority: IssuePriority;
   meta: Record<string, unknown>;
+  /** 항목(공종·대상 분류, 0039) — 미지정 = null. */
+  category_id: string | null;
   site: SiteTag | null;
   /** 사진 데이터URL(다운스케일 JPEG) — 용량 보호를 위해 축소 저장. */
   photo: string | null;
@@ -120,6 +122,7 @@ async function syncOne(draft: IssueDraft, authorName: string | null): Promise<vo
       description: draft.description || undefined,
       type: draft.type,
       meta,
+      category_id: draft.category_id,
       priority: draft.priority,
     },
     authorName,

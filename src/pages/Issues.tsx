@@ -20,6 +20,7 @@ import {
   listIssues,
   listUnreadIssues,
   markIssueRead,
+  setIssueCategory,
   setIssueStatus,
   updateIssueMeta,
   updateIssueTypeFields,
@@ -48,6 +49,14 @@ import {
   updateIssueViewpointMarkup,
   type IssueViewpoint,
 } from '../lib/issueViewpoints';
+import {
+  addIssueCategory,
+  listIssueCategories,
+  removeIssueCategory,
+  renameIssueCategory,
+  seedDefaultCategories,
+  type IssueCategory,
+} from '../lib/issueCategories';
 import { exportIssueFormDocx, exportIssuesXlsx, openIssueFormPrint } from '../lib/issueExport';
 import {
   getSiteTag,
@@ -102,6 +111,10 @@ export function Issues() {
   const [unread, setUnread] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<IssueStatus | 'all'>('all');
   const [typeFilter, setTypeFilter] = useState<IssueType | 'all'>('all');
+  // 항목(공종·대상 분류, 0039) — 프로젝트별 관리 목록 + 필터('none' = 미지정).
+  const [cats, setCats] = useState<IssueCategory[]>([]);
+  const [catFilter, setCatFilter] = useState<string>('all');
+  const [catManageOpen, setCatManageOpen] = useState(false);
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<SortMode>('newest');
   const [view, setView] = useState<ViewMode>(() => {
@@ -120,10 +133,11 @@ export function Issues() {
     description: string;
     type: IssueType;
     meta: Record<string, string>;
+    category_id: string;
     priority: IssuePriority;
     assignee_id: string;
     due_date: string;
-  }>({ title: '', description: '', type: 'general', meta: {}, priority: 'normal', assignee_id: '', due_date: '' });
+  }>({ title: '', description: '', type: 'general', meta: {}, category_id: '', priority: 'normal', assignee_id: '', due_date: '' });
 
   // 통합모델 이슈 핀 '이슈로 이동' 으로 들어오면 해당 이슈를 펼친다.
   const location = useLocation();
@@ -132,8 +146,12 @@ export function Issues() {
   useEffect(() => {
     refresh();
     getProject(projectId).then((p) => setProjectName(p?.name ?? '')).catch(() => {});
+    listIssueCategories(projectId).then(setCats).catch(() => setCats([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  // 항목 이름 해석(미지정/삭제된 항목 = '').
+  const catName = (id: string | null) => (id ? cats.find((c) => c.id === id)?.name ?? '' : '');
 
   // 오프라인 초안(현장 등록) — 진입/온라인 복귀 시 자동 동기화.
   useEffect(() => {
@@ -215,6 +233,7 @@ export function Issues() {
           description: form.description,
           type: form.type,
           meta,
+          category_id: form.category_id || null,
           priority: form.priority,
           assignee_id: form.assignee_id || null,
           assignee_name: member?.name,
@@ -222,7 +241,7 @@ export function Issues() {
         },
         authorName,
       );
-      setForm({ title: '', description: '', type: 'general', meta: {}, priority: 'normal', assignee_id: '', due_date: '' });
+      setForm({ title: '', description: '', type: 'general', meta: {}, category_id: '', priority: 'normal', assignee_id: '', due_date: '' });
       setShowForm(false);
       await refresh();
       setMsg('이슈 등록됨');
@@ -271,6 +290,9 @@ export function Issues() {
     const ql = q.trim().toLowerCase();
     let list = issues
       .filter((i) => typeFilter === 'all' || i.type === typeFilter)
+      .filter((i) =>
+        catFilter === 'all' ? true : catFilter === 'none' ? !i.category_id : i.category_id === catFilter,
+      )
       .filter(
         (i) =>
           !ql ||
@@ -288,7 +310,7 @@ export function Issues() {
       sorted.sort((a, b) => (a.due_date ?? '9999-12-31').localeCompare(b.due_date ?? '9999-12-31'));
     if (sort === 'priority') sorted.sort((a, b) => PRIO_ORDER[a.priority] - PRIO_ORDER[b.priority]);
     return sorted;
-  }, [issues, typeFilter, q, filter, sort, view]);
+  }, [issues, typeFilter, catFilter, q, filter, sort, view]);
 
   // 생성 순(오래된→최신) 순차 번호 — 간섭 저장 순서와 무관(#5).
   const numberOf = useMemo(() => {
@@ -310,7 +332,7 @@ export function Issues() {
 
   const onExportXlsx = async () => {
     try {
-      await exportIssuesXlsx(projectName, shown, issues);
+      await exportIssuesXlsx(projectName, shown, issues, catName);
     } catch (e) {
       setMsg(`엑셀 저장 실패: ${errMessage(e)}`);
     }
@@ -330,11 +352,14 @@ export function Issues() {
       projectName={projectName}
       canEdit={canEdit}
       members={members}
+      cats={cats}
+      catName={catName}
       authorName={authorName}
       onAssign={onAssign}
       onMeta={onMeta}
       onCommented={() => onRead(issue.id)}
       onChanged={refresh}
+      onManageCats={() => setCatManageOpen(true)}
     />
   );
 
@@ -368,6 +393,12 @@ export function Issues() {
         <section className="card dash-edit">
           <h3>새 이슈</h3>
           <div className="dash-edit-row">
+            <label>항목
+              <select value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
+                <option value="">미지정</option>
+                {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </label>
             <label>유형
               <select
                 value={form.type}
@@ -436,6 +467,22 @@ export function Issues() {
             </button>
           ))}
         </div>
+        <span className="issue-cat-filter">
+          <select value={catFilter} onChange={(e) => setCatFilter(e.target.value)} aria-label="항목 필터">
+            <option value="all">항목: 전체</option>
+            <option value="none">항목: 미지정</option>
+            {cats.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name} ({issues.filter((i) => i.category_id === c.id).length})
+              </option>
+            ))}
+          </select>
+          {canEdit && (
+            <button onClick={() => setCatManageOpen(true)} title="항목(토공·교량·터널 …) 추가/이름변경/삭제">
+              ⚙
+            </button>
+          )}
+        </span>
         <input
           className="issue-search"
           value={q}
@@ -469,6 +516,7 @@ export function Issues() {
               <thead>
                 <tr>
                   <th style={{ width: 48 }}>번호</th>
+                  <th style={{ width: 100 }}>항목</th>
                   <th style={{ width: 90 }}>유형</th>
                   <th>제목</th>
                   <th>상태</th>
@@ -488,6 +536,7 @@ export function Issues() {
                     unread={unread.has(it.id)}
                     canEdit={canEdit}
                     myId={myId}
+                    catName={catName}
                     onToggle={() => {
                       const opening = openId !== it.id;
                       setOpenId(opening ? it.id : null);
@@ -499,7 +548,7 @@ export function Issues() {
                   />
                 ))}
                 {shown.length === 0 && (
-                  <tr><td colSpan={8}><EmptyState compact icon="🗂" title="이슈가 없습니다" desc="새 이슈를 등록하면 여기에 표시됩니다." /></td></tr>
+                  <tr><td colSpan={9}><EmptyState compact icon="🗂" title="이슈가 없습니다" desc="새 이슈를 등록하면 여기에 표시됩니다." /></td></tr>
                 )}
               </tbody>
             </table>
@@ -514,6 +563,7 @@ export function Issues() {
           unread={unread}
           canEdit={canEdit}
           myId={myId}
+          catName={catName}
           onStatus={onStatus}
           onOpen={openIssue}
         />
@@ -542,9 +592,19 @@ export function Issues() {
         </div>
       )}
 
+      {catManageOpen && (
+        <CategoryManager
+          projectId={projectId}
+          cats={cats}
+          onChanged={(next) => setCats(next)}
+          onClose={() => setCatManageOpen(false)}
+        />
+      )}
+
       {quickOpen && (
         <QuickFieldRegister
           projectId={projectId}
+          cats={cats}
           authorName={authorName}
           onClose={() => setQuickOpen(false)}
           onDone={(offline) => {
@@ -616,6 +676,7 @@ function KanbanBoard({
   unread,
   canEdit,
   myId,
+  catName,
   onStatus,
   onOpen,
 }: {
@@ -624,6 +685,7 @@ function KanbanBoard({
   unread: Set<string>;
   canEdit: boolean;
   myId: string | null;
+  catName: (id: string | null) => string;
   onStatus: (issue: Issue, s: IssueStatus) => void;
   onOpen: (id: string) => void;
 }) {
@@ -683,6 +745,7 @@ function KanbanBoard({
                     title={canDrag(it) ? '드래그해서 상태 이동 · 클릭해서 상세' : '클릭해서 상세'}
                   >
                     <div className="kanban-card__top">
+                      {catName(it.category_id) && <span className="issue-cat-badge">{catName(it.category_id)}</span>}
                       <TypeBadge type={it.type} />
                       <span className="muted">#{numberOf.get(it.id)}</span>
                       {unread.has(it.id) && <span className="issue-unread-dot" title="새 코멘트(안읽음)" />}
@@ -831,6 +894,7 @@ function IssueRow({
   unread,
   canEdit,
   myId,
+  catName,
   onToggle,
   onStatus,
   onDelete,
@@ -842,6 +906,7 @@ function IssueRow({
   unread: boolean;
   canEdit: boolean;
   myId: string | null;
+  catName: (id: string | null) => string;
   onToggle: () => void;
   onStatus: (issue: Issue, s: IssueStatus) => void;
   onDelete: (id: string) => void;
@@ -849,10 +914,12 @@ function IssueRow({
 }) {
   // 담당자 본인도 자기 이슈의 상태를 변경할 수 있다(S30 결정).
   const canStatus = canEdit || (!!myId && issue.assignee_id === myId);
+  const cat = catName(issue.category_id);
   return (
     <>
       <tr>
         <td className="nowrap" style={{ color: 'var(--muted)', textAlign: 'center' }}>#{num}</td>
+        <td className="nowrap">{cat ? <span className="issue-cat-badge">{cat}</span> : <span className="muted">—</span>}</td>
         <td className="nowrap"><TypeBadge type={issue.type} /></td>
         <td className="cde-fname">
           <button className="cde-link" onClick={onToggle}>
@@ -883,7 +950,7 @@ function IssueRow({
       </tr>
       {open && (
         <tr className="issue-detail-row">
-          <td colSpan={8}>{detail(issue)}</td>
+          <td colSpan={9}>{detail(issue)}</td>
         </tr>
       )}
     </>
@@ -896,22 +963,28 @@ function IssueDetail({
   projectName,
   canEdit,
   members,
+  cats,
+  catName,
   authorName,
   onAssign,
   onMeta,
   onCommented,
   onChanged,
+  onManageCats,
 }: {
   issue: Issue;
   allIssues: Issue[];
   projectName: string;
   canEdit: boolean;
   members: ProjectMember[];
+  cats: IssueCategory[];
+  catName: (id: string | null) => string;
   authorName: string | null;
   onAssign: (issue: Issue, assigneeId: string) => void;
   onMeta: (issue: Issue, fields: { priority?: IssuePriority; due_date?: string | null; description?: string | null }) => Promise<void> | void;
   onCommented: () => void;
   onChanged: () => void;
+  onManageCats: () => void;
 }) {
   const navigate = useNavigate();
   const [comments, setComments] = useState<IssueComment[]>([]);
@@ -1068,12 +1141,14 @@ function IssueDetail({
   };
 
   const onFormDocx = () => {
-    exportIssueFormDocx(issue, allIssues, projectName, authorName).catch((e) => alert(`양식 저장 실패: ${errMessage(e)}`));
+    exportIssueFormDocx(issue, allIssues, projectName, authorName, catName(issue.category_id)).catch((e) =>
+      alert(`양식 저장 실패: ${errMessage(e)}`),
+    );
   };
   const onFormPrint = async () => {
     try {
       const atts = await listAttachments('issue', issue.id).catch(() => []);
-      await openIssueFormPrint(issue, allIssues, projectName, atts, viewpoints);
+      await openIssueFormPrint(issue, allIssues, projectName, atts, viewpoints, catName(issue.category_id));
     } catch (e) {
       alert(`양식 열기 실패: ${errMessage(e)}`);
     }
@@ -1092,6 +1167,7 @@ function IssueDetail({
         </button>
         <div className="issue-block__b">
           <div className="issue-facts">
+            <span><b>항목</b> {catName(issue.category_id) ? <span className="issue-cat-badge">{catName(issue.category_id)}</span> : '미지정'}</span>
             <span><b>유형</b> <TypeBadge type={issue.type} /></span>
             <span><b>상태</b> <span className={`issue-badge issue-${issue.status}`}>{statusLabelFor(issue.type, issue.status, STATUS_LABEL[issue.status])}</span></span>
             <span><b>우선순위</b> <span className={`issue-prio issue-prio-${issue.priority}`}>{PRIORITY_LABEL[issue.priority]}</span></span>
@@ -1100,6 +1176,27 @@ function IssueDetail({
           </div>
           {canEdit && propOpen && (
             <div className="issue-assign-row" style={{ marginTop: 10 }}>
+              <label>항목
+                <span style={{ display: 'flex', gap: 4 }}>
+                  <select
+                    value={issue.category_id ?? ''}
+                    onChange={async (e) => {
+                      const toId = e.target.value || null;
+                      try {
+                        await setIssueCategory(issue, toId, catName(issue.category_id) || '미지정', catName(toId) || '미지정', authorName);
+                        onChanged();
+                        refreshEvents();
+                      } catch (err) {
+                        alert(`항목 변경 실패: ${errMessage(err)}`);
+                      }
+                    }}
+                  >
+                    <option value="">미지정</option>
+                    {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                  <button onClick={onManageCats} title="항목 목록 관리(추가/이름변경/삭제)">⚙</button>
+                </span>
+              </label>
               <label>담당자 배정
                 <select value={issue.assignee_id ?? ''} onChange={(e) => onAssign(issue, e.target.value)}>
                   <option value="">미지정</option>
@@ -1612,20 +1709,130 @@ function MarkupEditor({
 }
 
 // =====================================================================
+// 항목 관리 모달 — 프로젝트별 항목(토공·교량·터널 …) 추가/이름변경/삭제.
+// 기본 세트는 버튼 한 번으로 생성(현장마다 다르므로 하드코딩하지 않는다).
+// =====================================================================
+function CategoryManager({
+  projectId,
+  cats,
+  onChanged,
+  onClose,
+}: {
+  projectId: string;
+  cats: IssueCategory[];
+  onChanged: (next: IssueCategory[]) => void;
+  onClose: () => void;
+}) {
+  const [newName, setNewName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const reload = async () => onChanged(await listIssueCategories(projectId));
+
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setErr('');
+    try {
+      await fn();
+      await reload();
+    } catch (e) {
+      setErr(errMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onAdd = () =>
+    run(async () => {
+      const name = newName.trim();
+      if (!name) return;
+      const maxOrder = cats.length ? Math.max(...cats.map((c) => c.sort_order)) + 1 : 0;
+      await addIssueCategory(projectId, name, maxOrder);
+      setNewName('');
+    });
+
+  const onRename = (c: IssueCategory) => {
+    const name = window.prompt('항목 이름 변경', c.name);
+    if (!name?.trim() || name.trim() === c.name) return;
+    void run(() => renameIssueCategory(c.id, name));
+  };
+
+  const onRemove = (c: IssueCategory) => {
+    if (!window.confirm(`'${c.name}' 항목을 삭제할까요?\n이 항목의 이슈들은 '미지정'이 됩니다(이슈 자체는 유지).`)) return;
+    void run(() => removeIssueCategory(c.id));
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head" style={{ display: 'flex', alignItems: 'center' }}>
+          <h3 style={{ flex: 1, margin: 0 }}>⚙ 이슈 항목 관리</h3>
+          <button onClick={onClose} aria-label="닫기">✕</button>
+        </div>
+        <div className="modal-body">
+          <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
+            항목 = 이슈의 대상 공종/분야(토공·교량·터널·가시설·도면·시뮬레이션 …). 프로젝트마다 자유롭게 구성합니다.
+          </p>
+          {cats.length === 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <p className="muted" style={{ margin: '0 0 6px' }}>아직 항목이 없습니다.</p>
+              <button disabled={busy} onClick={() => void run(async () => { await seedDefaultCategories(projectId); })}>
+                ✨ 기본 세트 만들기 (보고서·토공·교량·터널·가시설·도면·기타 문서·시뮬레이션)
+              </button>
+            </div>
+          )}
+          {cats.map((c) => (
+            <div key={c.id} className="issue-cat-row">
+              <span className="issue-cat-badge">{c.name}</span>
+              <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                <button disabled={busy} onClick={() => onRename(c)}>✏ 이름</button>
+                <button className="danger" disabled={busy} onClick={() => onRemove(c)}>삭제</button>
+              </span>
+            </div>
+          ))}
+          <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+            <input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="새 항목 이름 (예: 배수공)"
+              onKeyDown={(e) => { if (e.key === 'Enter') void onAdd(); }}
+              style={{ flex: 1 }}
+            />
+            <button className="primary" disabled={busy || !newName.trim()} onClick={() => void onAdd()}>추가</button>
+          </div>
+          {cats.length > 0 && (
+            <button style={{ marginTop: 8 }} disabled={busy} onClick={() => void run(async () => { await seedDefaultCategories(projectId); })}>
+              ✨ 기본 세트에서 빠진 항목 채우기
+            </button>
+          )}
+          {err && <p className="muted" style={{ color: 'var(--color-danger, #dc2626)' }}>{err}</p>}
+        </div>
+        <div className="modal-foot">
+          <button onClick={onClose}>닫기</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =====================================================================
 // 현장(모바일) 빠른 등록 — 사진(GPS·시간 태깅) + 오프라인 초안.
 // =====================================================================
 function QuickFieldRegister({
   projectId,
+  cats,
   authorName,
   onClose,
   onDone,
 }: {
   projectId: string;
+  cats: IssueCategory[];
   authorName: string | null;
   onClose: () => void;
   onDone: (offline: boolean) => void;
 }) {
   const [type, setType] = useState<IssueType>('punch');
+  const [categoryId, setCategoryId] = useState('');
   const [title, setTitle] = useState('');
   const [desc, setDesc] = useState('');
   const [photo, setPhoto] = useState<{ dataUrl: string; name: string } | null>(null);
@@ -1661,6 +1868,7 @@ function QuickFieldRegister({
       type,
       priority: 'normal' as IssuePriority,
       meta: {},
+      category_id: categoryId || null,
       site,
       photo: photo?.dataUrl ?? null,
       photo_name: photo?.name ?? null,
@@ -1676,7 +1884,14 @@ function QuickFieldRegister({
       if (site) meta.site = site;
       const issueId = await createIssue(
         projectId,
-        { title: base.title, description: base.description || undefined, type, meta, priority: 'normal' },
+        {
+          title: base.title,
+          description: base.description || undefined,
+          type,
+          meta,
+          category_id: categoryId || null,
+          priority: 'normal',
+        },
         authorName,
       );
       if (photo) {
@@ -1702,6 +1917,12 @@ function QuickFieldRegister({
           <button onClick={onClose} aria-label="닫기">✕</button>
         </div>
         <div className="modal-body">
+          <label style={{ display: 'block', marginBottom: 8 }}>항목
+            <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} style={{ width: '100%' }}>
+              <option value="">미지정</option>
+              {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </label>
           <label style={{ display: 'block', marginBottom: 8 }}>유형
             <select value={type} onChange={(e) => setType(e.target.value as IssueType)} style={{ width: '100%' }}>
               {ISSUE_TYPES.map((t) => <option key={t} value={t}>{TYPE_ICON[t]} {TYPE_LABEL[t]}</option>)}
@@ -1769,6 +1990,7 @@ function eventText(ev: IssueEvent): string {
     case 'priority': return `우선순위 ${ev.from_value} → ${ev.to_value}`;
     case 'due': return `마감일 ${ev.from_value} → ${ev.to_value}`;
     case 'content': return '내용 수정';
+    case 'category': return `항목 ${ev.from_value} → ${ev.to_value}`;
     case 'meta': return `타입별 정보 수정 — ${ev.to_value ?? ''}`;
     case 'viewpoint_add': return `3D 뷰포인트 추가 — ${ev.to_value ?? ''}`;
     case 'viewpoint_del': return `3D 뷰포인트 삭제 — ${ev.to_value ?? ''}`;
