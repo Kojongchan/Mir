@@ -6452,14 +6452,6 @@ textarea.input {
   min-width: 180px;
   max-width: 340px;
 }
-.issue-draft-badge {
-  font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: rgba(217, 119, 6, 0.16);
-  color: #b45309;
-  font-weight: 600;
-}
 
 /* 칸반 보드 — 상태 열 + 드래그 카드 */
 .kanban-board {

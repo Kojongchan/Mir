@@ -58,14 +58,6 @@ import {
   type IssueCategory,
 } from '../lib/issueCategories';
 import { exportIssueFormDocx, exportIssuesXlsx, openIssueFormPrint } from '../lib/issueExport';
-import {
-  getSiteTag,
-  listDrafts,
-  photoToDataUrl,
-  saveDraft,
-  syncDrafts,
-  dataUrlToFile,
-} from '../lib/issueDrafts';
 import { listPinsForIssue, listIssuePins, type IssuePinRef } from '../lib/drawings';
 import { listProjectMembers, memberLabel, type ProjectMember } from '../lib/members';
 import { formatDate } from '../lib/dashboard';
@@ -77,7 +69,7 @@ import { MentionInput } from '../components/MentionInput';
 import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
 import { AccFilePreview } from '../components/AccFilePreview';
 import { addIssueFile, listIssueFiles, removeIssueFile, type IssueFileLink } from '../lib/issueFiles';
-import { listAttachments, uploadAttachment } from '../lib/attachments';
+import { listAttachments } from '../lib/attachments';
 import { downloadAccItemProgress, isAccModel } from '../lib/aps';
 import { useProjectRole } from '../auth/useProjectRole';
 
@@ -124,8 +116,6 @@ export function Issues() {
   const [msg, setMsg] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [quickOpen, setQuickOpen] = useState(false);
-  const [draftCount, setDraftCount] = useState(0);
   const [projectName, setProjectName] = useState('');
 
   const [form, setForm] = useState<{
@@ -152,26 +142,6 @@ export function Issues() {
 
   // 항목 이름 해석(미지정/삭제된 항목 = '').
   const catName = (id: string | null) => (id ? cats.find((c) => c.id === id)?.name ?? '' : '');
-
-  // 오프라인 초안(현장 등록) — 진입/온라인 복귀 시 자동 동기화.
-  useEffect(() => {
-    const trySync = () => {
-      setDraftCount(listDrafts(projectId).length);
-      syncDrafts(projectId, authorName)
-        .then((n) => {
-          setDraftCount(listDrafts(projectId).length);
-          if (n > 0) {
-            setMsg(`오프라인 초안 ${n}건이 동기화되었습니다.`);
-            refresh();
-          }
-        })
-        .catch(() => {});
-    };
-    trySync();
-    window.addEventListener('online', trySync);
-    return () => window.removeEventListener('online', trySync);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, authorName]);
 
   // 담당 배정·@멘션 후보 목록 — 뷰어를 뺀 모두(실무자·관리자)가 배정 가능(0033: 같은
   // 프로젝트 멤버끼리 이름 조회 허용). canEdit 은 역할 로딩 후 갱신되므로 별도 effect 로
@@ -368,78 +338,85 @@ export function Issues() {
       <div className="dash-head">
         <h1 className="dash-h1">협업 · 이슈</h1>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          {draftCount > 0 && (
-            <span className="issue-draft-badge" title="네트워크 연결 시 자동 동기화됩니다">
-              📥 초안 {draftCount}건 대기
-            </span>
-          )}
           <button onClick={() => void onExportXlsx()} title="현재 필터·정렬이 반영된 목록을 엑셀로 저장">
             ⬇ 엑셀
           </button>
           {canEdit && (
-            <button onClick={() => setQuickOpen(true)} title="사진·GPS 태그로 현장에서 빠르게 등록(오프라인 지원)">
-              📷 현장 등록
-            </button>
-          )}
-          {canEdit && (
-            <button className="primary" onClick={() => setShowForm((s) => !s)}>
-              {showForm ? '취소' : '＋ 이슈 등록'}
+            <button className="primary" onClick={() => { setForm({ title: '', description: '', type: 'general', meta: {}, category_id: '', priority: 'normal', assignee_id: '', due_date: '' }); setShowForm(true); }}>
+              ＋ 이슈 등록
             </button>
           )}
         </div>
       </div>
 
       {showForm && (
-        <section className="card dash-edit">
-          <h3>새 이슈</h3>
-          <div className="dash-edit-row">
-            <label>항목
-              <select value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
-                <option value="">미지정</option>
-                {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </label>
-            <label>유형
-              <select
-                value={form.type}
-                onChange={(e) => setForm({ ...form, type: e.target.value as IssueType, meta: {} })}
-              >
-                {ISSUE_TYPES.map((t) => (
-                  <option key={t} value={t}>{TYPE_ICON[t]} {TYPE_LABEL[t]}</option>
-                ))}
-              </select>
-            </label>
-            <label className="grow">제목<input value={form.title} placeholder="예: 3층 보-슬래브 간섭 지적" onChange={(e) => setForm({ ...form, title: e.target.value })} /></label>
-            <label>우선순위
-              <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value as IssuePriority })}>
-                {ISSUE_PRIORITIES.map((p) => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
-              </select>
-            </label>
-            <label>담당자
-              <select value={form.assignee_id} onChange={(e) => setForm({ ...form, assignee_id: e.target.value })}>
-                <option value="">미지정</option>
-                {members.map((m) => <option key={m.id} value={m.id}>{memberLabel(m)}</option>)}
-              </select>
-            </label>
-            <label>마감일<input type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} /></label>
-          </div>
-          {TYPE_FIELDS[form.type].length > 0 && (
-            <div className="dash-edit-row">
-              {TYPE_FIELDS[form.type].map((f) => (
-                <TypeFieldInput
-                  key={f.key}
-                  def={f}
-                  value={form.meta[f.key] ?? ''}
-                  onChange={(v) => setForm({ ...form, meta: { ...form.meta, [f.key]: v } })}
-                />
-              ))}
+        <div className="modal-backdrop" onClick={() => setShowForm(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head" style={{ display: 'flex', alignItems: 'center' }}>
+              <h3 style={{ flex: 1, margin: 0 }}>＋ 새 이슈</h3>
+              <button onClick={() => setShowForm(false)} aria-label="닫기">✕</button>
             </div>
-          )}
-          <div className="dash-edit-row">
-            <label className="grow">내용<input value={form.description} placeholder={form.type === 'rfi' ? '질의 내용' : '상세 내용'} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
-            <button className="primary" onClick={onCreate}>등록</button>
+            <div className="modal-body">
+              <label style={{ display: 'block', marginBottom: 8 }}>제목
+                <input value={form.title} placeholder="예: 3층 보-슬래브 간섭 지적" onChange={(e) => setForm({ ...form, title: e.target.value })} style={{ width: '100%' }} autoFocus />
+              </label>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <label style={{ flex: 1 }}>항목
+                  <select value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })} style={{ width: '100%' }}>
+                    <option value="">미지정</option>
+                    {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </label>
+                <label style={{ flex: 1 }}>유형
+                  <select
+                    value={form.type}
+                    onChange={(e) => setForm({ ...form, type: e.target.value as IssueType, meta: {} })}
+                    style={{ width: '100%' }}
+                  >
+                    {ISSUE_TYPES.map((t) => (
+                      <option key={t} value={t}>{TYPE_ICON[t]} {TYPE_LABEL[t]}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <label style={{ flex: 1 }}>우선순위
+                  <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value as IssuePriority })} style={{ width: '100%' }}>
+                    {ISSUE_PRIORITIES.map((p) => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
+                  </select>
+                </label>
+                <label style={{ flex: 1 }}>담당자
+                  <select value={form.assignee_id} onChange={(e) => setForm({ ...form, assignee_id: e.target.value })} style={{ width: '100%' }}>
+                    <option value="">미지정</option>
+                    {members.map((m) => <option key={m.id} value={m.id}>{memberLabel(m)}</option>)}
+                  </select>
+                </label>
+                <label style={{ flex: 1 }}>마감일
+                  <input type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} style={{ width: '100%' }} />
+                </label>
+              </div>
+              {TYPE_FIELDS[form.type].length > 0 && (
+                <div className="dash-edit-row" style={{ flexWrap: 'wrap', marginBottom: 8 }}>
+                  {TYPE_FIELDS[form.type].map((f) => (
+                    <TypeFieldInput
+                      key={f.key}
+                      def={f}
+                      value={form.meta[f.key] ?? ''}
+                      onChange={(v) => setForm({ ...form, meta: { ...form.meta, [f.key]: v } })}
+                    />
+                  ))}
+                </div>
+              )}
+              <label style={{ display: 'block' }}>내용
+                <textarea value={form.description} rows={3} placeholder={form.type === 'rfi' ? '질의 내용' : '상세 내용'} onChange={(e) => setForm({ ...form, description: e.target.value })} style={{ width: '100%', resize: 'vertical' }} />
+              </label>
+            </div>
+            <div className="modal-foot">
+              <button onClick={() => setShowForm(false)}>취소</button>
+              <button className="primary" onClick={onCreate}>등록</button>
+            </div>
           </div>
-        </section>
+        </div>
       )}
 
       {/* 툴바 — 뷰 전환 · 타입 필터 · 검색 · 정렬 */}
@@ -598,24 +575,6 @@ export function Issues() {
           cats={cats}
           onChanged={(next) => setCats(next)}
           onClose={() => setCatManageOpen(false)}
-        />
-      )}
-
-      {quickOpen && (
-        <QuickFieldRegister
-          projectId={projectId}
-          cats={cats}
-          authorName={authorName}
-          onClose={() => setQuickOpen(false)}
-          onDone={(offline) => {
-            setQuickOpen(false);
-            setDraftCount(listDrafts(projectId).length);
-            if (offline) setMsg('오프라인 — 초안으로 저장했습니다. 온라인 복귀 시 자동 등록됩니다.');
-            else {
-              setMsg('현장 이슈 등록됨');
-              refresh();
-            }
-          }}
         />
       )}
 
@@ -1815,149 +1774,6 @@ function CategoryManager({
   );
 }
 
-// =====================================================================
-// 현장(모바일) 빠른 등록 — 사진(GPS·시간 태깅) + 오프라인 초안.
-// =====================================================================
-function QuickFieldRegister({
-  projectId,
-  cats,
-  authorName,
-  onClose,
-  onDone,
-}: {
-  projectId: string;
-  cats: IssueCategory[];
-  authorName: string | null;
-  onClose: () => void;
-  onDone: (offline: boolean) => void;
-}) {
-  const [type, setType] = useState<IssueType>('punch');
-  const [categoryId, setCategoryId] = useState('');
-  const [title, setTitle] = useState('');
-  const [desc, setDesc] = useState('');
-  const [photo, setPhoto] = useState<{ dataUrl: string; name: string } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [gpsNote, setGpsNote] = useState('위치는 등록 시 자동 태깅됩니다.');
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  const onPickPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    try {
-      const dataUrl = await photoToDataUrl(file);
-      setPhoto({ dataUrl, name: file.name || `site_${Date.now()}.jpg` });
-    } catch (err) {
-      alert(errMessage(err));
-    }
-  };
-
-  const submit = async () => {
-    if (!title.trim()) {
-      alert('제목을 입력하세요');
-      return;
-    }
-    setBusy(true);
-    setGpsNote('GPS 위치 확인 중…');
-    const site = await getSiteTag();
-    setGpsNote(site ? `GPS ${site.lat.toFixed(5)}, ${site.lng.toFixed(5)}` : 'GPS 미확인(태그 없이 등록)');
-    const base = {
-      project_id: projectId,
-      title: title.trim(),
-      description: desc.trim(),
-      type,
-      priority: 'normal' as IssuePriority,
-      meta: {},
-      category_id: categoryId || null,
-      site,
-      photo: photo?.dataUrl ?? null,
-      photo_name: photo?.name ?? null,
-    };
-    if (!navigator.onLine) {
-      saveDraft(projectId, base);
-      setBusy(false);
-      onDone(true);
-      return;
-    }
-    try {
-      const meta: Record<string, unknown> = {};
-      if (site) meta.site = site;
-      const issueId = await createIssue(
-        projectId,
-        {
-          title: base.title,
-          description: base.description || undefined,
-          type,
-          meta,
-          category_id: categoryId || null,
-          priority: 'normal',
-        },
-        authorName,
-      );
-      if (photo) {
-        const f = dataUrlToFile(photo.dataUrl, photo.name);
-        await uploadAttachment(projectId, 'issue', issueId, f);
-        await logIssueEvent(issueId, projectId, 'file_add', photo.name, authorName);
-      }
-      onDone(false);
-    } catch {
-      // 네트워크/일시 오류 — 초안으로 보존해 유실 방지.
-      saveDraft(projectId, base);
-      onDone(true);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head" style={{ display: 'flex', alignItems: 'center' }}>
-          <h3 style={{ flex: 1, margin: 0 }}>📷 현장 등록</h3>
-          <button onClick={onClose} aria-label="닫기">✕</button>
-        </div>
-        <div className="modal-body">
-          <label style={{ display: 'block', marginBottom: 8 }}>항목
-            <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} style={{ width: '100%' }}>
-              <option value="">미지정</option>
-              {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </label>
-          <label style={{ display: 'block', marginBottom: 8 }}>유형
-            <select value={type} onChange={(e) => setType(e.target.value as IssueType)} style={{ width: '100%' }}>
-              {ISSUE_TYPES.map((t) => <option key={t} value={t}>{TYPE_ICON[t]} {TYPE_LABEL[t]}</option>)}
-            </select>
-          </label>
-          <label style={{ display: 'block', marginBottom: 8 }}>제목
-            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="예: 3층 벽체 균열" style={{ width: '100%' }} />
-          </label>
-          <label style={{ display: 'block', marginBottom: 8 }}>내용
-            <textarea value={desc} onChange={(e) => setDesc(e.target.value)} rows={3} style={{ width: '100%', resize: 'vertical' }} placeholder="현장 상황 설명" />
-          </label>
-          <input ref={fileRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => void onPickPhoto(e)} />
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <button onClick={() => fileRef.current?.click()}>📸 사진 {photo ? '다시 찍기' : '촬영/선택'}</button>
-            <span className="muted" style={{ fontSize: 12 }}>{gpsNote}</span>
-          </div>
-          {photo && (
-            <img src={photo.dataUrl} alt="현장 사진" style={{ marginTop: 8, maxWidth: '100%', borderRadius: 8, border: '1px solid var(--border)' }} />
-          )}
-          {!navigator.onLine && (
-            <p className="muted" style={{ fontSize: 12, marginTop: 8 }}>
-              ⚠ 오프라인 — 초안으로 저장되고 온라인 복귀 시 자동 등록됩니다.
-            </p>
-          )}
-        </div>
-        <div className="modal-foot">
-          <button onClick={onClose}>취소</button>
-          <button className="primary" disabled={busy} onClick={() => void submit()}>
-            {busy ? '등록 중…' : '등록'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function fmtDateTime(iso: string): string {
   return new Date(iso).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' });
