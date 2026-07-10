@@ -7,6 +7,8 @@ import { getProjectAcc, setProjectAcc, getOrCreateApsModelRow } from '../lib/api
 import { buildApsMapping, type ApsMapping } from '../lib/apsMapping';
 import { isolateAndFit, showApsClash } from '../lib/apsClashView';
 import { listIssues, createIssue, logIssueEvent, STATUS_LABEL, type Issue } from '../lib/issues';
+import { ISSUE_TYPES, TYPE_ICON, TYPE_LABEL, type IssueType } from '../lib/issueTypes';
+import { listIssueCategories, type IssueCategory } from '../lib/issueCategories';
 import { addIssueViewpoint, captureApsSnapshot } from '../lib/issueViewpoints';
 import { ApsClashPanel } from '../components/ApsClashPanel';
 import { ApsIssuePins } from '../components/ApsIssuePins';
@@ -210,6 +212,14 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   const [popIssue, setPopIssue] = useState<Issue | null>(null);
   const [selDbId, setSelDbId] = useState<number | null>(null);
   const autoClashRef = useRef(autoClash);
+  // 이슈 항목(공종·대상 분류, 0039) + 3D '＋ 이슈' 입력 폼(제목·항목·유형).
+  const [issueCats, setIssueCats] = useState<IssueCategory[]>([]);
+  const [issueFormOpen, setIssueFormOpen] = useState(false);
+  const [issueForm, setIssueForm] = useState<{ title: string; category_id: string; type: IssueType }>({
+    title: '',
+    category_id: '',
+    type: 'general',
+  });
   const reloadIssues = () => {
     listIssues(projectId).then(setIssues).catch(() => {});
   };
@@ -229,6 +239,12 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   // 4D 모드: APS 모델(URN)을 models 테이블에 미러링해 기존 IFC 영속화 경로
   // (task_elements.model_id FK)를 재사용 — 없으면 가져오기한 공정표/매핑이
   // 메뉴 이동 시 사라진다(자동저장이 modelIdMap 비어있으면 no-op 이라서).
+  // 이슈 항목 목록(3D '＋ 이슈' 폼용) — 0039 미적용이면 빈 배열.
+  useEffect(() => {
+    if (mode4d) return; // 4D 모드는 이슈 핀·생성이 없음
+    listIssueCategories(projectId).then(setIssueCats).catch(() => setIssueCats([]));
+  }, [projectId, mode4d]);
+
   useEffect(() => {
     if (!mode4d || !urn) return;
     let cancelled = false;
@@ -619,7 +635,8 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   };
 
   // 3D 에서 선택한 객체 위치에 이슈 생성(선택 dbId → GlobalId 앵커, S49 Step 2).
-  const createIssueHere = async () => {
+  // 제목만 묻던 prompt 를 폼 모달로 — 항목(공종)·유형까지 지정.
+  const createIssueHere = () => {
     const m = modelRef.current as any;
     if (selDbId == null || !mapping || !m) return;
     const gid = mapping.dbIdToGlobalId.get(selDbId);
@@ -627,13 +644,36 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
       setStatus('이 객체의 GlobalId 를 찾지 못했습니다.');
       return;
     }
-    const title = window.prompt('이슈 제목');
+    setIssueForm({ title: '', category_id: '', type: 'general' });
+    setIssueFormOpen(true);
+  };
+
+  const submitIssueHere = async () => {
+    const m = modelRef.current as any;
+    if (selDbId == null || !mapping || !m) return;
+    const gid = mapping.dbIdToGlobalId.get(selDbId);
+    if (!gid) {
+      setStatus('이 객체의 GlobalId 를 찾지 못했습니다.');
+      return;
+    }
+    const title = issueForm.title.trim();
     if (!title) return;
     try {
-      const issueId = await createIssue(projectId, { title, priority: 'normal', global_id: gid }, authorName);
+      const issueId = await createIssue(
+        projectId,
+        {
+          title,
+          type: issueForm.type,
+          category_id: issueForm.category_id || null,
+          priority: 'normal',
+          global_id: gid,
+        },
+        authorName,
+      );
       // 생성 시점의 3D 뷰(카메라 state + 스냅샷)를 뷰포인트로 함께 저장(협의 근거).
       await saveViewpointFor(issueId, title);
       reloadIssues();
+      setIssueFormOpen(false);
       setStatus('이슈 생성됨(현재 뷰 저장)');
     } catch (e) {
       setStatus(`이슈 생성 실패: ${(e as Error).message}`);
@@ -1237,6 +1277,60 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
               issues={issues}
               onPinClick={(issue) => setPopIssue(issue)}
             />
+          )}
+          {/* 3D '＋ 이슈' 폼(선택 객체 위치에 이슈 생성 — 제목·항목·유형) */}
+          {issueFormOpen && (
+            <div
+              style={{ position: 'absolute', inset: 0, zIndex: 560, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              onMouseDown={(e) => { if (e.target === e.currentTarget) setIssueFormOpen(false); }}
+            >
+              <div style={{ width: 320, background: 'var(--panel)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 10, padding: 16, boxShadow: '0 8px 32px rgba(0,0,0,0.4)' }}>
+                <strong style={{ fontSize: 14 }}>＋ 이 위치에 이슈</strong>
+                <div style={{ fontSize: 11, color: 'var(--muted)', margin: '2px 0 10px' }}>선택한 3D 객체 위치에 앵커됩니다.</div>
+                <label style={{ display: 'block', fontSize: 12, color: 'var(--muted)' }}>제목</label>
+                <input
+                  autoFocus
+                  value={issueForm.title}
+                  onChange={(e) => setIssueForm((f) => ({ ...f, title: e.target.value }))}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void submitIssueHere(); }}
+                  placeholder="예: 슬래브 배근 간섭 확인"
+                  style={{ width: '100%', padding: '6px 8px', borderRadius: 6, marginTop: 2, background: 'var(--bg)', color: 'var(--text)', border: '1px solid var(--border)' }}
+                />
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', fontSize: 12, color: 'var(--muted)' }}>항목</label>
+                    <select
+                      value={issueForm.category_id}
+                      onChange={(e) => setIssueForm((f) => ({ ...f, category_id: e.target.value }))}
+                      style={{ width: '100%', padding: '6px 8px', borderRadius: 6, marginTop: 2, background: 'var(--bg)', color: 'var(--text)', border: '1px solid var(--border)' }}
+                    >
+                      <option value="">미지정</option>
+                      {issueCats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: 'block', fontSize: 12, color: 'var(--muted)' }}>유형</label>
+                    <select
+                      value={issueForm.type}
+                      onChange={(e) => setIssueForm((f) => ({ ...f, type: e.target.value as IssueType }))}
+                      style={{ width: '100%', padding: '6px 8px', borderRadius: 6, marginTop: 2, background: 'var(--bg)', color: 'var(--text)', border: '1px solid var(--border)' }}
+                    >
+                      {ISSUE_TYPES.map((t) => <option key={t} value={t}>{TYPE_ICON[t]} {TYPE_LABEL[t]}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
+                  <button onClick={() => setIssueFormOpen(false)} style={btnStyle}>취소</button>
+                  <button
+                    onClick={() => void submitIssueHere()}
+                    disabled={!issueForm.title.trim()}
+                    style={{ ...btnStyle, background: 'var(--accent)', color: 'var(--accent-fg)', border: '1px solid var(--accent)' }}
+                  >
+                    생성
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
           {/* 핀 클릭 팝업(기존 이슈 데이터 재사용) */}
           {popIssue && (
