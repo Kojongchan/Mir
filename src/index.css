@@ -3815,22 +3815,6 @@ button.danger:hover:not(:disabled) {
 }
 
 /* ---- 협업 · 이슈 ---- */
-.issue-filters {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin: 0 0 12px;
-}
-.issue-filters button {
-  font-size: 12px;
-  padding: 5px 12px;
-}
-.issue-filters button.active {
-  background: var(--accent);
-  color: var(--accent-fg);
-  border-color: var(--accent);
-}
-
 .issue-badge {
   display: inline-block;
   font-size: 11px;
@@ -6432,6 +6416,26 @@ textarea.input {
   color: var(--color-text-on-brand);
   font-weight: 600;
 }
+.issue-search {
+  flex: 1;
+  min-width: 180px;
+  max-width: none;
+}
+.issue-sort {
+  flex: none;
+}
+
+/* 툴바 2행 — 유형 칩 + 상태·항목 드롭다운 */
+.issue-filterbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+}
+.issue-filterbar__spacer {
+  flex: 1 1 auto;
+}
 .issue-type-chips {
   display: inline-flex;
   gap: 6px;
@@ -6441,16 +6445,41 @@ textarea.input {
   font-size: 12px;
   padding: 4px 10px;
   border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  transition: background 0.12s, border-color 0.12s, opacity 0.12s;
+}
+.issue-type-chips button b {
+  font-weight: 700;
+  color: var(--muted);
+  margin-left: 1px;
+}
+.issue-type-chips button:hover {
+  border-color: var(--color-brand-solid);
 }
 .issue-type-chips button.active {
   background: var(--color-brand-solid);
   color: var(--color-text-on-brand);
   border-color: var(--color-brand-solid);
 }
-.issue-search {
-  flex: 1;
-  min-width: 180px;
-  max-width: 340px;
+.issue-type-chips button.active b {
+  color: var(--color-text-on-brand);
+  opacity: 0.85;
+}
+/* 0건 유형은 옅게(있지만 시선 덜 끌게) — hover/active 시 정상 */
+.issue-type-chips button.is-empty {
+  opacity: 0.4;
+}
+.issue-type-chips button.is-empty:hover,
+.issue-type-chips button.is-empty.active {
+  opacity: 1;
+}
+/* 필터 드롭다운(상태·항목) 통일 높이 */
+.issue-dd {
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: 8px;
 }
 
 /* 칸반 보드 — 상태 열 + 드래그 카드 */

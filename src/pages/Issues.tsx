@@ -419,7 +419,7 @@ export function Issues() {
         </div>
       )}
 
-      {/* 툴바 — 뷰 전환 · 타입 필터 · 검색 · 정렬 */}
+      {/* 툴바 1행 — 뷰 전환 · 검색 · 정렬 */}
       <div className="issue-toolbar">
         <div className="issue-view-switch" role="tablist" aria-label="이슈 보기 방식">
           {(
@@ -434,18 +434,52 @@ export function Issues() {
             </button>
           ))}
         </div>
+        <input
+          className="issue-search"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="🔍 제목·내용·담당자·타입필드 검색"
+          aria-label="이슈 검색"
+        />
+        <select className="issue-sort" value={sort} onChange={(e) => setSort(e.target.value as SortMode)} aria-label="정렬">
+          <option value="newest">최신순</option>
+          <option value="oldest">오래된순</option>
+          <option value="due">마감임박순</option>
+          <option value="priority">우선순위순</option>
+        </select>
+      </div>
+
+      {/* 툴바 2행 — 유형 칩(분포 한눈에, 0건은 옅게) + 상태·항목 드롭다운 */}
+      <div className="issue-filterbar">
         <div className="issue-type-chips">
           <button className={typeFilter === 'all' ? 'active' : ''} onClick={() => setTypeFilter('all')}>
-            전체 {issues.length}
+            전체 <b>{issues.length}</b>
           </button>
-          {ISSUE_TYPES.map((t) => (
-            <button key={t} className={typeFilter === t ? 'active' : ''} onClick={() => setTypeFilter(t)}>
-              {TYPE_ICON[t]} {TYPE_LABEL[t]} {issues.filter((i) => i.type === t).length}
-            </button>
-          ))}
+          {ISSUE_TYPES.map((t) => {
+            const n = issues.filter((i) => i.type === t).length;
+            return (
+              <button
+                key={t}
+                className={`${typeFilter === t ? 'active' : ''}${n === 0 ? ' is-empty' : ''}`}
+                onClick={() => setTypeFilter(t)}
+              >
+                {TYPE_ICON[t]} {TYPE_LABEL[t]} <b>{n}</b>
+              </button>
+            );
+          })}
         </div>
+        <span className="issue-filterbar__spacer" />
+        {/* 상태 필터 — 칸반은 상태가 열이라 숨김. 그 외엔 드롭다운. */}
+        {view !== 'board' && (
+          <select className="issue-dd" value={filter} onChange={(e) => setFilter(e.target.value as IssueStatus | 'all')} aria-label="상태 필터">
+            <option value="all">상태: 전체 ({issues.length})</option>
+            {ISSUE_STATUSES.map((s) => (
+              <option key={s} value={s}>{STATUS_LABEL[s]} ({issues.filter((i) => i.status === s).length})</option>
+            ))}
+          </select>
+        )}
         <span className="issue-cat-filter">
-          <select value={catFilter} onChange={(e) => setCatFilter(e.target.value)} aria-label="항목 필터">
+          <select className="issue-dd" value={catFilter} onChange={(e) => setCatFilter(e.target.value)} aria-label="항목 필터">
             <option value="all">항목: 전체</option>
             <option value="none">항목: 미지정</option>
             {cats.map((c) => (
@@ -460,31 +494,7 @@ export function Issues() {
             </button>
           )}
         </span>
-        <input
-          className="issue-search"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="🔍 제목·내용·담당자·타입필드 검색"
-          aria-label="이슈 검색"
-        />
-        <select value={sort} onChange={(e) => setSort(e.target.value as SortMode)} aria-label="정렬">
-          <option value="newest">최신순</option>
-          <option value="oldest">오래된순</option>
-          <option value="due">마감임박순</option>
-          <option value="priority">우선순위순</option>
-        </select>
       </div>
-
-      {view !== 'board' && (
-        <div className="issue-filters">
-          <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>전체 {issues.length}</button>
-          {ISSUE_STATUSES.map((s) => (
-            <button key={s} className={filter === s ? 'active' : ''} onClick={() => setFilter(s)}>
-              {STATUS_LABEL[s]} {issues.filter((i) => i.status === s).length}
-            </button>
-          ))}
-        </div>
-      )}
 
       {view === 'list' && (
         <section className="card" style={{ padding: 0 }}>
