@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
 import { accFileBlobUrl, accFileRedirectUrl, accFileSignedUrl, isAccModel } from '../lib/aps';
 import { viewerKindFor, type ViewerKind, type FileRecord } from '../lib/files';
 import { ApsMiniViewer } from './ApsMiniViewer';
@@ -21,21 +20,18 @@ const fakeFile = (name: string) => ({ name, size_bytes: null, mime_type: null })
  * 모델(rvt·nwd·ifc…)은 미리보기 대신 3D 뷰어로 열도록 안내한다.
  */
 export function AccFilePreview({
-  projectId,
   accProject,
   itemId,
   name,
   urn,
   onClose,
 }: {
-  projectId: string;
   accProject: string;
   itemId: string;
   name: string;
   urn?: string | null;
   onClose: () => void;
 }) {
-  const navigate = useNavigate();
   const [view, setView] = useState<{ url: string; kind: ViewerKind } | null>(null);
   const [status, setStatus] = useState('여는 중…');
   const model = isAccModel(name);
@@ -96,9 +92,6 @@ export function AccFilePreview({
       <div className="acc-doc-head">
         <strong className="cde-view-name">👁 {name}</strong>
         <div className="spacer" />
-        {model && urn && (
-          <button className="primary" onClick={() => navigate(`/project/${projectId}/model?urn=${encodeURIComponent(urn)}`)}>3D 뷰어로 열기</button>
-        )}
         <button onClick={onClose}>✕ 닫기</button>
       </div>
       <div className="acc-doc-body">

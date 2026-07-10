@@ -408,7 +408,8 @@ function IssueDetail({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editContent, setEditContent] = useState(false);
   const [descDraft, setDescDraft] = useState(issue.description ?? '');
-  const [dl, setDl] = useState<{ id: string; pct: number | null } | null>(null);
+  // 파일별 다운로드 진행률(동시 다운로드 지원 — 다른 파일을 눌러도 기존 것이 이어짐).
+  const [dls, setDls] = useState<Record<string, number | null>>({});
   const [previewFile, setPreviewFile] = useState<IssueFileLink | null>(null);
   const [showAllComments, setShowAllComments] = useState(false);
   const [showAllEvents, setShowAllEvents] = useState(false);
@@ -457,17 +458,22 @@ function IssueDetail({
   const refreshEvents = () => listEvents(issue.id).then(setEvents).catch(() => {});
 
   const onDownloadFile = async (f: IssueFileLink) => {
-    setDl({ id: f.id, pct: 0 });
+    if (dls[f.id] !== undefined) return; // 이미 이 파일 받는 중
+    setDls((d) => ({ ...d, [f.id]: 0 }));
     try {
       await downloadAccItemProgress(f.acc_project_id, f.acc_item_id, f.name, (frac) =>
-        setDl({ id: f.id, pct: frac == null ? null : Math.round(frac * 100) }),
+        setDls((d) => ({ ...d, [f.id]: frac == null ? null : Math.round(frac * 100) })),
       );
       await logIssueEvent(issue.id, issue.project_id, 'file_download', f.name, authorName);
       refreshEvents();
     } catch (e) {
       alert(`다운로드 실패: ${errMessage(e)}`);
     } finally {
-      setDl(null);
+      setDls((d) => {
+        const n = { ...d };
+        delete n[f.id];
+        return n;
+      });
     }
   };
 
@@ -605,13 +611,14 @@ function IssueDetail({
         <div className="issue-block__b">
           {files.length === 0 && <p className="muted" style={{ margin: 0 }}>연결된 파일이 없습니다.</p>}
           {files.map((f) => {
-            const dling = dl?.id === f.id;
+            const pct = dls[f.id];
+            const dling = pct !== undefined;
             return (
               <div className="issue-file" key={f.id}>
                 <span className="issue-file-name" title={f.name}>{isAccModel(f.name) ? '🧱' : '📄'} {f.name}</span>
                 <button className="issue-file-dl" title="미리보기" onClick={() => setPreviewFile(f)}>👁 미리보기</button>
                 <button className="issue-file-dl" disabled={dling} title="이 파일 다운로드" onClick={() => void onDownloadFile(f)}>
-                  {dling ? (dl.pct == null ? '⬇ …' : `⬇ ${dl.pct}%`) : '⬇ 다운로드'}
+                  {dling ? (pct == null ? '⬇ …' : `⬇ ${pct}%`) : '⬇ 다운로드'}
                 </button>
                 <span className="issue-file-locwrap">
                   파일 위치 :
@@ -642,7 +649,6 @@ function IssueDetail({
       )}
       {previewFile && (
         <AccFilePreview
-          projectId={issue.project_id}
           accProject={previewFile.acc_project_id}
           itemId={previewFile.acc_item_id}
           name={previewFile.name}

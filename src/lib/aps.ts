@@ -124,8 +124,9 @@ export async function downloadAccItem(project: string, item: string, fileName: s
 }
 
 /**
- * 진행률(0~1)을 보고하며 다운로드한다. Content-Length 가 없으면 fraction=null(불확정).
- * 응답 바디를 스트림으로 읽어 loaded/total 을 계산한다.
+ * 진행률(0~1)을 보고하며 다운로드한다(XHR — download progress 이벤트가 주기적으로
+ * 발생해 중간 % 가 매끄럽다). Content-Length 가 없으면 fraction=null(불확정).
+ * 각 호출은 독립 XHR 이라 여러 파일을 동시에 받아도 서로 간섭하지 않는다.
  */
 export async function downloadAccItemProgress(
   project: string,
@@ -133,30 +134,27 @@ export async function downloadAccItemProgress(
   fileName: string,
   onProgress?: (fraction: number | null) => void,
 ): Promise<void> {
-  const res = await fetch(accFileBase(project, item), { headers: await authHeader() });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `다운로드 실패(${res.status})`);
-  const total = Number(res.headers.get('content-length') || 0);
-  if (!res.body || !total) {
-    onProgress?.(null); // 길이/스트림 없음 → 불확정
-    saveBlob(await res.blob(), fileName);
-    onProgress?.(1);
-    return;
-  }
-  const reader = res.body.getReader();
-  const chunks: BlobPart[] = [];
-  let loaded = 0;
-  onProgress?.(0);
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      chunks.push(value);
-      loaded += value.length;
-      onProgress?.(Math.min(1, loaded / total));
-    }
-  }
-  saveBlob(new Blob(chunks), fileName);
-  onProgress?.(1);
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token ?? '';
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', accFileBase(project, item), true);
+    if (token) xhr.setRequestHeader('authorization', `Bearer ${token}`);
+    xhr.responseType = 'blob';
+    onProgress?.(0);
+    xhr.onprogress = (e) => onProgress?.(e.lengthComputable && e.total ? e.loaded / e.total : null);
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        saveBlob(xhr.response as Blob, fileName);
+        onProgress?.(1);
+        resolve();
+      } else {
+        reject(new Error(`다운로드 실패(${xhr.status})`));
+      }
+    };
+    xhr.onerror = () => reject(new Error('다운로드 네트워크 오류'));
+    xhr.send();
+  });
 }
 
 /** ACC 아이템의 버전 이력. */

@@ -3,6 +3,25 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 C11 — 다운로드 진행률 XHR·동시 다운로드·미리보기 버튼 정리 (2026-07-09)
+> branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과.
+
+### ✅ 한 일
+1. **다운로드 진행률 XHR 전환**: fetch 스트림 리더 → `XMLHttpRequest`(다운로드 `onprogress` 이벤트가 주기적으로
+   발생해 **중간 %가 매끄럽게** 갱신). Content-Length 있으면 loaded/total, 없으면 `…`.
+2. **동시 다운로드 지원**: 진행률 상태를 단일 슬롯 → **파일별 맵**(`dls[fileId]`)으로 변경. 한 파일 받는 중에 다른
+   파일을 눌러도 **기존 다운로드가 끊기지 않고** 각자 % 표시. 같은 파일 중복 클릭은 무시.
+3. **인라인 3D 미리보기의 '3D 뷰어로 열기' 버튼 제거**(요청) — 미리보기 창에서 바로 3D 로 보므로 불필요.
+   `AccFilePreview` 에서 navigate/projectId 제거.
+
+### 🔜 미해결
+- 중간 %가 여전히 0/100 만 보이면 **서버 버퍼링 가능성**(edge 가 응답을 한 번에 전달) — 그 경우 대안은 첨부 시
+  ACC 파일크기 저장 후 그 값으로 계산. 서버(api/aps-file) 재배포 필요.
+
+### 인수인계 한 줄
+다운로드 XHR 진행률 + 파일별 동시 다운로드 + 미리보기 3D열기 버튼 제거. typecheck·build OK. 서버 재배포 필요.
+
+---
 ## 📋 C10 — 관련자료 모델 인라인 3D 미리보기 + 다운로드 % 실동작 (2026-07-09)
 > branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과. 라이브 UX 피드백.
 
