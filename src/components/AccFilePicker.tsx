@@ -9,6 +9,7 @@ export interface PickedAccFile {
   accItemId: string;
   accUrn: string | null;
   name: string;
+  size: number | null;
   folderId: string | null;
   folderIds: string[];
   folderNames: string[];
@@ -117,6 +118,7 @@ export function AccFilePicker({
       accItemId: it.id,
       accUrn: it.urn,
       name: it.name,
+      size: it.size ?? null,
       folderId: curId,
       folderIds: path.map((p) => p.id),
       folderNames: path.map((p) => p.name),

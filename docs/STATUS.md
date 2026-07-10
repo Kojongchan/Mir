@@ -3,6 +3,28 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 C12 — 첨부 파일크기 저장 → 다운로드 % 계산(우회) (2026-07-09)
+> branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과.
+
+### ✅ 한 일 (Content-Length 미유지 우회)
+1. **ACC 파일 크기 확보**: `api/aps-acc` contents 응답의 `included`(tip 버전)에서 `storageSize` 를 읽어 각
+   item 에 `size` 추가. `AccItem.size` 필드 추가.
+2. **첨부 시 크기 저장(0037_issue_file_size.sql)**: `issue_file_link.size_bytes`. 피커 `PickedAccFile.size` →
+   `addIssueFile(sizeBytes)`.
+3. **다운로드 % 계산**: `downloadAccItemProgress(..., knownTotal)` — XHR onprogress 에서 서버 Content-Length 가
+   없으면(edge 버퍼링) 저장된 `size_bytes` 를 총량으로 써서 `loaded/total` 로 % 표시.
+
+### ⚠️ 주의
+- **0037 적용 + 서버 재배포(api/aps-acc·aps-file) 필요.**
+- **기존에 첨부된 링크는 size_bytes=null** → 재첨부해야 % 나옴(신규 첨부부터 적용). Content-Length 가 살아있으면
+  기존 것도 % 표시됨.
+- 그래도 0/100 만 보이면 edge 가 응답을 통째 버퍼링해 onprogress 가 1회만 발생하는 극단 케이스 — 이 경우
+  네트워크 계층 한계라 클라이언트로는 더 못 쪼갬(서버에서 청크 스트리밍 조정 필요).
+
+### 인수인계 한 줄
+ACC 파일크기(storageSize)를 첨부 시 저장(0037)하고 다운로드 % 총량으로 사용. 서버 재배포+0037 적용, 재첨부부터 %.
+
+---
 ## 📋 C11 — 다운로드 진행률 XHR·동시 다운로드·미리보기 버튼 정리 (2026-07-09)
 > branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과.
 

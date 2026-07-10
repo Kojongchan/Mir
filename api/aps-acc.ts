@@ -107,6 +107,11 @@ export default async function handler(req: Request): Promise<Response> {
         .filter((x: any) => x.type === 'folders')
         .map((x: any) => ({ id: x.id, name: x.attributes?.displayName ?? x.attributes?.name }))
         .sort(byName);
+      // 아이템의 tip 버전은 응답 included 에 들어오며 storageSize(바이트)를 가진다.
+      const sizeByVer = new Map<string, number | null>();
+      for (const v of (d.included ?? []) as any[]) {
+        if (v?.id) sizeByVer.set(v.id, (v.attributes?.storageSize as number) ?? null);
+      }
       const items = (d.data ?? [])
         .filter((x: any) => x.type === 'items')
         .map((x: any) => {
@@ -116,6 +121,7 @@ export default async function handler(req: Request): Promise<Response> {
             name: x.attributes?.displayName ?? x.attributes?.name,
             urn: tip ? toBase64Url(tip) : null,
             lastModified: x.attributes?.lastModifiedTime ?? x.attributes?.createTime ?? null,
+            size: tip ? (sizeByVer.get(tip) ?? null) : null,
           };
         })
         .sort(byName);

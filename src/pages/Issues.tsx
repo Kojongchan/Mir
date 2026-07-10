@@ -433,6 +433,7 @@ function IssueDetail({
         accItemId: f.accItemId,
         accUrn: f.accUrn,
         name: f.name,
+        sizeBytes: f.size,
         folderId: f.folderId,
         folderIds: f.folderIds,
         folderNames: f.folderNames,
@@ -461,8 +462,12 @@ function IssueDetail({
     if (dls[f.id] !== undefined) return; // 이미 이 파일 받는 중
     setDls((d) => ({ ...d, [f.id]: 0 }));
     try {
-      await downloadAccItemProgress(f.acc_project_id, f.acc_item_id, f.name, (frac) =>
-        setDls((d) => ({ ...d, [f.id]: frac == null ? null : Math.round(frac * 100) })),
+      await downloadAccItemProgress(
+        f.acc_project_id,
+        f.acc_item_id,
+        f.name,
+        (frac) => setDls((d) => ({ ...d, [f.id]: frac == null ? null : Math.round(frac * 100) })),
+        f.size_bytes,
       );
       await logIssueEvent(issue.id, issue.project_id, 'file_download', f.name, authorName);
       refreshEvents();

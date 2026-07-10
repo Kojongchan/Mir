@@ -8,7 +8,7 @@
 import { supabase } from './supabase';
 
 export type AccNamed = { id: string; name: string };
-export type AccItem = { id: string; name: string; urn: string | null; lastModified?: string | null };
+export type AccItem = { id: string; name: string; urn: string | null; lastModified?: string | null; size?: number | null };
 export type AccVersion = {
   id: string;
   versionNumber: number | null;
@@ -133,6 +133,7 @@ export async function downloadAccItemProgress(
   item: string,
   fileName: string,
   onProgress?: (fraction: number | null) => void,
+  knownTotal?: number | null,
 ): Promise<void> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token ?? '';
@@ -142,7 +143,11 @@ export async function downloadAccItemProgress(
     if (token) xhr.setRequestHeader('authorization', `Bearer ${token}`);
     xhr.responseType = 'blob';
     onProgress?.(0);
-    xhr.onprogress = (e) => onProgress?.(e.lengthComputable && e.total ? e.loaded / e.total : null);
+    // 총량: 서버 Content-Length 우선, 없으면 첨부 시 저장한 파일크기(knownTotal)로 % 계산.
+    xhr.onprogress = (e) => {
+      const total = e.lengthComputable && e.total ? e.total : knownTotal || 0;
+      onProgress?.(total ? Math.min(1, e.loaded / total) : null);
+    };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         saveBlob(xhr.response as Blob, fileName);

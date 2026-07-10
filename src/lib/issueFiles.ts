@@ -14,6 +14,7 @@ export interface IssueFileLink {
   acc_item_id: string;
   acc_urn: string | null;
   name: string;
+  size_bytes: number | null;
   folder_id: string | null;
   folder_ids: string[];
   folder_names: string[];
@@ -22,7 +23,7 @@ export interface IssueFileLink {
 }
 
 const COLS =
-  'id, issue_id, acc_project_id, acc_item_id, acc_urn, name, folder_id, folder_ids, folder_names, added_by_name, created_at';
+  'id, issue_id, acc_project_id, acc_item_id, acc_urn, name, size_bytes, folder_id, folder_ids, folder_names, added_by_name, created_at';
 
 export async function listIssueFiles(issueId: string): Promise<IssueFileLink[]> {
   const { data, error } = await supabase
@@ -45,6 +46,7 @@ export interface AddIssueFileInput {
   accItemId: string;
   accUrn?: string | null;
   name: string;
+  sizeBytes?: number | null;
   folderId?: string | null;
   folderIds: string[];
   folderNames: string[];
@@ -62,6 +64,7 @@ export async function addIssueFile(input: AddIssueFileInput): Promise<IssueFileL
       acc_item_id: input.accItemId,
       acc_urn: input.accUrn ?? null,
       name: input.name,
+      size_bytes: input.sizeBytes ?? null,
       folder_id: input.folderId ?? null,
       folder_ids: input.folderIds,
       folder_names: input.folderNames,
