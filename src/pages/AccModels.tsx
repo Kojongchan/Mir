@@ -7,7 +7,7 @@ import { getProjectAcc, setProjectAcc, getOrCreateApsModelRow } from '../lib/api
 import { buildApsMapping, type ApsMapping } from '../lib/apsMapping';
 import { isolateAndFit, showApsClash } from '../lib/apsClashView';
 import { listIssues, createIssue, logIssueEvent, STATUS_LABEL, type Issue } from '../lib/issues';
-import { ISSUE_TYPES, TYPE_ICON, TYPE_LABEL, type IssueType } from '../lib/issueTypes';
+import { ISSUE_TYPES, TYPE_LABEL, type IssueType } from '../lib/issueTypes';
 import { listIssueCategories, type IssueCategory } from '../lib/issueCategories';
 import { addIssueViewpoint, captureApsSnapshot } from '../lib/issueViewpoints';
 import { ApsClashPanel } from '../components/ApsClashPanel';
@@ -1315,7 +1315,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
                       onChange={(e) => setIssueForm((f) => ({ ...f, type: e.target.value as IssueType }))}
                       style={{ width: '100%', padding: '6px 8px', borderRadius: 6, marginTop: 2, background: 'var(--bg)', color: 'var(--text)', border: '1px solid var(--border)' }}
                     >
-                      {ISSUE_TYPES.map((t) => <option key={t} value={t}>{TYPE_ICON[t]} {TYPE_LABEL[t]}</option>)}
+                      {ISSUE_TYPES.map((t) => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
                     </select>
                   </div>
                 </div>

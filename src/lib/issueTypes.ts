@@ -1,4 +1,5 @@
 import type { IssueStatus } from './issues';
+import type { IconName } from '../components/icons/Icon';
 
 // =====================================================================
 // 이슈 타입 분화 레지스트리 — general·rfi·punch(하자/지적)·safety(안전)·quality(품질).
@@ -18,12 +19,13 @@ export const TYPE_LABEL: Record<IssueType, string> = {
   quality: '품질',
 };
 
-export const TYPE_ICON: Record<IssueType, string> = {
-  general: '🗂',
-  rfi: '❓',
-  punch: '🔧',
-  safety: '⚠️',
-  quality: '✅',
+/** 유형별 커스텀 도메인 아이콘 이름(Icon.tsx). 이모지 대체 — 타입색으로 tint 됨. */
+export const TYPE_ICON_NAME: Record<IssueType, IconName> = {
+  general: 'issue-general',
+  rfi: 'issue-rfi',
+  punch: 'issue-punch',
+  safety: 'issue-safety',
+  quality: 'issue-quality',
 };
 
 /** 타입 뱃지 색(라이트/다크 토큰이 없어 뱃지 전용 고정 팔레트 — 배경/글자 쌍). */

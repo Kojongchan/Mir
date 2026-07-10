@@ -75,10 +75,22 @@
   **상태·항목 드롭다운**(상태를 칩 → 드롭다운으로, 칸반에선 상태가 열이라 숨김) + ⚙.
   중복 '전체' 제거, 미사용 `.issue-filters` CSS 정리. 목업 스크린샷으로 시각 확인.
 
+- **아이콘 통일(이모지 → 커스텀 SVG, 사용자 요청)**: 이슈 화면이 이모지(🗂❓🔧⚠️✅📍⚙…)라
+  "노션 스타일"로 겉돌던 문제 해소. 기존 디자인 시스템 아이콘 세트를 재사용/확장:
+  ①**유형 아이콘 5종**을 도메인 `Icon.tsx`에 추가(일반=문서·RFI=말풍선+?·하자=깃발·안전=경고삼각·
+  품질=체크원, 레드닷 생략하고 **타입색 currentColor tint**). `issueTypes.ts`의 이모지 `TYPE_ICON`
+  제거 → `TYPE_ICON_NAME`(IconName)로 교체(중복 제거). ②**범용 UI 아이콘 15종**을 `UiIcon.tsx`
+  스프라이트에 추가(list·columns·pin·search·download·settings·edit·bookmark·file-text·printer·
+  eye·user·clipboard·cube·ruler) — 단일 정의 참조라 중복 없음. ③Issues.tsx 전 구간(툴바·칩·뱃지·
+  상세·모달·항목관리·보고서메뉴·마크업툴) 이모지를 `<Icon>`/`<UiIcon>`로 교체, `<option>` 내부는
+  SVG 불가라 텍스트만. `.ic`/`.ic-only`/검색아이콘 CSS 유틸 추가. ApsClashPanel·AccModels의
+  유형 option도 텍스트화(TYPE_ICON import 제거). 아이콘 목업 스크린샷으로 시각 확인.
+  (EmptyState 대형 이모지는 앱 전역 패턴이라 이번 범위 밖.)
+
 ### 인수인계 한 줄
-이슈 고도화 완결(0038: 타입 5종+meta+뷰포인트 / 리스트·카드·핀(간섭) 3뷰 / 뷰포인트·마크업 / 보고서
-(엑셀·RFI·지적통보서) / 현장등록·오프라인 초안 / `/acc`→`/model` 버그픽스). typecheck·build·docx/xlsx
-스모크 OK. 다음은 0038 적용 후 라이브 검증.
+이슈 고도화 완결(0038/0039: 타입 5종+항목+meta+뷰포인트 / 리스트·카드·핀(간섭) 3뷰 / 뷰포인트·마크업 /
+보고서(엑셀·RFI·지적통보서) / 이모지→커스텀 SVG 아이콘 통일). typecheck·build·docx/xlsx·아이콘 목업 OK.
+다음은 0038·0039 적용 후 라이브 검증.
 
 ---
 ## 📋 C12 — 첨부 파일크기 저장 → 다운로드 % 계산(우회) (2026-07-09)

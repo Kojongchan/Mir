@@ -3815,6 +3815,18 @@ button.danger:hover:not(:disabled) {
 }
 
 /* ---- 협업 · 이슈 ---- */
+/* 아이콘+라벨 버튼/요소 정렬 유틸(이모지 → SVG 아이콘 전환) */
+.ic {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  vertical-align: middle;
+}
+.ic-only {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
 .issue-badge {
   display: inline-block;
   font-size: 11px;
@@ -6416,10 +6428,22 @@ textarea.input {
   color: var(--color-text-on-brand);
   font-weight: 600;
 }
-.issue-search {
+.issue-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
   flex: 1;
   min-width: 180px;
-  max-width: none;
+}
+.issue-search-ic {
+  position: absolute;
+  left: 10px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.issue-search {
+  width: 100%;
+  padding-left: 32px;
 }
 .issue-sort {
   flex: none;

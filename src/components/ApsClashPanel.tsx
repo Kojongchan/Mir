@@ -30,7 +30,7 @@ import { apsClashesToCsv, buildApsClashReport, downloadReport, captureClashAngle
 import { downloadCsv } from '../lib/clash';
 import { uploadAttachment } from '../lib/attachments';
 import { createIssue, ISSUE_PRIORITIES, PRIORITY_LABEL, type IssuePriority } from '../lib/issues';
-import { ISSUE_TYPES, TYPE_ICON, TYPE_LABEL, type IssueType } from '../lib/issueTypes';
+import { ISSUE_TYPES, TYPE_LABEL, type IssueType } from '../lib/issueTypes';
 import { listIssueCategories, type IssueCategory } from '../lib/issueCategories';
 import type { ApsMapping } from '../lib/apsMapping';
 import { listProjectMembers, memberLabel, type ProjectMember } from '../lib/members';
@@ -614,7 +614,7 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
                 <label style={lbl}>유형</label>
                 <select value={issueType} onChange={(e) => setIssueType(e.target.value as IssueType)} style={sel}>
                   {ISSUE_TYPES.map((t) => (
-                    <option key={t} value={t}>{TYPE_ICON[t]} {TYPE_LABEL[t]}</option>
+                    <option key={t} value={t}>{TYPE_LABEL[t]}</option>
                   ))}
                 </select>
               </div>

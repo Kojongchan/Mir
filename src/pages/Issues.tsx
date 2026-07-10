@@ -35,7 +35,7 @@ import {
   ISSUE_TYPES,
   TYPE_COLOR,
   TYPE_FIELDS,
-  TYPE_ICON,
+  TYPE_ICON_NAME,
   TYPE_LABEL,
   metaValue,
   siteTagOf,
@@ -63,6 +63,8 @@ import { listProjectMembers, memberLabel, type ProjectMember } from '../lib/memb
 import { formatDate } from '../lib/dashboard';
 import { getProject } from '../lib/api';
 import { Attachments } from '../components/Attachments';
+import { Icon } from '../components/icons/Icon';
+import { UiIcon, type UiIconName } from '../components/icons/UiIcon';
 import { MarkupOverlay, type MarkupTool } from '../components/MarkupOverlay';
 import { REDLINE_COLORS, type MarkupShape, type RedlineColor } from '../lib/viewpoints';
 import { MentionInput } from '../components/MentionInput';
@@ -79,12 +81,13 @@ type SortMode = 'newest' | 'oldest' | 'due' | 'priority';
 const VIEW_KEY = 'mir.issues.view';
 const PRIO_ORDER: Record<IssuePriority, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
 
-/** 이슈 타입 뱃지(아이콘+라벨, 타입별 색). */
+/** 이슈 타입 뱃지(아이콘+라벨, 타입별 색). 아이콘은 currentColor(=타입 fg)로 tint. */
 function TypeBadge({ type, compact = false }: { type: IssueType; compact?: boolean }) {
   const c = TYPE_COLOR[type];
   return (
     <span className="issue-type-badge" style={{ background: c.bg, color: c.fg }}>
-      {TYPE_ICON[type]}{compact ? '' : ` ${TYPE_LABEL[type]}`}
+      <Icon name={TYPE_ICON_NAME[type]} size={13} />
+      {compact ? '' : TYPE_LABEL[type]}
     </span>
   );
 }
@@ -338,12 +341,12 @@ export function Issues() {
       <div className="dash-head">
         <h1 className="dash-h1">협업 · 이슈</h1>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <button onClick={() => void onExportXlsx()} title="현재 필터·정렬이 반영된 목록을 엑셀로 저장">
-            ⬇ 엑셀
+          <button className="ic" onClick={() => void onExportXlsx()} title="현재 필터·정렬이 반영된 목록을 엑셀로 저장">
+            <UiIcon name="download" size={15} /> 엑셀
           </button>
           {canEdit && (
-            <button className="primary" onClick={() => { setForm({ title: '', description: '', type: 'general', meta: {}, category_id: '', priority: 'normal', assignee_id: '', due_date: '' }); setShowForm(true); }}>
-              ＋ 이슈 등록
+            <button className="primary ic" onClick={() => { setForm({ title: '', description: '', type: 'general', meta: {}, category_id: '', priority: 'normal', assignee_id: '', due_date: '' }); setShowForm(true); }}>
+              <UiIcon name="plus" size={15} /> 이슈 등록
             </button>
           )}
         </div>
@@ -353,8 +356,8 @@ export function Issues() {
         <div className="modal-backdrop" onClick={() => setShowForm(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head" style={{ display: 'flex', alignItems: 'center' }}>
-              <h3 style={{ flex: 1, margin: 0 }}>＋ 새 이슈</h3>
-              <button onClick={() => setShowForm(false)} aria-label="닫기">✕</button>
+              <h3 className="ic" style={{ flex: 1, margin: 0 }}><UiIcon name="plus" size={16} /> 새 이슈</h3>
+              <button className="ic-only" onClick={() => setShowForm(false)} aria-label="닫기"><UiIcon name="x" size={16} /></button>
             </div>
             <div className="modal-body">
               <label style={{ display: 'block', marginBottom: 8 }}>제목
@@ -374,7 +377,7 @@ export function Issues() {
                     style={{ width: '100%' }}
                   >
                     {ISSUE_TYPES.map((t) => (
-                      <option key={t} value={t}>{TYPE_ICON[t]} {TYPE_LABEL[t]}</option>
+                      <option key={t} value={t}>{TYPE_LABEL[t]}</option>
                     ))}
                   </select>
                 </label>
@@ -424,23 +427,26 @@ export function Issues() {
         <div className="issue-view-switch" role="tablist" aria-label="이슈 보기 방식">
           {(
             [
-              ['list', '☰ 리스트'],
-              ['board', '🗂 카드'],
-              ['pins', '📍 핀(간섭)'],
-            ] as [ViewMode, string][]
-          ).map(([v, label]) => (
-            <button key={v} role="tab" aria-selected={view === v} className={view === v ? 'active' : ''} onClick={() => setViewMode(v)}>
-              {label}
+              ['list', 'list', '리스트'],
+              ['board', 'columns', '카드'],
+              ['pins', 'pin', '핀(간섭)'],
+            ] as [ViewMode, UiIconName, string][]
+          ).map(([v, icon, label]) => (
+            <button key={v} role="tab" aria-selected={view === v} className={`ic${view === v ? ' active' : ''}`} onClick={() => setViewMode(v)}>
+              <UiIcon name={icon} size={15} /> {label}
             </button>
           ))}
         </div>
-        <input
-          className="issue-search"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="🔍 제목·내용·담당자·타입필드 검색"
-          aria-label="이슈 검색"
-        />
+        <span className="issue-search-wrap">
+          <UiIcon name="search" size={15} className="issue-search-ic" />
+          <input
+            className="issue-search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="제목·내용·담당자·타입필드 검색"
+            aria-label="이슈 검색"
+          />
+        </span>
         <select className="issue-sort" value={sort} onChange={(e) => setSort(e.target.value as SortMode)} aria-label="정렬">
           <option value="newest">최신순</option>
           <option value="oldest">오래된순</option>
@@ -460,10 +466,10 @@ export function Issues() {
             return (
               <button
                 key={t}
-                className={`${typeFilter === t ? 'active' : ''}${n === 0 ? ' is-empty' : ''}`}
+                className={`ic${typeFilter === t ? ' active' : ''}${n === 0 ? ' is-empty' : ''}`}
                 onClick={() => setTypeFilter(t)}
               >
-                {TYPE_ICON[t]} {TYPE_LABEL[t]} <b>{n}</b>
+                <Icon name={TYPE_ICON_NAME[t]} size={14} /> {TYPE_LABEL[t]} <b>{n}</b>
               </button>
             );
           })}
@@ -489,8 +495,8 @@ export function Issues() {
             ))}
           </select>
           {canEdit && (
-            <button onClick={() => setCatManageOpen(true)} title="항목(토공·교량·터널 …) 추가/이름변경/삭제">
-              ⚙
+            <button className="ic-only" onClick={() => setCatManageOpen(true)} title="항목(토공·교량·터널 …) 추가/이름변경/삭제">
+              <UiIcon name="settings" size={16} />
             </button>
           )}
         </span>
@@ -572,7 +578,7 @@ export function Issues() {
             <div className="modal-head" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <TypeBadge type={openIssueObj.type} />
               <h3 style={{ flex: 1, margin: 0 }}>#{numberOf.get(openIssueObj.id)} {openIssueObj.title}</h3>
-              <button onClick={() => setOpenId(null)} aria-label="닫기">✕</button>
+              <button className="ic-only" onClick={() => setOpenId(null)} aria-label="닫기"><UiIcon name="x" size={16} /></button>
             </div>
             <div className="modal-body">{detail(openIssueObj)}</div>
           </div>
@@ -725,7 +731,7 @@ function KanbanBoard({
                       {it.type !== 'general' && (
                         <span className="muted">{statusLabelFor(it.type, it.status, '')}</span>
                       )}
-                      {it.assignee_name && <span className="muted">👤 {it.assignee_name}</span>}
+                      {it.assignee_name && <span className="muted ic"><UiIcon name="user" size={12} /> {it.assignee_name}</span>}
                       {it.due_date && (ds === 'overdue' || ds === 'soon') && (
                         <span className={`due-badge due-${ds}`}>{DUE_LABEL[ds]} {dueDeltaLabel(it.due_date)}</span>
                       )}
@@ -790,7 +796,7 @@ function PinBoard({
     <div className="pinboard">
       <section className="card issue-block">
         <div className="issue-block__h">
-          <span>🧊 3D 모델 핀 · {anchored3d.length}</span>
+          <span className="ic"><UiIcon name="cube" size={15} /> 3D 모델 핀 · {anchored3d.length}</span>
           <button
             className="issue-block__chev"
             onClick={() => navigate(`/project/${projectId}/model`)}
@@ -816,8 +822,9 @@ function PinBoard({
                       : `/project/${projectId}/model?focusGlobalId=${encodeURIComponent(it.global_id!)}`,
                   )
                 }
+                className="ic"
               >
-                📍 위치 보기
+                <UiIcon name="pin" size={14} /> 위치 보기
               </button>,
             ),
           )}
@@ -825,7 +832,7 @@ function PinBoard({
       </section>
 
       <section className="card issue-block">
-        <div className="issue-block__h"><span>📐 도면 핀 · {drawPins.length}</span></div>
+        <div className="issue-block__h"><span className="ic"><UiIcon name="ruler" size={15} /> 도면 핀 · {drawPins.length}</span></div>
         <div className="issue-block__b">
           {byDrawing.size === 0 && (
             <p className="muted" style={{ margin: 0 }}>
@@ -835,7 +842,7 @@ function PinBoard({
           {[...byDrawing.entries()].map(([dId, g]) => (
             <div key={dId} className="pinboard-group">
               <div className="pinboard-group__h">
-                <span>📐 {g.name} · {g.pins.length}</span>
+                <span className="ic"><UiIcon name="ruler" size={14} /> {g.name} · {g.pins.length}</span>
                 <button onClick={() => navigate(`/project/${projectId}/drawings`, { state: { openDrawingId: dId } })}>
                   도면 열기 ›
                 </button>
@@ -1163,7 +1170,7 @@ function IssueDetail({
                     <option value="">미지정</option>
                     {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
-                  <button onClick={onManageCats} title="항목 목록 관리(추가/이름변경/삭제)">⚙</button>
+                  <button className="ic-only" onClick={onManageCats} title="항목 목록 관리(추가/이름변경/삭제)"><UiIcon name="settings" size={15} /></button>
                 </span>
               </label>
               <label>담당자 배정
@@ -1200,7 +1207,7 @@ function IssueDetail({
             onClick={() => { if (!canEdit) return; if (!typeOpen) openTypeEdit(); else setTypeOpen(false); }}
             aria-expanded={typeOpen}
           >
-            <span>{TYPE_ICON[issue.type]} {TYPE_LABEL[issue.type]} 정보</span>
+            <span className="ic"><Icon name={TYPE_ICON_NAME[issue.type]} size={15} /> {TYPE_LABEL[issue.type]} 정보</span>
             {canEdit && <span className="issue-block__chev">{typeOpen ? '▾ 편집 닫기' : '▸ 편집'}</span>}
           </button>
           <div className="issue-block__b">
@@ -1262,7 +1269,7 @@ function IssueDetail({
           <p className="muted issue-meta" style={{ margin: '8px 0 0' }}>
             등록 {issue.created_by_name || '—'} · {formatDate(issue.created_at.slice(0, 10))}
             {site && (
-              <> · 📍 GPS {site.lat.toFixed(6)}, {site.lng.toFixed(6)} ({new Date(site.taken_at).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })})</>
+              <> · <UiIcon name="pin" size={11} /> GPS {site.lat.toFixed(6)}, {site.lng.toFixed(6)} ({new Date(site.taken_at).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })})</>
             )}
           </p>
           {hasAnyLocation && (
@@ -1276,8 +1283,9 @@ function IssueDetail({
                         : `/project/${issue.project_id}/model?focusGlobalId=${encodeURIComponent(issue.global_id!)}`,
                     )
                   }
+                  className="ic"
                 >
-                  📍 위치 보기 {issue.global_id_b ? '(간섭 뷰)' : '(3D 모델)'}
+                  <UiIcon name="pin" size={14} /> 위치 보기 {issue.global_id_b ? '(간섭 뷰)' : '(3D 모델)'}
                 </button>
               )}
               {hasLocation && (
@@ -1287,8 +1295,9 @@ function IssueDetail({
                       state: { focus: { modelDbId: issue.model_id, expressID: issue.express_id } },
                     })
                   }
+                  className="ic"
                 >
-                  📍 위치 보기 (3D 객체 #{issue.express_id})
+                  <UiIcon name="pin" size={14} /> 위치 보기 (3D 객체 #{issue.express_id})
                 </button>
               )}
               {issue.viewpoint_id && (
@@ -1296,8 +1305,9 @@ function IssueDetail({
                   onClick={() =>
                     navigate(`/project/${issue.project_id}/model`, { state: { openViewpoint: issue.viewpoint_id } })
                   }
+                  className="ic"
                 >
-                  📌 뷰포인트 열기
+                  <UiIcon name="bookmark" size={14} /> 뷰포인트 열기
                 </button>
               )}
               {drawPins.map((p) => (
@@ -1307,8 +1317,9 @@ function IssueDetail({
                     navigate(`/project/${issue.project_id}/drawings`, { state: { openDrawingId: p.drawing_id } })
                   }
                   title="이 이슈가 핀으로 찍힌 도면 열기"
+                  className="ic"
                 >
-                  📐 도면에서 보기 — {p.drawing_name} (p.{p.page})
+                  <UiIcon name="ruler" size={14} /> 도면에서 보기 — {p.drawing_name} (p.{p.page})
                 </button>
               ))}
             </div>
@@ -1358,14 +1369,15 @@ function IssueDetail({
                           navigate(`/project/${issue.project_id}/model`, { state: { applyApsState: vp.camera_state } })
                         }
                         title="통합모델(3D)에서 이 시점으로 열기"
+                        className="ic"
                       >
-                        🧊 3D에서 열기
+                        <UiIcon name="cube" size={13} /> 3D에서 열기
                       </button>
                     )}
                     {canEdit && vp.snapshot && (
-                      <button onClick={() => setMarkupVp(vp)} title="스냅샷 위에 마크업(도형) 그리기">✏ 마크업</button>
+                      <button className="ic" onClick={() => setMarkupVp(vp)} title="스냅샷 위에 마크업(도형) 그리기"><UiIcon name="edit" size={13} /> 마크업</button>
                     )}
-                    {canEdit && <button className="danger" onClick={() => void onRemoveViewpoint(vp)}>✕</button>}
+                    {canEdit && <button className="danger ic-only" onClick={() => void onRemoveViewpoint(vp)} aria-label="뷰포인트 삭제"><UiIcon name="x" size={13} /></button>}
                   </div>
                 </div>
               ))}
@@ -1393,15 +1405,15 @@ function IssueDetail({
             const dling = pct !== undefined;
             return (
               <div className="issue-file" key={f.id}>
-                <span className="issue-file-name" title={f.name}>{isAccModel(f.name) ? '🧱' : '📄'} {f.name}</span>
-                <button className="issue-file-dl" title="미리보기" onClick={() => setPreviewFile(f)}>👁 미리보기</button>
-                <button className="issue-file-dl" disabled={dling} title="이 파일 다운로드" onClick={() => void onDownloadFile(f)}>
-                  {dling ? (pct == null ? '⬇ …' : `⬇ ${pct}%`) : '⬇ 다운로드'}
+                <span className="issue-file-name ic" title={f.name}><UiIcon name={isAccModel(f.name) ? 'cube' : 'file-text'} size={14} /> {f.name}</span>
+                <button className="issue-file-dl ic" title="미리보기" onClick={() => setPreviewFile(f)}><UiIcon name="eye" size={13} /> 미리보기</button>
+                <button className="issue-file-dl ic" disabled={dling} title="이 파일 다운로드" onClick={() => void onDownloadFile(f)}>
+                  <UiIcon name="download" size={13} /> {dling ? (pct == null ? '…' : `${pct}%`) : '다운로드'}
                 </button>
                 <span className="issue-file-locwrap">
                   파일 위치 :
                   <button
-                    className="issue-file-loc"
+                    className="issue-file-loc ic"
                     title="자료관리에서 이 파일이 있는 폴더 열기"
                     onClick={() =>
                       navigate(`/project/${issue.project_id}/docs`, {
@@ -1409,15 +1421,15 @@ function IssueDetail({
                       })
                     }
                   >
-                    📁 {f.folder_names.length ? f.folder_names.join(' / ') : '위치'} ›
+                    <UiIcon name="folder" size={13} /> {f.folder_names.length ? f.folder_names.join(' / ') : '위치'} ›
                   </button>
                 </span>
-                {canEdit && <button className="issue-file-del" title="첨부 해제" onClick={() => onRemoveFile(f.id)}>✕</button>}
+                {canEdit && <button className="issue-file-del ic-only" title="첨부 해제" onClick={() => onRemoveFile(f.id)} aria-label="첨부 해제"><UiIcon name="x" size={13} /></button>}
               </div>
             );
           })}
           {canEdit && (
-            <button style={{ marginTop: 8 }} onClick={() => setPickerOpen(true)}>＋ 자료관리에서 첨부</button>
+            <button className="ic" style={{ marginTop: 8 }} onClick={() => setPickerOpen(true)}><UiIcon name="plus" size={14} /> 자료관리에서 첨부</button>
           )}
         </div>
       </section>
@@ -1543,7 +1555,7 @@ function ReportMenu({
     };
   }, [open]);
 
-  const item = (label: string, desc: string, run: () => void) => (
+  const item = (icon: UiIconName, label: string, desc: string, run: () => void) => (
     <button
       className="report-menu__item"
       onClick={() => {
@@ -1551,21 +1563,21 @@ function ReportMenu({
         run();
       }}
     >
-      <span>{label}</span>
+      <span className="ic"><UiIcon name={icon} size={15} /> {label}</span>
       <span className="muted">{desc}</span>
     </button>
   );
 
   return (
     <div className="report-menu" ref={rootRef}>
-      <button onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}>
-        📑 보고서 {open ? '▴' : '▾'}
+      <button className="ic" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}>
+        <UiIcon name="clipboard" size={15} /> 보고서 <UiIcon name="chevron-down" size={13} />
       </button>
       {open && (
         <div className="report-menu__pop" role="menu">
           <div className="report-menu__title">{formLabel}</div>
-          {item('📄 양식 다운로드 (.docx)', '회사 양식 문서로 저장', onDocx)}
-          {item('🖨 인쇄 / PDF 저장', '사진·3D 뷰 포함 인쇄 양식', onPrint)}
+          {item('file-text', '양식 다운로드 (.docx)', '회사 양식 문서로 저장', onDocx)}
+          {item('printer', '인쇄 / PDF 저장', '사진·3D 뷰 포함 인쇄 양식', onPrint)}
         </div>
       )}
     </div>
@@ -1603,19 +1615,19 @@ function MarkupEditor({
   };
 
   const TOOLS: [MarkupTool, string][] = [
-    ['select', '☝ 선택'],
-    ['line', '─ 선'],
-    ['rect', '▭ 사각형'],
-    ['arrow', '➜ 화살표'],
-    ['text', 'T 텍스트'],
+    ['select', '선택'],
+    ['line', '선'],
+    ['rect', '사각형'],
+    ['arrow', '화살표'],
+    ['text', '텍스트'],
   ];
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal modal--wide" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <h3 style={{ flex: 1, margin: 0 }}>✏ 마크업 — {viewpoint.title || '뷰포인트'}</h3>
-          <button onClick={onClose} aria-label="닫기">✕</button>
+          <h3 className="ic" style={{ flex: 1, margin: 0 }}><UiIcon name="edit" size={16} /> 마크업 — {viewpoint.title || '뷰포인트'}</h3>
+          <button className="ic-only" onClick={onClose} aria-label="닫기"><UiIcon name="x" size={16} /></button>
         </div>
         <div className="modal-body">
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8, alignItems: 'center' }}>
@@ -1735,8 +1747,8 @@ function CategoryManager({
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head" style={{ display: 'flex', alignItems: 'center' }}>
-          <h3 style={{ flex: 1, margin: 0 }}>⚙ 이슈 항목 관리</h3>
-          <button onClick={onClose} aria-label="닫기">✕</button>
+          <h3 className="ic" style={{ flex: 1, margin: 0 }}><UiIcon name="settings" size={16} /> 이슈 항목 관리</h3>
+          <button className="ic-only" onClick={onClose} aria-label="닫기"><UiIcon name="x" size={16} /></button>
         </div>
         <div className="modal-body">
           <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
@@ -1745,8 +1757,8 @@ function CategoryManager({
           {cats.length === 0 && (
             <div style={{ marginBottom: 10 }}>
               <p className="muted" style={{ margin: '0 0 6px' }}>아직 항목이 없습니다.</p>
-              <button disabled={busy} onClick={() => void run(async () => { await seedDefaultCategories(projectId); })}>
-                ✨ 기본 세트 만들기 (보고서·토공·교량·터널·가시설·도면·기타 문서·시뮬레이션)
+              <button className="ic" disabled={busy} onClick={() => void run(async () => { await seedDefaultCategories(projectId); })}>
+                <UiIcon name="plus" size={14} /> 기본 세트 만들기 (보고서·토공·교량·터널·가시설·도면·기타 문서·시뮬레이션)
               </button>
             </div>
           )}
@@ -1754,7 +1766,7 @@ function CategoryManager({
             <div key={c.id} className="issue-cat-row">
               <span className="issue-cat-badge">{c.name}</span>
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-                <button disabled={busy} onClick={() => onRename(c)}>✏ 이름</button>
+                <button className="ic" disabled={busy} onClick={() => onRename(c)}><UiIcon name="edit" size={13} /> 이름</button>
                 <button className="danger" disabled={busy} onClick={() => onRemove(c)}>삭제</button>
               </span>
             </div>
@@ -1770,8 +1782,8 @@ function CategoryManager({
             <button className="primary" disabled={busy || !newName.trim()} onClick={() => void onAdd()}>추가</button>
           </div>
           {cats.length > 0 && (
-            <button style={{ marginTop: 8 }} disabled={busy} onClick={() => void run(async () => { await seedDefaultCategories(projectId); })}>
-              ✨ 기본 세트에서 빠진 항목 채우기
+            <button className="ic" style={{ marginTop: 8 }} disabled={busy} onClick={() => void run(async () => { await seedDefaultCategories(projectId); })}>
+              <UiIcon name="plus" size={14} /> 기본 세트에서 빠진 항목 채우기
             </button>
           )}
           {err && <p className="muted" style={{ color: 'var(--color-danger, #dc2626)' }}>{err}</p>}
