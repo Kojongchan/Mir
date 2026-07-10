@@ -8,7 +8,7 @@
 import { supabase } from './supabase';
 
 export type AccNamed = { id: string; name: string };
-export type AccItem = { id: string; name: string; urn: string | null; lastModified?: string | null };
+export type AccItem = { id: string; name: string; urn: string | null; lastModified?: string | null; size?: number | null };
 export type AccVersion = {
   id: string;
   versionNumber: number | null;
@@ -105,11 +105,7 @@ export async function accFileSignedUrl(project: string, item: string, name?: str
   return body.url as string;
 }
 
-/** ACC 원본 파일을 디스크로 저장(다운로드 — 실무자 이상 UI 에서만 호출). */
-export async function downloadAccItem(project: string, item: string, fileName: string): Promise<void> {
-  const res = await fetch(accFileBase(project, item), { headers: await authHeader() });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `다운로드 실패(${res.status})`);
-  const blob = await res.blob();
+function saveBlob(blob: Blob, fileName: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -118,6 +114,52 @@ export async function downloadAccItem(project: string, item: string, fileName: s
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+/** ACC 원본 파일을 디스크로 저장(다운로드 — 실무자 이상 UI 에서만 호출). */
+export async function downloadAccItem(project: string, item: string, fileName: string): Promise<void> {
+  const res = await fetch(accFileBase(project, item), { headers: await authHeader() });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `다운로드 실패(${res.status})`);
+  saveBlob(await res.blob(), fileName);
+}
+
+/**
+ * 진행률(0~1)을 보고하며 다운로드한다(XHR — download progress 이벤트가 주기적으로
+ * 발생해 중간 % 가 매끄럽다). Content-Length 가 없으면 fraction=null(불확정).
+ * 각 호출은 독립 XHR 이라 여러 파일을 동시에 받아도 서로 간섭하지 않는다.
+ */
+export async function downloadAccItemProgress(
+  project: string,
+  item: string,
+  fileName: string,
+  onProgress?: (fraction: number | null) => void,
+  knownTotal?: number | null,
+): Promise<void> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token ?? '';
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', accFileBase(project, item), true);
+    if (token) xhr.setRequestHeader('authorization', `Bearer ${token}`);
+    xhr.responseType = 'blob';
+    onProgress?.(0);
+    // 총량: 서버 Content-Length 우선, 없으면 첨부 시 저장한 파일크기(knownTotal)로 % 계산.
+    xhr.onprogress = (e) => {
+      const total = e.lengthComputable && e.total ? e.total : knownTotal || 0;
+      onProgress?.(total ? Math.min(1, e.loaded / total) : null);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        saveBlob(xhr.response as Blob, fileName);
+        onProgress?.(1);
+        resolve();
+      } else {
+        reject(new Error(`다운로드 실패(${xhr.status})`));
+      }
+    };
+    xhr.onerror = () => reject(new Error('다운로드 네트워크 오류'));
+    xhr.send();
+  });
 }
 
 /** ACC 아이템의 버전 이력. */

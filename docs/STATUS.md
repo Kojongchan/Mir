@@ -3,6 +3,326 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 C12 — 첨부 파일크기 저장 → 다운로드 % 계산(우회) (2026-07-09)
+> branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과.
+
+### ✅ 한 일 (Content-Length 미유지 우회)
+1. **ACC 파일 크기 확보**: `api/aps-acc` contents 응답의 `included`(tip 버전)에서 `storageSize` 를 읽어 각
+   item 에 `size` 추가. `AccItem.size` 필드 추가.
+2. **첨부 시 크기 저장(0037_issue_file_size.sql)**: `issue_file_link.size_bytes`. 피커 `PickedAccFile.size` →
+   `addIssueFile(sizeBytes)`.
+3. **다운로드 % 계산**: `downloadAccItemProgress(..., knownTotal)` — XHR onprogress 에서 서버 Content-Length 가
+   없으면(edge 버퍼링) 저장된 `size_bytes` 를 총량으로 써서 `loaded/total` 로 % 표시.
+
+### ⚠️ 주의
+- **0037 적용 + 서버 재배포(api/aps-acc·aps-file) 필요.**
+- **기존에 첨부된 링크는 size_bytes=null** → 재첨부해야 % 나옴(신규 첨부부터 적용). Content-Length 가 살아있으면
+  기존 것도 % 표시됨.
+- 그래도 0/100 만 보이면 edge 가 응답을 통째 버퍼링해 onprogress 가 1회만 발생하는 극단 케이스 — 이 경우
+  네트워크 계층 한계라 클라이언트로는 더 못 쪼갬(서버에서 청크 스트리밍 조정 필요).
+
+### 인수인계 한 줄
+ACC 파일크기(storageSize)를 첨부 시 저장(0037)하고 다운로드 % 총량으로 사용. 서버 재배포+0037 적용, 재첨부부터 %.
+
+---
+## 📋 C11 — 다운로드 진행률 XHR·동시 다운로드·미리보기 버튼 정리 (2026-07-09)
+> branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과.
+
+### ✅ 한 일
+1. **다운로드 진행률 XHR 전환**: fetch 스트림 리더 → `XMLHttpRequest`(다운로드 `onprogress` 이벤트가 주기적으로
+   발생해 **중간 %가 매끄럽게** 갱신). Content-Length 있으면 loaded/total, 없으면 `…`.
+2. **동시 다운로드 지원**: 진행률 상태를 단일 슬롯 → **파일별 맵**(`dls[fileId]`)으로 변경. 한 파일 받는 중에 다른
+   파일을 눌러도 **기존 다운로드가 끊기지 않고** 각자 % 표시. 같은 파일 중복 클릭은 무시.
+3. **인라인 3D 미리보기의 '3D 뷰어로 열기' 버튼 제거**(요청) — 미리보기 창에서 바로 3D 로 보므로 불필요.
+   `AccFilePreview` 에서 navigate/projectId 제거.
+
+### 🔜 미해결
+- 중간 %가 여전히 0/100 만 보이면 **서버 버퍼링 가능성**(edge 가 응답을 한 번에 전달) — 그 경우 대안은 첨부 시
+  ACC 파일크기 저장 후 그 값으로 계산. 서버(api/aps-file) 재배포 필요.
+
+### 인수인계 한 줄
+다운로드 XHR 진행률 + 파일별 동시 다운로드 + 미리보기 3D열기 버튼 제거. typecheck·build OK. 서버 재배포 필요.
+
+---
+## 📋 C10 — 관련자료 모델 인라인 3D 미리보기 + 다운로드 % 실동작 (2026-07-09)
+> branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과. 라이브 UX 피드백.
+
+### ✅ 한 일
+1. **모델(rvt·nwd·ifc…) 인라인 3D 미리보기**: 관련 자료 '미리보기'가 이제 파일의 **3D 뷰를 그 자리 오버레이에
+   직접 렌더**(ACC 처럼). 신규 `ApsMiniViewer`(GuiViewer3D, 스크립트/Initializer 페이지당 1회 로드, urn 로드).
+   `AccFilePreview` 가 모델이면 `ApsMiniViewer` 를 띄우고, urn 없으면 '변환 전' 안내. (기존 '3D 뷰어로 열기'
+   전체화면 버튼은 헤더에 유지.)
+2. **다운로드 진행률 % 실동작**: 프록시(`api/aps-file`)가 스트림만 넘기고 **content-length 를 안 넘겨** 항상
+   불확정(`…`)이던 문제 → S3 원본의 `content-length` 를 응답에 그대로 전달하도록 수정 → 클라이언트가 총량을
+   알아 `⬇ N%` 표시. (플랫폼이 청크 전송으로 재작성하면 여전히 `…` 폴백.)
+
+### 🔜 다음 할 일 / 미해결 (실 ACC 검증)
+- 인라인 3D: 대형 모델 로드 성능·토큰 만료, 여러 번 열고 닫을 때 뷰어 정리(finish) 확인.
+- 다운로드 %: Vercel edge 가 content-length 를 유지하는지(안 되면 대안 = ACC 파일크기 메타 저장 후 전달).
+
+### 인수인계 한 줄
+관련자료 모델 미리보기를 인라인 3D(ApsMiniViewer)로, 다운로드 %는 프록시 content-length 전달로 실동작.
+typecheck·build OK. 실 ACC 눈확인.
+
+---
+## 📋 C9 — 내용편집 양식통일·다운로드 진행률·미리보기·더보기(10) (2026-07-09)
+> branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과. 라이브 UX 피드백.
+
+### ✅ 한 일
+1. **내용 편집 버튼 우측 정렬(속성 양식과 통일)**: `.issue-block__chev` 를 전역 `margin-left:auto` 로 바꿔
+   내용의 '✏ 편집'도 속성의 '설정 편집'처럼 헤더 우측에 배치.
+2. **관련 자료 다운로드 진행률(0~100%)**: `downloadAccItemProgress`(스트림 리더로 loaded/total) 추가 → 버튼에
+   `⬇ N%` 표시(Content-Length 없으면 `⬇ …` 불확정). 완료 시 저장.
+3. **관련 자료 인라인 미리보기**: 다운로드 **좌측에 '👁 미리보기'** → `AccFilePreview`(신규) 오버레이. AccBrowser
+   문서 미리보기와 동일 경로(blob/서명/리다이렉트 + 우리 뷰어). 모델은 '3D 뷰어로 열기' 안내.
+4. **헤더 표기 통일**: '관련 자료 (파일 개수 : N)' → **'관련 자료 · N'**(코멘트·변경이력과 동일 양식).
+5. **코멘트·변경이력 더보기(기본 10)**: 각각 최근 10개만 보이고 '이전 … 더 보기'로 전체 펼침
+   (`showAllComments`/`showAllEvents`). 변경이력 넘버링은 전체 기준 유지.
+
+### 🔜 다음 할 일 / 미해결
+- **실 ACC 환경 검증**: 미리보기(이미지/PDF/office/영상), 다운로드 진행률(프록시 Content-Length 여부), 폴더 딥링크.
+- 반영된 추가제안: 코멘트/이력 페이지네이션·관련자료 미리보기(완료). 나머지 제안은 사용자 기각.
+
+### 인수인계 한 줄
+내용편집 우측정렬·다운로드 진행률·관련자료 인라인 미리보기(AccFilePreview)·헤더 '· N' 통일·코멘트/이력 더보기(10)
+완료. typecheck·build OK. 실 ACC 눈확인.
+
+---
+## 📋 C8 — 이슈 상세 개선 8건(내용편집·관련자료·다운로드·이력확장·섹션순서) (2026-07-09)
+> branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과. 라이브 UX 피드백.
+
+### ✅ 한 일
+1. **내용 편집**: 내용 섹션 헤더에 '✏ 편집' → textarea 인라인 편집·저장(`updateIssueMeta` description).
+2. **섹션 명칭/문구**: '자료관리 파일'→**'관련 자료 (파일 개수 : N)'**, '이미지·자동 캡처(기존)'→**'간섭 검토 이미지'**
+   + "간섭 검토에서 이슈 생성 시 자동으로 추가됩니다." 안내 문구.
+3. **관련 자료 다운로드 + 위치**: 각 파일 우측에 **⬇ 다운로드**(`downloadAccItem`) + **파일 위치 : 폴더경로 칩**
+   (클릭 시 자료관리 해당 폴더 딥링크, C7 그대로).
+4. **섹션 순서 재배치**: **속성 → 내용 → 간섭 검토 이미지 → 관련 자료 → 코멘트 → 변경이력**(속성 맨 위).
+5. **변경이력 확장(0036_issue_event_kinds.sql)**: kind 체크에 content·priority·due·file_add·file_download·comment
+   추가. `updateIssueMeta`(우선순위/마감/내용)·`addComment`·`addIssueFile`·파일 다운로드에서 이력 기록.
+   `logIssueEvent` 공개 헬퍼 + `eventText` 새 종류 문구. 각 변경 후 `refreshEvents` 로 이력 즉시 갱신.
+6. `Attachments` 에 label='' 지원(헤더 숨김) — '간섭 검토 이미지' 섹션이 자체 헤더·문구를 갖도록.
+
+### 🔜 다음 할 일 / 미해결
+- **0035·0036 적용 필요**. 실 ACC 환경에서 관련자료 다운로드·위치 이동, 변경이력 각 항목 기록 눈확인.
+- 추가 제안(사용자 검토): ①코멘트/이력 페이지네이션(길어질 때) ②이슈 목록에 관련자료·코멘트 수 뱃지
+  ③변경이력에 '되돌리기' ④@멘션 시 이메일(인프라 필요) — 별도 논의.
+
+### 인수인계 한 줄
+이슈 상세 8건 개선(내용편집·관련자료 다운로드/위치·섹션순서·변경이력 6종 확장 0036) 완료. typecheck·build OK.
+0035/0036 적용 후 실 ACC 눈확인.
+
+---
+## 📋 C7 — 이슈 첨부 = 자료관리(ACC) 파일 링크 + 폴더 딥링크 (2026-07-09)
+> branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과. **ACC 의존 → 실환경 검증 필요**.
+> 사용자 결정: (1) 전면 전환(개인 업로드 X, 자료관리 파일만 링크) (2) 클릭 시 정확한 폴더까지 이동.
+
+### ✅ 한 일
+1. **마이그레이션 0035_issue_file_link.sql(추가형)**: `issue_file_link`(issue↔ACC 아이템 링크) —
+   acc_project_id·acc_item_id·acc_urn·name + **폴더 경로(folder_ids[]·folder_names[])** 로 딥링크 지원.
+   RLS: 읽기=멤버, 쓰기=is_editor.
+2. **`lib/issueFiles.ts`**: list/add/removeIssueFile.
+3. **`components/AccFilePicker.tsx`(신규)**: 자료관리(ACC) 폴더 탐색 → 파일 선택(폴더 경로 함께 반환). 실무자는
+   **현재 폴더로 직접 업로드**(uploadToAcc)→즉시 링크. getProjectAcc 로 ACC 프로젝트/루트 확인, 미지정 시 안내.
+4. **이슈 상세**: '첨부 문서·사진(직접 업로드)' → **'자료관리 파일'** 섹션으로 전환. 파일별 **폴더 경로 칩**(클릭 시
+   자료관리 해당 폴더로 이동) + 해제(실무자). '＋ 자료관리에서 첨부' 로 피커. 기존 직접첨부(간섭 자동캡처 등)는
+   **읽기전용 '이미지·자동 캡처(기존)'** 섹션으로 보존(회귀 방지).
+5. **자료관리 폴더 딥링크**: `AccBrowser` 에 `initialPath`(폴더 id 체인) 추가 — 진입 시 그 폴더까지 순차 펼쳐 선택.
+   `DocumentManager` 가 라우트 state(`openFolderIds`)를 받아 전달. 이슈 첨부의 '위치 열기'가 정확한 폴더를 연다.
+
+### 🔜 다음 할 일 / 미해결 (라이브 검증 — 이 샌드박스는 ACC 불가)
+- **0035 적용 + 실 ACC 환경 검증 필수**: 피커에서 폴더 탐색·파일 선택·현재폴더 업로드, 첨부 링크 표시, '위치
+  열기'가 자료관리의 정확한 폴더를 펼치는지, 대형 폴더 성능. ACC 미지정 프로젝트에선 피커가 안내만 표시.
+- 클래시 자동캡처 스냅샷은 여전히 attachments(docs) 경로 — '기존' 섹션에 읽기전용 노출. 필요 시 ACC 이관은 후속.
+
+### 인수인계 한 줄
+이슈 첨부를 자료관리(ACC) 파일 링크로 전면 전환(0035) + ACC 폴더 피커 + 정확 폴더 딥링크(AccBrowser initialPath).
+typecheck·build OK. 실 ACC 환경 눈확인 필요.
+
+---
+## 📋 C6 — 이슈 상세 UX 보정(멘션 잘림·속성 접기·위치보기 이동) (2026-07-09)
+> branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과. 라이브 UX 피드백.
+
+### ✅ 한 일
+1. **@멘션 드롭다운 잘림 수정**: 코멘트 블록이 `overflow:hidden` 이라 입력창 위로 뜨는 후보 목록이 잘렸음
+   → 코멘트 섹션에 `.issue-block--pop`(overflow visible + 헤더 라운드) 부여해 온전히 표시.
+2. **속성 접기/펼치기**: 속성 섹션을 변경이력처럼 토글. 요약(상태·우선순위·담당·마감)은 **항상 표시**,
+   담당자 배정·우선순위·마감일 **편집 컨트롤은 펼쳐야** 보이게(기본 접힘, 깔끔).
+3. **위치 보기 → 내용 섹션으로 이동**: 위치 보기 버튼을 속성 → 내용 블록으로 옮김.
+
+### ⏳ 다음(큰 작업, 사용자 확인 대기) — 자료관리(ACC) 연동 첨부
+- 이슈 첨부를 **자료관리(ACC)에 있는 파일만** 링크하도록 전환 요청. 파일 위치(폴더) 표시 + 클릭 시 해당
+  폴더로 이동, 직접 업로드 시 ACC 폴더 선택 후 업로드·링크. **자료관리=ACC(Autodesk)** 기반이라 신규 링크
+  테이블 + ACC 폴더 브라우저 피커 + AccBrowser 딥링크(폴더 열기)까지 필요한 큰 기능 → 접근 방식 확인 후 착수.
+
+### 인수인계 한 줄
+멘션 잘림·속성 접기·위치보기 이동 완료(typecheck·build OK). 자료관리 연동 첨부는 접근 방식 확인 후 다음 착수.
+
+---
+## 📋 C5 — 이슈 상세 보고서형 UI · 인라인 @멘션 · 변경이력 접기 (2026-07-09)
+> branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과. 라이브 UX 피드백 반영.
+
+### ✅ 한 일
+1. **@멘션 인라인 하이라이트**: 코멘트 본문 안의 `@이름`(구성원 일치·경계)을 **그 자리에서 파랗게**
+   표시(`renderCommentBody` + `.mention-tag`). 기존처럼 본문 뒤에 `@이름` 을 **따로 붙이던 줄 제거**.
+2. **이슈 상세 = 보고서형 블록**: 상세를 **섹션 카드**(내용 / 속성 / 첨부 / 코멘트 / 변경이력)로 재구성.
+   각 섹션에 헤더(좌측 accent 바 + 배경 구분)로 딱딱 나뉘게. 상태·우선순위는 뱃지로 표기. 구성 일관성 확보.
+3. **변경이력 접기/펼치기**: 자주 바뀌면 길어져서 **기본 접힘**, 헤더 클릭으로 토글(▸/▾). 각 이력 앞에 **넘버링
+   (#1..)**, **시간·작성자는 코멘트처럼 우측 정렬**(`.issue-event-no`/`.issue-event-meta`).
+4. CSS: `.issue-report`/`.issue-block(__h/__b/__toggle)` 신설, 첨부 블록은 Attachments 자체 헤더를 섹션 헤더로
+   스타일. 라이트/다크 토큰 사용.
+
+### 🔜 다음 할 일 / 미해결
+- 실 로그인 화면에서 눈확인(이 샌드박스는 auth 불가). 0033/0034 적용 후 담당자·멘션 최종 확인.
+- 메일 발송은 인프라 부재로 인앱 알림 유지.
+
+### 인수인계 한 줄
+이슈 상세를 보고서형 섹션 카드로 재구성 + 코멘트 @멘션 인라인 파란 하이라이트 + 변경이력 넘버링·우측시간·접기.
+typecheck·build OK. 실 화면 눈확인만 남음.
+
+---
+## 📋 C4 — 협의=이슈 단일화 · 담당자 목록 버그픽스 · 이슈 상세 강화 (2026-07-09)
+> branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과. 라이브 피드백 반영.
+
+### ✅ 한 일
+1. **간섭 '협의' → '이슈'로 단일화**(사용자 판단: 둘이 같은 내용): 간섭 결과 행의 **💬 협의 버튼·
+   코디네이션 룸(ApsClashCoordination)·요약 뱃지 전부 제거**. 이제 간섭은 **"이슈로 등록"** 하나로만 협업
+   진입 → 담당·코멘트·멘션·상태·마감은 **협업·이슈 화면**에서 완결. 미사용 파일 삭제
+   (`ApsClashCoordination.tsx`·`clashCoordination.ts`). 0032 마이그레이션 테이블은 남지만 미사용(무해).
+2. **간섭→이슈 첨부 1컷만**: 4각도 캡처는 뷰가 엇나가고 느려서 **현재 뷰 1장만** 캡처
+   (`captureClashAngles(...,1)`). 캡처 시간↓.
+3. **간섭→이슈 모달 강화**(협업 팝업 수준): 제목·내용·우선순위에 더해 **마감일 + 담당자**(구성원 드롭다운,
+   `표시이름 - 소속 - 담당업무` 라벨) 추가. `createIssue` 에 assignee/ due 전달 → 생성 즉시 담당·기한 지정.
+4. **이슈 상세 강화**: 상단에 **상태·우선순위·담당(소속/담당업무)·마감 요약줄**(`issue-facts`) + 편집행에
+   **우선순위·마감일 인라인 편집**(`updateIssueMeta`). 담당자 드롭다운도 `표시이름 - 소속 - 담당업무`.
+5. **🐞 담당자에 사람 안뜨던 버그 수정(핵심)**: `Issues.tsx` 가 `if(canEdit) listProjectMembers` 를
+   `[projectId]` deps effect 에서만 호출 → **역할 로딩 후 canEdit=true 로 바뀌어도 재호출 안 돼** 목록이
+   비어 있었음. **`[projectId, canEdit]` 별도 effect 로 분리** → 역할 확정 시 반드시 로드. 이 버그가
+   @멘션 드롭다운이 안 뜨던 원인도 겸함(후보 0건이라). 이제 담당자·멘션 모두 정상.
+6. **담당자/멘션 라벨 통일**: `members.memberLabel(m)` = `표시이름 - 소속 - 담당업무`(있는 것만). 이슈 생성폼·
+   상세 배정·간섭→이슈 모달 전부 적용. 멘션 드롭다운은 이름+소속 표기.
+
+### 🔜 다음 할 일 / 미해결
+- **0033·0034 적용 필요**(담당자 목록 개방·소속/담당업무). 적용+역할확정 후 실무자 계정에서 담당자 뜨는지 재확인.
+- 메일 발송은 여전히 인프라 부재로 인앱 알림 대체.
+- 0032(clash 코디네이션) 테이블은 미사용 잔존 — 정리 원하면 후속 드롭 마이그(선택).
+
+### 인수인계 한 줄
+협의를 이슈로 단일화 + 간섭→이슈 모달/이슈 상세 강화(담당·마감·우선순위) + **담당자 목록 안뜨던 버그
+(canEdit effect deps) 수정** + 라벨 통일. typecheck·build OK. 0033/0034 적용 후 라이브 검증.
+
+---
+## 📋 C3 — 알림→이슈 링크 · @멘션 자동완성 · 구성원 소속/담당업무 (2026-07-09)
+> branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과. 라이브 피드백 반영.
+
+### ✅ 한 일
+1. **알림 클릭 → 해당 이슈로 이동**: `NotificationBell` 이 이슈 알림 클릭 시 `/issues` 로 가며
+   `state.focusIssueId` 전달 → `Issues` 가 그 이슈를 펼치고 **읽음 처리**. (간섭 알림은 `/clash`.)
+2. **@멘션 자동완성**(`components/MentionInput.tsx` 신규): 코멘트에서 `@` 입력 시 현재 프로젝트 구성원이
+   드롭다운으로 뜨고, `@관` 처럼 이어 치면 이름으로 좁혀짐(↑↓/Enter/Tab 선택, 클릭 선택, 그냥 타이핑도 허용).
+   본문에 실제 남은 `@이름` 을 사용자 id 로 해석(`mentionsInText`, 이름 경계 검사로 부분일치 오탐 방지)해
+   멘션 발송. `Issues.tsx` 코멘트 입력을 칩 방식 → MentionInput 으로 교체. 드롭다운에 **소속** 함께 표시.
+3. **구성원·권한 재구성**(요청 반영):
+   - 마이그레이션 **0034_member_org.sql**(추가형): `project_members.company`(소속)·`duty`(담당업무).
+   - 표 컬럼: **표시이름(=full_name‖username 통합) · 소속 · 권한 · 담당업무 · 관리**. 소속/담당업무는 인라인
+     입력(blur 저장, 낙관적 갱신). '역할' 명칭 → **'권한'**. 예시 placeholder(쌍용건설(주)/현장 공무팀).
+   - 설명란: **소속**(발주처·감리단·시공사·BIM 협력업체 …) / **권한**(뷰어·실무자·관리자·시스템 관리자 설명) /
+     **담당업무**(발주처·감리단·현장 공무/공사팀·본사 BIM 담당자·BIM 관리자/실무자 …) 안내.
+   - `admin.ts` `MemberRow`+`listMembers`(company/duty, 0034 미적용 폴백)·`setMemberOrg`.
+   - `members.ts listProjectMembers` 에 소속/담당업무 포함(폴백) → 담당 배정·멘션 드롭다운에 "이름 · 소속" 표시.
+
+### ⚠️ 메일 발송 — 여전히 미구현(인프라 부재, C2 참고). 인앱 알림(종·클릭 이동)으로 대체.
+
+### 🔜 다음 할 일 / 미해결 (라이브 검증)
+- **0034 적용 필요**(0032·0033 과 함께). 적용 후: 알림 클릭→이슈 펼침·읽음, @자동완성(관→관리자), 소속/담당업무
+  입력·저장, 배정/멘션 드롭다운의 "이름 · 소속" 눈확인.
+- 간섭 코디네이션 룸(C1)은 아직 칩 방식 멘션 — 원하면 MentionInput 으로 통일(후속).
+- "아이디=표시이름 통합"은 표시를 full_name‖username 으로 일원화. 로그인 아이디 자체 편집은 '아이디 변경'
+  (계정 op) 유지 — 표시이름(full_name) 직접 편집 UI 는 profiles 쓰기 권한(시스템관리자/서버) 필요라 후속.
+
+### 인수인계 한 줄
+알림→이슈 링크 + @멘션 자동완성(MentionInput) + 구성원 소속/담당업무(0034)·권한 표 재구성 완료. typecheck·build OK.
+다음은 0032~0034 적용 후 라이브 검증.
+
+---
+## 📋 C2 — 협업 강화: 담당 배정 개방 · @멘션 · 읽음/안읽음 (2026-07-09)
+> branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과.
+> 사용자 라이브 피드백(협업·이슈 화면 스크린샷) 반영. **이슈 화면이 실사용 협의 표면**이라 여기에 반영.
+
+### ✅ 한 일
+1. **마이그레이션 0033_issue_collab.sql(추가형)**:
+   - **`shares_project(uid)` 헬퍼 + `profiles_select` 확장** — 같은 프로젝트 구성원끼리 서로의 표시이름을
+     읽을 수 있게 개방(0001 은 본인·시스템관리자만). 담당 배정·@멘션 후보 목록이 비-관리자(실무자)에게도 보임.
+   - **`members_select` 확장(is_member 추가)** — 실무자도 자기 프로젝트 구성원 목록 조회 가능(배정/멘션 후보).
+     역할 부여(insert/update/delete)는 0023 그대로 **관리자만**.
+   - **`issue_comments.mentions uuid[]`** + **`issue_read`(issue_id·user_id·last_read_at, 읽음)**.
+2. **담당자 배정 = 뷰어 뺀 모두**: 권한은 이미 `canEdit`(is_editor, 뷰어 제외)로 맞았고(0023), 위 RLS 개방으로
+   실무자도 **후보 목록이 채워져 실제 배정 가능**해짐(기존엔 profiles RLS 로 관리자만 목록 보였음).
+3. **@멘션(이슈 코멘트)**: `issues.ts addComment(…, mentions)` — 멘션 대상엔 `issue_mention` 알림, 담당자·작성자
+   (멘션 제외)엔 `issue_comment` 알림. `Issues.tsx` 코멘트 작성기에 **멘션 칩**(구성원 토글) + 코멘트에 `@이름` 표시.
+4. **읽음/안읽음**: `listUnreadIssues`(내 마지막 열람 이후 새 코멘트면 안읽음) + `markIssueRead`(상세 열람 시 upsert).
+   리스트 제목에 **빨간 점 + 볼드**로 안읽음 표시, 상세를 열면 읽음 처리·배지 해제. (0033 미적용 시 무해하게 스킵.)
+5. **간섭검토 창 체감 지연 완화**: `/clash` 진입 시 `clashOpen` 을 즉시 열림으로 시작 + **로딩 셸**("모델 트리
+   준비 중…") 을 먼저 띄운다. 트리·매핑 준비되면 실제 `ApsClashPanel` 로 교체. (근본 지연=APS 객체트리/속성DB
+   로드가 3D 지오메트리보다 늦게 끝나는 것 — 트리는 A/B 선택에 필수라 단축 불가. 창이 '즉시 뜬 뒤 로딩' 체감으로 개선.)
+
+### ⚠️ 메일 발송 — 미구현(인프라 부재)
+- "배정 시 지정 메일주소로 메일" 은 SMTP/Supabase Edge Function 등 **메일 인프라가 이 레포에 없어 미구현**
+  (사용자 승인: "메일연동까지 안되면 빼고"). 대신 **인앱 알림(로그인 시 상단 종 + `/clash`·`/issues` 이동)** 은
+  배정·멘션·코멘트·검증 전부 동작. 메일이 필요하면 후속으로 Edge Function(`notify-email`) + 트리거/pg_net 배선 필요.
+
+### 🔜 다음 할 일 / 미해결 (라이브 검증 필요)
+- **0033 적용 필수**. 적용 후: 실무자 계정으로 로그인해 담당 배정 후보가 뜨는지, @멘션·안읽음 점·읽음 해제,
+  멘션/배정 시 상대 계정 종 알림을 눈확인.
+- 간섭 코디네이션 룸(C1)도 같은 profiles/members 개방 덕에 실무자에게 구성원 드롭다운이 채워짐(보너스).
+- 남은 고도화: #2 회사양식 보고서·#3 규칙셋/재검사·#4 리스트↔3D 좌측 도킹·#5 BCF import·3D 뷰포인트/마크업.
+
+### 인수인계 한 줄
+협업 강화 완료(0033: 담당 배정 개방·@멘션·읽음/안읽음) + 간섭검토 창 로딩 셸. 메일은 인프라 부재로 인앱 알림으로
+대체(사용자 승인). typecheck·build OK. 다음은 0033 적용 후 실무자 계정 라이브 검증.
+
+---
+## 📋 C1 — 간섭 코디네이션 룸(플랫폼 내 완결 #1 핵심) (2026-07-09)
+> branch `claude/interference-coordination-platform-0nusd9`. typecheck·build 통과.
+> **대전제**: MIR SMART 안에서 간섭 협의·해소·검증·이력까지 끝낸다(Navisworks/Solibri 왕복 X).
+> 우선순위 #1 항목 5개 중 **#1 코디네이션 룸(핵심)** 을 완결 슬라이스로 구현. 나머지(#2 회사양식
+> 보고서·#3 규칙셋 재검사·#4 뷰어중심 UI·#5 BCF import)는 후속.
+
+### ✅ 한 일
+1. **마이그레이션 0032_clash_coordination.sql(추가형)**:
+   - `clashes` 확장: `assignee`(담당 FK)·`assignee_label`(관계사/역할 자유텍스트 R12)·`due_date`(기한)·
+     `resolved_by/at`·`verified_by/at`(해소→검증 감사).
+   - `clash_comment`(clash_id·author·author_name·body·`mentions uuid[]`·created_at) — 간섭별 코멘트 스레드.
+   - `clash_read`(clash_id·user_id·last_read_at, PK 복합) — 스레드 **읽음** 표시(사용자별).
+   - `notifications.clash_id` 추가 — 배정·코멘트·멘션·검증 알림도 상단 종에 뜨고 클릭 시 `/clash` 이동.
+   - RLS: 쓰기 = **is_editor**(0023), 읽기 = 멤버(부모 clashes→clash_tests.project_id 로 판정). clash_read 는 본인만.
+2. **`lib/clashCoordination.ts`(신규)**: 담당 배정(`assignClash`)·기한(`setClashDue`)·코멘트
+   (`list/add/deleteClashComment`, @멘션→알림)·읽음(`markClashRead` upsert)·해소(`resolveClash`)·
+   검증(`verifyClash`)·재오픈(`reopenClash`)·요약(`listCoordSummaries` = 담당/기한/코멘트수/미읽음). 알림은
+   `notifications`(clash_id) 재사용 — 배정 시 담당자, 멘션 시 멘션대상, 코멘트 시 담당자, 검증 시 담당자에게.
+3. **`components/ApsClashCoordination.tsx`(신규)**: 저장된 간섭 1건의 협의 상세(우측 시트).
+   담당자(구성원 드롭다운)+관계사/역할 라벨+기한 · 상태흐름(신규→검토중→**해결**(담당)→**승인**(검토자 검증),
+   해소/검증 감사줄·해소처리/검증완료/재검토 버튼) · **코멘트 스레드**(작성자·시각·@멘션 칩·삭제, 열람 시 읽음처리).
+4. **`ApsClashPanel` 연동**: 각 결과 행에 **💬 협의** 버튼(dbBacked 일 때) + 코멘트수/미읽음(●)·담당·기한 뱃지.
+   저장 직후 **DB 재로드**로 행 id 를 실 `clashes.id` 로 교체(협의·상태갱신이 실 행을 가리키도록 — 기존
+   changeStatus id 불일치 잠재버그도 함께 해소). 코디네이션 변경 시 요약 재조회 + 리스트 상태 승계.
+   `NotificationBell` 이 `clash_id` 알림을 `/clash` 로 라우팅.
+
+### 🔜 다음 할 일 / 미해결 (라이브 검증 필요 — 이 샌드박스는 auth·ACC·Supabase 없음)
+- **0032 마이그레이션 적용 필수**. 적용 후 라이브에서: 간섭 저장→💬 협의→담당/기한/코멘트/멘션 알림/해소→검증
+  전 과정이 플랫폼 안에서 도는지, 재검사 상태승계(S40)와 협의 상태가 함께 유지되는지 눈확인.
+- **구성원 드롭다운·@멘션 대상은 profiles RLS(본인+admin) 상 관리자/PM 에게만 채워짐**. 비-admin 실무자는
+  **관계사/역할 라벨(자유텍스트)** 로 담당 표기(기존 issues 배정과 동일 제약). 멤버 이름 공유가 필요하면
+  후속 마이그(멤버 간 profiles 이름 SELECT 허용) 검토.
+- **기한 알림**은 배정/기한설정 시 담당자 인앱 알림으로 구현(즉시성). 기한 임박 스케줄 리마인더(cron)는 후속.
+- 남은 고도화: #2 회사양식 보고서(docxtemplater, S38 양식 대기)·#3 규칙셋 저장/정기 재검사(clash_rule)·
+  #4 리스트↔3D 동기화 좌측 도킹 UI·#5 BCF import(선택). 3D 뷰포인트/마크업 저장은 코멘트 다음 슬라이스.
+
+### 인수인계 한 줄
+간섭 코디네이션 룸(#1 핵심) 완결: 0032(담당·기한·코멘트@멘션·읽음·해소/검증 감사)+API+우측시트 UI, 알림
+연동, 저장 후 DB 재로드로 실 행 id 정합. typecheck·build OK. 다음은 라이브 검증 + #3 규칙셋/재검사 또는 뷰포인트/마크업.
+
+---
 ## 📋 M1 — 모바일 실사용 마감(뷰어 크롬·바텀시트·표·터치타깃) (2026-07-04)
 > branch `claude/mobile-version-update-v810fd`. typecheck·build 통과. Playwright(390px) 계산스타일 +
 > 시각 캡처로 모바일 규칙 실적용 확인, 데스크톱(1200px)은 무영향 확인. U4(하단탭)에 이은 후속 마감.

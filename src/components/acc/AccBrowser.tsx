@@ -91,7 +91,16 @@ function flattenFolders(nodes: FolderNode[], depth = 0): Array<{ id: string; nam
  * 쓰기(업로드/다운로드/편집)는 실무자(editor) 이상(canEdit). 뷰어는 미리보기만,
  * 다운로드 버튼 숨김(D19/RBAC). 업로드 시 files 메타 행(source='acc')도 기록.
  */
-export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit: boolean }) {
+export function AccBrowser({
+  projectId,
+  canEdit,
+  initialPath,
+}: {
+  projectId: string;
+  canEdit: boolean;
+  /** 딥링크: 최상위→대상 폴더 id 체인. 있으면 그 폴더까지 펼쳐 선택한다(이슈 첨부 위치 열기). */
+  initialPath?: string[];
+}) {
   const navigate = useNavigate();
   const { profile } = useAuth();
   const { role } = useProjectRole(projectId);
@@ -150,6 +159,25 @@ export function AccBrowser({ projectId, canEdit }: { projectId: string; canEdit:
           if (cancelled) return;
           setRoots((folders as AccNamed[]).map((f) => mkFolder(f.id, f.name)));
           setSelId(null);
+        }
+        // 딥링크: 특정 폴더까지 순차로 펼쳐 선택(이슈 첨부의 '위치 열기'에서 진입).
+        if (initialPath && initialPath.length) {
+          for (const fid of initialPath) {
+            if (cancelled) return;
+            try {
+              const { folders, items } = await accFetch({ action: 'contents', project: acc.acc_project_id, folder: fid });
+              setRoots((r) =>
+                updateFolder(r, fid, (n) => ({
+                  ...n, loaded: true, expanded: true,
+                  children: (folders as AccNamed[]).map((f) => mkFolder(f.id, f.name)),
+                  items: items as AccItem[],
+                })),
+              );
+            } catch {
+              /* 폴더 접근 불가 시 무시 — 부분 펼침 */
+            }
+          }
+          setSelId(initialPath[initialPath.length - 1]);
         }
         setStatus('');
       } catch (e) {

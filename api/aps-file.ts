@@ -130,14 +130,15 @@ export default async function handler(req: Request): Promise<Response> {
     if (!fileRes.ok || !fileRes.body) return err('파일 다운로드 실패');
     const ext = name.slice(name.lastIndexOf('.') + 1).toLowerCase();
     const ct = fileRes.headers.get('content-type') ?? CT[ext] ?? 'application/octet-stream';
-    return new Response(fileRes.body, {
-      status: 200,
-      headers: {
-        'content-type': ct,
-        'cache-control': 'private, max-age=300',
-        'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(name)}`,
-      },
-    });
+    const headers: Record<string, string> = {
+      'content-type': ct,
+      'cache-control': 'private, max-age=300',
+      'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(name)}`,
+    };
+    // 다운로드 진행률(0~100%)을 위해 S3 원본의 content-length 를 그대로 전달.
+    const len = fileRes.headers.get('content-length');
+    if (len) headers['content-length'] = len;
+    return new Response(fileRes.body, { status: 200, headers });
   } catch (e) {
     return err((e as Error).message);
   }

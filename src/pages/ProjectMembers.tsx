@@ -12,6 +12,7 @@ import {
   renameUserAccount,
   resetUserPassword,
   setMember,
+  setMemberOrg,
   type MemberRole,
   type MemberRow,
   type ProfileRow,
@@ -86,6 +87,14 @@ export function ProjectMembers() {
   const changeRole = async (userId: string, role: MemberRole) => {
     try { await setMember(projectId, userId, role); reload(); } catch (e) { err(e); }
   };
+  // 소속·담당업무 인라인 편집 — 변경분만 blur 시 저장(낙관적 갱신).
+  const saveOrg = async (userId: string, field: 'company' | 'duty', value: string) => {
+    const cur = members.find((m) => m.user_id === userId);
+    const next = value.trim() || null;
+    if (!cur || (cur[field] ?? null) === next) return;
+    setMembers((ms) => ms.map((m) => (m.user_id === userId ? { ...m, [field]: next } : m)));
+    try { await setMemberOrg(projectId, userId, { [field]: next }); } catch (e) { err(e); reload(); }
+  };
   const remove = async (userId: string) => {
     if (!window.confirm('이 프로젝트에서 멤버를 해제할까요? (계정은 유지됩니다)')) return;
     try { await removeMember(projectId, userId); ok('멤버를 해제했습니다.'); reload(); } catch (e) { err(e); }
@@ -149,21 +158,35 @@ export function ProjectMembers() {
         </div>
       </section>
 
-      {/* 멤버 목록 */}
+      {/* 멤버 목록 — 표시이름 · 소속 · 권한 · 담당업무 */}
       <section className="admin-card">
         <div className="admin-table-wrap">
           <table className="admin-table">
             <thead>
-              <tr><th>아이디</th><th>표시이름</th><th>역할</th><th className="right">관리</th></tr>
+              <tr>
+                <th>표시이름</th>
+                <th>소속</th>
+                <th>권한</th>
+                <th>담당업무</th>
+                <th className="right">관리</th>
+              </tr>
             </thead>
             <tbody>
               {members.map((m) => {
                 const u = usersById.get(m.user_id);
                 const sys = !!u?.is_admin;
+                const displayName = u?.full_name || u?.username || m.user_id.slice(0, 8);
                 return (
                   <tr key={m.user_id}>
-                    <td>{u?.username ?? m.user_id.slice(0, 8)}{sys && <span className="tag tag-sysadmin">시스템 관리자</span>}</td>
-                    <td className="muted">{u?.full_name ?? '—'}</td>
+                    <td>{displayName}{sys && <span className="tag tag-sysadmin">시스템 관리자</span>}</td>
+                    <td>
+                      <input
+                        className="member-org-input"
+                        defaultValue={m.company ?? ''}
+                        placeholder="예: 쌍용건설(주)"
+                        onBlur={(e) => void saveOrg(m.user_id, 'company', e.target.value)}
+                      />
+                    </td>
                     <td>
                       {sys ? (
                         <span className="muted">전체 관리(시스템)</span>
@@ -172,6 +195,14 @@ export function ProjectMembers() {
                           {MEMBER_ROLES.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
                         </select>
                       )}
+                    </td>
+                    <td>
+                      <input
+                        className="member-org-input"
+                        defaultValue={m.duty ?? ''}
+                        placeholder="예: 현장 공무팀"
+                        onBlur={(e) => void saveOrg(m.user_id, 'duty', e.target.value)}
+                      />
                     </td>
                     <td className="right nowrap">
                       {sys ? (
@@ -187,14 +218,22 @@ export function ProjectMembers() {
                   </tr>
                 );
               })}
-              {members.length === 0 && <tr><td colSpan={4}><EmptyState compact icon="👥" title="배정된 멤버가 없습니다" desc="아래에서 사용자를 배정하세요." /></td></tr>}
+              {members.length === 0 && <tr><td colSpan={5}><EmptyState compact icon="👥" title="배정된 멤버가 없습니다" desc="아래에서 사용자를 배정하세요." /></td></tr>}
             </tbody>
           </table>
         </div>
-        <p className="muted admin-hint">
-          역할 — <strong>뷰어</strong>=열람·미리보기(다운로드 없음) · <strong>실무자</strong>=업로드·수정·삭제 등 작업 ·
-          <strong> 관리자</strong>=실무자 + 멤버·역할 관리. <strong>프로젝트 설정·계정 삭제·시스템 관리자</strong>는 시스템 관리자 전용.
-        </p>
+        <div className="muted admin-hint">
+          <p style={{ margin: '0 0 4px' }}>
+            <strong>소속</strong> — 발주처 · 감리단 · 시공사 · BIM 협력업체 등(실제 회사·기관명, 예: 국가철도공단 · KCMC · 쌍용건설(주)).
+          </p>
+          <p style={{ margin: '0 0 4px' }}>
+            <strong>권한</strong> — <strong>뷰어</strong>=열람·미리보기(다운로드 없음) · <strong>실무자</strong>=업로드·수정·삭제 등 작업 ·
+            <strong> 관리자</strong>=실무자 + 멤버·권한 관리 · <strong>시스템 관리자</strong>=프로젝트 설정·계정 삭제(시스템 전용).
+          </p>
+          <p style={{ margin: 0 }}>
+            <strong>담당업무</strong> — 발주처 · 감리단 · 현장 공무팀 · 현장 공사팀 · 본사 BIM 담당자 · BIM 관리자 · BIM 실무자 등.
+          </p>
+        </div>
         {msg && <div className="muted" style={{ marginTop: 8 }}>{msg}</div>}
       </section>
     </div>

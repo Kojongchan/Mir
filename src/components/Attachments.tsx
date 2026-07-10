@@ -79,17 +79,19 @@ export function Attachments({ projectId, targetType, targetId, canEdit, label = 
 
   return (
     <div className="attach">
-      <div className="attach-head">
-        <span className="attach-label">{label} {atts.length > 0 && `(${atts.length})`}</span>
-        {canEdit && (
-          <>
-            <input ref={input} type="file" multiple style={{ display: 'none' }} onChange={onUpload} />
-            <button onClick={() => input.current?.click()} disabled={busy}>
-              {busy ? '업로드 중…' : '＋ 첨부'}
-            </button>
-          </>
-        )}
-      </div>
+      {(label !== '' || canEdit) && (
+        <div className="attach-head">
+          {label !== '' && <span className="attach-label">{label} {atts.length > 0 && `(${atts.length})`}</span>}
+          {canEdit && (
+            <>
+              <input ref={input} type="file" multiple style={{ display: 'none' }} onChange={onUpload} />
+              <button onClick={() => input.current?.click()} disabled={busy}>
+                {busy ? '업로드 중…' : '＋ 첨부'}
+              </button>
+            </>
+          )}
+        </div>
+      )}
       {err && <p className="auth-error" style={{ fontSize: 12 }}>{err}</p>}
       {atts.length === 0 ? (
         <p className="muted" style={{ fontSize: 12, margin: '4px 0' }}>첨부 없음</p>

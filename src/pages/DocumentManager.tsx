@@ -1,4 +1,4 @@
-import { useParams } from 'react-router-dom';
+import { useLocation, useParams } from 'react-router-dom';
 import { useProjectRole } from '../auth/useProjectRole';
 import { AccBrowser } from '../components/acc/AccBrowser';
 
@@ -15,9 +15,12 @@ import { AccBrowser } from '../components/acc/AccBrowser';
 export function DocumentManager() {
   const { projectId = '' } = useParams();
   const { canEdit } = useProjectRole(projectId);
+  // 이슈 첨부의 '위치 열기'로 진입 시 해당 폴더까지 펼치도록 폴더 id 체인을 전달받는다.
+  const location = useLocation();
+  const initialPath = (location.state as { openFolderIds?: string[] } | null)?.openFolderIds;
   return (
     <div className="mod-fill">
-      <AccBrowser projectId={projectId} canEdit={canEdit} />
+      <AccBrowser projectId={projectId} canEdit={canEdit} initialPath={initialPath} />
     </div>
   );
 }

@@ -3917,9 +3917,115 @@ button.danger:hover:not(:disabled) {
   flex-shrink: 0;
   font-size: 11px;
 }
+.clash-shell-dots {
+  display: inline-block;
+  animation: clash-shell-pulse 1s ease-in-out infinite;
+  color: var(--accent);
+}
+@keyframes clash-shell-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .clash-shell-dots { animation: none; }
+}
+.issue-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+.issue-facts b {
+  color: var(--muted);
+  font-weight: 600;
+  margin-right: 4px;
+}
+.issue-comment-mentions {
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
 .issue-comment-add {
   display: flex;
   gap: 8px;
+}
+.member-org-input {
+  width: 100%;
+  min-width: 110px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+.member-org-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+/* @멘션 자동완성 */
+.mention-input {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+.mention-input input {
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  color: var(--text);
+  font-size: 13px;
+}
+.mention-input input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.mention-list {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 4px);
+  z-index: var(--z-popover, 60);
+  min-width: 200px;
+  max-width: 320px;
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.2));
+}
+.mention-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+}
+.mention-list li.is-hi {
+  background: var(--accent-soft, var(--panel-2));
+}
+.mention-name {
+  font-weight: 600;
+  color: var(--text);
+}
+.mention-company {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
 }
 .issue-comment-add input {
   flex: 1;
@@ -4017,6 +4123,232 @@ button.danger:hover:not(:disabled) {
 .issue-event-text {
   flex: 1;
   min-width: 0;
+}
+
+/* ---- 이슈 상세 = 보고서형 블록 ---- */
+.issue-report {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 4px 12px;
+}
+.issue-block {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--panel);
+  overflow: hidden;
+}
+.issue-block__h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+}
+/* 첫 3px 컬러 액센트로 섹션 시작을 눈에 띄게 */
+.issue-block__h::before {
+  content: '';
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+button.issue-block__h,
+.issue-block__toggle {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+}
+.issue-block__chev {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.issue-block__b {
+  padding: 10px 12px;
+}
+/* 팝오버(멘션 드롭다운)가 블록 밖으로 나와도 잘리지 않도록 */
+.issue-block--pop {
+  overflow: visible;
+}
+.issue-block--pop .issue-block__h {
+  border-radius: var(--radius-md, 8px) var(--radius-md, 8px) 0 0;
+}
+/* 첨부 블록: Attachments 자체 헤더를 섹션 헤더처럼 */
+.issue-block--attach .attach {
+  padding: 0;
+}
+.issue-block--attach .attach-head {
+  margin: 0;
+  padding: 8px 12px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+}
+.issue-block--attach .attach-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.issue-block--attach .attach-label::before {
+  content: '';
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.issue-block--attach .attach-grid,
+.issue-block--attach .attach > p {
+  padding: 10px 12px 0;
+}
+/* 변경이력 넘버링 + 우측 시간 */
+.issue-event-no {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-weight: 700;
+  min-width: 30px;
+}
+.issue-event-meta {
+  flex-shrink: 0;
+  font-size: 11px;
+  margin-left: auto;
+  text-align: right;
+}
+/* 코멘트 본문 인라인 @멘션 하이라이트 */
+.mention-tag {
+  color: var(--accent);
+  font-weight: 600;
+}
+/* 코멘트·이력 '더 보기' */
+.issue-more {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+.issue-more:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+/* 자료관리 파일 링크 행 */
+.issue-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.issue-file:last-of-type {
+  border-bottom: 0;
+}
+.issue-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.issue-file-dl {
+  flex-shrink: 0;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.issue-file-dl:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.issue-file-locwrap {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 40%;
+  font-size: 11px;
+  color: var(--muted);
+}
+.issue-file-loc {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--accent);
+  background: var(--accent-soft, var(--panel-2));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill, 999px);
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.issue-file-del {
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  padding: 2px 8px;
+}
+/* ACC 파일 선택기 */
+.acc-picker-list {
+  max-height: 46vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-top: 6px;
+}
+.acc-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+}
+.acc-picker-row:hover {
+  background: var(--panel-2);
+}
+.acc-picker-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acc-picker-go {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.acc-picker-row:not(.folder) .acc-picker-go {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* ---- 알림 종 (상단바) ---- */
