@@ -28,6 +28,19 @@ export const TYPE_ICON_NAME: Record<IssueType, IconName> = {
   quality: 'issue-quality',
 };
 
+/**
+ * 유형 아이콘의 "의미 색상" — 단어 특징을 살려 눈에 띄게(안전=빨강·지적=앰버 …).
+ * 일반(문서)은 특징색이 없어 undefined → 중립(부모 텍스트색 상속). 활성 칩처럼
+ * 배경이 채워진 곳에서는 이 색 대신 흰색(currentColor)을 쓰도록 호출부에서 무시한다.
+ */
+export const TYPE_ICON_COLOR: Record<IssueType, string | undefined> = {
+  general: undefined, // 중립(문서) — 특징색 없음
+  rfi: '#2563eb', // 파랑 — 질의·정보
+  punch: '#f59e0b', // 앰버/노랑 — 하자·지적
+  safety: '#dc2626', // 빨강 — 안전·위험
+  quality: '#16a34a', // 초록 — 품질·합격
+};
+
 /** 타입 뱃지 색(라이트/다크 토큰이 없어 뱃지 전용 고정 팔레트 — 배경/글자 쌍). */
 export const TYPE_COLOR: Record<IssueType, { bg: string; fg: string }> = {
   general: { bg: 'rgba(100,116,139,0.16)', fg: '#475569' },

@@ -35,6 +35,7 @@ import {
   ISSUE_TYPES,
   TYPE_COLOR,
   TYPE_FIELDS,
+  TYPE_ICON_COLOR,
   TYPE_ICON_NAME,
   TYPE_LABEL,
   metaValue,
@@ -81,12 +82,26 @@ type SortMode = 'newest' | 'oldest' | 'due' | 'priority';
 const VIEW_KEY = 'mir.issues.view';
 const PRIO_ORDER: Record<IssuePriority, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
 
-/** 이슈 타입 뱃지(아이콘+라벨, 타입별 색). 아이콘은 currentColor(=타입 fg)로 tint. */
+/**
+ * 유형 아이콘 — 단어 특징을 살린 의미색(안전=빨강·지적=앰버 …)으로 표시.
+ * invert=true(배경이 채워진 활성 칩)면 의미색 대신 흰색(currentColor 상속)을 쓴다.
+ * general(문서)은 의미색이 없어 부모 텍스트색을 그대로 상속(중립).
+ */
+function TypeIcon({ type, size = 14, invert = false }: { type: IssueType; size?: number; invert?: boolean }) {
+  const col = invert ? undefined : TYPE_ICON_COLOR[type];
+  return (
+    <span className="ic-only" style={col ? { color: col } : undefined}>
+      <Icon name={TYPE_ICON_NAME[type]} size={size} />
+    </span>
+  );
+}
+
+/** 이슈 타입 뱃지(의미색 아이콘 + 라벨, 타입별 tint 배경). */
 function TypeBadge({ type, compact = false }: { type: IssueType; compact?: boolean }) {
   const c = TYPE_COLOR[type];
   return (
     <span className="issue-type-badge" style={{ background: c.bg, color: c.fg }}>
-      <Icon name={TYPE_ICON_NAME[type]} size={13} />
+      <TypeIcon type={type} size={13} />
       {compact ? '' : TYPE_LABEL[type]}
     </span>
   );
@@ -469,7 +484,7 @@ export function Issues() {
                 className={`ic${typeFilter === t ? ' active' : ''}${n === 0 ? ' is-empty' : ''}`}
                 onClick={() => setTypeFilter(t)}
               >
-                <Icon name={TYPE_ICON_NAME[t]} size={14} /> {TYPE_LABEL[t]} <b>{n}</b>
+                <TypeIcon type={t} size={14} invert={typeFilter === t} /> {TYPE_LABEL[t]} <b>{n}</b>
               </button>
             );
           })}
@@ -1207,7 +1222,7 @@ function IssueDetail({
             onClick={() => { if (!canEdit) return; if (!typeOpen) openTypeEdit(); else setTypeOpen(false); }}
             aria-expanded={typeOpen}
           >
-            <span className="ic"><Icon name={TYPE_ICON_NAME[issue.type]} size={15} /> {TYPE_LABEL[issue.type]} 정보</span>
+            <span className="ic"><TypeIcon type={issue.type} size={15} /> {TYPE_LABEL[issue.type]} 정보</span>
             {canEdit && <span className="issue-block__chev">{typeOpen ? '▾ 편집 닫기' : '▸ 편집'}</span>}
           </button>
           <div className="issue-block__b">
