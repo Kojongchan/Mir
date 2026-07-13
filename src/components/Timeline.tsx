@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store/useStore';
 import {
-  readCsv,
   buildSchedule,
   formatDate,
   TASK_KIND_LABEL,
@@ -10,15 +9,20 @@ import {
   type ScheduleSource,
   type CsvDoc,
   type ColumnMap,
+  type ParsedSchedule,
 } from '../lib/schedule';
+import { importScheduleFile, IMPORT_ACCEPT, FORMAT_LABEL } from '../lib/scheduleImport';
+import { exportScheduleStatus } from '../lib/scheduleExport';
 import {
   mapByName,
   mapSequential,
   mappingStats,
   computeStates,
+  analyzeDelays,
   type TaskMapping,
   type ElementRef,
   type FourDViewer,
+  type ScheduleBasis,
 } from '../lib/fourd';
 import {
   listSchedules,
@@ -133,6 +137,16 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
   const [showSettings, setShowSettings] = useState(false);
   const [detailed, setDetailed] = useState(false);
   const [pendingCsv, setPendingCsv] = useState<CsvDoc | null>(null);
+  // ★재생 기준(사용자 옵션): 계획 시뮬 vs 실제 시뮬. 실적 데이터가 있으면 '실제'가
+  //   계획 대비 빠름/늦음까지 표현한다. localStorage 에 프로젝트 무관 기억.
+  const [basis, setBasis] = useState<ScheduleBasis>(
+    () => (localStorage.getItem('tl-basis') === 'planned' ? 'planned' : 'actual'),
+  );
+  const setBasisPersist = (b: ScheduleBasis) => {
+    setBasis(b);
+    try { localStorage.setItem('tl-basis', b); } catch { /* ignore */ }
+  };
+  const [showDelays, setShowDelays] = useState(false);
   // 날짜 검색 — 지정하면 그 날짜에 걸치는(overlap) 공정만 간트/표에 보인다(#3).
   const [filterDate, setFilterDate] = useState('');
   const hasSchedule = tasks.length > 0;
@@ -143,6 +157,14 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
     if (Number.isNaN(t)) return tasks;
     return tasks.filter((task) => task.start <= t + DAY && task.end >= t);
   }, [tasks, filterDate]);
+
+  // 실적 데이터 유무(모드 토글·현황 export 안내용).
+  const hasActuals = useMemo(() => tasks.some((t) => t.actualStart != null || t.actualEnd != null), [tasks]);
+  // 계획 대비 지연 작업 목록(현재 시점 기준). 실적/진척으로 판정.
+  const delays = useMemo(
+    () => (hasSchedule ? analyzeDelays(tasks, currentTime).filter((d) => d.delayDays > 0) : []),
+    [tasks, currentTime, hasSchedule],
+  );
 
   // 활성 슬롯에 즉시 저장(관리자, 모델 오픈 상태). 사용자 편집 직후 명시적으로 호출해
   // 프로그램적 복원(autoRestore)과의 경합을 피한다. fire-and-forget.
@@ -167,28 +189,8 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
     void saveActiveSchedule({ projectId, modelIdMap, source: src, tasks: t, mapping: m }).catch(() => {});
   };
 
-  // --- CSV 임포트(열 매핑 모달) ---
-  const onPickFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const doc = readCsv(new Uint8Array(await file.arrayBuffer()));
-      if (doc.rows.length === 0) {
-        setStatus('빈 CSV 입니다.');
-        return;
-      }
-      setPendingCsv(doc); // 모달 열기
-    } catch (err) {
-      setStatus(`CSV 읽기 실패: ${(err as Error).message}`);
-    } finally {
-      if (fileInput.current) fileInput.current.value = '';
-    }
-  };
-
-  const confirmImport = (map: ColumnMap) => {
-    if (!pendingCsv) return;
-    const parsed = buildSchedule(pendingCsv, map);
-    setPendingCsv(null);
+  // --- 공정표 임포트(CSV·Excel·MS Project XML·P6 XER) ---
+  const applyParsed = (parsed: ParsedSchedule, formatLabel: string) => {
     if (parsed.tasks.length === 0) {
       setStatus(`작업을 만들지 못했습니다: ${parsed.warnings.join(' ') || '유효한 행 없음'}`);
       return;
@@ -201,9 +203,39 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
     });
     persistActive(parsed.tasks, {}, parsed.source);
     setStatus(
-      `공정표 로드: ${parsed.tasks.length}개 작업 (${parsed.source})` +
+      `공정표 로드(${formatLabel}): ${parsed.tasks.length}개 작업` +
         (parsed.warnings.length ? ` · ${parsed.warnings.join(' ')}` : ''),
     );
+  };
+
+  const onPickFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const res = await importScheduleFile(file.name, new Uint8Array(await file.arrayBuffer()));
+      if (res.kind === 'tabular') {
+        if (res.doc.rows.length === 0) {
+          setStatus('빈 공정표입니다(행 없음).');
+          return;
+        }
+        pendingFormatRef.current = FORMAT_LABEL[res.format];
+        setPendingCsv(res.doc); // 열 매핑 모달 열기
+      } else {
+        applyParsed(res.schedule, FORMAT_LABEL[res.format]);
+      }
+    } catch (err) {
+      setStatus(`공정표 읽기 실패: ${(err as Error).message}`);
+    } finally {
+      if (fileInput.current) fileInput.current.value = '';
+    }
+  };
+
+  const pendingFormatRef = useRef<string>('CSV');
+  const confirmImport = (map: ColumnMap) => {
+    if (!pendingCsv) return;
+    const parsed = buildSchedule(pendingCsv, map);
+    setPendingCsv(null);
+    applyParsed(parsed, pendingFormatRef.current);
   };
 
   // --- 매핑 ---
@@ -477,12 +509,12 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
       viewer.clearConstruction();
       return;
     }
-    const states = computeStates(tasks, mapping, currentTime);
+    const states = computeStates(tasks, mapping, currentTime, basis);
     viewer.applyConstruction(
       [...states.values()].map((v) => ({ ...v.ref, state: v.state })),
       appearance,
     );
-  }, [viewer, enabled, hasSchedule, started, tasks, mapping, currentTime, appearance]);
+  }, [viewer, enabled, hasSchedule, started, tasks, mapping, currentTime, appearance, basis]);
 
   // --- 재생 ---
   const currentTimeRef = useRef(currentTime);
@@ -535,8 +567,10 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
         <button className="tl-toggle" onClick={() => setCollapsed(true)}>
           ▾
         </button>
-        <input ref={fileInput} type="file" accept=".csv" hidden onChange={onPickFile} />
-        <button onClick={() => fileInput.current?.click()}>공정표 임포트</button>
+        <input ref={fileInput} type="file" accept={IMPORT_ACCEPT} hidden onChange={onPickFile} />
+        <button onClick={() => fileInput.current?.click()} title="Excel·CSV·MS Project(.xml)·P6(.xer)">
+          공정표 임포트
+        </button>
         {apsMode && onOpenMapping && hasSchedule && (
           <button onClick={() => onOpenMapping()} title="공정표와 모델 객체 속성을 매칭(규칙 편집기)">
             🔗 4D 매칭
@@ -580,6 +614,32 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
             </button>
             <button onClick={() => setDetailed((v) => !v)} title="상세 열 표시">
               {detailed ? '기본 열' : '상세 열'}
+            </button>
+            <span className="tl-divider" />
+            {/* ★재생 기준: 계획 시뮬 / 실제 시뮬. 실적이 있어야 '실제'가 의미. */}
+            <select
+              value={basis}
+              onChange={(e) => setBasisPersist(e.target.value as ScheduleBasis)}
+              title="계획 공정으로 재생할지, 실제 공정으로 재생할지 선택"
+            >
+              <option value="planned">계획 시뮬</option>
+              <option value="actual">실제 시뮬{hasActuals ? '' : ' (실적 없음)'}</option>
+            </select>
+            {delays.length > 0 && (
+              <button
+                className={showDelays ? 'active' : ''}
+                onClick={() => setShowDelays((v) => !v)}
+                title="계획 대비 지연 작업 목록"
+                style={{ color: appearance.colorLate }}
+              >
+                ⚠ 지연 {delays.length}
+              </button>
+            )}
+            <button
+              onClick={() => void exportScheduleStatus(tasks, '공정현황.xlsx', currentTime)}
+              title="계획/실적 대비 현황을 엑셀로 내보내기"
+            >
+              현황 엑셀
             </button>
             <span className="tl-divider" />
             <label className="tl-check" title="입력한 날짜에 걸치는 공정만 표시">
@@ -640,6 +700,32 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
       </div>
 
       {hasSchedule && showSettings && <AppearancePanel />}
+
+      {hasSchedule && showDelays && delays.length > 0 && (
+        <div className="tl-delays">
+          <div className="tl-delays-head">
+            ⚠ 계획 대비 지연 작업 {delays.length}건
+            <span className="muted"> (기준일 {formatDate(currentTime)})</span>
+            <button className="tl-mini" onClick={() => setShowDelays(false)} title="닫기">✕</button>
+          </div>
+          <div className="tl-delays-list">
+            {delays.slice(0, 50).map((d) => (
+              <button
+                key={d.task.id}
+                className="tl-delay-row"
+                title="클릭 시 해당 객체로 이동"
+                onClick={() => focusTask(d.task.id)}
+              >
+                <span className="tl-delay-name">{d.task.name}</span>
+                <span className="tl-delay-days" style={{ color: appearance.colorLate }}>+{d.delayDays}일</span>
+                <span className="muted tl-delay-reason">
+                  {d.reason === 'late-finish' ? '완료 지연' : d.reason === 'late-start' ? '착수 지연' : '진행 지연'}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {hasSchedule ? (
         <>
@@ -927,10 +1013,20 @@ function TaskTable({
                 </span>
               </div>
               <div className="td td-gantt">
-                <div
-                  className={t.isSummary ? 'tl-bar tl-bar-summary' : `tl-bar tl-bar-${st} tl-bar-${t.type}`}
-                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                />
+                {t.isMilestone ? (
+                  // 마일스톤: 다이아몬드 마커(기간 0).
+                  <div className="tl-milestone" style={{ left: `${leftPct}%` }} title={`◆ ${t.name}`} />
+                ) : (
+                  <div
+                    className={t.isSummary ? 'tl-bar tl-bar-summary' : `tl-bar tl-bar-${st} tl-bar-${t.type}`}
+                    style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                  >
+                    {/* 진척률 채우기(있을 때만). */}
+                    {!t.isSummary && t.progress != null && t.progress > 0 && (
+                      <span className="tl-bar-fill" style={{ width: `${Math.round(t.progress * 100)}%` }} />
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           );

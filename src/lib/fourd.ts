@@ -183,17 +183,25 @@ function afterState(kind: TaskKind): CellState {
 }
 
 /**
+ * 재생 기준(★사용자 옵션): 'planned'=계획 날짜로만 시뮬(실적 무시) · 'actual'=실제
+ * 날짜가 있으면 그걸 우선(계획 대비 빠름/늦음 색 포함). 기본 'actual'(기존 동작).
+ */
+export type ScheduleBasis = 'planned' | 'actual';
+
+/**
  * 특정 시점(now)에 매핑된 모든 요소의 표시 상태를 계산. 한 요소가 여러 작업에
  * 걸리면(예: 시공 후 철거) 작업을 시작 시각 순으로 적용해 생애주기를 따른다.
  *  - 시작 전: 첫 작업이 '철거'면 normal(기시공 상태로 이미 존재), 아니면 ghost(미시공)
  *  - 진행 중: 유형별 색상(active-construct/demolish/temporary)
  *  - 완료 후: 시공→normal, 철거/임시→hidden
  * 매핑되지 않은 요소는 결과에 없으며(=항상 보이게 유지) 모델이 통째로 사라지지 않는다.
+ * basis='planned' 면 실적(actualStart/End)을 무시하고 계획 날짜로만 계산한다.
  */
 export function computeStates(
   tasks: ScheduleTask[],
   mapping: TaskMapping,
   now: number,
+  basis: ScheduleBasis = 'actual',
 ): Map<string, { ref: ElementRef; state: CellState }> {
   const byId = new Map(tasks.map((t) => [t.id, t]));
 
@@ -205,8 +213,9 @@ export function computeStates(
       start: task.start,
       end: task.end,
       kind: task.type,
-      actualStart: task.actualStart,
-      actualEnd: task.actualEnd,
+      // 계획 시뮬 모드에선 실적을 배제해 계획 순수 재생.
+      actualStart: basis === 'planned' ? null : task.actualStart,
+      actualEnd: basis === 'planned' ? null : task.actualEnd,
     };
     for (const ref of refs) {
       const key = elementKey(ref);
@@ -246,4 +255,40 @@ export function computeStates(
     result.set(key, { ref, state });
   }
   return result;
+}
+
+// --- 지연 분석(계획 대비 실적) ------------------------------------------
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export interface DelayInfo {
+  task: ScheduleTask;
+  /** 지연 일수(양수=늦음). 실제 시작이 계획보다 늦거나, 실제 끝이 계획 끝보다 늦음. */
+  delayDays: number;
+  reason: 'late-start' | 'late-finish' | 'behind' | 'early';
+}
+
+/**
+ * 계획 대비 지연/선행 작업 목록. 실제 시작/끝이 있는 작업을 우선 판정하고,
+ * 실적이 없어도 now 기준 계획상 시작했어야 하는데 진척이 0 이면 '지연 진행'으로 본다.
+ * 요약 행은 제외. delayDays 내림차순(가장 지연 큰 것부터) 정렬.
+ */
+export function analyzeDelays(tasks: ScheduleTask[], now: number): DelayInfo[] {
+  const out: DelayInfo[] = [];
+  for (const t of tasks) {
+    if (t.isSummary) continue;
+    const as = t.actualStart ?? null;
+    const ae = t.actualEnd ?? null;
+    if (ae != null) {
+      const d = Math.round((ae - t.end) / DAY_MS);
+      if (d !== 0) out.push({ task: t, delayDays: d, reason: d > 0 ? 'late-finish' : 'early' });
+    } else if (as != null) {
+      const d = Math.round((as - t.start) / DAY_MS);
+      if (d !== 0) out.push({ task: t, delayDays: d, reason: d > 0 ? 'late-start' : 'early' });
+    } else if (Number.isFinite(now) && now > t.start && (t.progress ?? 0) <= 0) {
+      // 실적 없음: 계획상 시작했어야 하는데 진척 0 → 지연 진행.
+      out.push({ task: t, delayDays: Math.round((now - t.start) / DAY_MS), reason: 'behind' });
+    }
+  }
+  return out.sort((a, b) => b.delayDays - a.delayDays);
 }

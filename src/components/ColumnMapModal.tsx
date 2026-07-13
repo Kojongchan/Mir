@@ -26,7 +26,7 @@ export function ColumnMapModal({ doc, onConfirm, onCancel }: Props) {
     <div className="modal-backdrop" onClick={onCancel}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h3>CSV 가져오기 — 열 매핑</h3>
+          <h3>공정표 가져오기 — 열 매핑</h3>
           <span className="muted">
             형식 자동 인식: {doc.source} · {doc.rows.length}행 · {doc.header.length}열
           </span>
@@ -37,7 +37,7 @@ export function ColumnMapModal({ doc, onConfirm, onCancel }: Props) {
             <thead>
               <tr>
                 <th>속성</th>
-                <th>CSV 열</th>
+                <th>열</th>
                 <th>미리보기(1행)</th>
               </tr>
             </thead>

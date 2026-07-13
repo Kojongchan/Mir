@@ -11,7 +11,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "verify:e2e": "node scripts/verify-e2e.mjs"
+    "verify:e2e": "node scripts/verify-e2e.mjs",
+    "verify:4d": "node scripts/verify-4d-import.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

@@ -9,3 +9,6 @@ dist-ssr
 .vscode/*
 !.vscode/extensions.json
 public/web-ifc/*.wasm
+
+# 4D import smoke test 임시 번들
+.4dtmp-*/

@@ -3,6 +3,55 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 D1 — 4D 공정 시뮬 고도화: 진실원본 import(Excel/MSP/P6)·실적/지연·현황 export·재생기준 (2026-07-13)
+> branch `claude/4d-process-simulation-xic7pn`. **typecheck·build 통과 + node 스모크 테스트 31/31**
+> (`npm run verify:4d` — esbuild 로 src TS 번들 후 Excel/MSP/P6 파싱·현황·지연·basis 검증).
+> **이 샌드박스는 실 ACC/Supabase 불가** → 파서·순수로직은 실검증, 3D 반영은 라이브 눈확인 필요.
+
+### ✅ 한 일 (AC #1 import·#3 실적/지연/현황 export 완결, #2 일부)
+1. **공정표 import = 진실원본 3포맷 추가**(기존 CSV 위에):
+   - **Excel(.xlsx/.xls)** `lib/xlsxImport.ts` — 첫 시트를 헤더+행으로 읽어 CSV 와 동일한
+     `CsvDoc` 로 → 기존 **열 매핑 모달(ColumnMapModal)·buildSchedule 재사용**. xlsx 는 **동적 import**
+     (초기 번들 무영향, 코드 스플리팅 유지).
+   - **MS Project XML(.xml)** `lib/mspImport.ts` + 의존성 없는 소형 XML 파서 `lib/miniXml.ts`
+     (node·브라우저 공용) — Task/OutlineNumber(WBS)/Start·Finish/Actual*/PercentComplete/
+     Milestone/Summary/PredecessorLink 흡수.
+   - **Primavera P6 XER(.xer)** `lib/xerImport.ts` — 탭구분 %T/%F/%R 테이블 파싱. PROJWBS 계층을
+     개요번호로 펼치고 TASK 를 말단으로 얹어 **공통 buildSchedule 파이프라인 재사용**(요약 기간채움·
+     마일스톤). TASKPRED→선행, task_code→매칭키(externalId).
+   - **디스패처** `lib/scheduleImport.ts`: 확장자/내용으로 판별 → CSV·Excel=`{kind:tabular}`(열 매핑
+     모달), MSP·XER=`{kind:parsed}`(바로 로드). `IMPORT_ACCEPT`·`FORMAT_LABEL` 제공.
+2. **스키마 모델 확장(하위호환, optional)**: `ScheduleTask` 에 `progress`(0..1)·`predecessors[]`·
+   `isMilestone` 추가. `ColumnMap`+`COLUMN_ROLES` 에 **진척률·선행** 역할 추가, `guessColumns` 키 대폭
+   보강(작업명/계획 시작·끝/실제/진척/매칭키/WBS 한글 헤더 자동인식 — Excel 자동추정 실효성↑).
+   `parseProgress`("50%"/"0.5"/50→0..1)·`parsePredecessors`(관계유형·지연 제거)·`docFromRows`(CSV/Excel 공용).
+3. **실적 동기화 → 계획대비 색 + 지연 목록**(AC #3): 계획대비 색(빠름 파랑/늦음 주황)은 기존 유지.
+   `fourd.analyzeDelays(tasks, now)` 신설 — 실제끝>계획끝(완료지연)·실제시작>계획시작(착수지연)·
+   실적없이 계획상 시작했어야 하는데 진척0(진행지연) 판정. Timeline 툴바 **⚠ 지연 N** 버튼 →
+   **지연 작업 패널**(작업명·+지연일수·사유, 클릭 시 해당 객체로 카메라 이동).
+4. **현황(계획/실적 대비표) 엑셀 export**(AC #3): `lib/scheduleExport.ts` — `buildStatusRows`(순수함수,
+   WBS·계획/실제·진척·상태(완료/진행/예정/지연)·편차일·비용) + `exportScheduleStatus`(xlsx 동적 import,
+   브라우저 다운로드). Timeline 툴바 **현황 엑셀** 버튼.
+5. **★재생 기준 선택(사용자 옵션 #6 1차)**: `computeStates(…, basis)` — **계획 시뮬**(실적 무시,
+   계획 날짜로만)·**실제 시뮬**(실적 우선+빠름/늦음 색) 토글. Timeline 툴바 드롭다운, localStorage 기억.
+6. **WBS/마일스톤 뷰(AC #2 일부)**: WBS 트리(개요번호 접기/펴기)는 기존 유지. **마일스톤**(기간0)은 간트에
+   **다이아몬드 마커**, **진척률**은 간트 막대 안 **채우기 오버레이**로 표시.
+
+### ⚠️ 다음(라이브/후속) — 이 샌드박스에서 미검증·미구현
+- **라이브 눈확인**: 실 ACC 4D 모델 + Excel/MSP/P6 공정표로 import→열매핑→WBS/타임라인→3D 스크럽 색/표시,
+  실적 열 매핑 시 지연목록·계획대비 색, 현황 엑셀 다운로드. (매핑엔진·저장경로는 S50 그대로 재사용.)
+- **범위상 후속(viewer 중심·ACC 필요)**: #4 4D 워크스루(카메라경로 재생·캔버스 녹화·공유링크 웹재생·날짜
+  스크럽 일부만 有), #5 물량/기성 기간연동(§0-H·R6), **#6 비교/중첩 재생(뷰 2분할·상하 동일화면·중첩)** —
+  APS Viewer 2개 마운트가 필요한 큰 작업이라 이번엔 **재생기준(계획/실제) 토글까지만** 구현.
+- DB 스키마: `task_elements`(0029) 는 이미 actual/GlobalId 지원. 진척률/선행 DB 영속은 미추가(현재는
+  import 시점 메모리+localStorage). 필요 시 후속 마이그(schedule_tasks 에 progress/predecessors 컬럼).
+
+### 인수인계 한 줄
+4D import 를 진실원본 3포맷(Excel·MS Project XML·P6 XER)으로 확장 + 진척률/선행/마일스톤 + 실적 지연목록 +
+현황 엑셀 export + 계획/실제 재생기준 토글. typecheck·build·스모크(31) OK. 다음은 실 ACC 라이브 검증 →
+#6 뷰 2분할/중첩·#4 워크스루 공유·#5 기성 연동.
+
+---
 ## 📋 F2 — 협업·이슈 고도화(타입 분화·3뷰·뷰포인트·출력·현장등록) (2026-07-10)
 > branch `claude/issue-collaboration-upgrade-o4uzc0`. typecheck·build 통과.
 > .docx/xlsx 생성은 node 스모크 테스트로 실검증(3종 양식 렌더·이스케이프·잔여태그 0 확인).

@@ -31,6 +31,12 @@ export interface ScheduleTask {
   outline: string | null;
   /** 하위 작업을 가진 상위(합계) 행인지 — 매핑·시뮬 대상에서 제외, 트리 헤더로만 표시. */
   isSummary: boolean;
+  /** 진척률(0..1). 없으면 null. 엑셀/MS Project(%Complete)/P6(phys_complete) 흡수. */
+  progress?: number | null;
+  /** 선행 작업 id 목록(선후행). 없으면 빈 배열. */
+  predecessors?: string[];
+  /** 마일스톤(기간 0 = 시작==끝) 여부 — 마일스톤 뷰·간트 다이아몬드 표시용. */
+  isMilestone?: boolean;
 }
 
 export type TaskKind = 'construct' | 'demolish' | 'equipment' | 'temporary' | 'other';
@@ -48,6 +54,8 @@ export interface ColumnMap {
   cost: number;
   externalId: number;
   outline: number;
+  progress: number;
+  predecessor: number;
 }
 
 /** readCsv 결과: 헤더/행 + 포맷·열 자동추정 */
@@ -67,8 +75,10 @@ export const COLUMN_ROLES: { key: keyof ColumnMap; label: string; required?: boo
   { key: 'actualStart', label: '실제 시작 날짜' },
   { key: 'actualEnd', label: '실제 끝 날짜' },
   { key: 'cost', label: '비용' },
-  { key: 'externalId', label: '동기화 ID / GUID' },
-  { key: 'outline', label: '개요 번호(계층)' },
+  { key: 'externalId', label: '동기화 ID / GUID (매칭키)' },
+  { key: 'outline', label: '개요 번호(WBS 계층)' },
+  { key: 'progress', label: '진척률(%)' },
+  { key: 'predecessor', label: '선행 작업' },
 ];
 
 export interface ParsedSchedule {
@@ -152,16 +162,18 @@ export function parseCsvRows(text: string): string[][] {
 
 // --- 컬럼 추정 -----------------------------------------------------------
 
-const NAME_KEYS = ['name', '이름'];
-const START_KEYS = ['planned start', '계획된 시작', 'main start', 'start', '시작'];
-const END_KEYS = ['planned end', '계획된 끝', 'main end', 'end', '끝'];
-const ASTART_KEYS = ['actual start', '실제 시작'];
-const AEND_KEYS = ['actual end', '실제 끝'];
-const TYPE_KEYS = ['task type', '작업 유형', 'type'];
+const NAME_KEYS = ['name', '이름', '작업명', '작업 이름', '공정명', 'task name', 'activity name', 'activity'];
+const START_KEYS = ['planned start', '계획된 시작', '계획 시작', '계획시작', 'main start', 'start', '시작', 'start date'];
+const END_KEYS = ['planned end', '계획된 끝', '계획 끝', '계획끝', '계획 종료', 'main end', 'finish', 'end', '끝', '종료', 'end date'];
+const ASTART_KEYS = ['actual start', '실제 시작', '실제시작', '실제 착수'];
+const AEND_KEYS = ['actual end', 'actual finish', '실제 끝', '실제끝', '실제 종료', '실제 완료'];
+const TYPE_KEYS = ['task type', '작업 유형', '유형', 'type'];
 const COST_KEYS = ['planned total cost', 'main total cost', 'total cost', '비용 합계', '총 비용', '총비용', '재료비'];
 const ID_KEYS = ['id'];
-const EXTID_KEYS = ['fuzor guid', 'unique id', '동기화 id', '표시 id'];
-const OUTLINE_KEYS = ['outlinenumber', 'outline number'];
+const EXTID_KEYS = ['fuzor guid', 'unique id', '동기화 id', '표시 id', 'guid', '매칭키', 'match key'];
+const OUTLINE_KEYS = ['outlinenumber', 'outline number', 'wbs', 'wbs code', 'wbs 코드'];
+const PROGRESS_KEYS = ['% complete', 'percent complete', '진척률', '진척', '진도율', 'progress', 'complete'];
+const PRED_KEYS = ['predecessors', 'predecessor', '선행', '선행작업', '선행 작업'];
 
 function findIndex(header: string[], keys: string[]): number {
   const norm = header.map((h) => h.trim().toLowerCase());
@@ -214,18 +226,49 @@ function guessColumns(header: string[]): ColumnMap {
     cost: findIndex(header, COST_KEYS),
     externalId: findIndex(header, EXTID_KEYS),
     outline: findIndex(header, OUTLINE_KEYS),
+    progress: findIndex(header, PROGRESS_KEYS),
+    predecessor: findIndex(header, PRED_KEYS),
   };
+}
+
+/** "50%", "0.5", "50" 등 다양한 진척 표기를 0..1 로 정규화. 없으면 null. */
+export function parseProgress(raw: string | undefined): number | null {
+  const s = (raw ?? '').trim().replace('%', '');
+  if (!s) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  // 0..1 로 들어오면 그대로, 그 이상이면 백분율로 간주.
+  const v = n > 1 ? n / 100 : n;
+  return Math.min(1, Math.max(0, v));
+}
+
+/**
+ * "3", "3;5", "3FS+2d", "5,7SS-1d" 등 선행 표기에서 선행 작업 번호/코드만 뽑는다.
+ * 관계유형(FS/SS/FF/SF)·지연(+2d/-1d)은 떼어낸다.
+ */
+export function parsePredecessors(raw: string | undefined): string[] {
+  const s = (raw ?? '').trim();
+  if (!s) return [];
+  return s
+    .split(/[;,]/)
+    .map((p) => p.trim().replace(/(FS|SS|FF|SF).*$/i, '').replace(/[+\-]\s*\d.*$/, '').trim())
+    .filter(Boolean);
 }
 
 // --- 1) 읽기/추정 --------------------------------------------------------
 
+/** 헤더+행(2차원) → CsvDoc(포맷·열 자동추정). CSV·Excel 임포트가 공통으로 사용. */
+export function docFromRows(all: string[][], sourceHint?: ScheduleSource): CsvDoc {
+  const rowsAll = all.filter((r) => r.some((c) => (c ?? '').trim() !== ''));
+  const header = rowsAll[0] ?? [];
+  const rows = rowsAll.slice(1);
+  return { header, rows, source: sourceHint ?? detectSource(header), guess: guessColumns(header) };
+}
+
 /** 바이트 → 디코딩 + 행 분해 + 포맷/열 자동추정. 임포트 모달이 사용. */
 export function readCsv(bytes: Uint8Array): CsvDoc {
   const text = decodeCsvBytes(bytes);
-  const all = parseCsvRows(text).filter((r) => r.some((c) => c.trim() !== ''));
-  const header = all[0] ?? [];
-  const rows = all.slice(1);
-  return { header, rows, source: detectSource(header), guess: guessColumns(header) };
+  return docFromRows(parseCsvRows(text));
 }
 
 // --- 2) 작업 생성 --------------------------------------------------------
@@ -286,13 +329,14 @@ export function buildSchedule(doc: CsvDoc, map: ColumnMap): ParsedSchedule {
       if (v && key) custom[key] = v;
     }
 
+    const safeEnd = Math.max(end, start);
     tasks.push({
       id: rawId || externalId || `task-${r}`,
       name,
       type: normalizeKind(rawType),
       rawType,
       start,
-      end: Math.max(end, start),
+      end: safeEnd,
       actualStart: nullIfNaN(parseDate(map.actualStart >= 0 ? cols[map.actualStart] : '')),
       actualEnd: nullIfNaN(parseDate(map.actualEnd >= 0 ? cols[map.actualEnd] : '')),
       cost: map.cost >= 0 ? parseCost(cols[map.cost]) : null,
@@ -300,6 +344,10 @@ export function buildSchedule(doc: CsvDoc, map: ColumnMap): ParsedSchedule {
       custom,
       outline: outline || null,
       isSummary,
+      progress: map.progress >= 0 ? parseProgress(cols[map.progress]) : null,
+      predecessors: map.predecessor >= 0 ? parsePredecessors(cols[map.predecessor]) : [],
+      // 마일스톤: 기간 0(시작==끝)인 말단 작업.
+      isMilestone: !isSummary && Number.isFinite(start) && safeEnd === start,
     });
   }
 
