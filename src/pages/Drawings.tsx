@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useLocation, useParams } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
 import * as pdfjsLib from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -29,8 +29,12 @@ export function Drawings() {
   const { canEdit } = useProjectRole(projectId);
   const authorName = profile?.full_name ?? profile?.username ?? null;
 
+  // 이슈 상세 '도면에서 보기' 딥링크 — 해당 도면을 바로 선택.
+  const location = useLocation();
+  const openDrawingId = (location.state as { openDrawingId?: string } | null)?.openDrawingId ?? null;
+
   const [list, setList] = useState<Drawing[]>([]);
-  const [selId, setSelId] = useState<string | null>(null);
+  const [selId, setSelId] = useState<string | null>(openDrawingId);
   const [msg, setMsg] = useState('');
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -49,6 +53,10 @@ export function Drawings() {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  useEffect(() => {
+    if (openDrawingId) setSelId(openDrawingId);
+  }, [openDrawingId]);
 
   const onPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

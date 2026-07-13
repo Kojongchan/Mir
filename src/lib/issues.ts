@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { notify } from './notifications';
+import type { IssueType } from './issueTypes';
 
 // =====================================================================
 // 협업 · 이슈/지적 관리 데이터층 (Phase 12 / S22, 워크플로우 확장 S30).
@@ -37,6 +38,12 @@ export const OPEN_STATUSES: IssueStatus[] = ['open', 'in_progress', 'on_hold'];
 export interface Issue {
   id: string;
   project_id: string;
+  /** 이슈 타입(0038) — general·rfi·punch·safety·quality. 미적용 DB 폴백 = general. */
+  type: IssueType;
+  /** 타입별 전용 필드(0038, jsonb) — RFI 상대처/응답기한/답변, 현장 GPS 태그(site) 등. */
+  meta: Record<string, unknown>;
+  /** 항목(공종·대상 분류, 0039) — issue_category FK. 미지정/미적용 = null. */
+  category_id: string | null;
   title: string;
   description: string | null;
   status: IssueStatus;
@@ -75,7 +82,11 @@ export type IssueEventKind =
   | 'due'
   | 'file_add'
   | 'file_download'
-  | 'comment';
+  | 'comment'
+  | 'meta'
+  | 'viewpoint_add'
+  | 'viewpoint_del'
+  | 'category';
 export interface IssueEvent {
   id: string;
   issue_id: string;
@@ -88,15 +99,36 @@ export interface IssueEvent {
 
 const COLS =
   'id, project_id, title, description, status, priority, assignee_id, assignee_name, due_date, model_id, express_id, global_id, global_id_b, viewpoint_id, created_by, created_by_name, created_at, updated_at';
+// 0038(type·meta)/0039(category_id) 적용 수준별 조회 — 미적용이면 단계적으로 폴백.
+const COLS_TYPED = `${COLS}, type, meta`;
+const COLS_FULL = `${COLS_TYPED}, category_id`;
+
+/** 신규 컬럼 미포함 행(0038/0039 미적용 폴백)에 기본값을 채워 Issue 로 정규화. */
+function normalizeIssue(row: Record<string, unknown>): Issue {
+  return {
+    ...(row as unknown as Issue),
+    type: ((row.type as string) || 'general') as IssueType,
+    meta: (row.meta as Record<string, unknown>) ?? {},
+    category_id: (row.category_id as string | null) ?? null,
+  };
+}
 
 export async function listIssues(projectId: string): Promise<Issue[]> {
-  const { data, error } = await supabase
-    .from('issues')
-    .select(COLS)
-    .eq('project_id', projectId)
-    .order('created_at', { ascending: false });
-  if (error) throw error;
-  return (data ?? []) as Issue[];
+  // full(0039) → typed(0038) → legacy 순서로 시도.
+  let rows: Record<string, unknown>[] | null = null;
+  for (const cols of [COLS_FULL, COLS_TYPED, COLS]) {
+    const res = await supabase
+      .from('issues')
+      .select(cols)
+      .eq('project_id', projectId)
+      .order('created_at', { ascending: false });
+    if (!res.error) {
+      rows = (res.data ?? []) as unknown as Record<string, unknown>[];
+      break;
+    }
+    if (cols === COLS) throw res.error;
+  }
+  return (rows ?? []).map(normalizeIssue);
 }
 
 /** Count of issues not yet closed/resolved — for the dashboard card. */
@@ -115,6 +147,9 @@ export async function createIssue(
   input: {
     title: string;
     description?: string;
+    type?: IssueType;
+    meta?: Record<string, unknown>;
+    category_id?: string | null;
     priority: IssuePriority;
     assignee_id?: string | null;
     assignee_name?: string;
@@ -141,6 +176,10 @@ export async function createIssue(
     created_by: userData.user?.id ?? null,
     created_by_name: authorName,
   };
+  // type/meta 는 0038, category_id 는 0039 컬럼 — 값이 있을 때만 포함(미적용 폴백).
+  if (input.type && input.type !== 'general') payload.type = input.type;
+  if (input.meta && Object.keys(input.meta).length) payload.meta = input.meta;
+  if (input.category_id) payload.category_id = input.category_id;
   // viewpoint_id 는 0017 에서 추가된 컬럼 — 값이 있을 때만 포함(미적용 폴백).
   if (input.viewpoint_id) payload.viewpoint_id = input.viewpoint_id;
   // global_id 는 0026(APS 앵커) — 값이 있을 때만 포함(미적용 폴백).
@@ -252,6 +291,39 @@ export async function updateIssueMeta(
   if (fields.description !== undefined && (fields.description ?? '') !== (issue.description ?? '')) {
     await logEvent(issue.id, issue.project_id, 'content', null, '내용 수정', actorName);
   }
+}
+
+/** 항목(공종·대상 분류) 변경 + 변경이력('category') 기록. 0039 필요. */
+export async function setIssueCategory(
+  issue: Issue,
+  categoryId: string | null,
+  fromName: string,
+  toName: string,
+  actorName: string | null,
+): Promise<void> {
+  if ((issue.category_id ?? null) === (categoryId ?? null)) return;
+  const { error } = await supabase
+    .from('issues')
+    .update({ category_id: categoryId, updated_at: new Date().toISOString() })
+    .eq('id', issue.id);
+  if (error) throw error;
+  await logEvent(issue.id, issue.project_id, 'category', fromName, toName, actorName);
+}
+
+/** 타입별 전용 필드(meta jsonb) 갱신 + 변경이력('meta') 기록. 0038 필요. */
+export async function updateIssueTypeFields(
+  issue: Issue,
+  patch: Record<string, unknown>,
+  changedLabel: string,
+  actorName: string | null,
+): Promise<void> {
+  const meta = { ...issue.meta, ...patch };
+  const { error } = await supabase
+    .from('issues')
+    .update({ meta, updated_at: new Date().toISOString() })
+    .eq('id', issue.id);
+  if (error) throw error;
+  await logEvent(issue.id, issue.project_id, 'meta', null, changedLabel, actorName);
 }
 
 /** 외부(첨부 링크·다운로드 등)에서 이슈 변경이력을 남기기 위한 공개 헬퍼. */

@@ -30,6 +30,8 @@ import { apsClashesToCsv, buildApsClashReport, downloadReport, captureClashAngle
 import { downloadCsv } from '../lib/clash';
 import { uploadAttachment } from '../lib/attachments';
 import { createIssue, ISSUE_PRIORITIES, PRIORITY_LABEL, type IssuePriority } from '../lib/issues';
+import { ISSUE_TYPES, TYPE_LABEL, type IssueType } from '../lib/issueTypes';
+import { listIssueCategories, type IssueCategory } from '../lib/issueCategories';
 import type { ApsMapping } from '../lib/apsMapping';
 import { listProjectMembers, memberLabel, type ProjectMember } from '../lib/members';
 import { useAuth } from '../auth/AuthProvider';
@@ -132,6 +134,8 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
   const [issueFor, setIssueFor] = useState<ClashRow | null>(null);
   // 담당 배정용 구성원 목록(간섭→이슈 모달에서 담당자·멘션에 사용).
   const [members, setMembers] = useState<ProjectMember[]>([]);
+  // 이슈 항목(공종·대상 분류, 0039) — 프로젝트별 목록.
+  const [cats, setCats] = useState<IssueCategory[]>([]);
   const [reportBusy, setReportBusy] = useState(false);
   const [saveName, setSaveName] = useState('');
 
@@ -145,6 +149,8 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
     listClashTests(projectId).then(setTests).catch(() => {});
     // 담당 배정·멘션용 구성원 목록(profiles RLS 상 관리자만 채워짐 — 비면 라벨로 대체).
     listProjectMembers(projectId).then(setMembers).catch(() => {});
+    // 이슈 항목 목록(0039 미적용이면 빈 배열).
+    listIssueCategories(projectId).then(setCats).catch(() => setCats([]));
     return () => clearApsClashView(viewer, model);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -301,6 +307,9 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
 
   const [issueTitle, setIssueTitle] = useState('');
   const [issueDesc, setIssueDesc] = useState('');
+  // 간섭은 대개 품질 이슈로 등록되나 유형은 사용자가 바꿀 수 있게 둔다.
+  const [issueType, setIssueType] = useState<IssueType>('quality');
+  const [issueCategory, setIssueCategory] = useState('');
   const [issuePriority, setIssuePriority] = useState<IssuePriority>('high');
   const [issueAssignee, setIssueAssignee] = useState('');
   const [issueDue, setIssueDue] = useState('');
@@ -313,6 +322,8 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
     setIssueFor(r);
     setIssueTitle(`간섭: ${r.a.name || r.a.category} ↔ ${r.b.name || r.b.category}`);
     setIssueDesc(`간섭 검출 (관통깊이 ${r.depth.toFixed(3)}m)\nA: ${r.a.name || r.a.category}\nB: ${r.b.name || r.b.category}`);
+    setIssueType('quality');
+    setIssueCategory('');
     setIssuePriority('high');
     setIssueAssignee('');
     setIssueDue('');
@@ -343,6 +354,8 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
         {
           title: issueTitle,
           description: issueDesc,
+          type: issueType,
+          category_id: issueCategory || null,
           priority: issuePriority,
           assignee_id: issueAssignee || null,
           assignee_name: assignee?.name,
@@ -587,6 +600,25 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
             <input value={issueTitle} onChange={(e) => setIssueTitle(e.target.value)} style={sel} />
             <label style={lbl}>내용</label>
             <textarea value={issueDesc} onChange={(e) => setIssueDesc(e.target.value)} style={{ ...sel, height: 80, resize: 'vertical' }} />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ flex: 1 }}>
+                <label style={lbl}>항목</label>
+                <select value={issueCategory} onChange={(e) => setIssueCategory(e.target.value)} style={sel}>
+                  <option value="">미지정</option>
+                  {cats.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={lbl}>유형</label>
+                <select value={issueType} onChange={(e) => setIssueType(e.target.value as IssueType)} style={sel}>
+                  {ISSUE_TYPES.map((t) => (
+                    <option key={t} value={t}>{TYPE_LABEL[t]}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <div style={{ flex: 1 }}>
                 <label style={lbl}>우선순위</label>

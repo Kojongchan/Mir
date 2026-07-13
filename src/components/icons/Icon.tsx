@@ -21,7 +21,14 @@ export type IconName =
   // 12개 세트 외 — 동일 톤(레드닷·currentColor)으로 채운 확장 아이콘
   | 'issue'
   | 'billing'
-  | 'members';
+  | 'members'
+  // 이슈 타입 아이콘(일반·RFI·하자·안전·품질) — 타입색으로 tint 되도록 레드닷 생략,
+  // currentColor(칩/뱃지의 타입 fg 색) 기반. 이모지 TYPE_ICON 대체.
+  | 'issue-general'
+  | 'issue-rfi'
+  | 'issue-punch'
+  | 'issue-safety'
+  | 'issue-quality';
 
 const DOT = 'var(--color-brand-accent)';
 const ON = 'var(--color-text-on-brand)'; // 레드닷 위 흰 체크
@@ -146,6 +153,44 @@ const PATHS: Record<IconName, ReactNode> = {
       <circle cx="9" cy="8" r="3.2" />
       <path d="M3.5 20C3.5 16.4 6 14 9 14C12 14 14.5 16.4 14.5 20" />
       <circle cx="17.5" cy="9" r="2.4" fill={DOT} stroke="none" />
+    </>
+  ),
+  // ── 이슈 타입(레드닷 없이 타입색 tint) ──
+  'issue-general': (
+    <>
+      <rect x="5" y="3" width="14" height="18" fill="currentColor" fillOpacity="0.12" />
+      <rect x="5" y="3" width="14" height="18" />
+      <path d="M8 8H16 M8 12H16 M8 16H13" strokeOpacity="0.85" />
+    </>
+  ),
+  'issue-rfi': (
+    <>
+      <path d="M4 5H20V15H11L7 19V15H4V5Z" fill="currentColor" fillOpacity="0.12" />
+      <path d="M4 5H20V15H11L7 19V15H4V5Z" />
+      <path
+        d="M10 8.6C10 7.5 10.9 6.8 12 6.8C13.1 6.8 14 7.5 14 8.6C14 10 12 10 12 11.4 M12 13.1H12.01"
+        strokeLinecap="round"
+      />
+    </>
+  ),
+  'issue-punch': (
+    <>
+      <path d="M6 4H17L14.5 8L17 12H6" fill="currentColor" fillOpacity="0.12" />
+      <path d="M6 21V4 M6 4H17L14.5 8L17 12H6" />
+    </>
+  ),
+  'issue-safety': (
+    <>
+      <path d="M12 4L21 19H3L12 4Z" fill="currentColor" fillOpacity="0.12" />
+      <path d="M12 4L21 19H3L12 4Z" />
+      <path d="M12 10V13.5 M12 16.4H12.01" strokeLinecap="round" />
+    </>
+  ),
+  'issue-quality': (
+    <>
+      <circle cx="12" cy="12" r="8.5" fill="currentColor" fillOpacity="0.12" />
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M8.3 12.2L11 14.9L15.7 9.6" strokeLinecap="round" strokeLinejoin="round" />
     </>
   ),
 };

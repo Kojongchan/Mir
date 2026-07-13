@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
 import { errMessage } from '../lib/errors';
@@ -20,8 +20,10 @@ import {
   listIssues,
   listUnreadIssues,
   markIssueRead,
+  setIssueCategory,
   setIssueStatus,
   updateIssueMeta,
+  updateIssueTypeFields,
   logIssueEvent,
   type Issue,
   type IssueComment,
@@ -29,17 +31,83 @@ import {
   type IssuePriority,
   type IssueStatus,
 } from '../lib/issues';
+import {
+  ISSUE_TYPES,
+  TYPE_COLOR,
+  TYPE_FIELDS,
+  TYPE_ICON_COLOR,
+  TYPE_ICON_NAME,
+  TYPE_LABEL,
+  metaValue,
+  siteTagOf,
+  statusLabelFor,
+  type IssueFieldDef,
+  type IssueType,
+} from '../lib/issueTypes';
+import {
+  listIssueViewpoints,
+  removeIssueViewpoint,
+  updateIssueViewpointMarkup,
+  type IssueViewpoint,
+} from '../lib/issueViewpoints';
+import {
+  addIssueCategory,
+  listIssueCategories,
+  removeIssueCategory,
+  renameIssueCategory,
+  seedDefaultCategories,
+  type IssueCategory,
+} from '../lib/issueCategories';
+import { exportIssueFormDocx, exportIssuesXlsx, openIssueFormPrint } from '../lib/issueExport';
+import { listPinsForIssue, listIssuePins, type IssuePinRef } from '../lib/drawings';
 import { listProjectMembers, memberLabel, type ProjectMember } from '../lib/members';
 import { formatDate } from '../lib/dashboard';
+import { getProject } from '../lib/api';
 import { Attachments } from '../components/Attachments';
+import { Icon } from '../components/icons/Icon';
+import { UiIcon, type UiIconName } from '../components/icons/UiIcon';
+import { MarkupOverlay, type MarkupTool } from '../components/MarkupOverlay';
+import { REDLINE_COLORS, type MarkupShape, type RedlineColor } from '../lib/viewpoints';
 import { MentionInput } from '../components/MentionInput';
 import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
 import { AccFilePreview } from '../components/AccFilePreview';
 import { addIssueFile, listIssueFiles, removeIssueFile, type IssueFileLink } from '../lib/issueFiles';
+import { listAttachments } from '../lib/attachments';
 import { downloadAccItemProgress, isAccModel } from '../lib/aps';
 import { useProjectRole } from '../auth/useProjectRole';
 
-/** 협업 · 이슈/지적 관리 — 상태 워크플로우·담당자·마감 추적 트래커. */
+type ViewMode = 'list' | 'board' | 'pins';
+type SortMode = 'newest' | 'oldest' | 'due' | 'priority';
+
+const VIEW_KEY = 'mir.issues.view';
+const PRIO_ORDER: Record<IssuePriority, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
+
+/**
+ * 유형 아이콘 — 단어 특징을 살린 의미색(안전=빨강·지적=앰버 …)으로 표시.
+ * invert=true(배경이 채워진 활성 칩)면 의미색 대신 흰색(currentColor 상속)을 쓴다.
+ * general(문서)은 의미색이 없어 부모 텍스트색을 그대로 상속(중립).
+ */
+function TypeIcon({ type, size = 14, invert = false }: { type: IssueType; size?: number; invert?: boolean }) {
+  const col = invert ? undefined : TYPE_ICON_COLOR[type];
+  return (
+    <span className="ic-only" style={col ? { color: col } : undefined}>
+      <Icon name={TYPE_ICON_NAME[type]} size={size} />
+    </span>
+  );
+}
+
+/** 이슈 타입 뱃지(의미색 아이콘 + 라벨, 타입별 tint 배경). */
+function TypeBadge({ type, compact = false }: { type: IssueType; compact?: boolean }) {
+  const c = TYPE_COLOR[type];
+  return (
+    <span className="issue-type-badge" style={{ background: c.bg, color: c.fg }}>
+      <TypeIcon type={type} size={13} />
+      {compact ? '' : TYPE_LABEL[type]}
+    </span>
+  );
+}
+
+/** 협업 · 이슈/지적 관리 — 타입 분화(RFI·하자·안전·품질) + 리스트/칸반/핀 3뷰. */
 export function Issues() {
   const { projectId = '' } = useParams();
   const { profile, session } = useAuth();
@@ -52,17 +120,32 @@ export function Issues() {
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [unread, setUnread] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<IssueStatus | 'all'>('all');
+  const [typeFilter, setTypeFilter] = useState<IssueType | 'all'>('all');
+  // 항목(공종·대상 분류, 0039) — 프로젝트별 관리 목록 + 필터('none' = 미지정).
+  const [cats, setCats] = useState<IssueCategory[]>([]);
+  const [catFilter, setCatFilter] = useState<string>('all');
+  const [catManageOpen, setCatManageOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [sort, setSort] = useState<SortMode>('newest');
+  const [view, setView] = useState<ViewMode>(() => {
+    const v = localStorage.getItem(VIEW_KEY);
+    return v === 'board' || v === 'pins' ? v : 'list';
+  });
   const [msg, setMsg] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [projectName, setProjectName] = useState('');
 
   const [form, setForm] = useState<{
     title: string;
     description: string;
+    type: IssueType;
+    meta: Record<string, string>;
+    category_id: string;
     priority: IssuePriority;
     assignee_id: string;
     due_date: string;
-  }>({ title: '', description: '', priority: 'normal', assignee_id: '', due_date: '' });
+  }>({ title: '', description: '', type: 'general', meta: {}, category_id: '', priority: 'normal', assignee_id: '', due_date: '' });
 
   // 통합모델 이슈 핀 '이슈로 이동' 으로 들어오면 해당 이슈를 펼친다.
   const location = useLocation();
@@ -70,8 +153,13 @@ export function Issues() {
 
   useEffect(() => {
     refresh();
+    getProject(projectId).then((p) => setProjectName(p?.name ?? '')).catch(() => {});
+    listIssueCategories(projectId).then(setCats).catch(() => setCats([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  // 항목 이름 해석(미지정/삭제된 항목 = '').
+  const catName = (id: string | null) => (id ? cats.find((c) => c.id === id)?.name ?? '' : '');
 
   // 담당 배정·@멘션 후보 목록 — 뷰어를 뺀 모두(실무자·관리자)가 배정 가능(0033: 같은
   // 프로젝트 멤버끼리 이름 조회 허용). canEdit 은 역할 로딩 후 갱신되므로 별도 effect 로
@@ -121,11 +209,19 @@ export function Issues() {
     }
     try {
       const member = members.find((m) => m.id === form.assignee_id);
+      const meta: Record<string, unknown> = {};
+      for (const f of TYPE_FIELDS[form.type]) {
+        const v = (form.meta[f.key] ?? '').trim();
+        if (v) meta[f.key] = v;
+      }
       await createIssue(
         projectId,
         {
           title: form.title.trim(),
           description: form.description,
+          type: form.type,
+          meta,
+          category_id: form.category_id || null,
           priority: form.priority,
           assignee_id: form.assignee_id || null,
           assignee_name: member?.name,
@@ -133,7 +229,7 @@ export function Issues() {
         },
         authorName,
       );
-      setForm({ title: '', description: '', priority: 'normal', assignee_id: '', due_date: '' });
+      setForm({ title: '', description: '', type: 'general', meta: {}, category_id: '', priority: 'normal', assignee_id: '', due_date: '' });
       setShowForm(false);
       await refresh();
       setMsg('이슈 등록됨');
@@ -177,7 +273,33 @@ export function Issues() {
     await refresh();
   };
 
-  const shown = filter === 'all' ? issues : issues.filter((i) => i.status === filter);
+  // ---------- 필터·검색·정렬 파이프라인(3뷰 공용, 엑셀 export 에도 그대로 반영) ----------
+  const shown = useMemo(() => {
+    const ql = q.trim().toLowerCase();
+    let list = issues
+      .filter((i) => typeFilter === 'all' || i.type === typeFilter)
+      .filter((i) =>
+        catFilter === 'all' ? true : catFilter === 'none' ? !i.category_id : i.category_id === catFilter,
+      )
+      .filter(
+        (i) =>
+          !ql ||
+          i.title.toLowerCase().includes(ql) ||
+          (i.description ?? '').toLowerCase().includes(ql) ||
+          (i.assignee_name ?? '').toLowerCase().includes(ql) ||
+          TYPE_FIELDS[i.type].some((f) => metaValue(i.meta, f.key).toLowerCase().includes(ql)),
+      );
+    // 칸반은 상태가 열이므로 상태 필터는 리스트/핀 뷰에서만 적용.
+    if (view !== 'board' && filter !== 'all') list = list.filter((i) => i.status === filter);
+    const sorted = [...list];
+    if (sort === 'newest') sorted.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    if (sort === 'oldest') sorted.sort((a, b) => a.created_at.localeCompare(b.created_at));
+    if (sort === 'due')
+      sorted.sort((a, b) => (a.due_date ?? '9999-12-31').localeCompare(b.due_date ?? '9999-12-31'));
+    if (sort === 'priority') sorted.sort((a, b) => PRIO_ORDER[a.priority] - PRIO_ORDER[b.priority]);
+    return sorted;
+  }, [issues, typeFilter, catFilter, q, filter, sort, view]);
+
   // 생성 순(오래된→최신) 순차 번호 — 간섭 저장 순서와 무관(#5).
   const numberOf = useMemo(() => {
     const m = new Map<string, number>();
@@ -187,99 +309,337 @@ export function Issues() {
     return m;
   }, [issues]);
 
+  const setViewMode = (v: ViewMode) => {
+    setView(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      /* 무시 */
+    }
+  };
+
+  const onExportXlsx = async () => {
+    try {
+      await exportIssuesXlsx(projectName, shown, issues, catName);
+    } catch (e) {
+      setMsg(`엑셀 저장 실패: ${errMessage(e)}`);
+    }
+  };
+
+  const openIssue = (id: string) => {
+    setOpenId(id);
+    onRead(id);
+  };
+
+  const openIssueObj = openId ? issues.find((i) => i.id === openId) ?? null : null;
+
+  const detail = (issue: Issue) => (
+    <IssueDetail
+      issue={issue}
+      allIssues={issues}
+      projectName={projectName}
+      canEdit={canEdit}
+      members={members}
+      cats={cats}
+      catName={catName}
+      authorName={authorName}
+      onAssign={onAssign}
+      onMeta={onMeta}
+      onCommented={() => onRead(issue.id)}
+      onChanged={refresh}
+      onManageCats={() => setCatManageOpen(true)}
+    />
+  );
+
   return (
     <div className="dash">
       <div className="dash-head">
         <h1 className="dash-h1">협업 · 이슈</h1>
-        {canEdit && (
-          <button className="primary" onClick={() => setShowForm((s) => !s)}>
-            {showForm ? '취소' : '＋ 이슈 등록'}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button className="ic" onClick={() => void onExportXlsx()} title="현재 필터·정렬이 반영된 목록을 엑셀로 저장">
+            <UiIcon name="download" size={15} /> 엑셀
           </button>
-        )}
+          {canEdit && (
+            <button className="primary ic" onClick={() => { setForm({ title: '', description: '', type: 'general', meta: {}, category_id: '', priority: 'normal', assignee_id: '', due_date: '' }); setShowForm(true); }}>
+              <UiIcon name="plus" size={15} /> 이슈 등록
+            </button>
+          )}
+        </div>
       </div>
 
       {showForm && (
-        <section className="card dash-edit">
-          <h3>새 이슈</h3>
-          <div className="dash-edit-row">
-            <label className="grow">제목<input value={form.title} placeholder="예: 3층 보-슬래브 간섭 지적" onChange={(e) => setForm({ ...form, title: e.target.value })} /></label>
-            <label>우선순위
-              <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value as IssuePriority })}>
-                {ISSUE_PRIORITIES.map((p) => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
-              </select>
-            </label>
-            <label>담당자
-              <select value={form.assignee_id} onChange={(e) => setForm({ ...form, assignee_id: e.target.value })}>
-                <option value="">미지정</option>
-                {members.map((m) => <option key={m.id} value={m.id}>{memberLabel(m)}</option>)}
-              </select>
-            </label>
-            <label>마감일<input type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} /></label>
+        <div className="modal-backdrop" onClick={() => setShowForm(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head" style={{ display: 'flex', alignItems: 'center' }}>
+              <h3 className="ic" style={{ flex: 1, margin: 0 }}><UiIcon name="plus" size={16} /> 새 이슈</h3>
+              <button className="ic-only" onClick={() => setShowForm(false)} aria-label="닫기"><UiIcon name="x" size={16} /></button>
+            </div>
+            <div className="modal-body">
+              <label style={{ display: 'block', marginBottom: 8 }}>제목
+                <input value={form.title} placeholder="예: 3층 보-슬래브 간섭 지적" onChange={(e) => setForm({ ...form, title: e.target.value })} style={{ width: '100%' }} autoFocus />
+              </label>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <label style={{ flex: 1 }}>항목
+                  <select value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })} style={{ width: '100%' }}>
+                    <option value="">미지정</option>
+                    {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </label>
+                <label style={{ flex: 1 }}>유형
+                  <select
+                    value={form.type}
+                    onChange={(e) => setForm({ ...form, type: e.target.value as IssueType, meta: {} })}
+                    style={{ width: '100%' }}
+                  >
+                    {ISSUE_TYPES.map((t) => (
+                      <option key={t} value={t}>{TYPE_LABEL[t]}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <label style={{ flex: 1 }}>우선순위
+                  <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value as IssuePriority })} style={{ width: '100%' }}>
+                    {ISSUE_PRIORITIES.map((p) => <option key={p} value={p}>{PRIORITY_LABEL[p]}</option>)}
+                  </select>
+                </label>
+                <label style={{ flex: 1 }}>담당자
+                  <select value={form.assignee_id} onChange={(e) => setForm({ ...form, assignee_id: e.target.value })} style={{ width: '100%' }}>
+                    <option value="">미지정</option>
+                    {members.map((m) => <option key={m.id} value={m.id}>{memberLabel(m)}</option>)}
+                  </select>
+                </label>
+                <label style={{ flex: 1 }}>마감일
+                  <input type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} style={{ width: '100%' }} />
+                </label>
+              </div>
+              {TYPE_FIELDS[form.type].length > 0 && (
+                <div className="dash-edit-row" style={{ flexWrap: 'wrap', marginBottom: 8 }}>
+                  {TYPE_FIELDS[form.type].map((f) => (
+                    <TypeFieldInput
+                      key={f.key}
+                      def={f}
+                      value={form.meta[f.key] ?? ''}
+                      onChange={(v) => setForm({ ...form, meta: { ...form.meta, [f.key]: v } })}
+                    />
+                  ))}
+                </div>
+              )}
+              <label style={{ display: 'block' }}>내용
+                <textarea value={form.description} rows={3} placeholder={form.type === 'rfi' ? '질의 내용' : '상세 내용'} onChange={(e) => setForm({ ...form, description: e.target.value })} style={{ width: '100%', resize: 'vertical' }} />
+              </label>
+            </div>
+            <div className="modal-foot">
+              <button onClick={() => setShowForm(false)}>취소</button>
+              <button className="primary" onClick={onCreate}>등록</button>
+            </div>
           </div>
-          <div className="dash-edit-row">
-            <label className="grow">내용<input value={form.description} placeholder="상세 내용" onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
-            <button className="primary" onClick={onCreate}>등록</button>
+        </div>
+      )}
+
+      {/* 툴바 1행 — 뷰 전환 · 검색 · 정렬 */}
+      <div className="issue-toolbar">
+        <div className="issue-view-switch" role="tablist" aria-label="이슈 보기 방식">
+          {(
+            [
+              ['list', 'list', '리스트'],
+              ['board', 'columns', '카드'],
+              ['pins', 'pin', '핀(간섭)'],
+            ] as [ViewMode, UiIconName, string][]
+          ).map(([v, icon, label]) => (
+            <button key={v} role="tab" aria-selected={view === v} className={`ic${view === v ? ' active' : ''}`} onClick={() => setViewMode(v)}>
+              <UiIcon name={icon} size={15} /> {label}
+            </button>
+          ))}
+        </div>
+        <span className="issue-search-wrap">
+          <UiIcon name="search" size={15} className="issue-search-ic" />
+          <input
+            className="issue-search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="제목·내용·담당자·타입필드 검색"
+            aria-label="이슈 검색"
+          />
+        </span>
+        <select className="issue-sort" value={sort} onChange={(e) => setSort(e.target.value as SortMode)} aria-label="정렬">
+          <option value="newest">최신순</option>
+          <option value="oldest">오래된순</option>
+          <option value="due">마감임박순</option>
+          <option value="priority">우선순위순</option>
+        </select>
+      </div>
+
+      {/* 툴바 2행 — 유형 칩(분포 한눈에, 0건은 옅게) + 상태·항목 드롭다운 */}
+      <div className="issue-filterbar">
+        <div className="issue-type-chips">
+          <button className={typeFilter === 'all' ? 'active' : ''} onClick={() => setTypeFilter('all')}>
+            전체 <b>{issues.length}</b>
+          </button>
+          {ISSUE_TYPES.map((t) => {
+            const n = issues.filter((i) => i.type === t).length;
+            return (
+              <button
+                key={t}
+                className={`ic${typeFilter === t ? ' active' : ''}${n === 0 ? ' is-empty' : ''}`}
+                onClick={() => setTypeFilter(t)}
+              >
+                <TypeIcon type={t} size={14} invert={typeFilter === t} /> {TYPE_LABEL[t]} <b>{n}</b>
+              </button>
+            );
+          })}
+        </div>
+        <span className="issue-filterbar__spacer" />
+        {/* 상태 필터 — 칸반은 상태가 열이라 숨김. 그 외엔 드롭다운. */}
+        {view !== 'board' && (
+          <select className="issue-dd" value={filter} onChange={(e) => setFilter(e.target.value as IssueStatus | 'all')} aria-label="상태 필터">
+            <option value="all">상태: 전체 ({issues.length})</option>
+            {ISSUE_STATUSES.map((s) => (
+              <option key={s} value={s}>{STATUS_LABEL[s]} ({issues.filter((i) => i.status === s).length})</option>
+            ))}
+          </select>
+        )}
+        <span className="issue-cat-filter">
+          <select className="issue-dd" value={catFilter} onChange={(e) => setCatFilter(e.target.value)} aria-label="항목 필터">
+            <option value="all">항목: 전체</option>
+            <option value="none">항목: 미지정</option>
+            {cats.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name} ({issues.filter((i) => i.category_id === c.id).length})
+              </option>
+            ))}
+          </select>
+          {canEdit && (
+            <button className="ic-only" onClick={() => setCatManageOpen(true)} title="항목(토공·교량·터널 …) 추가/이름변경/삭제">
+              <UiIcon name="settings" size={16} />
+            </button>
+          )}
+        </span>
+      </div>
+
+      {view === 'list' && (
+        <section className="card" style={{ padding: 0 }}>
+          <div className="cde-table-wrap" style={{ padding: 0 }}>
+            <table className="cde-table">
+              <thead>
+                <tr>
+                  <th style={{ width: 48 }}>번호</th>
+                  <th style={{ width: 100 }}>항목</th>
+                  <th style={{ width: 90 }}>유형</th>
+                  <th>제목</th>
+                  <th>상태</th>
+                  <th>우선순위</th>
+                  <th>담당자</th>
+                  <th>마감일</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((it) => (
+                  <IssueRow
+                    key={it.id}
+                    num={numberOf.get(it.id) ?? 0}
+                    issue={it}
+                    open={openId === it.id}
+                    unread={unread.has(it.id)}
+                    canEdit={canEdit}
+                    myId={myId}
+                    catName={catName}
+                    onToggle={() => {
+                      const opening = openId !== it.id;
+                      setOpenId(opening ? it.id : null);
+                      if (opening) onRead(it.id);
+                    }}
+                    onStatus={onStatus}
+                    onDelete={onDelete}
+                    detail={detail}
+                  />
+                ))}
+                {shown.length === 0 && (
+                  <tr><td colSpan={9}><EmptyState compact icon="🗂" title="이슈가 없습니다" desc="새 이슈를 등록하면 여기에 표시됩니다." /></td></tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </section>
       )}
 
-      <div className="issue-filters">
-        <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>전체 {issues.length}</button>
-        {ISSUE_STATUSES.map((s) => (
-          <button key={s} className={filter === s ? 'active' : ''} onClick={() => setFilter(s)}>
-            {STATUS_LABEL[s]} {issues.filter((i) => i.status === s).length}
-          </button>
-        ))}
-      </div>
+      {view === 'board' && (
+        <KanbanBoard
+          issues={shown}
+          numberOf={numberOf}
+          unread={unread}
+          canEdit={canEdit}
+          myId={myId}
+          catName={catName}
+          onStatus={onStatus}
+          onOpen={openIssue}
+        />
+      )}
 
-      <section className="card" style={{ padding: 0 }}>
-        <div className="cde-table-wrap" style={{ padding: 0 }}>
-          <table className="cde-table">
-            <thead>
-              <tr>
-                <th style={{ width: 48 }}>번호</th>
-                <th>제목</th>
-                <th>상태</th>
-                <th>우선순위</th>
-                <th>담당자</th>
-                <th>마감일</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((it) => (
-                <IssueRow
-                  key={it.id}
-                  num={numberOf.get(it.id) ?? 0}
-                  issue={it}
-                  open={openId === it.id}
-                  unread={unread.has(it.id)}
-                  canEdit={canEdit}
-                  myId={myId}
-                  members={members}
-                  authorName={authorName}
-                  onToggle={() => {
-                    const opening = openId !== it.id;
-                    setOpenId(opening ? it.id : null);
-                    if (opening) onRead(it.id);
-                  }}
-                  onStatus={onStatus}
-                  onAssign={onAssign}
-                  onMeta={onMeta}
-                  onDelete={onDelete}
-                  onCommented={() => onRead(it.id)}
-                />
-              ))}
-              {shown.length === 0 && (
-                <tr><td colSpan={7}><EmptyState compact icon="🗂" title="이슈가 없습니다" desc="새 이슈를 등록하면 여기에 표시됩니다." /></td></tr>
-              )}
-            </tbody>
-          </table>
+      {view === 'pins' && (
+        <PinBoard
+          projectId={projectId}
+          issues={shown}
+          numberOf={numberOf}
+          onOpen={openIssue}
+        />
+      )}
+
+      {/* 칸반/핀 뷰의 상세 = 모달(리스트 뷰는 기존 행 펼침 유지) */}
+      {view !== 'list' && openIssueObj && (
+        <div className="modal-backdrop" onClick={() => setOpenId(null)}>
+          <div className="modal modal--wide" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-head" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <TypeBadge type={openIssueObj.type} />
+              <h3 style={{ flex: 1, margin: 0 }}>#{numberOf.get(openIssueObj.id)} {openIssueObj.title}</h3>
+              <button className="ic-only" onClick={() => setOpenId(null)} aria-label="닫기"><UiIcon name="x" size={16} /></button>
+            </div>
+            <div className="modal-body">{detail(openIssueObj)}</div>
+          </div>
         </div>
-      </section>
+      )}
+
+      {catManageOpen && (
+        <CategoryManager
+          projectId={projectId}
+          cats={cats}
+          onChanged={(next) => setCats(next)}
+          onClose={() => setCatManageOpen(false)}
+        />
+      )}
 
       {msg && <p className="muted dash-msg">{msg}</p>}
     </div>
+  );
+}
+
+/** 타입별 전용 필드 입력(폼·상세 공용) — 선언 스키마(TYPE_FIELDS) 기반. */
+function TypeFieldInput({
+  def,
+  value,
+  onChange,
+  grow,
+}: {
+  def: IssueFieldDef;
+  value: string;
+  onChange: (v: string) => void;
+  grow?: boolean;
+}) {
+  return (
+    <label className={grow || def.kind === 'textarea' ? 'grow' : undefined}>
+      {def.label}
+      {def.kind === 'select' ? (
+        <select value={value} onChange={(e) => onChange(e.target.value)}>
+          <option value="">선택</option>
+          {(def.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+      ) : def.kind === 'textarea' ? (
+        <textarea value={value} placeholder={def.placeholder} onChange={(e) => onChange(e.target.value)} rows={2} style={{ resize: 'vertical' }} />
+      ) : (
+        <input type={def.kind === 'date' ? 'date' : 'text'} value={value} placeholder={def.placeholder} onChange={(e) => onChange(e.target.value)} />
+      )}
+    </label>
   );
 }
 
@@ -297,6 +657,227 @@ function DueCell({ issue }: { issue: Issue }) {
   );
 }
 
+// =====================================================================
+// 칸반 보드 — 상태 열 + 카드 드래그로 상태 이동(HTML5 DnD).
+// =====================================================================
+function KanbanBoard({
+  issues,
+  numberOf,
+  unread,
+  canEdit,
+  myId,
+  catName,
+  onStatus,
+  onOpen,
+}: {
+  issues: Issue[];
+  numberOf: Map<string, number>;
+  unread: Set<string>;
+  canEdit: boolean;
+  myId: string | null;
+  catName: (id: string | null) => string;
+  onStatus: (issue: Issue, s: IssueStatus) => void;
+  onOpen: (id: string) => void;
+}) {
+  const [overCol, setOverCol] = useState<IssueStatus | null>(null);
+  const dragId = useRef<string | null>(null);
+
+  const canDrag = (it: Issue) => canEdit || (!!myId && it.assignee_id === myId);
+
+  const onDrop = (status: IssueStatus) => {
+    const id = dragId.current;
+    dragId.current = null;
+    setOverCol(null);
+    if (!id) return;
+    const issue = issues.find((i) => i.id === id);
+    if (issue && issue.status !== status) onStatus(issue, status);
+  };
+
+  return (
+    <div className="kanban-board">
+      {ISSUE_STATUSES.map((s) => {
+        const cols = issues.filter((i) => i.status === s);
+        return (
+          <div
+            key={s}
+            className={`kanban-col${overCol === s ? ' is-over' : ''}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setOverCol(s);
+            }}
+            onDragLeave={() => setOverCol((c) => (c === s ? null : c))}
+            onDrop={(e) => {
+              e.preventDefault();
+              onDrop(s);
+            }}
+          >
+            <div className="kanban-col__h">
+              <span className={`issue-badge issue-${s}`}>{STATUS_LABEL[s]}</span>
+              <span className="muted">{cols.length}</span>
+            </div>
+            <div className="kanban-col__b">
+              {cols.map((it) => {
+                const ds = it.due_date ? dueState(it.due_date, it.status) : 'none';
+                return (
+                  <div
+                    key={it.id}
+                    className="kanban-card"
+                    draggable={canDrag(it)}
+                    onDragStart={(e) => {
+                      dragId.current = it.id;
+                      e.dataTransfer.effectAllowed = 'move';
+                    }}
+                    onDragEnd={() => {
+                      dragId.current = null;
+                      setOverCol(null);
+                    }}
+                    onClick={() => onOpen(it.id)}
+                    title={canDrag(it) ? '드래그해서 상태 이동 · 클릭해서 상세' : '클릭해서 상세'}
+                  >
+                    <div className="kanban-card__top">
+                      {catName(it.category_id) && <span className="issue-cat-badge">{catName(it.category_id)}</span>}
+                      <TypeBadge type={it.type} />
+                      <span className="muted">#{numberOf.get(it.id)}</span>
+                      {unread.has(it.id) && <span className="issue-unread-dot" title="새 코멘트(안읽음)" />}
+                    </div>
+                    <div className="kanban-card__title">{it.title}</div>
+                    <div className="kanban-card__meta">
+                      <span className={`issue-prio issue-prio-${it.priority}`}>{PRIORITY_LABEL[it.priority]}</span>
+                      {it.type !== 'general' && (
+                        <span className="muted">{statusLabelFor(it.type, it.status, '')}</span>
+                      )}
+                      {it.assignee_name && <span className="muted ic"><UiIcon name="user" size={12} /> {it.assignee_name}</span>}
+                      {it.due_date && (ds === 'overdue' || ds === 'soon') && (
+                        <span className={`due-badge due-${ds}`}>{DUE_LABEL[ds]} {dueDeltaLabel(it.due_date)}</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {cols.length === 0 && <div className="kanban-empty muted">비어 있음</div>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// =====================================================================
+// 핀 뷰 — 3D(GlobalId 앵커)·도면(drawing_pins) 위치 기반으로 이슈를 본다.
+// 실제 핀 렌더는 통합모델(ApsIssuePins)·도면(DrawingSheet)이 담당 — 여기서
+// 위치별로 모아 상호 점프한다.
+// =====================================================================
+function PinBoard({
+  projectId,
+  issues,
+  numberOf,
+  onOpen,
+}: {
+  projectId: string;
+  issues: Issue[];
+  numberOf: Map<string, number>;
+  onOpen: (id: string) => void;
+}) {
+  const navigate = useNavigate();
+  const [drawPins, setDrawPins] = useState<IssuePinRef[]>([]);
+
+  useEffect(() => {
+    listIssuePins(projectId).then(setDrawPins).catch(() => setDrawPins([]));
+  }, [projectId]);
+
+  const anchored3d = issues.filter((i) => i.global_id);
+  const byId = new Map(issues.map((i) => [i.id, i]));
+  // 도면별 그룹
+  const byDrawing = new Map<string, { name: string; pins: IssuePinRef[] }>();
+  for (const p of drawPins) {
+    const g = byDrawing.get(p.drawing_id) ?? { name: p.drawing_name, pins: [] };
+    g.pins.push(p);
+    byDrawing.set(p.drawing_id, g);
+  }
+
+  const issueLine = (it: Issue, extra?: React.ReactNode) => (
+    <div className="pinboard-row" key={it.id}>
+      <TypeBadge type={it.type} />
+      <button className="cde-link" onClick={() => onOpen(it.id)}>
+        #{numberOf.get(it.id)} {it.title}
+      </button>
+      <span className={`issue-badge issue-${it.status}`}>{statusLabelFor(it.type, it.status, STATUS_LABEL[it.status])}</span>
+      <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>{extra}</span>
+    </div>
+  );
+
+  return (
+    <div className="pinboard">
+      <section className="card issue-block">
+        <div className="issue-block__h">
+          <span className="ic"><UiIcon name="cube" size={15} /> 3D 모델 핀 · {anchored3d.length}</span>
+          <button
+            className="issue-block__chev"
+            onClick={() => navigate(`/project/${projectId}/model`)}
+            title="통합모델(3D)에서 전체 이슈 핀 보기"
+          >
+            3D에서 핀 보기 ›
+          </button>
+        </div>
+        <div className="issue-block__b">
+          {anchored3d.length === 0 && (
+            <p className="muted" style={{ margin: 0 }}>
+              3D 앵커(부재 GlobalId)가 지정된 이슈가 없습니다. 통합모델(3D)에서 객체 선택 → '＋ 이슈'로 등록하세요.
+            </p>
+          )}
+          {anchored3d.map((it) =>
+            issueLine(
+              it,
+              <button
+                onClick={() =>
+                  navigate(
+                    it.global_id_b
+                      ? `/project/${projectId}/clash?focusClashA=${encodeURIComponent(it.global_id!)}&focusClashB=${encodeURIComponent(it.global_id_b)}`
+                      : `/project/${projectId}/model?focusGlobalId=${encodeURIComponent(it.global_id!)}`,
+                  )
+                }
+                className="ic"
+              >
+                <UiIcon name="pin" size={14} /> 위치 보기
+              </button>,
+            ),
+          )}
+        </div>
+      </section>
+
+      <section className="card issue-block">
+        <div className="issue-block__h"><span className="ic"><UiIcon name="ruler" size={15} /> 도면 핀 · {drawPins.length}</span></div>
+        <div className="issue-block__b">
+          {byDrawing.size === 0 && (
+            <p className="muted" style={{ margin: 0 }}>
+              도면에 연결된 이슈 핀이 없습니다. 도면(2D)에서 핀을 찍고 이슈를 연결하세요.
+            </p>
+          )}
+          {[...byDrawing.entries()].map(([dId, g]) => (
+            <div key={dId} className="pinboard-group">
+              <div className="pinboard-group__h">
+                <span className="ic"><UiIcon name="ruler" size={14} /> {g.name} · {g.pins.length}</span>
+                <button onClick={() => navigate(`/project/${projectId}/drawings`, { state: { openDrawingId: dId } })}>
+                  도면 열기 ›
+                </button>
+              </div>
+              {g.pins.map((p) => {
+                const it = p.issue_id ? byId.get(p.issue_id) : null;
+                if (!it) return null;
+                return issueLine(
+                  it,
+                  <span className="muted nowrap">p.{p.page}{p.label ? ` · ${p.label}` : ''}</span>,
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function IssueRow({
   num,
   issue,
@@ -304,14 +885,11 @@ function IssueRow({
   unread,
   canEdit,
   myId,
-  members,
-  authorName,
+  catName,
   onToggle,
   onStatus,
-  onAssign,
-  onMeta,
   onDelete,
-  onCommented,
+  detail,
 }: {
   num: number;
   issue: Issue;
@@ -319,21 +897,21 @@ function IssueRow({
   unread: boolean;
   canEdit: boolean;
   myId: string | null;
-  members: ProjectMember[];
-  authorName: string | null;
+  catName: (id: string | null) => string;
   onToggle: () => void;
   onStatus: (issue: Issue, s: IssueStatus) => void;
-  onAssign: (issue: Issue, assigneeId: string) => void;
-  onMeta: (issue: Issue, fields: { priority?: IssuePriority; due_date?: string | null; description?: string | null }) => Promise<void> | void;
   onDelete: (id: string) => void;
-  onCommented: () => void;
+  detail: (issue: Issue) => React.ReactNode;
 }) {
   // 담당자 본인도 자기 이슈의 상태를 변경할 수 있다(S30 결정).
   const canStatus = canEdit || (!!myId && issue.assignee_id === myId);
+  const cat = catName(issue.category_id);
   return (
     <>
       <tr>
         <td className="nowrap" style={{ color: 'var(--muted)', textAlign: 'center' }}>#{num}</td>
+        <td className="nowrap">{cat ? <span className="issue-cat-badge">{cat}</span> : <span className="muted">—</span>}</td>
+        <td className="nowrap"><TypeBadge type={issue.type} /></td>
         <td className="cde-fname">
           <button className="cde-link" onClick={onToggle}>
             {open ? '▾ ' : '▸ '}
@@ -346,14 +924,14 @@ function IssueRow({
             <span style={{ fontWeight: unread && !open ? 700 : 400 }}>{issue.title}</span>
           </button>
         </td>
-        <td><span className={`issue-badge issue-${issue.status}`}>{STATUS_LABEL[issue.status]}</span></td>
+        <td><span className={`issue-badge issue-${issue.status}`}>{statusLabelFor(issue.type, issue.status, STATUS_LABEL[issue.status])}</span></td>
         <td><span className={`issue-prio issue-prio-${issue.priority}`}>{PRIORITY_LABEL[issue.priority]}</span></td>
         <td className="nowrap">{issue.assignee_name || '—'}</td>
         <td><DueCell issue={issue} /></td>
         <td className="right nowrap">
           {canStatus ? (
             <select value={issue.status} onChange={(e) => onStatus(issue, e.target.value as IssueStatus)} aria-label="상태 변경">
-              {ISSUE_STATUSES.map((s) => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
+              {ISSUE_STATUSES.map((s) => <option key={s} value={s}>{statusLabelFor(issue.type, s, STATUS_LABEL[s])}</option>)}
             </select>
           ) : (
             <span className="muted">—</span>
@@ -363,17 +941,7 @@ function IssueRow({
       </tr>
       {open && (
         <tr className="issue-detail-row">
-          <td colSpan={7}>
-            <IssueDetail
-              issue={issue}
-              canEdit={canEdit}
-              members={members}
-              authorName={authorName}
-              onAssign={onAssign}
-              onMeta={onMeta}
-              onCommented={onCommented}
-            />
-          </td>
+          <td colSpan={9}>{detail(issue)}</td>
         </tr>
       )}
     </>
@@ -382,20 +950,32 @@ function IssueRow({
 
 function IssueDetail({
   issue,
+  allIssues,
+  projectName,
   canEdit,
   members,
+  cats,
+  catName,
   authorName,
   onAssign,
   onMeta,
   onCommented,
+  onChanged,
+  onManageCats,
 }: {
   issue: Issue;
+  allIssues: Issue[];
+  projectName: string;
   canEdit: boolean;
   members: ProjectMember[];
+  cats: IssueCategory[];
+  catName: (id: string | null) => string;
   authorName: string | null;
   onAssign: (issue: Issue, assigneeId: string) => void;
   onMeta: (issue: Issue, fields: { priority?: IssuePriority; due_date?: string | null; description?: string | null }) => Promise<void> | void;
   onCommented: () => void;
+  onChanged: () => void;
+  onManageCats: () => void;
 }) {
   const navigate = useNavigate();
   const [comments, setComments] = useState<IssueComment[]>([]);
@@ -408,6 +988,14 @@ function IssueDetail({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [editContent, setEditContent] = useState(false);
   const [descDraft, setDescDraft] = useState(issue.description ?? '');
+  // 타입별 전용 필드 편집 초안(meta jsonb).
+  const [typeOpen, setTypeOpen] = useState(false);
+  const [metaDraft, setMetaDraft] = useState<Record<string, string>>({});
+  // 3D 뷰포인트/마크업 첨부(0038).
+  const [viewpoints, setViewpoints] = useState<IssueViewpoint[]>([]);
+  const [markupVp, setMarkupVp] = useState<IssueViewpoint | null>(null);
+  // 이 이슈에 연결된 도면 핀(상호 점프).
+  const [drawPins, setDrawPins] = useState<IssuePinRef[]>([]);
   // 파일별 다운로드 진행률(동시 다운로드 지원 — 다른 파일을 눌러도 기존 것이 이어짐).
   const [dls, setDls] = useState<Record<string, number | null>>({});
   const [previewFile, setPreviewFile] = useState<IssueFileLink | null>(null);
@@ -417,11 +1005,15 @@ function IssueDetail({
   const hasGlobal = !!issue.global_id; // APS/ACC 앵커(S49) — GlobalId→dbId 위치보기
 
   const assignedMember = members.find((m) => m.id === issue.assignee_id) ?? null;
+  const typeFields = TYPE_FIELDS[issue.type];
+  const site = siteTagOf(issue.meta);
 
   useEffect(() => {
     listComments(issue.id).then(setComments).catch(() => setComments([]));
     listEvents(issue.id).then(setEvents).catch(() => setEvents([]));
     listIssueFiles(issue.id).then(setFiles).catch(() => setFiles([]));
+    listIssueViewpoints(issue.id).then(setViewpoints).catch(() => setViewpoints([]));
+    listPinsForIssue(issue.id).then(setDrawPins).catch(() => setDrawPins([]));
   }, [issue.id, issue.status, issue.assignee_id]);
 
   const onPickFile = async (f: PickedAccFile) => {
@@ -488,6 +1080,47 @@ function IssueDetail({
     refreshEvents();
   };
 
+  const openTypeEdit = () => {
+    const init: Record<string, string> = {};
+    for (const f of typeFields) init[f.key] = metaValue(issue.meta, f.key);
+    setMetaDraft(init);
+    setTypeOpen(true);
+  };
+
+  const saveTypeFields = async () => {
+    try {
+      const patch: Record<string, unknown> = {};
+      const changed: string[] = [];
+      for (const f of typeFields) {
+        const v = (metaDraft[f.key] ?? '').trim();
+        if (v !== metaValue(issue.meta, f.key)) {
+          patch[f.key] = v || null;
+          changed.push(f.label);
+        }
+      }
+      if (changed.length) {
+        await updateIssueTypeFields(issue, patch, changed.join('·'), authorName);
+        onChanged();
+        refreshEvents();
+      }
+      setTypeOpen(false);
+    } catch (e) {
+      alert(`저장 실패: ${errMessage(e)}`);
+    }
+  };
+
+  const onRemoveViewpoint = async (vp: IssueViewpoint) => {
+    if (!window.confirm('이 뷰포인트를 삭제할까요?')) return;
+    try {
+      await removeIssueViewpoint(vp.id);
+      setViewpoints((vs) => vs.filter((v) => v.id !== vp.id));
+      await logIssueEvent(issue.id, issue.project_id, 'viewpoint_del', vp.title || '뷰포인트', authorName);
+      refreshEvents();
+    } catch (e) {
+      alert(`삭제 실패: ${errMessage(e)}`);
+    }
+  };
+
   const onAdd = async () => {
     if (!body.trim()) return;
     await addComment(issue, body.trim(), authorName, mentions);
@@ -498,25 +1131,63 @@ function IssueDetail({
     onCommented();
   };
 
-  const hasAnyLocation = hasLocation || hasGlobal || !!issue.viewpoint_id;
+  const onFormDocx = () => {
+    exportIssueFormDocx(issue, allIssues, projectName, authorName, catName(issue.category_id)).catch((e) =>
+      alert(`양식 저장 실패: ${errMessage(e)}`),
+    );
+  };
+  const onFormPrint = async () => {
+    try {
+      const atts = await listAttachments('issue', issue.id).catch(() => []);
+      await openIssueFormPrint(issue, allIssues, projectName, atts, viewpoints, catName(issue.category_id));
+    } catch (e) {
+      alert(`양식 열기 실패: ${errMessage(e)}`);
+    }
+  };
+
+  const hasAnyLocation = hasLocation || hasGlobal || !!issue.viewpoint_id || drawPins.length > 0;
 
   return (
     <div className="issue-detail issue-report">
-      {/* 속성 — 요약(상태·우선순위·담당·마감)은 항상, 편집은 펼쳐서 */}
-      <section className="issue-block">
+      {/* 속성 — 요약(유형·상태·우선순위·담당·마감)은 항상, 편집은 펼쳐서.
+          --pop: 보고서 드롭다운이 블록 밖으로 온전히 뜨도록 overflow 개방. */}
+      <section className="issue-block issue-block--pop">
         <button className="issue-block__h issue-block__toggle" onClick={() => setPropOpen((o) => !o)} aria-expanded={propOpen}>
           <span>속성</span>
           {canEdit && <span className="issue-block__chev">{propOpen ? '▾ 설정 접기' : '▸ 설정 편집'}</span>}
         </button>
         <div className="issue-block__b">
           <div className="issue-facts">
-            <span><b>상태</b> <span className={`issue-badge issue-${issue.status}`}>{STATUS_LABEL[issue.status]}</span></span>
+            <span><b>항목</b> {catName(issue.category_id) ? <span className="issue-cat-badge">{catName(issue.category_id)}</span> : '미지정'}</span>
+            <span><b>유형</b> <TypeBadge type={issue.type} /></span>
+            <span><b>상태</b> <span className={`issue-badge issue-${issue.status}`}>{statusLabelFor(issue.type, issue.status, STATUS_LABEL[issue.status])}</span></span>
             <span><b>우선순위</b> <span className={`issue-prio issue-prio-${issue.priority}`}>{PRIORITY_LABEL[issue.priority]}</span></span>
             <span><b>담당</b> {assignedMember ? memberLabel(assignedMember) : issue.assignee_name || '미지정'}</span>
             <span><b>마감</b> {issue.due_date ? formatDate(issue.due_date) : '—'}</span>
           </div>
           {canEdit && propOpen && (
             <div className="issue-assign-row" style={{ marginTop: 10 }}>
+              <label>항목
+                <span style={{ display: 'flex', gap: 4 }}>
+                  <select
+                    value={issue.category_id ?? ''}
+                    onChange={async (e) => {
+                      const toId = e.target.value || null;
+                      try {
+                        await setIssueCategory(issue, toId, catName(issue.category_id) || '미지정', catName(toId) || '미지정', authorName);
+                        onChanged();
+                        refreshEvents();
+                      } catch (err) {
+                        alert(`항목 변경 실패: ${errMessage(err)}`);
+                      }
+                    }}
+                  >
+                    <option value="">미지정</option>
+                    {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                  <button className="ic-only" onClick={onManageCats} title="항목 목록 관리(추가/이름변경/삭제)"><UiIcon name="settings" size={15} /></button>
+                </span>
+              </label>
               <label>담당자 배정
                 <select value={issue.assignee_id ?? ''} onChange={(e) => onAssign(issue, e.target.value)}>
                   <option value="">미지정</option>
@@ -533,8 +1204,58 @@ function IssueDetail({
               </label>
             </div>
           )}
+          <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+            <ReportMenu
+              formLabel={issue.type === 'rfi' ? 'RFI 질의서' : '지적통보서'}
+              onDocx={onFormDocx}
+              onPrint={() => void onFormPrint()}
+            />
+          </div>
         </div>
       </section>
+
+      {/* 타입별 정보 — RFI 상대처/응답기한/응답, 하자 위치/협력사/심각도, 안전 위험요소/조치 … */}
+      {typeFields.length > 0 && (
+        <section className="issue-block">
+          <button
+            className="issue-block__h issue-block__toggle"
+            onClick={() => { if (!canEdit) return; if (!typeOpen) openTypeEdit(); else setTypeOpen(false); }}
+            aria-expanded={typeOpen}
+          >
+            <span className="ic"><TypeIcon type={issue.type} size={15} /> {TYPE_LABEL[issue.type]} 정보</span>
+            {canEdit && <span className="issue-block__chev">{typeOpen ? '▾ 편집 닫기' : '▸ 편집'}</span>}
+          </button>
+          <div className="issue-block__b">
+            {typeOpen ? (
+              <div>
+                <div className="dash-edit-row" style={{ flexWrap: 'wrap' }}>
+                  {typeFields.map((f) => (
+                    <TypeFieldInput
+                      key={f.key}
+                      def={f}
+                      value={metaDraft[f.key] ?? ''}
+                      onChange={(v) => setMetaDraft((d) => ({ ...d, [f.key]: v }))}
+                    />
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+                  <button className="primary" onClick={() => void saveTypeFields()}>저장</button>
+                  <button onClick={() => setTypeOpen(false)}>취소</button>
+                </div>
+              </div>
+            ) : (
+              <div className="issue-facts">
+                {typeFields.map((f) => {
+                  const v = metaValue(issue.meta, f.key);
+                  return (
+                    <span key={f.key}><b>{f.label}</b> {v || <span className="muted">—</span>}</span>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* 내용 (+ 편집 + 위치 보기) — 헤더 토글 양식은 속성과 동일 */}
       <section className="issue-block">
@@ -562,6 +1283,9 @@ function IssueDetail({
           )}
           <p className="muted issue-meta" style={{ margin: '8px 0 0' }}>
             등록 {issue.created_by_name || '—'} · {formatDate(issue.created_at.slice(0, 10))}
+            {site && (
+              <> · <UiIcon name="pin" size={11} /> GPS {site.lat.toFixed(6)}, {site.lng.toFixed(6)} ({new Date(site.taken_at).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' })})</>
+            )}
           </p>
           {hasAnyLocation && (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
@@ -571,11 +1295,12 @@ function IssueDetail({
                     navigate(
                       issue.global_id_b
                         ? `/project/${issue.project_id}/clash?focusClashA=${encodeURIComponent(issue.global_id!)}&focusClashB=${encodeURIComponent(issue.global_id_b)}`
-                        : `/project/${issue.project_id}/acc?focusGlobalId=${encodeURIComponent(issue.global_id!)}`,
+                        : `/project/${issue.project_id}/model?focusGlobalId=${encodeURIComponent(issue.global_id!)}`,
                     )
                   }
+                  className="ic"
                 >
-                  📍 위치 보기 {issue.global_id_b ? '(간섭 뷰)' : '(ACC 모델)'}
+                  <UiIcon name="pin" size={14} /> 위치 보기 {issue.global_id_b ? '(간섭 뷰)' : '(3D 모델)'}
                 </button>
               )}
               {hasLocation && (
@@ -585,8 +1310,9 @@ function IssueDetail({
                       state: { focus: { modelDbId: issue.model_id, expressID: issue.express_id } },
                     })
                   }
+                  className="ic"
                 >
-                  📍 위치 보기 (3D 객체 #{issue.express_id})
+                  <UiIcon name="pin" size={14} /> 위치 보기 (3D 객체 #{issue.express_id})
                 </button>
               )}
               {issue.viewpoint_id && (
@@ -594,20 +1320,92 @@ function IssueDetail({
                   onClick={() =>
                     navigate(`/project/${issue.project_id}/model`, { state: { openViewpoint: issue.viewpoint_id } })
                   }
+                  className="ic"
                 >
-                  📌 뷰포인트 열기
+                  <UiIcon name="bookmark" size={14} /> 뷰포인트 열기
                 </button>
               )}
+              {drawPins.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() =>
+                    navigate(`/project/${issue.project_id}/drawings`, { state: { openDrawingId: p.drawing_id } })
+                  }
+                  title="이 이슈가 핀으로 찍힌 도면 열기"
+                  className="ic"
+                >
+                  <UiIcon name="ruler" size={14} /> 도면에서 보기 — {p.drawing_name} (p.{p.page})
+                </button>
+              ))}
             </div>
           )}
         </div>
       </section>
 
-      {/* 간섭 검토 이미지 — 간섭검토에서 이슈 생성 시 자동 첨부(읽기전용) */}
+      {/* 3D 뷰포인트/마크업 — 협의 근거 화면(카메라 state + 도형)을 이슈에 잔존 */}
       <section className="issue-block">
-        <div className="issue-block__h">간섭 검토 이미지</div>
+        <div className="issue-block__h">3D 뷰포인트 · {viewpoints.length}</div>
         <div className="issue-block__b">
-          <p className="muted" style={{ margin: '0 0 6px', fontSize: 12 }}>간섭 검토에서 이슈 생성 시 자동으로 추가됩니다.</p>
+          {viewpoints.length === 0 && (
+            <p className="muted" style={{ margin: 0 }}>
+              저장된 3D 뷰가 없습니다. 통합모델(3D)에서 이슈 핀 팝업의 '📌 현재 뷰 저장'으로 추가합니다.
+            </p>
+          )}
+          {viewpoints.length > 0 && (
+            <div className="issue-vp-grid">
+              {viewpoints.map((vp) => (
+                <div className="issue-vp" key={vp.id}>
+                  <div className="issue-vp__shot">
+                    {vp.snapshot ? (
+                      <>
+                        <img src={vp.snapshot} alt={vp.title ?? '뷰포인트'} />
+                        <MarkupOverlay
+                          shapes={vp.markup}
+                          onChange={() => {}}
+                          active={false}
+                          tool="select"
+                          color="red"
+                          selected={null}
+                          onSelect={() => {}}
+                        />
+                      </>
+                    ) : (
+                      <span className="muted">스냅샷 없음</span>
+                    )}
+                  </div>
+                  <div className="issue-vp__meta">
+                    <span className="issue-vp__title" title={vp.title ?? ''}>{vp.title || '뷰포인트'}</span>
+                    <span className="muted">{vp.created_by_name || '—'} · {fmtDateTime(vp.created_at)}</span>
+                  </div>
+                  <div className="issue-vp__acts">
+                    {vp.camera_state != null && (
+                      <button
+                        onClick={() =>
+                          navigate(`/project/${issue.project_id}/model`, { state: { applyApsState: vp.camera_state } })
+                        }
+                        title="통합모델(3D)에서 이 시점으로 열기"
+                        className="ic"
+                      >
+                        <UiIcon name="cube" size={13} /> 3D에서 열기
+                      </button>
+                    )}
+                    {canEdit && vp.snapshot && (
+                      <button className="ic" onClick={() => setMarkupVp(vp)} title="스냅샷 위에 마크업(도형) 그리기"><UiIcon name="edit" size={13} /> 마크업</button>
+                    )}
+                    {canEdit && <button className="danger ic-only" onClick={() => void onRemoveViewpoint(vp)} aria-label="뷰포인트 삭제"><UiIcon name="x" size={13} /></button>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* 사진·이미지 — 간섭검토 자동 캡처 + 현장 등록 사진(읽기전용) */}
+      <section className="issue-block">
+        <div className="issue-block__h">사진·이미지</div>
+        <div className="issue-block__b">
+          <p className="muted" style={{ margin: '0 0 6px', fontSize: 12 }}>간섭 검토·현장 등록 시 자동으로 추가됩니다.</p>
           <Attachments projectId={issue.project_id} targetType="issue" targetId={issue.id} canEdit={false} label="" />
         </div>
       </section>
@@ -622,15 +1420,15 @@ function IssueDetail({
             const dling = pct !== undefined;
             return (
               <div className="issue-file" key={f.id}>
-                <span className="issue-file-name" title={f.name}>{isAccModel(f.name) ? '🧱' : '📄'} {f.name}</span>
-                <button className="issue-file-dl" title="미리보기" onClick={() => setPreviewFile(f)}>👁 미리보기</button>
-                <button className="issue-file-dl" disabled={dling} title="이 파일 다운로드" onClick={() => void onDownloadFile(f)}>
-                  {dling ? (pct == null ? '⬇ …' : `⬇ ${pct}%`) : '⬇ 다운로드'}
+                <span className="issue-file-name ic" title={f.name}><UiIcon name={isAccModel(f.name) ? 'cube' : 'file-text'} size={14} /> {f.name}</span>
+                <button className="issue-file-dl ic" title="미리보기" onClick={() => setPreviewFile(f)}><UiIcon name="eye" size={13} /> 미리보기</button>
+                <button className="issue-file-dl ic" disabled={dling} title="이 파일 다운로드" onClick={() => void onDownloadFile(f)}>
+                  <UiIcon name="download" size={13} /> {dling ? (pct == null ? '…' : `${pct}%`) : '다운로드'}
                 </button>
                 <span className="issue-file-locwrap">
                   파일 위치 :
                   <button
-                    className="issue-file-loc"
+                    className="issue-file-loc ic"
                     title="자료관리에서 이 파일이 있는 폴더 열기"
                     onClick={() =>
                       navigate(`/project/${issue.project_id}/docs`, {
@@ -638,15 +1436,15 @@ function IssueDetail({
                       })
                     }
                   >
-                    📁 {f.folder_names.length ? f.folder_names.join(' / ') : '위치'} ›
+                    <UiIcon name="folder" size={13} /> {f.folder_names.length ? f.folder_names.join(' / ') : '위치'} ›
                   </button>
                 </span>
-                {canEdit && <button className="issue-file-del" title="첨부 해제" onClick={() => onRemoveFile(f.id)}>✕</button>}
+                {canEdit && <button className="issue-file-del ic-only" title="첨부 해제" onClick={() => onRemoveFile(f.id)} aria-label="첨부 해제"><UiIcon name="x" size={13} /></button>}
               </div>
             );
           })}
           {canEdit && (
-            <button style={{ marginTop: 8 }} onClick={() => setPickerOpen(true)}>＋ 자료관리에서 첨부</button>
+            <button className="ic" style={{ marginTop: 8 }} onClick={() => setPickerOpen(true)}><UiIcon name="plus" size={14} /> 자료관리에서 첨부</button>
           )}
         </div>
       </section>
@@ -661,6 +1459,16 @@ function IssueDetail({
           name={previewFile.name}
           urn={previewFile.acc_urn}
           onClose={() => setPreviewFile(null)}
+        />
+      )}
+      {markupVp && (
+        <MarkupEditor
+          viewpoint={markupVp}
+          onClose={() => setMarkupVp(null)}
+          onSaved={(shapes) => {
+            setViewpoints((vs) => vs.map((v) => (v.id === markupVp.id ? { ...v, markup: shapes } : v)));
+            setMarkupVp(null);
+          }}
         />
       )}
 
@@ -730,6 +1538,280 @@ function IssueDetail({
   );
 }
 
+// =====================================================================
+// 보고서 메뉴 — 양식 출력(.docx 다운로드 / 인쇄·PDF)을 '보고서' 하위로 묶는다.
+// =====================================================================
+function ReportMenu({
+  formLabel,
+  onDocx,
+  onPrint,
+}: {
+  formLabel: string;
+  onDocx: () => void;
+  onPrint: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // 바깥 클릭 / Esc 로 닫기.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const item = (icon: UiIconName, label: string, desc: string, run: () => void) => (
+    <button
+      className="report-menu__item"
+      onClick={() => {
+        setOpen(false);
+        run();
+      }}
+    >
+      <span className="ic"><UiIcon name={icon} size={15} /> {label}</span>
+      <span className="muted">{desc}</span>
+    </button>
+  );
+
+  return (
+    <div className="report-menu" ref={rootRef}>
+      <button className="ic" onClick={() => setOpen((o) => !o)} aria-haspopup="menu" aria-expanded={open}>
+        <UiIcon name="clipboard" size={15} /> 보고서 <UiIcon name="chevron-down" size={13} />
+      </button>
+      {open && (
+        <div className="report-menu__pop" role="menu">
+          <div className="report-menu__title">{formLabel}</div>
+          {item('file-text', '양식 다운로드 (.docx)', '회사 양식 문서로 저장', onDocx)}
+          {item('printer', '인쇄 / PDF 저장', '사진·3D 뷰 포함 인쇄 양식', onPrint)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// =====================================================================
+// 뷰포인트 스냅샷 마크업 편집기 — MarkupOverlay(정규화 도형) 재사용.
+// =====================================================================
+function MarkupEditor({
+  viewpoint,
+  onClose,
+  onSaved,
+}: {
+  viewpoint: IssueViewpoint;
+  onClose: () => void;
+  onSaved: (shapes: MarkupShape[]) => void;
+}) {
+  const [shapes, setShapes] = useState<MarkupShape[]>(viewpoint.markup);
+  const [tool, setTool] = useState<MarkupTool>('rect');
+  const [color, setColor] = useState<RedlineColor>('red');
+  const [selected, setSelected] = useState<number | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await updateIssueViewpointMarkup(viewpoint.id, shapes);
+      onSaved(shapes);
+    } catch (e) {
+      alert(`마크업 저장 실패: ${errMessage(e)}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const TOOLS: [MarkupTool, string][] = [
+    ['select', '선택'],
+    ['line', '선'],
+    ['rect', '사각형'],
+    ['arrow', '화살표'],
+    ['text', '텍스트'],
+  ];
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal modal--wide" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <h3 className="ic" style={{ flex: 1, margin: 0 }}><UiIcon name="edit" size={16} /> 마크업 — {viewpoint.title || '뷰포인트'}</h3>
+          <button className="ic-only" onClick={onClose} aria-label="닫기"><UiIcon name="x" size={16} /></button>
+        </div>
+        <div className="modal-body">
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8, alignItems: 'center' }}>
+            {TOOLS.map(([t, label]) => (
+              <button key={t} className={tool === t ? 'active' : ''} onClick={() => setTool(t)} aria-pressed={tool === t}>
+                {label}
+              </button>
+            ))}
+            <span style={{ display: 'inline-flex', gap: 4, marginLeft: 6 }}>
+              {REDLINE_COLORS.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setColor(c)}
+                  aria-label={`색 ${c}`}
+                  style={{
+                    width: 22,
+                    height: 22,
+                    padding: 0,
+                    borderRadius: 999,
+                    background: `var(--redline-${c})`,
+                    outline: color === c ? '2px solid var(--color-brand-solid, #2563eb)' : 'none',
+                  }}
+                />
+              ))}
+            </span>
+            {selected != null && (
+              <button
+                className="danger"
+                onClick={() => {
+                  setShapes((ss) => ss.filter((_, i) => i !== selected));
+                  setSelected(null);
+                }}
+              >
+                선택 도형 삭제
+              </button>
+            )}
+          </div>
+          <div className="issue-vp-editor">
+            <img src={viewpoint.snapshot ?? ''} alt="스냅샷" />
+            <MarkupOverlay
+              shapes={shapes}
+              onChange={setShapes}
+              active
+              tool={tool}
+              color={color}
+              selected={selected}
+              onSelect={setSelected}
+            />
+          </div>
+        </div>
+        <div className="modal-foot">
+          <button onClick={onClose}>취소</button>
+          <button className="primary" disabled={saving} onClick={() => void save()}>
+            {saving ? '저장 중…' : '저장'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =====================================================================
+// 항목 관리 모달 — 프로젝트별 항목(토공·교량·터널 …) 추가/이름변경/삭제.
+// 기본 세트는 버튼 한 번으로 생성(현장마다 다르므로 하드코딩하지 않는다).
+// =====================================================================
+function CategoryManager({
+  projectId,
+  cats,
+  onChanged,
+  onClose,
+}: {
+  projectId: string;
+  cats: IssueCategory[];
+  onChanged: (next: IssueCategory[]) => void;
+  onClose: () => void;
+}) {
+  const [newName, setNewName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const reload = async () => onChanged(await listIssueCategories(projectId));
+
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setErr('');
+    try {
+      await fn();
+      await reload();
+    } catch (e) {
+      setErr(errMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onAdd = () =>
+    run(async () => {
+      const name = newName.trim();
+      if (!name) return;
+      const maxOrder = cats.length ? Math.max(...cats.map((c) => c.sort_order)) + 1 : 0;
+      await addIssueCategory(projectId, name, maxOrder);
+      setNewName('');
+    });
+
+  const onRename = (c: IssueCategory) => {
+    const name = window.prompt('항목 이름 변경', c.name);
+    if (!name?.trim() || name.trim() === c.name) return;
+    void run(() => renameIssueCategory(c.id, name));
+  };
+
+  const onRemove = (c: IssueCategory) => {
+    if (!window.confirm(`'${c.name}' 항목을 삭제할까요?\n이 항목의 이슈들은 '미지정'이 됩니다(이슈 자체는 유지).`)) return;
+    void run(() => removeIssueCategory(c.id));
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head" style={{ display: 'flex', alignItems: 'center' }}>
+          <h3 className="ic" style={{ flex: 1, margin: 0 }}><UiIcon name="settings" size={16} /> 이슈 항목 관리</h3>
+          <button className="ic-only" onClick={onClose} aria-label="닫기"><UiIcon name="x" size={16} /></button>
+        </div>
+        <div className="modal-body">
+          <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
+            항목 = 이슈의 대상 공종/분야(토공·교량·터널·가시설·도면·시뮬레이션 …). 프로젝트마다 자유롭게 구성합니다.
+          </p>
+          {cats.length === 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <p className="muted" style={{ margin: '0 0 6px' }}>아직 항목이 없습니다.</p>
+              <button className="ic" disabled={busy} onClick={() => void run(async () => { await seedDefaultCategories(projectId); })}>
+                <UiIcon name="plus" size={14} /> 기본 세트 만들기 (보고서·토공·교량·터널·가시설·도면·기타 문서·시뮬레이션)
+              </button>
+            </div>
+          )}
+          {cats.map((c) => (
+            <div key={c.id} className="issue-cat-row">
+              <span className="issue-cat-badge">{c.name}</span>
+              <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                <button className="ic" disabled={busy} onClick={() => onRename(c)}><UiIcon name="edit" size={13} /> 이름</button>
+                <button className="danger" disabled={busy} onClick={() => onRemove(c)}>삭제</button>
+              </span>
+            </div>
+          ))}
+          <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+            <input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="새 항목 이름 (예: 배수공)"
+              onKeyDown={(e) => { if (e.key === 'Enter') void onAdd(); }}
+              style={{ flex: 1 }}
+            />
+            <button className="primary" disabled={busy || !newName.trim()} onClick={() => void onAdd()}>추가</button>
+          </div>
+          {cats.length > 0 && (
+            <button className="ic" style={{ marginTop: 8 }} disabled={busy} onClick={() => void run(async () => { await seedDefaultCategories(projectId); })}>
+              <UiIcon name="plus" size={14} /> 기본 세트에서 빠진 항목 채우기
+            </button>
+          )}
+          {err && <p className="muted" style={{ color: 'var(--color-danger, #dc2626)' }}>{err}</p>}
+        </div>
+        <div className="modal-foot">
+          <button onClick={onClose}>닫기</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function fmtDateTime(iso: string): string {
   return new Date(iso).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' });
 }
@@ -761,6 +1843,10 @@ function eventText(ev: IssueEvent): string {
     case 'priority': return `우선순위 ${ev.from_value} → ${ev.to_value}`;
     case 'due': return `마감일 ${ev.from_value} → ${ev.to_value}`;
     case 'content': return '내용 수정';
+    case 'category': return `항목 ${ev.from_value} → ${ev.to_value}`;
+    case 'meta': return `타입별 정보 수정 — ${ev.to_value ?? ''}`;
+    case 'viewpoint_add': return `3D 뷰포인트 추가 — ${ev.to_value ?? ''}`;
+    case 'viewpoint_del': return `3D 뷰포인트 삭제 — ${ev.to_value ?? ''}`;
     case 'file_add': return `관련 자료 추가 — ${ev.to_value ?? ''}`;
     case 'file_download': return `자료 다운로드 — ${ev.to_value ?? ''}`;
     case 'comment': return `코멘트 — ${ev.to_value ?? ''}`;
