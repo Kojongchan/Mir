@@ -3,6 +3,30 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 D3 — 4D 재생 UX 3건(HUD 우상단·재생 중 툴바/렌더 크롬 숨김·렌더 churn↓) (2026-07-13)
+> branch `claude/4d-process-simulation-xic7pn`. typecheck·build·스모크(31) 통과. 라이브 눈확인 필요.
+> 사용자 라이브 피드백(비교 분할 스크린샷) 반영.
+
+### ✅ 한 일
+1. **글자 겹침 해소(#1)**: 좌상단 4D HUD(날짜·진척)를 **우상단**으로 이동(`.fourd-hud` left→right).
+   비교(분할)에선 HUD 를 숨기고(페인 라벨+타임라인 날짜로 충분) **계획/실제 페인 라벨도 우상단**으로.
+2. **재생 중 뷰어 크롬 숨김(#2)**: 재생 상태를 store 로 승격(`fourd.playing`/`setPlaying`) →
+   `.acc-viewer-root.playing` 클래스로 **APS 툴바 + "렌더링 중…" 진행/스피너 오버레이를 CSS 로 숨김**
+   (재생 중에만; 일시정지·멈춤 시 복귀). 위·아래 두 뷰 모두 적용.
+3. **재생 렌더 churn↓(#3)**: ①`apsFourdView.applyConstruction` 이 **실제 변화가 있는 틱만** invalidate
+   (색/표시 변화 없는 스크럽 틱은 재그리기 생략). ②`setPlaybackActive` 가 `setOptimizeNavigation(true)`
+   +progressive 렌더 OFF(버전별 방어) 로 재생 중 렌더 비용↓, 멈추면 정식 렌더로 화질 복원. 두 번째
+   뷰(compare)도 `fourd.playing` 으로 동일 최적화.
+
+### ⚠️ 라이브 검증
+- 재생 시 툴바/"렌더링 중" 오버레이가 실제로 사라지는지(APS DOM class `adsk-toolbar`·스피너 셀렉터
+  버전 확인), 재생 후 복귀, 렉 체감 개선, 우상단 HUD/라벨이 ViewCube 와 심하게 안 겹치는지.
+
+### 인수인계 한 줄
+4D 재생 UX 3건: HUD/라벨 우상단·재생 중 툴바+렌더 진행바 숨김(playing store 승격)·변화 있는 틱만
+재그리기+렌더 최적화. typecheck·build·스모크 OK. 다음은 실 ACC 눈확인.
+
+---
 ## 📋 D2 — 4D 재생 깜빡임 제거(핵심) + 비교 뷰 분할(상하 카메라 동기화) (2026-07-13)
 > branch `claude/4d-process-simulation-xic7pn`. typecheck·build·스모크(31) 통과.
 > **라이브(실 ACC) 눈확인 필요** — 이 샌드박스는 APS 뷰어 실행 불가. 코드 리뷰 부탁.

@@ -132,7 +132,8 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
       /* ignore */
     }
   };
-  const [playing, setPlaying] = useState(false);
+  const playing = useStore((s) => s.fourd.playing);
+  const setPlaying = useStore((s) => s.fourd.setPlaying);
   // 시뮬 시작 여부: 임포트 직후엔 모델을 정상(불투명)으로 두고, 재생/스크럽을
   // 시작해야 반투명+색 시뮬이 적용된다(#1). 새 공정표 로드 시 false 로 리셋.
   const [started, setStarted] = useState(false);
@@ -613,7 +614,7 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
             <button
               onClick={() => {
                 setStarted(true);
-                setPlaying((p) => !p);
+                setPlaying(!playing);
               }}
               disabled={!enabled}
             >

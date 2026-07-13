@@ -35,6 +35,8 @@ export interface FourDState {
   /** 매핑 통계(표시용) */
   mappedTasks: number;
   mappedElements: number;
+  /** 재생 중 여부(전역) — 뷰어 툴바 숨김·렌더 최적화·두 번째 뷰 구동에 공유. */
+  playing: boolean;
 
   loadSchedule: (p: {
     tasks: ScheduleTask[];
@@ -47,6 +49,7 @@ export interface FourDState {
   setCurrentTime: (t: number) => void;
   setAppearance: (patch: Partial<AppearanceSettings>) => void;
   setMapping: (m: TaskMapping, tasks: number, elements: number) => void;
+  setPlaying: (v: boolean) => void;
 }
 
 const emptyFourD = {
@@ -60,6 +63,7 @@ const emptyFourD = {
   mapping: {} as TaskMapping,
   mappedTasks: 0,
   mappedElements: 0,
+  playing: false,
 };
 
 export const useStore = create<AppState>((set) => ({
@@ -97,5 +101,6 @@ export const useStore = create<AppState>((set) => ({
       set((s) => ({ fourd: { ...s.fourd, appearance: { ...s.fourd.appearance, ...patch } } })),
     setMapping: (mapping, mappedTasks, mappedElements) =>
       set((s) => ({ fourd: { ...s.fourd, mapping, mappedTasks, mappedElements } })),
+    setPlaying: (v) => set((s) => ({ fourd: { ...s.fourd, playing: v } })),
   },
 }));

@@ -1387,7 +1387,7 @@ button.danger:hover:not(:disabled) {
 .fourd-hud {
   position: absolute;
   top: 12px;
-  left: 12px;
+  right: 12px;
   z-index: 540;
   pointer-events: none;
   min-width: 168px;
@@ -1826,10 +1826,10 @@ button.danger:hover:not(:disabled) {
   padding: 0 4px;
 }
 
-/* ---- 4D: 비교(뷰 분할) 페인 라벨 ---- */
+/* ---- 4D: 비교(뷰 분할) 페인 라벨 (우측 상단 — 모델 위 글자 겹침 방지) ---- */
 .cmp-label {
   position: absolute;
-  left: 8px;
+  right: 8px;
   z-index: 30;
   padding: 3px 8px;
   border-radius: 6px;
@@ -1839,6 +1839,19 @@ button.danger:hover:not(:disabled) {
   background: rgba(20, 26, 38, 0.72);
   border: 1px solid var(--accent);
   pointer-events: none;
+}
+
+/* ---- 4D: 재생 중 뷰어 크롬(툴바·진행바) 숨김 (사용자 요청 #2/#3) ----
+   재생 중에는 APS 툴바와 "렌더링 중…" 진행/스피너 오버레이를 감춰 화면을 깔끔히
+   하고 렌더 churn 체감을 줄인다. 멈추면(class 제거) 다시 나타난다. */
+.acc-viewer-root.playing .adsk-toolbar,
+.acc-viewer-root.playing #guiviewer3d-toolbar,
+.acc-viewer-root.playing .adsk-viewing-viewer .spinner,
+.acc-viewer-root.playing .adsk-viewing-viewer .forge-spinner,
+.acc-viewer-root.playing .adsk-viewing-viewer .progressbg,
+.acc-viewer-root.playing .adsk-viewing-viewer .progressfg,
+.acc-viewer-root.playing .adsk-viewing-progress {
+  display: none !important;
 }
 
 /* ---- 4D: 표시 설정 패널 ---- */

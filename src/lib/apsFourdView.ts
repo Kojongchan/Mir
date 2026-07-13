@@ -96,19 +96,27 @@ export function createApsFourDViewer(
         for (const d of hiddenNow) if (!targetHidden.has(d)) toShow.push(d);
         if (toHide.length) viewer.hide?.(toHide, model);
         if (toShow.length) viewer.show?.(toShow, model);
+        let changed = toHide.length > 0 || toShow.length > 0;
 
         // 3) 색 delta 만 반영(변한 것 set / 사라진 것 per-object clear).
         for (const [d, c] of targetColor) {
-          if (colorNow.get(d) !== c.key) viewer.setThemingColor?.(d, c.vec, model, true);
+          if (colorNow.get(d) !== c.key) {
+            viewer.setThemingColor?.(d, c.vec, model, true);
+            changed = true;
+          }
         }
         for (const [d] of colorNow) {
-          if (!targetColor.has(d)) viewer.clearThemingColor?.(d, model);
+          if (!targetColor.has(d)) {
+            viewer.clearThemingColor?.(d, model);
+            changed = true;
+          }
         }
 
-        // 4) 상태 커밋 + clear 없는 invalidate(깜빡임 없음).
+        // 4) 상태 커밋 + **바뀐 게 있을 때만** clear 없는 invalidate.
+        //    (스크럽/재생 중 실제 변화 없는 틱은 다시 그리지 않아 렉·렌더 churn 감소.)
         hiddenNow = targetHidden;
         colorNow = new Map([...targetColor].map(([d, c]) => [d, c.key]));
-        viewer.impl?.invalidate?.(false, true, false);
+        if (changed) viewer.impl?.invalidate?.(false, true, false);
       } catch {
         /* 무시 */
       }
@@ -132,10 +140,14 @@ export function createApsFourDViewer(
     setPlaybackActive(active: boolean) {
       if (!viewer) return;
       try {
-        // 재생 중: progressive 렌더 OFF → 매 프레임 한 번에 그려 잔상/깜빡임 방지.
-        // 멈춤: ON → 회전 시 부드럽게(점진 렌더).
+        // 재생 중 렌더 비용을 낮춘다(사용자 지적: 재생 시 렉·"렌더링 중" churn).
+        //  - setOptimizeNavigation: 이동/갱신 중 디테일을 낮춰 프레임을 빨리 그림(공개 API).
+        //  - progressive 렌더 OFF: 매 프레임 한 번에 그려 진행바("렌더링 중") 억제(버전별 방어).
+        viewer.setOptimizeNavigation?.(active);
         viewer.setProgressiveRendering?.(!active);
-        viewer.impl?.invalidate?.(false, true, false);
+        viewer.impl?.setProgressiveRendering?.(!active);
+        // 멈추면 한 번 정식 렌더로 화질 복원.
+        if (!active) viewer.impl?.invalidate?.(true, true, false);
       } catch {
         /* 무시 */
       }

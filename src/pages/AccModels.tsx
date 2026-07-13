@@ -342,6 +342,12 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apsFourDViewer2, fourd.enabled, fourd.tasks, fourd.mapping, fourd.currentTime, fourd.appearance]);
 
+  // 아래 뷰도 재생 중 렌더 최적화(위 뷰는 Timeline 이 담당).
+  useEffect(() => {
+    apsFourDViewer2?.setPlaybackActive?.(fourd.playing);
+    return () => apsFourDViewer2?.setPlaybackActive?.(false);
+  }, [apsFourDViewer2, fourd.playing]);
+
   // 요소 열거가 아직(또는 빈 결과로) 끝나지 않았어도 매칭 시점에 보장한다.
   const ensureApsElements = async (m: any): Promise<ApsElement[]> => {
     if (apsElements.length) return apsElements;
@@ -1118,7 +1124,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
   }, [showBrowser, panelW, compareSplit]);
 
   return (
-    <div className="acc-viewer-root">
+    <div className={`acc-viewer-root${mode4d && fourd.playing ? ' playing' : ''}`}>
       <div className="viewer-topbar">
         <strong style={{ fontSize: 13 }}>{autoClash ? '🔍 간섭검토' : mode4d ? '🏗 공정관리(4D)' : '🧊 통합모델(3D)'}</strong>
         {/* 4D 매칭(규칙 편집기)은 하단 타임라인의 "공정표 임포트" 옆 버튼으로 통합(#3b). */}
@@ -1349,9 +1355,9 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
               <div className="cmp-label" style={{ top: 'calc(50% + 8px)' }}>실제 공정</div>
             </>
           )}
-          {/* 4D 시뮬레이션 날짜·진척 HUD(Navisworks/Forma 류) — 재생 중 모델 위에 현재
-              시점과 진행률을 띄운다. 모델 재로딩 없이 오버레이만 갱신. */}
-          {mode4d && <FourDHud />}
+          {/* 4D 시뮬레이션 날짜·진척 HUD(Navisworks/Forma 류) — 우측 상단. 비교(분할)에선
+              페인 라벨+타임라인 날짜로 충분하므로 숨긴다(글자 겹침 방지 — 사용자 요청). */}
+          {mode4d && !compareSplit && <FourDHud />}
           {/* 통합모델(3D) 관측점 패널(IFC 뷰어 이식 — S52). */}
           {integrated && vpOpen && !!modelRef.current && (
             <ApsViewpointPanel
