@@ -4,13 +4,19 @@ import type { CellState, ElementInfo, FourDViewer } from './fourd';
 import type { ApsElement } from './apsElements';
 
 // =====================================================================
-// APS 4D 어댑터 — S50. Timeline.tsx(손대지 않음) 가 기대하는 FourDViewer 인터페이스
-// (getElementCatalog/applyConstruction/clearConstruction) 를 APS Viewer 위에서
-// 구현한다. apsClashView.ts 와 동일한 setThemingColor/isolate 류 호출을 쓰지만,
-// 4D 는 동시에 여러 disjoint 상태 그룹(숨김/고스트/시공중/철거중/완료)이 필요해
-// 전역 isolate 대신 **per-object** viewer.hide(dbId)/show(dbId) 를 사용한다.
-// 색은 setThemingColor 로만 표현(전역 clearThemingColors 로 매 틱 리셋 후 재적용 —
-// 공정표 규모가 작아 비용 무시 가능. 모델이 커지면 추후 diff 최적화).
+// APS 4D 어댑터 — S50 → D2(깜빡임 제거 재작성).
+// Timeline.tsx 가 기대하는 FourDViewer(getElementCatalog/applyConstruction/
+// clearConstruction) 를 APS Viewer 위에서 구현한다.
+//
+// ⚠️ 이전 구현은 매 틱 `isolate()` + `clearThemingColors()` + `invalidate(true,…)`
+// 를 호출해 프레임 버퍼를 통째로 지우고 가시성 집합을 재구성 → 재생 시 심한 깜빡임.
+// 재작성 원칙(깜빡임 원인 제거):
+//   1) isolate 를 쓰지 않는다 — 대신 **직전 상태 대비 delta** 만 hide/show.
+//   2) themingColor 도 **변한 객체만** set/clear (전역 clearThemingColors 금지).
+//   3) invalidate 는 **clear 없이**(false, true, false) — 화면을 지우지 않고 다시 그림.
+//   4) 미시공(ghost)은 기본 숨김(나비스웍스 기본 동작), ghostFuture 시 회색 틴트.
+//   5) 미매핑 객체는 건드리지 않아 항상 정상 표시(맥락 유지).
+// 이렇게 하면 틱마다 실제로 바뀐 소수 객체만 갱신 → 깜빡임 없음.
 // =====================================================================
 
 type ApsViewer = any;
@@ -21,33 +27,32 @@ function hexToVec4(hex: string, alpha: number): THREE.Vector4 {
   return new THREE.Vector4(c.r, c.g, c.b, alpha);
 }
 
-/**
- * APS 모델 1개를 위한 FourDViewer 어댑터를 만든다. `modelID` 슬롯에는 `model.id`,
- * `expressID` 슬롯에는 dbId 를 담아 fourd.ts 의 ElementRef 규약을 그대로 따른다.
- */
+const GHOST_HEX = '#8a8f98';
+
 export function createApsFourDViewer(
   viewer: ApsViewer,
   model: ApsModel,
   elements: ApsElement[],
 ): FourDViewer {
   const modelID: number = model?.id ?? 0;
-  // 비어 있으면 모델 전체를 고스트로 만들기 위한 센티넬(존재하지 않는 dbId).
-  const GHOST_ALL = [2147483647];
-  let prevVisKey = '';
-  let prevColorKey = '';
 
-  const colorFor = (state: CellState, opts: AppearanceSettings): THREE.Vector4 | null => {
+  // 직전 프레임의 적용 상태(증분 갱신 기준).
+  let hiddenNow = new Set<number>();
+  let colorNow = new Map<number, string>(); // dbId → 적용된 색 키
+
+  // 색 상태 → (Vector4, 캐시키). normal/hidden 은 색 없음(null).
+  const colorFor = (state: CellState, opts: AppearanceSettings): { vec: THREE.Vector4; key: string } | null => {
     switch (state) {
       case 'active-construct':
-        return hexToVec4(opts.colorConstruct, opts.activeOpacity);
+        return { vec: hexToVec4(opts.colorConstruct, opts.activeOpacity), key: `c:${opts.colorConstruct}:${opts.activeOpacity}` };
       case 'active-demolish':
-        return hexToVec4(opts.colorDemolish, opts.activeOpacity);
+        return { vec: hexToVec4(opts.colorDemolish, opts.activeOpacity), key: `d:${opts.colorDemolish}:${opts.activeOpacity}` };
       case 'active-temporary':
-        return hexToVec4(opts.colorTemporary, opts.activeOpacity);
+        return { vec: hexToVec4(opts.colorTemporary, opts.activeOpacity), key: `t:${opts.colorTemporary}:${opts.activeOpacity}` };
       case 'active-early':
-        return hexToVec4(opts.colorEarly, opts.activeOpacity);
+        return { vec: hexToVec4(opts.colorEarly, opts.activeOpacity), key: `e:${opts.colorEarly}:${opts.activeOpacity}` };
       case 'active-late':
-        return hexToVec4(opts.colorLate, opts.activeOpacity);
+        return { vec: hexToVec4(opts.colorLate, opts.activeOpacity), key: `l:${opts.colorLate}:${opts.activeOpacity}` };
       default:
         return null; // ghost/hidden/normal — 활성 색 없음
     }
@@ -58,37 +63,52 @@ export function createApsFourDViewer(
       return elements.map((e) => ({ modelID, expressID: e.dbId, name: e.name }));
     },
 
-    // 나비스웍스 TimeLiner 식 표현: 매 시점에 "이미 시공됨(완료)+시공/철거 중" 객체만
-    // isolate 로 또렷이 보이게 하고, 나머지(미시공·미매핑)는 자동으로 반투명 고스트가
-    // 된다. 진행 중 객체는 유형별 색(생성/철거/임시/빠름/늦음)으로 칠한다.
     applyConstruction(
       states: Iterable<{ modelID: number; expressID: number; state: CellState }>,
       opts: AppearanceSettings,
     ) {
       if (!viewer) return;
-      const visible: number[] = []; // 완료(normal) + 진행중(active-*) → 또렷이
-      const colors: Array<[number, THREE.Vector4]> = [];
-      for (const { modelID: m, expressID, state } of states) {
-        if (m !== modelID) continue;
-        if (state === 'hidden' || state === 'ghost') continue; // 미시공/철거완료 → 고스트
-        visible.push(expressID);
-        const c = colorFor(state, opts);
-        if (c) colors.push([expressID, c]);
-      }
       try {
-        const visKey = visible.length ? visible.slice().sort((a, b) => a - b).join(',') : '∅';
-        const colorKey = `${opts.colorConstruct}|${opts.colorDemolish}|${opts.colorTemporary}|${opts.colorEarly}|${opts.colorLate}|${opts.activeOpacity}|` +
-          colors.map(([d]) => d).sort((a, b) => a - b).join(',');
-        if (visKey === prevVisKey && colorKey === prevColorKey) return; // 변화 없음
-        prevVisKey = visKey;
-        prevColorKey = colorKey;
+        // 1) 목표 상태 계산(이 모델 소속 매핑 객체만).
+        const targetHidden = new Set<number>();
+        const targetColor = new Map<number, { vec: THREE.Vector4; key: string }>();
+        for (const { modelID: m, expressID: dbId, state } of states) {
+          if (m !== modelID) continue;
+          if (state === 'hidden') {
+            targetHidden.add(dbId);
+            continue;
+          }
+          if (state === 'ghost') {
+            // 미시공: 기본 숨김. ghostFuture 면 회색 틴트로 남겨 맥락 표시.
+            if (opts.ghostFuture) targetColor.set(dbId, { vec: hexToVec4(GHOST_HEX, 0.35), key: 'ghost' });
+            else targetHidden.add(dbId);
+            continue;
+          }
+          // normal(완료) → 색 없음(자연색) · active-* → 유형 색.
+          const c = colorFor(state, opts);
+          if (c) targetColor.set(dbId, c);
+        }
 
-        // isolate: 지정 객체만 또렷이, 나머지는 반투명 고스트(전체 베이스라인).
-        viewer.isolate?.(visible.length ? visible : GHOST_ALL, model);
-        // 활성 객체에 유형별 색.
-        viewer.clearThemingColors?.(model);
-        for (const [dbId, c] of colors) viewer.setThemingColor?.(dbId, c, model, true);
-        viewer.impl?.invalidate?.(true, true, true);
+        // 2) 가시성 delta 만 반영(hide 새로 숨길 것 / show 다시 보일 것).
+        const toHide: number[] = [];
+        for (const d of targetHidden) if (!hiddenNow.has(d)) toHide.push(d);
+        const toShow: number[] = [];
+        for (const d of hiddenNow) if (!targetHidden.has(d)) toShow.push(d);
+        if (toHide.length) viewer.hide?.(toHide, model);
+        if (toShow.length) viewer.show?.(toShow, model);
+
+        // 3) 색 delta 만 반영(변한 것 set / 사라진 것 per-object clear).
+        for (const [d, c] of targetColor) {
+          if (colorNow.get(d) !== c.key) viewer.setThemingColor?.(d, c.vec, model, true);
+        }
+        for (const [d] of colorNow) {
+          if (!targetColor.has(d)) viewer.clearThemingColor?.(d, model);
+        }
+
+        // 4) 상태 커밋 + clear 없는 invalidate(깜빡임 없음).
+        hiddenNow = targetHidden;
+        colorNow = new Map([...targetColor].map(([d, c]) => [d, c.key]));
+        viewer.impl?.invalidate?.(false, true, false);
       } catch {
         /* 무시 */
       }
@@ -97,12 +117,13 @@ export function createApsFourDViewer(
     clearConstruction() {
       if (!viewer) return;
       try {
-        prevVisKey = '';
-        prevColorKey = '';
+        // 숨김/색을 한 번에 원복. 여기서만 전역 clear 사용(재생 중 아님 → 깜빡여도 무해).
+        if (hiddenNow.size) viewer.show?.([...hiddenNow], model);
         viewer.clearThemingColors?.(model);
-        viewer.isolate?.([], model); // 격리 해제 → 전체 정상 표시
         viewer.showAll?.();
-        viewer.impl?.invalidate?.(true, true, true);
+        hiddenNow = new Set();
+        colorNow = new Map();
+        viewer.impl?.invalidate?.(true, true, false);
       } catch {
         /* 무시 */
       }
@@ -111,7 +132,7 @@ export function createApsFourDViewer(
     setPlaybackActive(active: boolean) {
       if (!viewer) return;
       try {
-        // 재생 중: progressive 렌더 OFF → 매 틱 전체를 한 번에 그려 깜빡임 제거.
+        // 재생 중: progressive 렌더 OFF → 매 프레임 한 번에 그려 잔상/깜빡임 방지.
         // 멈춤: ON → 회전 시 부드럽게(점진 렌더).
         viewer.setProgressiveRendering?.(!active);
         viewer.impl?.invalidate?.(false, true, false);

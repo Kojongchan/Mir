@@ -20,7 +20,8 @@ import { collectPropertyNames, collectTaskFields, applyApsRules, diagnoseRule, t
 import { ApsRuleEditor } from '../components/ApsRuleEditor';
 import { ApsViewpointPanel } from '../components/acc/ApsViewpointPanel';
 import { saveApsHomeView, loadApsHomeView, clearApsHomeView } from '../lib/apsViewpoints';
-import { mappingStats } from '../lib/fourd';
+import { mappingStats, computeStates } from '../lib/fourd';
+import { linkViewerCameras } from '../lib/apsCameraSync';
 import { formatDate, DAY } from '../lib/schedule';
 import { saveLocalApsSchedule } from '../lib/localSchedule';
 import { viewerKindFor, type ViewerKind, type FileRecord } from '../lib/files';
@@ -264,6 +265,82 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
     return createApsFourDViewer(viewerRef.current, modelRef.current, apsElements);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode4d, apsElements, mapping]);
+
+  // ★비교(뷰 분할, 상하): 위=계획 공정 / 아래=실제 공정. 두 뷰 카메라를 동기화해
+  //   한쪽을 돌리면 다른 쪽도 같은 시점으로 따라온다. viewer2 는 compareSplit 시 생성.
+  const [compareSplit, setCompareSplit] = useState(false);
+  const container2Ref = useRef<HTMLDivElement>(null);
+  const viewer2Ref = useRef<any>(null);
+  const model2Ref = useRef<any>(null);
+  const [viewer2Tick, setViewer2Tick] = useState(0); // model2 준비 시 리렌더 트리거
+  const apsFourDViewer2 = useMemo(() => {
+    if (!mode4d || !compareSplit || !viewer2Ref.current || !model2Ref.current) return null;
+    return createApsFourDViewer(viewer2Ref.current, model2Ref.current, apsElements);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode4d, compareSplit, apsElements, viewer2Tick]);
+
+  // 두 번째 뷰어(아래=실제 공정) 생성/로드/카메라동기화 — compareSplit 켜질 때만.
+  // 단일 뷰 경로는 이 이펙트가 no-op 이라 전혀 영향받지 않는다.
+  useEffect(() => {
+    if (!mode4d || !compareSplit || !urn || !container2Ref.current) return;
+    const Autodesk = (window as unknown as { Autodesk?: any }).Autodesk;
+    if (!Autodesk) return;
+    let cancelled = false;
+    let cleanupSync: (() => void) | null = null;
+    const v2 = new Autodesk.Viewing.GuiViewer3D(container2Ref.current, { extensions: VIEWER_EXTENSIONS });
+    v2.start();
+    try {
+      v2.setBackgroundColor(40, 48, 64, 20, 26, 38);
+      v2.setReverseZoomDirection(true);
+      v2.navigation.setZoomTowardsPivot(true);
+    } catch {
+      /* 일부 버전 미지원 무시 */
+    }
+    viewer2Ref.current = v2;
+    const ro = new ResizeObserver(() => {
+      try { v2.resize(); } catch { /* */ }
+    });
+    ro.observe(container2Ref.current);
+    v2.addEventListener(Autodesk.Viewing.OBJECT_TREE_CREATED_EVENT, (e: any) => {
+      model2Ref.current = e?.model ?? v2.model;
+      setViewer2Tick((t) => t + 1);
+      // 두 뷰 모두 준비되면 카메라 동기화 시작(한쪽 이동 → 다른쪽 따라옴).
+      if (viewerRef.current && !cleanupSync) cleanupSync = linkViewerCameras(viewerRef.current, v2);
+    });
+    const docId = urn.startsWith('urn:') ? urn : `urn:${urn}`;
+    Autodesk.Viewing.Document.load(
+      docId,
+      (doc: any) => {
+        if (cancelled) return;
+        v2.loadDocumentNode(doc, doc.getRoot().getDefaultGeometry());
+      },
+      () => {},
+    );
+    return () => {
+      cancelled = true;
+      cleanupSync?.();
+      ro.disconnect();
+      try { if (v2.finish) v2.finish(); } catch { /* */ }
+      viewer2Ref.current = null;
+      model2Ref.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode4d, compareSplit, urn]);
+
+  // 아래 뷰(실제 공정)를 store(공정표·매핑·현재시점)로 구동 — basis='actual'.
+  // 위 뷰(계획)는 Timeline 이 basis='planned' 로 구동한다(compare 모드).
+  useEffect(() => {
+    const v = apsFourDViewer2;
+    if (!v) return;
+    const { enabled, tasks, mapping, currentTime, appearance } = fourd;
+    if (!enabled || tasks.length === 0 || Number.isNaN(currentTime)) {
+      v.clearConstruction();
+      return;
+    }
+    const states = computeStates(tasks, mapping, currentTime, 'actual');
+    v.applyConstruction([...states.values()].map((s) => ({ ...s.ref, state: s.state })), appearance);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apsFourDViewer2, fourd.enabled, fourd.tasks, fourd.mapping, fourd.currentTime, fourd.appearance]);
 
   // 요소 열거가 아직(또는 빈 결과로) 끝나지 않았어도 매칭 시점에 보장한다.
   const ensureApsElements = async (m: any): Promise<ApsElement[]> => {
@@ -1029,14 +1106,16 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 패널 열고/닫기·폭 변경 직후 캔버스 크기 재계산(메인뷰가 빈틈 없이 채워지게).
+  // 패널 열고/닫기·폭 변경·뷰 분할 토글 직후 캔버스 크기 재계산(빈틈 없이 채워지게).
   useEffect(() => {
     const id = requestAnimationFrame(() => {
       const v = viewerRef.current as any;
       if (v?.resize) v.resize();
+      const v2 = viewer2Ref.current as any;
+      if (v2?.resize) v2.resize();
     });
     return () => cancelAnimationFrame(id);
-  }, [showBrowser, panelW]);
+  }, [showBrowser, panelW, compareSplit]);
 
   return (
     <div className="acc-viewer-root">
@@ -1255,7 +1334,21 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
           </div>
         )}
         <div style={{ position: 'relative', flex: 1 }}>
-          <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
+          <div
+            ref={containerRef}
+            style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: mode4d && compareSplit ? '50%' : 0 }}
+          />
+          {/* ★비교(뷰 분할, 상하): 아래 뷰(실제 공정) + 두 뷰 카메라 동기화. */}
+          {mode4d && compareSplit && (
+            <>
+              <div
+                ref={container2Ref}
+                style={{ position: 'absolute', left: 0, right: 0, top: '50%', bottom: 0, borderTop: '2px solid var(--accent)' }}
+              />
+              <div className="cmp-label" style={{ top: 8 }}>계획 공정</div>
+              <div className="cmp-label" style={{ top: 'calc(50% + 8px)' }}>실제 공정</div>
+            </>
+          )}
           {/* 4D 시뮬레이션 날짜·진척 HUD(Navisworks/Forma 류) — 재생 중 모델 위에 현재
               시점과 진행률을 띄운다. 모델 재로딩 없이 오버레이만 갱신. */}
           {mode4d && <FourDHud />}
@@ -1482,6 +1575,8 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             setRuleMsg('');
             setRuleEditorOpen(true);
           }}
+          compare={compareSplit}
+          onToggleCompare={() => setCompareSplit((v) => !v)}
         />
       )}
       {mode4d && ruleEditorOpen && (

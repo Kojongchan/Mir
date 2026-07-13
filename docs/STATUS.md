@@ -3,6 +3,42 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 D2 — 4D 재생 깜빡임 제거(핵심) + 비교 뷰 분할(상하 카메라 동기화) (2026-07-13)
+> branch `claude/4d-process-simulation-xic7pn`. typecheck·build·스모크(31) 통과.
+> **라이브(실 ACC) 눈확인 필요** — 이 샌드박스는 APS 뷰어 실행 불가. 코드 리뷰 부탁.
+
+### ✅ 한 일
+1. **재생 깜빡임 제거(사용자 지적 "진짜 심각함")** — `lib/apsFourdView.ts` 전면 재작성.
+   - **원인**: 매 틱 `viewer.isolate()`(가시성 집합 통째 재구성) + `clearThemingColors()`(전역 색 리셋)
+     + `invalidate(true,true,true)`(**프레임 버퍼 clear**) 호출 → 시점이 바뀔 때마다 화면을 지우고
+     다시 그려 심하게 깜빡임.
+   - **해결(증분 갱신)**: ①isolate 폐기 → **직전 프레임 대비 delta 만** `hide`/`show`. ②theming 도
+     **변한 객체만** `setThemingColor`/`clearThemingColor`(전역 clear 금지). ③`invalidate(false,true,false)`
+     — **clear 없이** 다시 그림(화면 안 지워짐). ④미시공은 기본 숨김(ghostFuture 시 회색 틴트),
+     미매핑은 건드리지 않아 맥락 유지. → 틱마다 실제로 바뀐 소수 객체만 갱신되어 **깜빡임 없음**.
+   - 추가: Timeline 이 재생 시작/정지에 `setPlaybackActive(playing)` 호출 → progressive 렌더 OFF
+     로 잔상까지 억제.
+2. **★비교 = 뷰 분할(상하) + 카메라 동기화(사용자 요청)** — 한 뷰를 움직이면 다른 뷰도 같은 시점으로 따라옴.
+   - `lib/apsCameraSync.ts`(신규) `linkViewerCameras(a,b)`: 공개 navigation API(getPosition/getTarget/
+     getCameraUpVector + setView)로 양방향 동기화, **억제 플래그 소비 패턴**으로 되먹임 루프 차단.
+   - `AccModels`: 4D 모드에 **compareSplit** 토글 → 위=계획·아래=실제로 상하 분할, 아래 뷰용 **두 번째
+     GuiViewer3D** 생성·같은 URN 로드·정리(finish)까지 라이프사이클 관리. 아래 뷰는 store(공정표·매핑·
+     현재시점)로 **basis='actual'** 구동, 위 뷰는 Timeline 이 **basis='planned'** 구동. 페인 라벨(계획/실제).
+   - `Timeline`: `compare`/`onToggleCompare` prop + 툴바 **⇅ 비교** 버튼. compare 시 basis 드롭다운을
+     "위 계획/아래 실제" 안내로 대체, 위 뷰는 planned 고정, 진입 시 즉시 started(양 뷰 시점 일치).
+   - **전부 compareSplit 게이트** — 단일 뷰(기존) 경로는 무영향.
+
+### ⚠️ 라이브 검증 포인트(실 ACC)
+- 재생·스크럽 시 깜빡임이 사라졌는지, 색/표시 전환이 매끄러운지.
+- 비교 분할: 두 번째 뷰 로드·상하 배치, **한쪽 회전/줌 시 반대쪽 동기화**, 계획 vs 실제 색 차이,
+  분할 토글 시 캔버스 리사이즈, 메모리(모델 2회 로드) 부담.
+- 카메라 sync 되먹임 억제(플래그 소비) 튜닝 여지 — 동일 시점 반복 이벤트 시 미세 글리치 가능.
+
+### 인수인계 한 줄
+4D 재생 깜빡임을 증분 hide/show+per-object theming+clear없는 invalidate 로 제거 + 비교 뷰 상하분할·
+카메라 동기화(linkViewerCameras) 추가(전부 게이트). typecheck·build·스모크 OK. 다음은 실 ACC 눈확인.
+
+---
 ## 📋 D1 — 4D 공정 시뮬 고도화: 진실원본 import(Excel/MSP/P6)·실적/지연·현황 export·재생기준 (2026-07-13)
 > branch `claude/4d-process-simulation-xic7pn`. **typecheck·build 통과 + node 스모크 테스트 31/31**
 > (`npm run verify:4d` — esbuild 로 src TS 번들 후 Excel/MSP/P6 파싱·현황·지연·basis 검증).

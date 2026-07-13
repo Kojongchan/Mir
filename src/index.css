@@ -1821,6 +1821,25 @@ button.danger:hover:not(:disabled) {
 .tl-controls button.active {
   outline: 1px solid var(--accent);
 }
+.tl-cmp-hint {
+  font-size: 12px;
+  padding: 0 4px;
+}
+
+/* ---- 4D: 비교(뷰 분할) 페인 라벨 ---- */
+.cmp-label {
+  position: absolute;
+  left: 8px;
+  z-index: 30;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(20, 26, 38, 0.72);
+  border: 1px solid var(--accent);
+  pointer-events: none;
+}
 
 /* ---- 4D: 표시 설정 패널 ---- */
 .tl-settings {

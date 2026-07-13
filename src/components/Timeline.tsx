@@ -60,6 +60,9 @@ interface Props {
   apsMode?: { modelDbId: string | null; apsMapping: ApsMapping | null } | null;
   /** APS 4D: 공정표 옆 "4D 매칭" 버튼이 호출(규칙 편집기 열기). 상위(AccModels)가 처리. */
   onOpenMapping?: (() => void) | null;
+  /** ★비교(뷰 분할, 상하): 켜지면 이 뷰(위)는 계획, 아래 뷰는 실제로 재생된다. */
+  compare?: boolean;
+  onToggleCompare?: (() => void) | null;
 }
 
 /**
@@ -67,7 +70,7 @@ interface Props {
  * 타임슬라이더로 현재 시점을 옮기면 그 시점의 시공 상태(시공/철거/임시)를 유형별
  * 색상·반투명으로 뷰어에 반영한다. 작업 테이블(헤더/열)과 간트를 함께 표시.
  */
-export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpenMapping = null }: Props) {
+export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpenMapping = null, compare = false, onToggleCompare = null }: Props) {
   // DB 모델 uuid → 런타임 modelID (불러온 매핑을 현재 세션 모델로 재해석). IFC 경로용.
   const dbToRuntime = useMemo(() => {
     const m = new Map<string, number>();
@@ -501,6 +504,11 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
     setStarted(false);
   }, [rangeStart, rangeEnd, tasks.length]);
 
+  // 비교(분할) 진입 시 위 뷰도 즉시 시뮬 시작 → 아래(실제) 뷰와 표시 시점 일치.
+  useEffect(() => {
+    if (compare) setStarted(true);
+  }, [compare]);
+
   // --- 시점/표시 변경 → 뷰어 반영 ---
   useEffect(() => {
     if (!viewer) return;
@@ -509,12 +517,20 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
       viewer.clearConstruction();
       return;
     }
-    const states = computeStates(tasks, mapping, currentTime, basis);
+    // 비교(분할)에선 이 뷰(위)는 계획 공정으로 고정 재생(아래 뷰=실제는 AccModels 가 구동).
+    const effectiveBasis = compare ? 'planned' : basis;
+    const states = computeStates(tasks, mapping, currentTime, effectiveBasis);
     viewer.applyConstruction(
       [...states.values()].map((v) => ({ ...v.ref, state: v.state })),
       appearance,
     );
-  }, [viewer, enabled, hasSchedule, started, tasks, mapping, currentTime, appearance, basis]);
+  }, [viewer, enabled, hasSchedule, started, tasks, mapping, currentTime, appearance, basis, compare]);
+
+  // 재생 중에는 progressive 렌더를 꺼 매 틱 한 번에 그리게 한다(깜빡임/잔상 방지).
+  useEffect(() => {
+    viewer?.setPlaybackActive?.(playing);
+    return () => viewer?.setPlaybackActive?.(false);
+  }, [viewer, playing]);
 
   // --- 재생 ---
   const currentTimeRef = useRef(currentTime);
@@ -616,15 +632,30 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
               {detailed ? '기본 열' : '상세 열'}
             </button>
             <span className="tl-divider" />
-            {/* ★재생 기준: 계획 시뮬 / 실제 시뮬. 실적이 있어야 '실제'가 의미. */}
-            <select
-              value={basis}
-              onChange={(e) => setBasisPersist(e.target.value as ScheduleBasis)}
-              title="계획 공정으로 재생할지, 실제 공정으로 재생할지 선택"
-            >
-              <option value="planned">계획 시뮬</option>
-              <option value="actual">실제 시뮬{hasActuals ? '' : ' (실적 없음)'}</option>
-            </select>
+            {/* ★재생 기준: 계획 / 실제 / 비교(뷰 분할). 비교는 상위(AccModels)가 뷰 2개로. */}
+            {compare ? (
+              <span className="muted tl-cmp-hint" title="위=계획 · 아래=실제, 두 뷰 카메라 동기화">
+                위 계획 / 아래 실제
+              </span>
+            ) : (
+              <select
+                value={basis}
+                onChange={(e) => setBasisPersist(e.target.value as ScheduleBasis)}
+                title="계획 공정으로 재생할지, 실제 공정으로 재생할지 선택"
+              >
+                <option value="planned">계획 시뮬</option>
+                <option value="actual">실제 시뮬{hasActuals ? '' : ' (실적 없음)'}</option>
+              </select>
+            )}
+            {onToggleCompare && (
+              <button
+                className={compare ? 'active' : ''}
+                onClick={() => onToggleCompare()}
+                title="계획 vs 실제를 상하 2뷰로 분할(카메라 동기화)"
+              >
+                ⇅ 비교
+              </button>
+            )}
             {delays.length > 0 && (
               <button
                 className={showDelays ? 'active' : ''}
