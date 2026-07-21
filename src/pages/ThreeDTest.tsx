@@ -108,12 +108,17 @@ export function ThreeDTest() {
         : {};
       const urn = f.accUrn;
 
-      // 서버가 JSON이 아닌 에러(플랫폼 500 등)를 줘도 원문을 드러낸다.
+      // 서버가 JSON이 아닌 에러(플랫폼 500/504 등)를 줘도 원문을 드러낸다.
       const readJson = async (r: Response): Promise<Record<string, unknown>> => {
         const text = await r.text();
         try {
           return JSON.parse(text) as Record<string, unknown>;
         } catch {
+          if (r.status === 504 || /TIMEOUT/i.test(text)) {
+            throw new Error(
+              '서버 변환이 시간 초과(504)됐습니다. 이 모델은 서버리스 변환 한도를 넘어 오프라인/배치 변환이 필요합니다.',
+            );
+          }
           throw new Error(`서버 오류(${r.status}): ${text.slice(0, 160)}`);
         }
       };
