@@ -11,21 +11,18 @@
 //   POST /api/aps-convert  body {urn, size?} → 변환 실행(캐시에 저장 후 URL 반환)
 //        200 {ready:true, url}  |  413 {tooLarge:true, ...}
 //
-// ⚠️ Node 런타임 필수(svf-utils 가 fs/스트림 사용) — edge 아님.
-// ⚠️ 대용량(≈527MB급)은 serverless 시간·메모리 한도를 넘으므로 413 로 거절하고
-//    오프라인/배치 변환으로 유도(협의된 'A로 시작' 범위).
-// Required env: APS_CLIENT_ID / APS_CLIENT_SECRET / SUPABASE_URL /
+// ⚠️ Node 런타임 필수(svf-utils 가 fs/스트림 사용) — edge 아님. 그래서 Vercel
+//    표준 Node 시그니처 (req,res) 를 쓴다(Web Request/Response 아님 — 그건 edge용).
+// ⚠️ 무거운 변환기(svf-utils·convert2xkt)는 POST 안에서 **지연 import** — 모듈
+//    로드/GET 경로가 이들 초기화로 죽지 않게(500 방지).
+// ⚠️ 대용량(≈527MB급)은 serverless 한도 초과 → 413 로 거절, 오프라인/배치 변환 유도.
+// Required env: APS_CLIENT_ID / APS_CLIENT_SECRET / SUPABASE_URL(or VITE_) /
 //               SUPABASE_SERVICE_ROLE_KEY.
 // =====================================================================
 import { createClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readdir, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { SVFReader, GLTFWriter, TwoLeggedAuthenticationProvider } from 'svf-utils';
-import { convert2xkt } from '@xeokit/xeokit-convert';
 
-export const config = { runtime: 'nodejs', maxDuration: 300 };
+export const config = { runtime: 'nodejs', maxDuration: 60 };
 
 const APS_CLIENT_ID = process.env.APS_CLIENT_ID;
 const APS_CLIENT_SECRET = process.env.APS_CLIENT_SECRET;
@@ -39,11 +36,33 @@ const PREFIX = 'aps-xkt';
 // serverless 안전 상한(원본 파일 크기 기준). 넘으면 오프라인 변환으로 유도.
 const MAX_SOURCE_BYTES = 200 * 1024 * 1024;
 
-function json(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+// Vercel Node 함수 시그니처(느슨한 타입 — @vercel/node 의존 없이).
+interface Req {
+  method?: string;
+  headers: Record<string, string | string[] | undefined>;
+  query: Record<string, string | string[] | undefined>;
+  body?: unknown;
+}
+interface Res {
+  status: (code: number) => Res;
+  json: (body: unknown) => void;
+  setHeader: (k: string, v: string) => void;
+}
+
+function supa() {
+  return createClient(SUPABASE_URL as string, SERVICE_ROLE as string, {
+    auth: { persistSession: false },
   });
+}
+
+function cachePath(urn: string): string {
+  const key = createHash('sha1').update(urn).digest('hex');
+  return `${PREFIX}/${key}/model.xkt`;
+}
+
+async function cachedUrl(urn: string): Promise<string | null> {
+  const { data } = await supa().storage.from(BUCKET).createSignedUrl(cachePath(urn), 3600);
+  return data?.signedUrl ?? null;
 }
 
 async function mintToken(): Promise<string> {
@@ -58,7 +77,7 @@ async function mintToken(): Promise<string> {
   return d.access_token;
 }
 
-/** Model Derivative 매니페스트에서 SVF 뷰어블(graphics/autodesk-svf)의 GUID 를 찾는다. */
+/** 매니페스트에서 SVF 뷰어블(graphics/autodesk-svf)의 GUID 를 찾는다. */
 async function findSvfGuid(urn: string, token: string): Promise<string | null> {
   const res = await fetch(`${APS}/modelderivative/v2/designdata/${urn}/manifest`, {
     headers: { authorization: `Bearer ${token}` },
@@ -79,130 +98,115 @@ async function findSvfGuid(urn: string, token: string): Promise<string | null> {
   return found;
 }
 
-/** 캐시 오브젝트 경로(URN 해시 기반). */
-function cachePath(urn: string): string {
-  const key = createHash('sha1').update(urn).digest('hex');
-  return `${PREFIX}/${key}/model.xkt`;
-}
+export default async function handler(req: Req, res: Res): Promise<void> {
+  const send = (status: number, body: unknown) => {
+    res.setHeader('cache-control', 'no-store');
+    res.status(status).json(body);
+  };
 
-function supa() {
-  return createClient(SUPABASE_URL as string, SERVICE_ROLE as string, {
-    auth: { persistSession: false },
-  });
-}
-
-/** 저장된 캐시 XKT 의 서명 URL(없으면 null). */
-async function cachedUrl(urn: string): Promise<string | null> {
-  const path = cachePath(urn);
-  const { data } = await supa().storage.from(BUCKET).createSignedUrl(path, 3600);
-  return data?.signedUrl ?? null;
-}
-
-export default async function handler(req: Request): Promise<Response> {
-  if (!APS_CLIENT_ID || !APS_CLIENT_SECRET) return json({ error: 'APS 환경변수 미설정' }, 500);
-  if (!SUPABASE_URL || !SERVICE_ROLE) return json({ error: 'Supabase 환경변수 미설정' }, 500);
-
-  // 로그인한 MIR 사용자만.
-  const bearer = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
-  if (!bearer) return json({ error: 'missing token' }, 401);
-  const { data: userData, error: userErr } = await supa().auth.getUser(bearer);
-  if (userErr || !userData?.user) return json({ error: 'invalid session' }, 401);
-
-  const url = new URL(req.url);
-
-  // ── GET: 캐시 상태만 조회(변환 안 함) ──────────────────────────────
-  if (req.method === 'GET') {
-    const urn = url.searchParams.get('urn') ?? '';
-    if (!urn) return json({ error: 'urn 필요' }, 400);
-    const cached = await cachedUrl(urn);
-    return json(cached ? { ready: true, url: cached } : { ready: false });
-  }
-
-  if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
-
-  // ── POST: 변환 실행 ───────────────────────────────────────────────
-  let body: { urn?: string; size?: number };
   try {
-    body = (await req.json()) as { urn?: string; size?: number };
-  } catch {
-    return json({ error: 'JSON 본문 필요' }, 400);
-  }
-  const urn = body.urn ?? '';
-  if (!urn) return json({ error: 'urn 필요' }, 400);
+    if (!APS_CLIENT_ID || !APS_CLIENT_SECRET) return send(500, { error: 'APS 환경변수 미설정' });
+    if (!SUPABASE_URL || !SERVICE_ROLE) return send(500, { error: 'Supabase 환경변수 미설정' });
 
-  // 이미 캐시돼 있으면 바로 반환(재변환 방지).
-  const already = await cachedUrl(urn);
-  if (already) return json({ ready: true, url: already });
+    // 로그인한 MIR 사용자만.
+    const authHeader = req.headers['authorization'];
+    const bearer = (Array.isArray(authHeader) ? authHeader[0] : authHeader || '').replace(
+      /^Bearer\s+/i,
+      '',
+    );
+    if (!bearer) return send(401, { error: 'missing token' });
+    const { data: userData, error: userErr } = await supa().auth.getUser(bearer);
+    if (userErr || !userData?.user) return send(401, { error: 'invalid session' });
 
-  // serverless 안전 상한 — 초대형은 오프라인 변환으로 유도.
-  if (typeof body.size === 'number' && body.size > MAX_SOURCE_BYTES) {
-    return json(
-      {
+    // ── GET: 캐시 상태만 조회(변환 안 함, 무거운 import 없음) ──────────
+    if (req.method === 'GET') {
+      const q = req.query['urn'];
+      const urn = (Array.isArray(q) ? q[0] : q) ?? '';
+      if (!urn) return send(400, { error: 'urn 필요' });
+      const cached = await cachedUrl(urn);
+      return send(200, cached ? { ready: true, url: cached } : { ready: false });
+    }
+
+    if (req.method !== 'POST') return send(405, { error: 'method not allowed' });
+
+    // ── POST: 변환 실행 ─────────────────────────────────────────────
+    const body = (req.body ?? {}) as { urn?: string; size?: number };
+    const urn = body.urn ?? '';
+    if (!urn) return send(400, { error: 'urn 필요' });
+
+    // 이미 캐시돼 있으면 바로 반환.
+    const already = await cachedUrl(urn);
+    if (already) return send(200, { ready: true, url: already });
+
+    // serverless 안전 상한 — 초대형은 오프라인 변환으로 유도.
+    if (typeof body.size === 'number' && body.size > MAX_SOURCE_BYTES) {
+      return send(413, {
         tooLarge: true,
         limitMB: Math.round(MAX_SOURCE_BYTES / (1024 * 1024)),
         sizeMB: Math.round(body.size / (1024 * 1024)),
         message: '이 모델은 서버리스 변환 한도를 초과합니다. 오프라인/배치 변환이 필요합니다.',
-      },
-      413,
-    );
-  }
-
-  let workDir: string | null = null;
-  try {
-    const token = await mintToken();
-    const guid = await findSvfGuid(urn, token);
-    if (!guid) {
-      return json({ error: 'SVF 뷰어블을 찾을 수 없습니다(변환 전이거나 3D 파생 없음).' }, 422);
+      });
     }
 
-    // 1) SVF → 중간표현 → glTF (svf-utils, /tmp)
-    const authProvider = new TwoLeggedAuthenticationProvider(APS_CLIENT_ID, APS_CLIENT_SECRET);
-    const reader = await SVFReader.FromDerivativeService(urn, guid, authProvider);
-    const scene = await reader.read();
+    // 무거운 변환기는 여기서만 지연 로드(모듈 초기화 실패로 500 나는 것 방지).
+    const { mkdtemp, readdir, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { SVFReader, GLTFWriter, TwoLeggedAuthenticationProvider } = await import('svf-utils');
+    const { convert2xkt } = await import('@xeokit/xeokit-convert');
 
-    workDir = await mkdtemp(join(tmpdir(), 'aps-'));
-    const gltfDir = join(workDir, 'gltf');
-    const writer = new GLTFWriter({
-      deduplicate: true,
-      skipUnusedUvs: true,
-      center: false, // 실좌표 유지(지형/타 모델과 정합)
-      log: () => {},
-    });
-    await writer.write(scene, gltfDir);
+    const token = await mintToken();
+    const guid = await findSvfGuid(urn, token);
+    if (!guid) return send(422, { error: 'SVF 뷰어블을 찾을 수 없습니다(변환 전이거나 3D 파생 없음).' });
 
-    // svf-utils 는 output.gltf(+.bin) 를 쓴다 — 실제 .gltf 파일명을 찾는다.
-    const files = await readdir(gltfDir);
-    const gltfName = files.find((f) => f.toLowerCase().endsWith('.gltf'));
-    if (!gltfName) return json({ error: 'glTF 산출 실패' }, 500);
-    const gltfPath = join(gltfDir, gltfName);
+    let workDir: string | null = null;
+    try {
+      // 1) SVF → 중간표현 → glTF (svf-utils, /tmp)
+      const authProvider = new TwoLeggedAuthenticationProvider(APS_CLIENT_ID, APS_CLIENT_SECRET);
+      const reader = await SVFReader.FromDerivativeService(urn, guid, authProvider);
+      const scene = await reader.read();
 
-    // 2) glTF → XKT (단일 파일, xeokit 네이티브 경량)
-    let xkt: ArrayBuffer | null = null;
-    await convert2xkt({
-      source: gltfPath,
-      outputXKT: (buf: ArrayBuffer) => {
-        xkt = buf;
-      },
-      log: () => {},
-    });
-    if (!xkt) return json({ error: 'XKT 변환 실패' }, 500);
-
-    // 3) Supabase 파생 캐시에 업로드 → 서명 URL 반환
-    const path = cachePath(urn);
-    const { error: upErr } = await supa()
-      .storage.from(BUCKET)
-      .upload(path, Buffer.from(xkt as ArrayBuffer), {
-        contentType: 'application/octet-stream',
-        upsert: true,
+      workDir = await mkdtemp(join(tmpdir(), 'aps-'));
+      const gltfDir = join(workDir, 'gltf');
+      const writer = new GLTFWriter({
+        deduplicate: true,
+        skipUnusedUvs: true,
+        center: false, // 실좌표 유지(지형/타 모델과 정합)
+        log: () => {},
       });
-    if (upErr) return json({ error: `업로드 실패: ${upErr.message}` }, 500);
+      await writer.write(scene, gltfDir);
 
-    const signed = await cachedUrl(urn);
-    if (!signed) return json({ error: '서명 URL 발급 실패' }, 500);
-    return json({ ready: true, url: signed });
+      const files = await readdir(gltfDir);
+      const gltfName = files.find((f) => f.toLowerCase().endsWith('.gltf'));
+      if (!gltfName) return send(500, { error: 'glTF 산출 실패' });
+
+      // 2) glTF → XKT (단일 파일)
+      let xkt: ArrayBuffer | null = null;
+      await convert2xkt({
+        source: join(gltfDir, gltfName),
+        outputXKT: (buf: ArrayBuffer) => {
+          xkt = buf;
+        },
+        log: () => {},
+      });
+      if (!xkt) return send(500, { error: 'XKT 변환 실패' });
+
+      // 3) Supabase 파생 캐시에 업로드 → 서명 URL 반환
+      const { error: upErr } = await supa()
+        .storage.from(BUCKET)
+        .upload(cachePath(urn), Buffer.from(xkt as ArrayBuffer), {
+          contentType: 'application/octet-stream',
+          upsert: true,
+        });
+      if (upErr) return send(500, { error: `업로드 실패: ${upErr.message}` });
+
+      const signed = await cachedUrl(urn);
+      if (!signed) return send(500, { error: '서명 URL 발급 실패' });
+      return send(200, { ready: true, url: signed });
+    } finally {
+      if (workDir) await rm(workDir, { recursive: true, force: true }).catch(() => {});
+    }
   } catch (e) {
-    return json({ error: `변환 실패: ${(e as Error).message}` }, 500);
-  } finally {
-    if (workDir) await rm(workDir, { recursive: true, force: true }).catch(() => {});
+    return send(500, { error: `변환 실패: ${(e as Error)?.message ?? String(e)}` });
   }
 }

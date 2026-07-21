@@ -108,12 +108,22 @@ export function ThreeDTest() {
         : {};
       const urn = f.accUrn;
 
+      // 서버가 JSON이 아닌 에러(플랫폼 500 등)를 줘도 원문을 드러낸다.
+      const readJson = async (r: Response): Promise<Record<string, unknown>> => {
+        const text = await r.text();
+        try {
+          return JSON.parse(text) as Record<string, unknown>;
+        } catch {
+          throw new Error(`서버 오류(${r.status}): ${text.slice(0, 160)}`);
+        }
+      };
+
       setBusy(true);
       setStatus(`변환 캐시 확인 중… ${f.name}`);
       try {
         // 1) 캐시 조회
         const chk = await fetch(`/api/aps-convert?urn=${encodeURIComponent(urn)}`, { headers: authz });
-        const cj = (await chk.json()) as { ready?: boolean; url?: string };
+        const cj = (await readJson(chk)) as { ready?: boolean; url?: string };
         if (cj.ready && cj.url) {
           setStatus(`불러오는 중… ${f.name}`);
           mountXkt({ src: cj.url }, f.name);
@@ -126,7 +136,7 @@ export function ThreeDTest() {
           headers: { 'content-type': 'application/json', ...authz },
           body: JSON.stringify({ urn, size: f.size ?? undefined }),
         });
-        const rj = (await res.json()) as {
+        const rj = (await readJson(res)) as {
           ready?: boolean;
           url?: string;
           tooLarge?: boolean;
