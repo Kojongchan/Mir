@@ -3,26 +3,36 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
-## 📋 T1 — 3D뷰(신규 테스트) 네이티브 메뉴 (2026-07-21)
+## 📋 T1 — 3D뷰(신규 테스트) 네이티브 메뉴: xeokit로 스택 교정 (2026-07-21)
 > branch `claude/3d-view-testing-hlrugl`. typecheck·build 통과. **확정 전까지 main 미머지**(협의됨).
 
+### ⛔ 초판 실패 → 교정 (핵심)
+- **초판(폐기): Three.js + web-ifc** — 브라우저에서 IFC 런타임 파싱. 527MB 터널 IFC 드롭 시
+  회전/확대가 안 될 정도로 렉(=논문 때 That Open 실패 + ACC 렉의 재현). **금지 스택**이었음.
+- **교정: xeokit(더블프리시전) + 서버 사전변환 XKT**. 엔진만 xeokit, IFC는 브라우저에서 파싱하지
+  않고 서버 `convert2xkt`로 XKT를 구워 스트리밍(문서 V1_INTEGRATION.md §0·§5·§1-3 확정 설계).
+
 ### ✅ 한 일
-- 사용자 결정: iframe 임베드 대신 **자체 뷰어를 플랫폼 네이티브 메뉴로 직접** 띄운다.
-- 레포에 이미 있는 자체 엔진 `src/viewer/IfcViewer.ts`(Three.js + web-ifc, 실좌표·선택·측정·단면)를
-  재사용해 신규 페이지 **`src/pages/ThreeDTest.tsx`** 추가 — ACC/Supabase/인증 없이 **로컬 `.ifc`
-  드롭/선택 → 즉시 렌더**(frameAll)·선택(PropertiesPanel)·Toolbar. 테스트 안내 배너 + 드래그오버 UI.
-- 라우트 `/project/:projectId/model-test`(App.tsx, lazy 코드스플릿) + 좌측 네비 '3D뷰 (신규 테스트)'
-  (ProjectNav, `model-3d` 아이콘). CSS `.threed-test*` 추가.
+- `npm install @xeokit/xeokit-sdk`(^2.6.112). **`src/pages/ThreeDTest.tsx` 전면 재작성** —
+  xeokit `Viewer({dtxEnabled:true})` + `XKTLoaderPlugin`. 로컬 **`.xkt`** 드롭/선택 →
+  `loader.load({xkt: ArrayBuffer})`(브라우저 파싱 없음) → `cameraFlight.flyTo` → **클릭 픽**
+  (entity.id + metaObject 이름/유형 → MIR_SMART DB 조인 지점). IFC 드롭 시 "서버 변환 후 XKT" 안내.
+- 라우트 `/project/:projectId/model-test`(lazy 코드스플릿, xeokit는 이 청크에만 896kB — 초기
+  번들 무영향) + 좌측 네비 '3D뷰 (신규 테스트)'. CSS `.threed-test*`(캔버스·속성패널) 갱신.
+- web-ifc/three 는 **다른 메뉴(자료관리 파일 열기 IfcModelViewer 등)가 여전히 사용** → 전역 제거 X.
+  이 테스트 메뉴에서만 잘못된 스택을 걷어냄.
 
 ### 🔜 다음 할 일 / 미해결
-- **라이브 눈확인**(이 샌드박스는 auth 뒤 화면 렌더 불가): 로그인→프로젝트→'3D뷰 (신규 테스트)'에서
-  실제 IFC 드롭해 렌더/선택/측정/단면 확인. OK 확인되면 그때 main 머지 검토.
-- 확장 경로(문서 V1_INTEGRATION.md): 지형 glTF·DWG 선형 로더를 얹어 **통합 씬(실좌표 정합)**으로.
-  이땐 기존 xeokit 데모의 에셋(terrain.glb, dwg_lines.json, 샘플 XKT)·코드가 있으면 넘겨줄 것.
+- **라이브 눈확인**(샌드박스는 auth 뒤 렌더 불가): 로그인→'3D뷰 (신규 테스트)'에서 **이미 변환된
+  `.xkt`**(다른 레포 ingest 산출물) 드롭 → 60fps·클릭 픽 확인. OK면 main 머지 검토.
+- **필요한 한 조각: IFC→XKT 변환 엔드포인트.** "드롭한 IFC → 서버 convert2xkt → XKT URL 반환"이
+  v1에 없음(대용량이라 Vercel serverless 부적합 — ingest 오프라인 변환 후 Supabase 저장·스트리밍이 정석).
+  다른 레포 `ingest/ifc2xkt`(convert2xkt)가 변환은 이미 함 → 연결 방식(엔드포인트 vs 사전변환 저장) 결정 대기.
+- 확장: 지형 glTF·DWG 선형을 같은 xeokit 씬에 실좌표 정합(문서 §1~§5). 기존 데모 에셋 있으면 넘겨줄 것.
 
 ### 인수인계 한 줄
-자체 뷰어(Three.js+web-ifc)를 네이티브 '3D뷰(신규 테스트)' 메뉴로 붙임(로컬 IFC 드롭 테스트). typecheck·build OK.
-확정 전 미머지 — 라이브 IFC 렌더 눈확인 후 지형/선형 통합 씬으로 확장.
+'3D뷰(신규 테스트)' 메뉴를 **Three.js+web-ifc(폐기) → xeokit+XKT(확정 스택)**로 교정. 로컬 .xkt 드롭으로
+엔진 검증(60fps·픽). typecheck·build OK, 확정 전 미머지. 다음은 IFC→XKT 변환 연결(엔드포인트/사전변환) 결정.
 
 ---
 ## 📋 F2 — 협업·이슈 고도화(타입 분화·3뷰·뷰포인트·출력·현장등록) (2026-07-10)
