@@ -1,29 +1,36 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import { Viewer, XKTLoaderPlugin } from '@xeokit/xeokit-sdk';
+import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
+import { useProjectRole } from '../auth/useProjectRole';
+import { supabase } from '../lib/supabase';
+import { isAccModel } from '../lib/aps';
 import { UiIcon } from '../components/icons/UiIcon';
 import { errMessage } from '../lib/errors';
 
 /**
  * 3D뷰 (신규 테스트) — 확정 스택(xeokit + 서버 사전변환 XKT)으로 붙인 네이티브 메뉴.
  *
- * ⛔ Three.js / web-ifc(브라우저 런타임 IFC 파싱) 금지 — 대용량에서 렉·메모리 폭발
- *    (논문 때 That Open 실패 + ACC 렉의 재현). 그래서 초판(web-ifc)은 폐기했다.
- * ✅ 엔진 = xeokit(더블프리시전, LOD/컬링/DTX). 지오메트리 = 서버에서 convert2xkt 로
- *    구운 경량 XKT 만 스트리밍(브라우저는 파싱하지 않음).
+ * ⛔ Three.js / web-ifc(브라우저 런타임 IFC 파싱) 금지 — 대용량에서 렉·메모리 폭발.
+ * ✅ 엔진 = xeokit(더블프리시전, LOD/컬링/DTX). 지오메트리 = 서버에서 구운 경량 XKT 만
+ *    스트리밍(브라우저는 파싱하지 않음).
  *
- * 이 메뉴는 로컬 `.xkt`(이미 변환된 산출물)를 드롭/선택해 **xeokit 엔진 자체를 60fps로
- * 검증**한다. IFC 입력은 반드시 서버(convert2xkt→XKT) 경유 — 아래 안내 참조.
- * 확정 전까지 main 미머지(협의됨).
+ * 주 시나리오: **ACC(자료관리)에 올라간 모델(rvt·nwd·dwg·ifc)을 선택 → 서버 변환
+ * (SVF→glTF→XKT, `/api/aps-convert`, 캐시) → xeokit 로드**. 부가로 로컬 `.xkt` 드롭도
+ * 지원(이미 변환된 산출물 테스트용). 확정 전까지 main 미머지(협의됨).
  */
 export function ThreeDTest() {
+  const { projectId = '' } = useParams();
+  const { canEdit } = useProjectRole(projectId);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
   const loaderRef = useRef<XKTLoaderPlugin | null>(null);
   const [status, setStatus] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [modelName, setModelName] = useState<string | null>(null);
   const [pick, setPick] = useState<{ id: string; name?: string; type?: string } | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   // xeokit Viewer 1회 생성/파기.
   useEffect(() => {
@@ -41,7 +48,7 @@ export function ThreeDTest() {
     viewerRef.current = viewer;
     loaderRef.current = new XKTLoaderPlugin(viewer);
 
-    // 클릭 픽 → 엔티티 ID(+메타) → 여기서 MIR_SMART DB 조인 지점.
+    // 클릭 픽 → 엔티티 ID(+메타) → MIR_SMART DB 조인 지점.
     const onClick = viewer.scene.input.on('mouseclicked', (canvasPos: number[]) => {
       const hit = viewer.scene.pick({ canvasPos });
       const entity = hit?.entity as { id?: string | number; isObject?: boolean } | undefined;
@@ -62,55 +69,124 @@ export function ThreeDTest() {
     };
   }, []);
 
-  const loadFile = useCallback(async (file: File) => {
+  /** XKT(로컬 ArrayBuffer 또는 원격 URL)를 뷰어에 올린다. */
+  const mountXkt = useCallback((params: { xkt?: ArrayBuffer; src?: string }, label: string) => {
     const viewer = viewerRef.current;
     const loader = loaderRef.current;
     if (!viewer || !loader) return;
-
-    if (/\.ifc$/i.test(file.name)) {
-      setStatus(
-        'IFC는 브라우저에서 파싱하지 않습니다(정책). 서버에서 XKT로 변환 후 .xkt 를 여세요.',
-      );
-      return;
-    }
-    if (!/\.xkt$/i.test(file.name)) {
-      setStatus(`.xkt 파일만 지원합니다 (선택: ${file.name})`);
-      return;
-    }
-
-    setLoading(true);
     setPick(null);
-    setStatus(`불러오는 중… ${file.name}`);
-    try {
-      // 기존 모델 제거(단일 모델 테스트).
-      const prev = viewer.scene.models['test'];
-      if (prev) prev.destroy();
+    const prev = viewer.scene.models['test'];
+    if (prev) prev.destroy();
 
-      const buf = await file.arrayBuffer();
-      const model = loader.load({ id: 'test', xkt: buf, edges: true });
-      model.on('loaded', () => {
-        viewer.cameraFlight.flyTo(model);
-        setModelName(file.name);
-        setStatus('');
-        setLoading(false);
-      });
-      model.on('error', (e: unknown) => {
-        setStatus(`불러오기 실패: ${errMessage(e)}`);
-        setLoading(false);
-      });
-    } catch (e) {
+    const model = loader.load({ id: 'test', edges: true, ...params });
+    model.on('loaded', () => {
+      viewer.cameraFlight.flyTo(model);
+      setModelName(label);
+      setStatus('');
+      setBusy(false);
+    });
+    model.on('error', (e: unknown) => {
       setStatus(`불러오기 실패: ${errMessage(e)}`);
-      setLoading(false);
-    }
+      setBusy(false);
+    });
   }, []);
 
-  const onPick = useCallback(
+  /** ACC 모델 선택 → 서버 변환(캐시) → XKT 로드. */
+  const openFromAcc = useCallback(
+    async (f: PickedAccFile) => {
+      if (!isAccModel(f.name)) {
+        setStatus(`3D 모델(rvt·nwd·dwg·ifc)만 지원합니다 (선택: ${f.name})`);
+        return;
+      }
+      if (!f.accUrn) {
+        setStatus('이 파일은 아직 APS 파생(URN)이 없습니다. ACC에서 변환 완료 후 다시 시도하세요.');
+        return;
+      }
+      const { data } = await supabase.auth.getSession();
+      const authz: Record<string, string> = data.session
+        ? { authorization: `Bearer ${data.session.access_token}` }
+        : {};
+      const urn = f.accUrn;
+
+      setBusy(true);
+      setStatus(`변환 캐시 확인 중… ${f.name}`);
+      try {
+        // 1) 캐시 조회
+        const chk = await fetch(`/api/aps-convert?urn=${encodeURIComponent(urn)}`, { headers: authz });
+        const cj = (await chk.json()) as { ready?: boolean; url?: string };
+        if (cj.ready && cj.url) {
+          setStatus(`불러오는 중… ${f.name}`);
+          mountXkt({ src: cj.url }, f.name);
+          return;
+        }
+        // 2) 변환 실행(최초 1회)
+        setStatus(`변환 중… ${f.name} (최초 1회, 수 분 소요될 수 있음)`);
+        const res = await fetch('/api/aps-convert', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...authz },
+          body: JSON.stringify({ urn, size: f.size ?? undefined }),
+        });
+        const rj = (await res.json()) as {
+          ready?: boolean;
+          url?: string;
+          tooLarge?: boolean;
+          sizeMB?: number;
+          limitMB?: number;
+          error?: string;
+        };
+        if (res.status === 413 && rj.tooLarge) {
+          setStatus(
+            `서버리스 변환 한도 초과(${rj.sizeMB}MB > ${rj.limitMB}MB). 오프라인/배치 변환이 필요합니다.`,
+          );
+          setBusy(false);
+          return;
+        }
+        if (!res.ok || !rj.ready || !rj.url) {
+          setStatus(`변환 실패: ${rj.error ?? res.statusText}`);
+          setBusy(false);
+          return;
+        }
+        setStatus(`불러오는 중… ${f.name}`);
+        mountXkt({ src: rj.url }, f.name);
+      } catch (e) {
+        setStatus(`변환/로드 실패: ${errMessage(e)}`);
+        setBusy(false);
+      }
+    },
+    [mountXkt],
+  );
+
+  /** 로컬 .xkt 드롭/선택(이미 변환된 산출물 테스트용). */
+  const loadLocal = useCallback(
+    async (file: File) => {
+      if (/\.ifc$|\.rvt$|\.nwd$|\.dwg$/i.test(file.name)) {
+        setStatus('원본 모델은 ACC에서 열어 서버 변환합니다("ACC에서 열기"). 로컬은 .xkt 만.');
+        return;
+      }
+      if (!/\.xkt$/i.test(file.name)) {
+        setStatus(`.xkt 파일만 지원합니다 (선택: ${file.name})`);
+        return;
+      }
+      setBusy(true);
+      setStatus(`불러오는 중… ${file.name}`);
+      try {
+        const buf = await file.arrayBuffer();
+        mountXkt({ xkt: buf }, file.name);
+      } catch (e) {
+        setStatus(`불러오기 실패: ${errMessage(e)}`);
+        setBusy(false);
+      }
+    },
+    [mountXkt],
+  );
+
+  const onLocalInput = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const f = e.target.files?.[0];
-      if (f) void loadFile(f);
+      if (f) void loadLocal(f);
       e.target.value = '';
     },
-    [loadFile],
+    [loadLocal],
   );
 
   const onDrop = useCallback(
@@ -118,9 +194,9 @@ export function ThreeDTest() {
       e.preventDefault();
       setDragOver(false);
       const f = e.dataTransfer.files?.[0];
-      if (f) void loadFile(f);
+      if (f) void loadLocal(f);
     },
-    [loadFile],
+    [loadLocal],
   );
 
   const fitAll = () => {
@@ -135,23 +211,25 @@ export function ThreeDTest() {
         <UiIcon name="cube" size={16} />
         <span>
           <strong>3D뷰 (신규 테스트)</strong> — 엔진 <strong>xeokit</strong>(더블프리시전) +
-          서버 사전변환 <strong>XKT</strong> 스트리밍. Three.js/web-ifc 런타임 IFC 파싱은
-          폐기(대용량 렉). 로컬 <code>.xkt</code> 를 드롭해 60fps를 확인하세요. IFC는 서버에서
-          <code>convert2xkt</code>로 변환 후 로드합니다.
+          서버 사전변환 <strong>XKT</strong> 스트리밍. <strong>ACC 모델(rvt·nwd·dwg·ifc)</strong>을
+          선택하면 서버가 변환(캐시)해 로드합니다. Three.js/web-ifc 런타임 파싱은 폐기(대용량 렉).
         </span>
       </div>
 
       <div className="threed-test__viewer">
         <div className="viewer-bar">
+          <button className="btn btn--sm btn--primary" onClick={() => setPickerOpen(true)} disabled={busy}>
+            <UiIcon name="folder" size={14} /> ACC에서 열기
+          </button>
           <button className="btn btn--sm" onClick={fitAll} disabled={!modelName}>
             전체 맞춤
           </button>
-          <label className="btn btn--sm btn--primary threed-test__open">
-            <UiIcon name="folder" size={14} /> XKT 열기
-            <input type="file" accept=".xkt" onChange={onPick} hidden />
+          <label className="btn btn--sm threed-test__open" title="이미 변환된 .xkt 테스트">
+            .xkt
+            <input type="file" accept=".xkt" onChange={onLocalInput} hidden />
           </label>
           <div className="spacer" />
-          {modelName && !loading && <span className="muted">{modelName}</span>}
+          {modelName && !busy && <span className="muted">{modelName}</span>}
           {status && <span className="muted">{status}</span>}
         </div>
 
@@ -165,14 +243,14 @@ export function ThreeDTest() {
           onDrop={onDrop}
         >
           <canvas ref={canvasRef} className="threed-test__canvas" />
-          {!modelName && !loading && (
+          {!modelName && !busy && (
             <div className="threed-test__empty">
               <UiIcon name="cube" size={40} />
               <p>
-                여기로 <strong>.xkt</strong> 파일을 드래그하거나 상단 <em>XKT 열기</em>를 누르세요.
+                상단 <em>ACC에서 열기</em>로 자료관리 모델(rvt·nwd·dwg·ifc)을 여세요.
               </p>
               <p className="threed-test__empty-sub">
-                (IFC는 서버 <code>convert2xkt</code> 변환 후 XKT로 로드 — 브라우저 파싱 금지)
+                (첫 열람 시 서버 변환 → 이후 캐시에서 즉시 로드 · 로컬 <strong>.xkt</strong> 드롭도 가능)
               </p>
             </div>
           )}
@@ -203,6 +281,18 @@ export function ThreeDTest() {
           </div>
         )}
       </div>
+
+      {pickerOpen && (
+        <AccFilePicker
+          projectId={projectId}
+          canEdit={canEdit}
+          onClose={() => setPickerOpen(false)}
+          onPick={(f) => {
+            setPickerOpen(false);
+            void openFromAcc(f);
+          }}
+        />
+      )}
     </div>
   );
 }

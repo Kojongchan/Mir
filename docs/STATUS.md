@@ -22,17 +22,31 @@
 - web-ifc/three 는 **다른 메뉴(자료관리 파일 열기 IfcModelViewer 등)가 여전히 사용** → 전역 제거 X.
   이 테스트 메뉴에서만 잘못된 스택을 걷어냄.
 
-### 🔜 다음 할 일 / 미해결
-- **라이브 눈확인**(샌드박스는 auth 뒤 렌더 불가): 로그인→'3D뷰 (신규 테스트)'에서 **이미 변환된
-  `.xkt`**(다른 레포 ingest 산출물) 드롭 → 60fps·클릭 픽 확인. OK면 main 머지 검토.
-- **필요한 한 조각: IFC→XKT 변환 엔드포인트.** "드롭한 IFC → 서버 convert2xkt → XKT URL 반환"이
-  v1에 없음(대용량이라 Vercel serverless 부적합 — ingest 오프라인 변환 후 Supabase 저장·스트리밍이 정석).
-  다른 레포 `ingest/ifc2xkt`(convert2xkt)가 변환은 이미 함 → 연결 방식(엔드포인트 vs 사전변환 저장) 결정 대기.
-- 확장: 지형 glTF·DWG 선형을 같은 xeokit 씬에 실좌표 정합(문서 §1~§5). 기존 데모 에셋 있으면 넘겨줄 것.
+### ✅ 한 일 (2차 — ACC→변환→xeokit 배선, 사용자 결정 'A로 시작')
+- **주 시나리오 구현**: 드랍이 아니라 **ACC(자료관리)에 올라간 rvt·nwd·dwg·ifc 를 선택 → 서버 변환
+  (SVF→glTF→XKT) → xeokit 로드**. ThreeDTest.tsx 에 기존 `AccFilePicker` 재사용 '**ACC에서 열기**'
+  버튼 + 변환 상태 흐름(캐시조회→변환→로드) + 클릭 픽. 로컬 `.xkt` 드롭은 보조로 유지.
+- **신규 서버리스 변환기 `api/aps-convert.ts`(Node 런타임)**: 매니페스트에서 SVF 뷰어블 GUID 추출 →
+  `svf-utils`(SVFReader.FromDerivativeService + GLTFWriter, center:false 실좌표 유지) → `@xeokit/
+  xeokit-convert`(convert2xkt, 단일 XKT) → Supabase `models` 버킷 `aps-xkt/{urn해시}/model.xkt` 로
+  **캐시 업로드** → 서명 URL 반환. GET=캐시조회, POST=변환. 원본 크기 상한(200MB) 초과 시 413(오프라인 유도).
+  기존 `/api/aps-*` 인증(Supabase 세션 bearer)·토큰(2-legged) 패턴 재사용. deps: `svf-utils@8`,
+  `@xeokit/xeokit-convert@1.3`(서버 전용 — 프런트 번들에 안 들어감).
+
+### 🔜 다음 할 일 / 미해결 (배포 환경에서 실검증 필요 — 샌드박스는 APS 크리덴셜·실행 불가)
+- **배포 검증 항목**: ① `api/aps-convert` 가 Vercel **nodejs 런타임 + Web 핸들러(Request/Response)**로 뜨는지
+  (기존 함수는 전부 edge라 이 조합은 이 레포 첫 사례 — 안 뜨면 `(VercelRequest,res)` 시그니처로 전환).
+  ② env `APS_CLIENT_ID/SECRET`·`SUPABASE_SERVICE_ROLE_KEY` 서버 설정. ③ `models` 버킷에 service_role
+  업로드 RLS 허용. ④ 중소형 ACC 모델로 변환→로드→클릭 픽 눈확인. ⑤ 좌표(R4): center:false glTF 가
+  실좌표로 나오는지(지형 정합 관건).
+- **초대형(527MB급)**: serverless 한도 초과(413) → 오프라인/배치 변환(ingest)로 XKT 굽고 같은 캐시 경로에
+  올리는 경로(B) 후속. 캐시 키(urn 해시)·버킷 경로는 이미 맞춰둠.
+- 확장: 지형 glTF·DWG 선형을 같은 xeokit 씬에 실좌표 정합(문서 §1~§5).
 
 ### 인수인계 한 줄
-'3D뷰(신규 테스트)' 메뉴를 **Three.js+web-ifc(폐기) → xeokit+XKT(확정 스택)**로 교정. 로컬 .xkt 드롭으로
-엔진 검증(60fps·픽). typecheck·build OK, 확정 전 미머지. 다음은 IFC→XKT 변환 연결(엔드포인트/사전변환) 결정.
+'3D뷰(신규 테스트)'를 xeokit+XKT로 교정 후, **ACC 모델 선택→서버 변환(SVF→glTF→XKT, `api/aps-convert`,
+캐시)→xeokit 로드** 배선까지 완료(A안). typecheck·build·api standalone tsc OK, 확정 전 미머지.
+다음은 배포 환경에서 변환 실동작 검증(런타임/ENV/버킷 RLS/좌표) → OK면 초대형용 오프라인 변환(B)로 확장.
 
 ---
 ## 📋 F2 — 협업·이슈 고도화(타입 분화·3뷰·뷰포인트·출력·현장등록) (2026-07-10)
