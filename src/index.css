@@ -3205,6 +3205,66 @@ button.danger:hover:not(:disabled) {
   white-space: nowrap;
 }
 
+/* ── 3D뷰(신규 테스트) 메뉴 ─────────────────────────────────────────── */
+.threed-test {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.threed-test__note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  background: var(--color-surface-2, var(--color-surface));
+  border-bottom: 1px solid var(--color-border);
+}
+.threed-test__note code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  font-size: 12px;
+}
+.threed-test__viewer {
+  flex: 1;
+  min-height: 0;
+}
+.threed-test__open {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+.threed-test__viewport {
+  position: relative;
+  transition: box-shadow 0.15s ease;
+}
+.threed-test__viewport.is-dragover {
+  box-shadow: inset 0 0 0 3px var(--color-brand-primary);
+}
+.threed-test__empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  pointer-events: none;
+  text-align: center;
+  color: var(--color-text-tertiary);
+}
+.threed-test__empty p {
+  margin: 0;
+  font-size: 14px;
+}
+
 /* 관리자 콘솔을 셸 안에 임베드할 때 */
 .admin-embed {
   padding-bottom: 24px;

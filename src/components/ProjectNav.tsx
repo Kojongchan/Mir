@@ -25,6 +25,7 @@ export function ProjectNav() {
     { to: `${base}/model`, icon: 'model-3d', label: '통합모델 (3D)' },
     { to: `${base}/viewer`, icon: 'schedule-4d', label: '공정관리 (4D)' },
     { to: `${base}/clash`, icon: 'clash', label: '간섭검토' },
+    { to: `${base}/model-test`, icon: 'model-3d', label: '3D뷰 (신규 테스트)' },
     { to: `${base}/quantities`, icon: 'qto', label: '물량 산출 (QTO)' },
     { to: `${base}/drawings`, icon: 'drawing', label: '도면 (2D)' },
     { to: `${base}/logs`, icon: 'daily-report', label: '공사일보' },

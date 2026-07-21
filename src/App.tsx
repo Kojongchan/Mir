@@ -26,6 +26,8 @@ const Admin = lazy(() => named(import('./pages/Admin'), 'Admin'));
 const FileViewer = lazy(() => named(import('./pages/FileViewer'), 'FileViewer'));
 const AccModels = lazy(() => named(import('./pages/AccModels'), 'AccModels'));
 const StyleGuide = lazy(() => named(import('./pages/StyleGuide'), 'StyleGuide'));
+// 3D뷰(신규 테스트) — 자체 뷰어 엔진(Three.js+web-ifc)을 네이티브 메뉴로 검증.
+const ThreeDTest = lazy(() => named(import('./pages/ThreeDTest'), 'ThreeDTest'));
 
 /** 지연 로드 라우트의 로딩 자리표시(Suspense fallback). */
 function RouteFallback() {
@@ -110,6 +112,8 @@ export default function App() {
             <Route path="viewer" element={<AccModels key="fourd" mode4d />} />
             {/* 간섭검토 = APS(ACC) 모델 위 간섭(S49). */}
             <Route path="clash" element={<AccModels key="clash" autoClash />} />
+            {/* 3D뷰(신규 테스트) — iframe 없이 자체 뷰어를 직접 띄우는 실험 메뉴. */}
+            <Route path="model-test" element={<ThreeDTest />} />
             <Route path="quantities" element={<Quantities />} />
             <Route path="drawings" element={<Drawings />} />
             <Route path="docs" element={<DocumentManager />} />

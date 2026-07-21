@@ -3,6 +3,28 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 T1 — 3D뷰(신규 테스트) 네이티브 메뉴 (2026-07-21)
+> branch `claude/3d-view-testing-hlrugl`. typecheck·build 통과. **확정 전까지 main 미머지**(협의됨).
+
+### ✅ 한 일
+- 사용자 결정: iframe 임베드 대신 **자체 뷰어를 플랫폼 네이티브 메뉴로 직접** 띄운다.
+- 레포에 이미 있는 자체 엔진 `src/viewer/IfcViewer.ts`(Three.js + web-ifc, 실좌표·선택·측정·단면)를
+  재사용해 신규 페이지 **`src/pages/ThreeDTest.tsx`** 추가 — ACC/Supabase/인증 없이 **로컬 `.ifc`
+  드롭/선택 → 즉시 렌더**(frameAll)·선택(PropertiesPanel)·Toolbar. 테스트 안내 배너 + 드래그오버 UI.
+- 라우트 `/project/:projectId/model-test`(App.tsx, lazy 코드스플릿) + 좌측 네비 '3D뷰 (신규 테스트)'
+  (ProjectNav, `model-3d` 아이콘). CSS `.threed-test*` 추가.
+
+### 🔜 다음 할 일 / 미해결
+- **라이브 눈확인**(이 샌드박스는 auth 뒤 화면 렌더 불가): 로그인→프로젝트→'3D뷰 (신규 테스트)'에서
+  실제 IFC 드롭해 렌더/선택/측정/단면 확인. OK 확인되면 그때 main 머지 검토.
+- 확장 경로(문서 V1_INTEGRATION.md): 지형 glTF·DWG 선형 로더를 얹어 **통합 씬(실좌표 정합)**으로.
+  이땐 기존 xeokit 데모의 에셋(terrain.glb, dwg_lines.json, 샘플 XKT)·코드가 있으면 넘겨줄 것.
+
+### 인수인계 한 줄
+자체 뷰어(Three.js+web-ifc)를 네이티브 '3D뷰(신규 테스트)' 메뉴로 붙임(로컬 IFC 드롭 테스트). typecheck·build OK.
+확정 전 미머지 — 라이브 IFC 렌더 눈확인 후 지형/선형 통합 씬으로 확장.
+
+---
 ## 📋 F2 — 협업·이슈 고도화(타입 분화·3뷰·뷰포인트·출력·현장등록) (2026-07-10)
 > branch `claude/issue-collaboration-upgrade-o4uzc0`. typecheck·build 통과.
 > .docx/xlsx 생성은 node 스모크 테스트로 실검증(3종 양식 렌더·이스케이프·잔여태그 0 확인).
