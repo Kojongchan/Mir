@@ -43,10 +43,32 @@
   올리는 경로(B) 후속. 캐시 키(urn 해시)·버킷 경로는 이미 맞춰둠.
 - 확장: 지형 glTF·DWG 선형을 같은 xeokit 씬에 실좌표 정합(문서 §1~§5).
 
+### ✅ 한 일 (3차 — 변환 워커 분리: 모두에게 자동·큰 파일 커버)
+- 서버리스 동기 변환이 **504 타임아웃**(큰 모델은 60초 초과 — 구조적 한계) → 사용자 결정대로
+  **변환을 장시간 실행 컨테이너(A: Railway 등)로 분리**. 변환은 **모델당 1회, 공용 캐시 공유**라
+  누가 한 번 열면 이후 **모든 사용자**가 캐시에서 즉시 로드.
+- **`worker/`(신규 배포 단위)**: Node HTTP 서버(`server.mjs`, 무프레임워크). `POST /convert {urn}`
+  → 즉시 `{status:'processing'}` + **백그라운드** 변환(svf-utils→convert2xkt, `deduplicate:false`
+  속도 우선) → Supabase `models` 버킷 `aps-xkt/{sha1(urn)}/model.xkt` 업로드. 진행중 URN 메모리
+  중복 방지. `x-worker-secret` 인증. 자체 `package.json`(svf-utils·xeokit-convert). `README.md` 포함.
+- **`api/aps-convert.ts` 를 edge 로 경량화**: 무거운 변환기 제거 → GET=캐시조회(존재확인+서명URL),
+  POST=캐시 확인 후 **워커에 위임**(WORKER_URL/SECRET). 500/504 원인(무거운 import·nodejs런타임) 소거.
+- **프런트 폴링**: POST 후 `{status:'processing'}` 면 4초 간격으로 GET 캐시 폴링(최대 20분, 경과초 표시)
+  → XKT 뜨면 자동 로드. 로컬 `.xkt` 드롭 보조 유지.
+- 루트 `package.json` 에서 svf-utils·xeokit-convert 제거(워커로 이동) → Vercel 번들 경량.
+
+### 🔜 다음 할 일 / 미해결 (사용자: Railway 워커 배포 + Vercel/Supabase 설정)
+- **Railway**: worker/ 를 Root Directory 로 배포 + env(APS·SUPABASE·WORKER_SECRET) → 공개 URL 확보.
+- **Vercel env**: `WORKER_URL`(워커 URL)·`WORKER_SECRET`(워커와 동일) 추가 후 재배포.
+- **Supabase**: `models` 버킷에 service_role 업로드 + `aps-xkt/**` 경로 서명 URL 읽기 가능(RLS) 확인.
+- 검증: 'ACC에서 열기'→변환 워커 동작→캐시 히트→xeokit 로드→클릭 픽. 좌표(R4) 실좌표 확인.
+- (선택) **업로드 시 자동 변환 트리거** — 아무도 첫 열람에서 안 기다리게. 속도 더 필요하면 워커 인스턴스
+  스펙↑ 또는 사전변환.
+
 ### 인수인계 한 줄
-'3D뷰(신규 테스트)'를 xeokit+XKT로 교정 후, **ACC 모델 선택→서버 변환(SVF→glTF→XKT, `api/aps-convert`,
-캐시)→xeokit 로드** 배선까지 완료(A안). typecheck·build·api standalone tsc OK, 확정 전 미머지.
-다음은 배포 환경에서 변환 실동작 검증(런타임/ENV/버킷 RLS/좌표) → OK면 초대형용 오프라인 변환(B)로 확장.
+변환을 **워커(worker/, 컨테이너)로 분리**해 '모두에게 자동·큰 파일 OK' 구조 완성 — api/aps-convert(edge)는
+캐시조회+워커위임, 프런트는 캐시 폴링, 결과는 Supabase 공용 캐시(모델당 1회). typecheck·build·worker syntax OK,
+확정 전 미머지. 다음은 사용자가 Railway 워커 배포 + Vercel/Supabase 설정 → 실동작 검증.
 
 ---
 ## 📋 F2 — 협업·이슈 고도화(타입 분화·3뷰·뷰포인트·출력·현장등록) (2026-07-10)

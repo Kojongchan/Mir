@@ -108,61 +108,69 @@ export function ThreeDTest() {
         : {};
       const urn = f.accUrn;
 
-      // 서버가 JSON이 아닌 에러(플랫폼 500/504 등)를 줘도 원문을 드러낸다.
+      // 서버가 JSON이 아닌 에러(플랫폼 오류 등)를 줘도 원문을 드러낸다.
       const readJson = async (r: Response): Promise<Record<string, unknown>> => {
         const text = await r.text();
         try {
           return JSON.parse(text) as Record<string, unknown>;
         } catch {
-          if (r.status === 504 || /TIMEOUT/i.test(text)) {
-            throw new Error(
-              '서버 변환이 시간 초과(504)됐습니다. 이 모델은 서버리스 변환 한도를 넘어 오프라인/배치 변환이 필요합니다.',
-            );
-          }
           throw new Error(`서버 오류(${r.status}): ${text.slice(0, 160)}`);
         }
       };
+      const checkCache = async () => {
+        const r = await fetch(`/api/aps-convert?urn=${encodeURIComponent(urn)}`, { headers: authz });
+        return (await readJson(r)) as { ready?: boolean; url?: string };
+      };
+      const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
       setBusy(true);
       setStatus(`변환 캐시 확인 중… ${f.name}`);
       try {
-        // 1) 캐시 조회
-        const chk = await fetch(`/api/aps-convert?urn=${encodeURIComponent(urn)}`, { headers: authz });
-        const cj = (await readJson(chk)) as { ready?: boolean; url?: string };
+        // 1) 캐시 조회 — 이미 있으면 즉시 로드(모든 사용자 공통).
+        const cj = await checkCache();
         if (cj.ready && cj.url) {
           setStatus(`불러오는 중… ${f.name}`);
           mountXkt({ src: cj.url }, f.name);
           return;
         }
-        // 2) 변환 실행(최초 1회)
-        setStatus(`변환 중… ${f.name} (최초 1회, 수 분 소요될 수 있음)`);
+
+        // 2) 변환 워커에 작업 위임(즉시 반환).
         const res = await fetch('/api/aps-convert', {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...authz },
-          body: JSON.stringify({ urn, size: f.size ?? undefined }),
+          body: JSON.stringify({ urn }),
         });
-        const rj = (await readJson(res)) as {
-          ready?: boolean;
-          url?: string;
-          tooLarge?: boolean;
-          sizeMB?: number;
-          limitMB?: number;
-          error?: string;
-        };
-        if (res.status === 413 && rj.tooLarge) {
-          setStatus(
-            `서버리스 변환 한도 초과(${rj.sizeMB}MB > ${rj.limitMB}MB). 오프라인/배치 변환이 필요합니다.`,
-          );
+        const rj = (await readJson(res)) as { ready?: boolean; url?: string; status?: string; error?: string };
+        if (rj.ready && rj.url) {
+          setStatus(`불러오는 중… ${f.name}`);
+          mountXkt({ src: rj.url }, f.name);
+          return;
+        }
+        if (!res.ok) {
+          setStatus(`변환 요청 실패: ${rj.error ?? res.statusText}`);
           setBusy(false);
           return;
         }
-        if (!res.ok || !rj.ready || !rj.url) {
-          setStatus(`변환 실패: ${rj.error ?? res.statusText}`);
-          setBusy(false);
-          return;
+
+        // 3) 워커가 백그라운드 변환 중 — 캐시에 XKT 뜰 때까지 폴링(최대 20분).
+        const started = Date.now();
+        const MAX_MS = 20 * 60 * 1000;
+        for (;;) {
+          if (Date.now() - started > MAX_MS) {
+            setStatus('변환이 20분을 넘겨 중단했습니다. 매우 큰 모델일 수 있습니다(워커 로그 확인).');
+            setBusy(false);
+            return;
+          }
+          const secs = Math.round((Date.now() - started) / 1000);
+          setStatus(`변환 중… ${f.name} (최초 1회, ${secs}s 경과 · 완료되면 자동 표시)`);
+          await sleep(4000);
+          const poll = await checkCache().catch(() => ({ ready: false }) as { ready?: boolean; url?: string });
+          if (poll.ready && poll.url) {
+            setStatus(`불러오는 중… ${f.name}`);
+            mountXkt({ src: poll.url }, f.name);
+            return;
+          }
         }
-        setStatus(`불러오는 중… ${f.name}`);
-        mountXkt({ src: rj.url }, f.name);
       } catch (e) {
         setStatus(`변환/로드 실패: ${errMessage(e)}`);
         setBusy(false);
