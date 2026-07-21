@@ -1,0 +1,39 @@
+name: Supabase Keep-Alive
+
+# 무료 플랜 자동 일시정지(약 7일 무활동) 방지용.
+# 매일 한 번 프로젝트에 가벼운 요청을 보내 "활동"을 유지한다.
+# 필요 시 Actions 탭에서 수동 실행(workflow_dispatch)도 가능.
+#
+# 준비: 레포 Settings → Secrets and variables → Actions 에 추가
+#   SUPABASE_URL       = https://<프로젝트>.supabase.co
+#   SUPABASE_ANON_KEY  = <anon public 키>
+
+on:
+  schedule:
+    # 매일 00:17 UTC (정각은 지연되기 쉬워 분을 비틀어 둠)
+    - cron: '17 0 * * *'
+  workflow_dispatch: {}
+
+# 동시에 여러 번 돌 필요 없음
+concurrency:
+  group: supabase-keepalive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    name: Ping Supabase
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Keep-alive ping
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: node scripts/keepalive.mjs

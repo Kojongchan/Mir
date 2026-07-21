@@ -3,6 +3,31 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 📋 OPS1 — Supabase 무료 플랜 자동 일시정지 방지(keep-alive) (2026-07-21)
+> branch `claude/free-issue-14z7fc`. 무의존성(Node 20 내장 fetch) + GitHub Actions cron.
+
+### 배경
+- 무료 플랜은 **약 7일 무활동 시 프로젝트를 자동 pause**(요금 아님). Resume는 90일 내 무료로 가능하나
+  방치하면 매번 꺼짐. → 주기 요청으로 "활동"을 유지해 자동 정지 자체를 예방.
+
+### ✅ 한 일
+1. **`scripts/keepalive.mjs`(신규)**: anon 키로 `${SUPABASE_URL}/rest/v1/`(PostgREST 루트)에 가벼운 GET.
+   테이블/RLS 비의존, anon 키만 사용(서비스키 X, RLS 우회 X). URL/키는 env 로만(커밋 금지). 방어 로직
+   스모크 테스트 통과(시크릿 누락→exit1, 네트워크 실패→exit1).
+2. **`.github/workflows/keepalive.yml`(신규)**: 매일 00:17 UTC cron + `workflow_dispatch`(수동). `npm ci`
+   불필요(fetch 내장). concurrency 그룹으로 중복 방지.
+
+### ⚠️ 사용자 준비 필요 (1회)
+- 레포 **Settings → Secrets and variables → Actions** 에 추가:
+  `SUPABASE_URL` = `https://<프로젝트>.supabase.co`, `SUPABASE_ANON_KEY` = anon(public) 키.
+- 지금 정지 상태면 대시보드에서 **Resume project** 먼저(그 후 cron 이 유지).
+- 주의: **GitHub는 레포 60일 무활동 시 scheduled workflow 를 자동 비활성화** → 가끔 커밋/푸시가 있으면 유지됨.
+
+### 인수인계 한 줄
+Supabase 무료 자동정지 예방 keep-alive(scripts/keepalive.mjs + 매일 cron 워크플로우) 추가. Actions Secrets
+2개(SUPABASE_URL·SUPABASE_ANON_KEY) 등록 필요. 지금 pause 상태면 Resume 먼저.
+
+---
 ## 📋 F2 — 협업·이슈 고도화(타입 분화·3뷰·뷰포인트·출력·현장등록) (2026-07-10)
 > branch `claude/issue-collaboration-upgrade-o4uzc0`. typecheck·build 통과.
 > .docx/xlsx 생성은 node 스모크 테스트로 실검증(3종 양식 렌더·이스케이프·잔여태그 0 확인).
