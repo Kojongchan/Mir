@@ -130,9 +130,20 @@ async function downloadSvfToDisk(derivative, outDir) {
   const svfManifest = JSON.parse(zip.readAsText('manifest.json'));
   const basePath = svfDerivUrn.substring(0, svfDerivUrn.lastIndexOf('/') + 1);
   const assets = (svfManifest.assets || []).filter(
-    (a) => a.URI && !a.URI.startsWith('embed:') && !a.URI.includes('://') && a.URI !== svfName,
+    (a) =>
+      a.URI &&
+      !a.URI.startsWith('embed:') &&
+      !a.URI.includes('://') &&
+      a.URI !== svfName &&
+      // ../../objects_*.json.gz 등 상위폴더 공유 '속성 DB' 는 지오메트리 GLB 에 불필요하고
+      // (dbId 는 fragment 에서 나온다) basePath+'../..' 이 APS 에서 404 를 낸다 → 건너뛴다.
+      // (RVT 처럼 속성 DB 를 공유 위치에 두는 모델에서 변환이 죽던 원인.)
+      !a.URI.includes('..'),
   );
-  console.log(`[convert4d] 에셋 ${assets.length}개 병렬 다운로드…`);
+  const skipped = (svfManifest.assets || []).length - assets.length;
+  console.log(
+    `[convert4d] 에셋 ${assets.length}개 병렬 다운로드…${skipped ? ` (공유 속성DB 등 ${skipped}개 건너뜀)` : ''}`,
+  );
   let done = 0;
   const downloadOne = async (asset) => {
     let bytes;

@@ -160,7 +160,8 @@ export function ThreeDTest() {
             return;
           }
           const secs = Math.round((Date.now() - started) / 1000);
-          setStatus(`변환 중… ${f.name} (최초 1회, ${secs}s 경과 · 완료되면 자동 표시)`);
+          const hint = secs > 240 ? ' · 오래 걸리면 GitHub Actions 로그를 확인하세요' : '';
+          setStatus(`변환 중… ${f.name} (최초 1회, ${secs}s 경과 · 완료되면 자동 표시${hint})`);
           await sleep(5000);
           const poll = await checkCache().catch(() => ({ ready: false }) as { ready?: boolean; url?: string });
           if (poll.ready && poll.url) {
