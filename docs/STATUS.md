@@ -57,18 +57,31 @@
   → XKT 뜨면 자동 로드. 로컬 `.xkt` 드롭 보조 유지.
 - 루트 `package.json` 에서 svf-utils·xeokit-convert 제거(워커로 이동) → Vercel 번들 경량.
 
-### 🔜 다음 할 일 / 미해결 (사용자: Railway 워커 배포 + Vercel/Supabase 설정)
-- **Railway**: worker/ 를 Root Directory 로 배포 + env(APS·SUPABASE·WORKER_SECRET) → 공개 URL 확보.
-- **Vercel env**: `WORKER_URL`(워커 URL)·`WORKER_SECRET`(워커와 동일) 추가 후 재배포.
-- **Supabase**: `models` 버킷에 service_role 업로드 + `aps-xkt/**` 경로 서명 URL 읽기 가능(RLS) 확인.
-- 검증: 'ACC에서 열기'→변환 워커 동작→캐시 히트→xeokit 로드→클릭 픽. 좌표(R4) 실좌표 확인.
-- (선택) **업로드 시 자동 변환 트리거** — 아무도 첫 열람에서 안 기다리게. 속도 더 필요하면 워커 인스턴스
-  스펙↑ 또는 사전변환.
+### ✅ 한 일 (4차 — 기존 변환 파이프라인 재사용, 무료·검증됨: 'A로 시작')
+- **발견**: 레포에 **이미** ACC→GLB 변환기가 있음 — `.github/workflows/convert-4d.yml` +
+  `scripts/convert4d.mjs`(main 존재·dispatch 가능·GitHub Actions 무료·거대모델 데시메이션·
+  **CI SVF 다운로드 타임아웃 해결 완료**). 3차의 자체 워커는 `FromDerivativeService`를 써서
+  CI에서 같은 타임아웃을 다시 밟을 방식이라 **폐기**(worker/ 삭제).
+- **재사용 배선**: `api/aps-convert.ts`(edge) — GET=캐시조회(`models4d/<urn40>/model.glb` 서명URL),
+  POST=캐시 없으면 **`convert-4d.yml`을 urn으로 workflow_dispatch**(GH_REPO/GH_TOKEN/GH_REF) → processing.
+  캐시 키·버킷을 convert4d.mjs와 **동일 규약**으로 맞춤.
+- **프런트**: XKT→**GLB 로드**(`GLTFLoaderPlugin`, GLB는 plain glTF라 디코더 불필요). ACC 선택→
+  캐시조회→(없으면 dispatch)→5초 폴링(최대 30분)→자동 로드. 로컬 `.glb` 드롭 보조.
+- **main 변경 0** — convert-4d.yml이 이미 main에 있어 dispatch만 하면 됨. worker/·XKT 잔재 제거.
+
+### 🔜 다음 할 일 / 미해결 (사용자 설정 최소)
+- **Vercel env 2개만**: `GH_REPO`=`Kojongchan/Mir`, `GH_TOKEN`=워크플로 dispatch PAT(classic `repo`
+  또는 fine-grained Actions:write). (`GH_REF` 기본 main.) SUPABASE_URL/SERVICE_ROLE는 이미 있음.
+- **GitHub Actions Secrets**(APS·SUPABASE)는 convert-4d.yml이 이미 쓰므로 **대개 설정돼 있음** — 없으면 추가.
+- 검증: 'ACC에서 열기'→(캐시 없으면)Actions 변환→GLB 캐시 히트→**xeokit 렌더**. 먼저 `models4d`에 4D용으로
+  이미 구운 GLB 있으면 그 urn으로 바로 로드 테스트 가능.
+- **판단 대기**: GLB는 병합+데시메이션(4D용) → ①객체별 클릭 granularity ②형상 정밀도 확인 후,
+  필요하면 convert4d 다운로더 재사용한 **XKT 변형(B)**으로 갈지 결정.
 
 ### 인수인계 한 줄
-변환을 **워커(worker/, 컨테이너)로 분리**해 '모두에게 자동·큰 파일 OK' 구조 완성 — api/aps-convert(edge)는
-캐시조회+워커위임, 프런트는 캐시 폴링, 결과는 Supabase 공용 캐시(모델당 1회). typecheck·build·worker syntax OK,
-확정 전 미머지. 다음은 사용자가 Railway 워커 배포 + Vercel/Supabase 설정 → 실동작 검증.
+'A' 채택 — **기존 검증된 convert-4d.yml(GitHub Actions, 무료) 재사용**: api/aps-convert(edge)가 urn으로
+dispatch, 결과 GLB(models4d 캐시)를 xeokit(GLTFLoaderPlugin)로 로드. main 변경 0, typecheck·build OK, 미머지.
+다음은 Vercel env(GH_REPO/GH_TOKEN) 설정 후 실렌더 확인 → GLB 정밀도/픽 보고 XKT 변형 여부 판단.
 
 ---
 ## 📋 F2 — 협업·이슈 고도화(타입 분화·3뷰·뷰포인트·출력·현장등록) (2026-07-10)

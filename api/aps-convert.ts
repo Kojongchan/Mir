@@ -1,19 +1,20 @@
 // =====================================================================
-// MIR_VDC — ACC(APS) 모델 → XKT 변환 게이트웨이 (신규 3D뷰: xeokit).
+// MIR_VDC — ACC(APS) 모델 → (신규 3D뷰: xeokit) 게이트웨이.
 //
-// 구조(모두에게 자동·큰 파일 커버):
-//   ① 브라우저 'ACC에서 열기' → 이 함수(GET)로 **공용 캐시** 조회
-//   ② 없으면 이 함수(POST)가 **변환 워커**(장시간 실행 컨테이너)에 작업 위임
-//   ③ 워커가 SVF→glTF→XKT 변환 후 같은 캐시(Supabase)에 업로드
-//   ④ 브라우저는 GET 을 폴링 → 캐시에 XKT 뜨면 xeokit 로드
-// 변환은 **모델당 1회**(캐시 공유) — 이후 모든 사용자는 즉시 로드.
+// 변환은 **이미 있는 검증된 파이프라인**을 재사용한다:
+//   .github/workflows/convert-4d.yml + scripts/convert4d.mjs
+//   → SVF(ACC 보유) → glTF → 병합/데시메이션 GLB → Supabase 'models4d' 버킷
+//      <urn40>/model.glb  (거대 모델 대응·CI 다운로드 타임아웃 해결 완료)
+// 변환은 **모델당 1회**(캐시 공유) — 이후 모든 사용자는 캐시 GLB 를 xeokit 로 즉시 로드.
 //
-// 이 함수는 무거운 변환기를 안 쓰므로 **edge 런타임**으로 가볍고 안정적이다.
+// 이 함수(edge)는 무거운 변환을 하지 않는다:
 //   GET  /api/aps-convert?urn=<base64 URN>  → {ready:true,url} | {ready:false}
 //   POST /api/aps-convert  {urn}            → {ready:true,url} | {status:'processing'}
+//     (캐시 없으면 GitHub Actions 워크플로를 urn 으로 dispatch → 즉시 processing)
 //
 // Required env: SUPABASE_URL(or VITE_) / SUPABASE_SERVICE_ROLE_KEY /
-//               WORKER_URL(변환 워커 공개 URL) / WORKER_SECRET(공유 비밀).
+//               GH_REPO(owner/repo) / GH_TOKEN(workflow dispatch PAT) /
+//               GH_REF(워크플로 실행 브랜치, 기본 main)
 // =====================================================================
 import { createClient } from '@supabase/supabase-js';
 
@@ -21,11 +22,14 @@ export const config = { runtime: 'edge' };
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const WORKER_URL = process.env.WORKER_URL; // 예: https://mir-aps-worker.up.railway.app
-const WORKER_SECRET = process.env.WORKER_SECRET;
+const GH_REPO = process.env.GH_REPO; // 예: 'Kojongchan/Mir'
+const GH_TOKEN = process.env.GH_TOKEN; // workflow dispatch 권한 PAT
+const GH_REF = process.env.GH_REF || 'main'; // 워크플로가 있는 브랜치
+const WORKFLOW_FILE = 'convert-4d.yml';
 
-const BUCKET = 'models';
-const PREFIX = 'aps-xkt';
+// convert4d.mjs 와 **동일한** 캐시 규약(반드시 일치해야 로드가 캐시를 찾는다).
+const BUCKET = 'models4d';
+const glbKey = (urn: string) => urn.replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -34,27 +38,40 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-/** URN → 캐시 오브젝트 경로(SHA-1, Web Crypto). */
-async function cacheKey(urn: string): Promise<string> {
-  const buf = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(urn));
-  const hex = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
-  return `${PREFIX}/${hex}`;
-}
-
 function supa() {
   return createClient(SUPABASE_URL as string, SERVICE_ROLE as string, {
     auth: { persistSession: false },
   });
 }
 
-/** 캐시에 model.xkt 가 실제로 존재하면 서명 URL, 없으면 null. */
+/** 캐시에 model.glb 가 실제로 있으면 서명 URL, 없으면 null. */
 async function cachedUrl(urn: string): Promise<string | null> {
-  const dir = await cacheKey(urn);
+  const dir = glbKey(urn);
   const client = supa();
-  const { data: list } = await client.storage.from(BUCKET).list(dir, { search: 'model.xkt' });
-  if (!list?.some((f) => f.name === 'model.xkt')) return null;
-  const { data } = await client.storage.from(BUCKET).createSignedUrl(`${dir}/model.xkt`, 3600);
+  const { data: list } = await client.storage.from(BUCKET).list(dir, { search: 'model.glb' });
+  if (!list?.some((f) => f.name === 'model.glb')) return null;
+  const { data } = await client.storage.from(BUCKET).createSignedUrl(`${dir}/model.glb`, 3600);
   return data?.signedUrl ?? null;
+}
+
+/** GitHub Actions 변환 워크플로를 urn 으로 실행(비동기). 성공 시 204. */
+async function dispatchConvert(urn: string): Promise<{ ok: boolean; status: number; body: string }> {
+  const res = await fetch(
+    `https://api.github.com/repos/${GH_REPO}/actions/workflows/${WORKFLOW_FILE}/dispatches`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${GH_TOKEN}`,
+        accept: 'application/vnd.github+json',
+        'x-github-api-version': '2022-11-28',
+        'user-agent': 'mir-vdc',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ ref: GH_REF, inputs: { urn, region: 'US' } }),
+    },
+  );
+  const body = res.ok ? '' : await res.text().catch(() => '');
+  return { ok: res.ok, status: res.status, body };
 }
 
 export default async function handler(req: Request): Promise<Response> {
@@ -78,7 +95,7 @@ export default async function handler(req: Request): Promise<Response> {
 
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
 
-  // ── POST: 캐시 확인 후 워커에 변환 위임 ───────────────────────────
+  // ── POST: 캐시 확인 후 없으면 변환 워크플로 dispatch ───────────────
   let body: { urn?: string };
   try {
     body = (await req.json()) as { urn?: string };
@@ -91,28 +108,13 @@ export default async function handler(req: Request): Promise<Response> {
   const already = await cachedUrl(urn);
   if (already) return json({ ready: true, url: already });
 
-  if (!WORKER_URL || !WORKER_SECRET) {
-    return json({ error: '변환 워커가 설정되지 않았습니다(WORKER_URL/SECRET).' }, 503);
+  if (!GH_REPO || !GH_TOKEN) {
+    return json({ error: '변환 워크플로가 설정되지 않았습니다(GH_REPO/GH_TOKEN).' }, 503);
   }
 
-  // 워커에 작업 등록(즉시 반환 — 실제 변환은 백그라운드). 브라우저가 GET 폴링.
-  try {
-    const res = await fetch(`${WORKER_URL.replace(/\/$/, '')}/convert`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-worker-secret': WORKER_SECRET },
-      body: JSON.stringify({ urn }),
-    });
-    const data = (await res.json().catch(() => ({}))) as {
-      ready?: boolean;
-      url?: string;
-      status?: string;
-      error?: string;
-    };
-    if (!res.ok) return json({ error: data.error ?? `워커 오류(${res.status})` }, 502);
-    // 워커가 이미 캐시됨을 알려주면 그대로, 아니면 처리중.
-    if (data.ready && data.url) return json({ ready: true, url: data.url });
-    return json({ status: 'processing' });
-  } catch (e) {
-    return json({ error: `워커 연결 실패: ${(e as Error).message}` }, 502);
+  const d = await dispatchConvert(urn);
+  if (!d.ok) {
+    return json({ error: `워크플로 dispatch 실패(${d.status}): ${d.body.slice(0, 200)}` }, 502);
   }
+  return json({ status: 'processing' });
 }
