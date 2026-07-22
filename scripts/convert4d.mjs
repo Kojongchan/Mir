@@ -25,6 +25,7 @@ import { SVFReader } from 'svf-utils';
 import { AuthenticationClient, Scopes } from '@aps_sdk/authentication';
 import { ModelDerivativeClient } from '@aps_sdk/model-derivative';
 import AdmZip from 'adm-zip';
+import gltfPipeline from 'gltf-pipeline';
 import { buildMergedGlb } from './mergeGlb.mjs';
 
 const APS_BASE = 'https://developer.api.autodesk.com';
@@ -227,20 +228,46 @@ async function main() {
     `[convert4d] GLB 완료: ${(res.bytes / 1048576).toFixed(1)} MB · 메시 ${res.groups} · 정점 ${res.vertices.toLocaleString()} · 단순화 ${res.decimated} (${((Date.now() - t0) / 1000).toFixed(1)}s)`,
   );
 
-  // Supabase Storage 업로드(버킷 없으면 생성). 대용량이라 실패해도 아티팩트로 남기고 계속.
+  // Draco 압축 — Supabase 무료 스토리지 상한(50MB) 아래로 낮추고 로드도 빠르게.
+  // (xeokit 는 KHR_draco_mesh_compression 디코드 지원. meshopt 는 xeokit 가 요구하는
+  //  KHR_mesh_quantization 미지원이라 부적합 → Draco 사용.) 위치 14bit 로 형상 보존.
+  const rawBytes = res.bytes;
+  console.log(`[convert4d] Draco 압축 중…`);
+  const compressed = await gltfPipeline.processGlb(fs.readFileSync(outPath), {
+    dracoOptions: {
+      compressionLevel: 7,
+      quantizePositionBits: 14,
+      quantizeNormalBits: 10,
+      quantizeTexcoordBits: 12,
+      quantizeGenericBits: 16, // _DBID 최대한 보존
+      unifiedQuantization: true, // 병합 모델(실좌표) 정합
+    },
+  });
+  fs.writeFileSync(outPath, compressed.glb);
+  const cBytes = fs.statSync(outPath).size;
+  console.log(
+    `[convert4d] 압축 완료: ${(rawBytes / 1048576).toFixed(1)}MB → ${(cBytes / 1048576).toFixed(1)}MB`,
+  );
+
+  // Supabase Storage 업로드(버킷 없으면 생성). 실패는 치명적으로 — 캐시가 없으면
+  // 프런트가 무한 폴링하므로, 조용히 넘어가지 않고 잡을 실패시켜 로그로 드러낸다.
   await supabase.storage.createBucket(STORAGE_BUCKET, { public: false }).catch(() => {});
   const objectPath = `${keyBase}/model.glb`;
-  try {
-    const fileBuf = fs.readFileSync(outPath);
-    const up = await supabase.storage.from(STORAGE_BUCKET).upload(objectPath, fileBuf, {
-      contentType: 'model/gltf-binary',
-      upsert: true,
-    });
-    if (up.error) throw up.error;
-    console.log(`[convert4d] 업로드 완료: ${STORAGE_BUCKET}/${objectPath}`);
-  } catch (e) {
-    console.warn(`[convert4d] 업로드 실패(아티팩트로 보관): ${e?.message || e}`);
+  const fileBuf = fs.readFileSync(outPath);
+  if (fileBuf.length > 49 * 1024 * 1024) {
+    throw new Error(
+      `압축 후에도 ${(fileBuf.length / 1048576).toFixed(1)}MB 로 Supabase 무료 상한(50MB) 초과 — ` +
+        `더 강한 데시메이션(DECIMATE_RATIO↓) 또는 모델 분할 필요`,
+    );
   }
+  const up = await supabase.storage.from(STORAGE_BUCKET).upload(objectPath, fileBuf, {
+    contentType: 'model/gltf-binary',
+    upsert: true,
+  });
+  if (up.error) throw new Error(`Supabase 업로드 실패: ${up.error.message}`);
+  console.log(
+    `[convert4d] 업로드 완료: ${STORAGE_BUCKET}/${objectPath} (${(fileBuf.length / 1048576).toFixed(1)}MB)`,
+  );
   console.log(`[convert4d] DONE`);
 }
 
