@@ -130,29 +130,31 @@ async function downloadSvfToDisk(derivative, outDir) {
   const svfManifest = JSON.parse(zip.readAsText('manifest.json'));
   const basePath = svfDerivUrn.substring(0, svfDerivUrn.lastIndexOf('/') + 1);
   const assets = (svfManifest.assets || []).filter(
-    (a) =>
-      a.URI &&
-      !a.URI.startsWith('embed:') &&
-      !a.URI.includes('://') &&
-      a.URI !== svfName &&
-      // ../../objects_*.json.gz 등 상위폴더 공유 '속성 DB' 는 지오메트리 GLB 에 불필요하고
-      // (dbId 는 fragment 에서 나온다) basePath+'../..' 이 APS 에서 404 를 낸다 → 건너뛴다.
-      // (RVT 처럼 속성 DB 를 공유 위치에 두는 모델에서 변환이 죽던 원인.)
-      !a.URI.includes('..'),
+    (a) => a.URI && !a.URI.startsWith('embed:') && !a.URI.includes('://') && a.URI !== svfName,
   );
-  const skipped = (svfManifest.assets || []).length - assets.length;
-  console.log(
-    `[convert4d] 에셋 ${assets.length}개 병렬 다운로드…${skipped ? ` (공유 속성DB 등 ${skipped}개 건너뜀)` : ''}`,
-  );
+  console.log(`[convert4d] 에셋 ${assets.length}개 병렬 다운로드…`);
   let done = 0;
+  // 원격 derivative URN 은 '..' 를 해석하지 못한다(APS 404). RVT 등은 공유 '속성 DB'
+  // (objects_*.json.gz)를 상위 폴더(../../)로 참조하므로, 다운로드용 URN 에서만 '..' 를
+  // 미리 정규화한다. 로컬 저장 경로(path.join)는 그대로 두면 svf-utils 가 SVF 기준으로
+  // 같은 위치에서 되찾는다(양쪽 경로 일치).
+  const normUrn = (p) => {
+    const out = [];
+    for (const seg of p.split('/')) {
+      if (seg === '..') out.pop();
+      else if (seg !== '.') out.push(seg);
+    }
+    return out.join('/');
+  };
   const downloadOne = async (asset) => {
+    const remote = normUrn(basePath + asset.URI);
     let bytes;
     try {
-      bytes = await fetchDerivativeBytes(token, basePath + asset.URI);
+      bytes = await fetchDerivativeBytes(token, remote);
     } catch (e) {
       if (e?.status === 401) {
         token = await mintApsToken(); // 장시간 다운로드 중 토큰 만료 → 재발급
-        bytes = await fetchDerivativeBytes(token, basePath + asset.URI);
+        bytes = await fetchDerivativeBytes(token, remote);
       } else {
         throw new Error(`에셋 다운로드 실패(${asset.URI}): ${e?.message || e}`);
       }
