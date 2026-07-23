@@ -215,7 +215,13 @@ export async function buildMergedGlb(imf, opts) {
 
     if (++processed % 50000 === 0) log(`[merge]   ${processed} 객체 (단순화 ${decimated})`);
   }
-  log(`[merge] 프래그먼트 ${fragCount} · 재질그룹 ${groups.size} · 단순화 ${decimated} · 선 ${lineFrag} · 점 ${pointFrag}`);
+  let triVerts = 0; for (const g of groups.values()) triVerts += g.vtx;
+  let lineVerts = 0; for (const g of lineGroups.values()) lineVerts += g.vtx;
+  let pointVerts = 0; for (const g of pointGroups.values()) pointVerts += g.vtx;
+  // 솔리드가 지배적이면 선/점은 대개 엣지/주석 클러터(IFC/RVT 의 와이어프레임) → 제외.
+  // 선형 위주(DWG 도면)면 유지. INCLUDE_LINES=1 로 강제 포함 가능.
+  const includeLines = process.env.INCLUDE_LINES === '1' || lineVerts + pointVerts >= triVerts;
+  log(`[merge] 프래그먼트 ${fragCount} · 재질그룹 ${groups.size} · 단순화 ${decimated} · 선 ${lineFrag} · 점 ${pointFrag} · 선/점포함 ${includeLines}`);
 
   // 청크 → 그룹별 연속 배열로 합치고 glTF/GLB 작성.
   const concatF = (chunks, total) => { const out = new Float32Array(total); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; } return out; };
@@ -246,6 +252,8 @@ export async function buildMergedGlb(imf, opts) {
     const mat = imf.getMaterial(matId);
     const d = mat?.diffuse;
     const baseColor = d ? [d.x, d.y, d.z, mat?.opacity ?? 1] : [0.72, 0.74, 0.77, 1];
+    // 색 진단용 로그(포맷별 재질 색이 원본과 다른지 확인).
+    log(`[merge] mat ${matId}: rgb=(${baseColor.slice(0, 3).map((x) => (+x).toFixed(2)).join(',')}) a=${(+baseColor[3]).toFixed(2)} metal=${mat?.metallic ?? '-'} rough=${mat?.roughness ?? '-'}`);
     // 원본 재질의 metallic/roughness 를 그대로 반영(예전엔 0/0.9 로 하드코딩해 금속 등이
     // 무광 플라스틱처럼 보였다). 값 없으면 비금속 기본값.
     materials.push({
@@ -261,8 +269,8 @@ export async function buildMergedGlb(imf, opts) {
     nodes.push({ mesh: meshes.length - 1 });
   }
 
-  // 선(line) 그룹 → mode:1 프리미티브(법선 없음). DWG 선형이 보이게 된다.
-  for (const [matId, g] of lineGroups) {
+  // 선(line) 그룹 → mode:1 프리미티브(법선 없음). 솔리드 지배 모델에선 제외(클러터).
+  for (const [matId, g] of includeLines ? lineGroups : []) {
     if (g.vtx === 0) continue;
     const pos = concatF(g.posCh, g.vtx * 3); g.posCh.length = 0;
     const dbid = concatF(g.dbCh, g.vtx); g.dbCh.length = 0;
@@ -282,7 +290,7 @@ export async function buildMergedGlb(imf, opts) {
   }
 
   // 점(point) 그룹 → mode:0 프리미티브(인덱스 없음).
-  for (const [matId, g] of pointGroups) {
+  for (const [matId, g] of includeLines ? pointGroups : []) {
     if (g.vtx === 0) continue;
     const pos = concatF(g.posCh, g.vtx * 3); g.posCh.length = 0;
     const dbid = concatF(g.dbCh, g.vtx); g.dbCh.length = 0;
