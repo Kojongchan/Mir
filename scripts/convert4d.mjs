@@ -131,9 +131,20 @@ async function downloadSvfToDisk(derivative, outDir) {
   const svfManifest = JSON.parse(zip.readAsText('manifest.json'));
   const basePath = svfDerivUrn.substring(0, svfDerivUrn.lastIndexOf('/') + 1);
   const assets = (svfManifest.assets || []).filter(
-    (a) => a.URI && !a.URI.startsWith('embed:') && !a.URI.includes('://') && a.URI !== svfName,
+    (a) =>
+      a.URI &&
+      !a.URI.startsWith('embed:') &&
+      !a.URI.includes('://') &&
+      a.URI !== svfName &&
+      // 속성 DB(objects_*.json.gz)는 지오메트리 GLB 에 불필요(dbId 는 fragment 에서 나옴)하고,
+      // 모델마다 상위폴더 공유(../, RVT)거나 매니페스트에 있는데 실제 404(DWG)라 변환을 죽인다.
+      // read({skipPropertyDb:true}) 로 읽으니 아예 받지 않는다.
+      !/objects_.*\.json\.gz$/i.test(a.URI),
   );
-  console.log(`[convert4d] 에셋 ${assets.length}개 병렬 다운로드…`);
+  const skipped = (svfManifest.assets || []).length - assets.length - 1; /* svf 자기 자신 */
+  console.log(
+    `[convert4d] 에셋 ${assets.length}개 병렬 다운로드…${skipped > 0 ? ` (속성DB ${skipped}개 제외)` : ''}`,
+  );
   let done = 0;
   // 원격 derivative URN 은 '..' 를 해석하지 못한다(APS 404). RVT 등은 공유 '속성 DB'
   // (objects_*.json.gz)를 상위 폴더(../../)로 참조하므로, 다운로드용 URN 에서만 '..' 를
@@ -216,7 +227,8 @@ async function main() {
   const svfPath = await downloadSvfToDisk(derivative, path.join(tmp, 'svf'));
   console.log(`[convert4d] SVF 읽는 중 (${svfPath})…`);
   const reader = await SVFReader.FromFileSystem(svfPath);
-  const scene = await reader.read({ log: () => process.stdout.write('.') });
+  // skipPropertyDb: 속성 DB(dbId→속성)는 지오메트리 변환에 불필요 — 안 읽어 404/ENOENT 회피.
+  const scene = await reader.read({ skipPropertyDb: true, log: () => process.stdout.write('.') });
   process.stdout.write('\n');
 
   // 재질별 병합 + 정점당 dbId → 단일 GLB(거대 모델의 glTF JSON 한계 회피).
