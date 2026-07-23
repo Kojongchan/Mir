@@ -42,7 +42,9 @@ export function ThreeDTest() {
       canvasElement: canvasRef.current,
       transparent: false,
       backgroundColor: [1, 1, 1],
-      dtxEnabled: true, // 더블프리시전 — 실좌표(대좌표) 지터 없음
+      // DTX(데이터텍스처) 모드는 선(line) 프리미티브를 렌더하지 않는다(DWG 선형이 안 보이는 원인).
+      // VBO 로 그려도 60fps 나오므로 끈다. (더블프리시전은 DTX 와 무관 — RTC 로 자동 처리)
+      dtxEnabled: false,
       saoEnabled: true,
     });
     viewer.camera.eye = [15, 15, 15];
