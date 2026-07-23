@@ -21,6 +21,10 @@ on:
         description: 'APS 리전 (US / EMEA / AUS)'
         required: false
         default: 'US'
+      include_lines:
+        description: "선/점 포함 여부('1'=포함(DWG 등), '0'=엣지선 제외(IFC/RVT/NWD))"
+        required: false
+        default: ''
 
 jobs:
   convert:
@@ -52,6 +56,7 @@ jobs:
           PROJECT_ID: ${{ github.event.inputs.project_id }}
           URN: ${{ github.event.inputs.urn }}
           APS_REGION: ${{ github.event.inputs.region }}
+          INCLUDE_LINES: ${{ github.event.inputs.include_lines }}
         run: node scripts/convert4d.mjs
 
       - name: Upload glb as workflow artifact (백업)

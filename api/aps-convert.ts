@@ -130,7 +130,17 @@ async function clearCache(urn: string): Promise<void> {
   await Promise.all([r2Delete(`${dir}/model.glb`), r2Delete(`${dir}/error.json`)]);
 }
 
-async function dispatchConvert(urn: string): Promise<{ ok: boolean; status: number; body: string }> {
+// DWG 는 솔리드 + 선/점을 모두 보여줘야 하므로 선 유지('1'), 그 외(IFC/RVT/NWD)는
+// 엣지선 잡음을 제외('0'). 파일명 확장자로 판단한다.
+function includeLinesFor(name: string): '0' | '1' {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  return ext === 'dwg' ? '1' : '0';
+}
+
+async function dispatchConvert(
+  urn: string,
+  includeLines: '0' | '1',
+): Promise<{ ok: boolean; status: number; body: string }> {
   const res = await fetch(
     `https://api.github.com/repos/${GH_REPO}/actions/workflows/${WORKFLOW_FILE}/dispatches`,
     {
@@ -142,7 +152,10 @@ async function dispatchConvert(urn: string): Promise<{ ok: boolean; status: numb
         'user-agent': 'mir-vdc',
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ ref: GH_REF, inputs: { urn, region: 'US' } }),
+      body: JSON.stringify({
+        ref: GH_REF,
+        inputs: { urn, region: 'US', include_lines: includeLines },
+      }),
     },
   );
   const body = res.ok ? '' : await res.text().catch(() => '');
@@ -173,14 +186,15 @@ export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
 
   // ── POST: 캐시 확인 후 없으면 변환 워크플로 dispatch ───────────────
-  let body: { urn?: string; force?: boolean; ackOverage?: boolean };
+  let body: { urn?: string; name?: string; force?: boolean; ackOverage?: boolean };
   try {
-    body = (await req.json()) as { urn?: string; force?: boolean; ackOverage?: boolean };
+    body = (await req.json()) as { urn?: string; name?: string; force?: boolean; ackOverage?: boolean };
   } catch {
     return json({ error: 'JSON 본문 필요' }, 400);
   }
   const urn = body.urn ?? '';
   if (!urn) return json({ error: 'urn 필요' }, 400);
+  const includeLines = includeLinesFor(body.name ?? '');
 
   if (body.force) {
     await clearCache(urn);
@@ -206,7 +220,7 @@ export default async function handler(req: Request): Promise<Response> {
     return json({ error: '변환 워크플로가 설정되지 않았습니다(GH_REPO/GH_TOKEN).' }, 503);
   }
 
-  const d = await dispatchConvert(urn);
+  const d = await dispatchConvert(urn, includeLines);
   if (!d.ok) {
     return json({ error: `워크플로 dispatch 실패(${d.status}): ${d.body.slice(0, 200)}` }, 502);
   }
