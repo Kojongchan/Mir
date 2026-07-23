@@ -77,22 +77,28 @@ function groupKey(matId, color) {
   return `m${matId}#${q[0]}_${q[1]}_${q[2]}_${q[3]}`;
 }
 
-// 프래그먼트 중심점들의 축별 가중 분위수(1~99%)로 이상치를 뺀 카메라 초점 박스.
-// {center:[x,y,z], half:[hx,hy,hz]}. 멀리 떨어진 소수 이상치(타이틀블록·측점 등)가
-// 전체 AABB 를 부풀려 flyTo 가 빈 공간을 맞추는 문제를 막는다. 실좌표(회전 전) 기준.
+// 카메라 초점 박스 {center, half}. 축별로 '지오메트리 가중치의 85% 를 담는 가장 좁은
+// 구간'을 찾아(2-포인터) 밀집 영역에 맞춘다. 멀리 흩어진 소수(타이틀블록·측량 격자·
+// 측점 등)를 제외 → flyTo 가 빈 공간/전 구간을 맞춰 모델이 콩알처럼 보이던 문제 방지.
+// 실좌표(회전 전) 기준.
 function robustFocus(foci) {
   if (!foci.length) return null;
   const total = foci.reduce((s, f) => s + f.w, 0);
+  const need = total * 0.85;
   const axis = (i) => {
     const arr = foci.map((f) => ({ v: f.c[i], w: f.w })).sort((a, b) => a.v - b.v);
-    const q = (p) => {
-      let acc = 0; const target = total * p;
-      for (const x of arr) { acc += x.w; if (acc >= target) return x.v; }
-      return arr[arr.length - 1].v;
-    };
-    const lo = q(0.01), hi = q(0.99);
+    let lo = 0, acc = 0, bestW = Infinity, bestLo = 0, bestHi = arr.length - 1;
+    for (let hi = 0; hi < arr.length; hi++) {
+      acc += arr[hi].w;
+      while (acc - arr[lo].w >= need) { acc -= arr[lo].w; lo++; }
+      if (acc >= need) {
+        const w = arr[hi].v - arr[lo].v;
+        if (w < bestW) { bestW = w; bestLo = lo; bestHi = hi; }
+      }
+    }
+    const a = arr[bestLo].v, b = arr[bestHi].v;
     // 초점은 중심점 분포 → 부재 크기만큼 여유(15%+최소치)를 둔다.
-    return { center: (lo + hi) / 2, half: Math.max((hi - lo) / 2 * 1.15, 0.5) };
+    return { center: (a + b) / 2, half: Math.max((b - a) / 2 * 1.15, 0.5) };
   };
   const fx = axis(0), fy = axis(1), fz = axis(2);
   return { center: [fx.center, fy.center, fz.center], half: [fx.half, fy.half, fz.half] };
