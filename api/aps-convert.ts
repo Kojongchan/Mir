@@ -78,6 +78,29 @@ async function r2Delete(key: string): Promise<void> {
   await r2().fetch(objUrl(key), { method: 'DELETE' }).catch(() => {});
 }
 
+// R2 무료 한도(10GB)에 임박하면 변환 전 경고하기 위해 총 사용량을 잰다.
+const FREE_BYTES = 10e9;
+const WARN_BYTES = 9e9; // 9GB 부터 경고
+async function r2TotalSize(): Promise<number> {
+  const client = r2();
+  let total = 0;
+  let token = '';
+  for (let i = 0; i < 50; i++) {
+    const u =
+      `${R2_ENDPOINT}/${R2_BUCKET}?list-type=2&max-keys=1000` +
+      (token ? `&continuation-token=${encodeURIComponent(token)}` : '');
+    const res = await client.fetch(u);
+    if (!res.ok) break;
+    const xml = await res.text();
+    for (const m of xml.matchAll(/<Size>(\d+)<\/Size>/g)) total += Number(m[1]);
+    if (!/<IsTruncated>true<\/IsTruncated>/.test(xml)) break;
+    const nt = xml.match(/<NextContinuationToken>([^<]+)<\/NextContinuationToken>/);
+    if (!nt) break;
+    token = nt[1];
+  }
+  return total;
+}
+
 type CacheState =
   | { ready: true; url: string }
   | { failed: true; error: string }
@@ -150,9 +173,9 @@ export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
 
   // ── POST: 캐시 확인 후 없으면 변환 워크플로 dispatch ───────────────
-  let body: { urn?: string; force?: boolean };
+  let body: { urn?: string; force?: boolean; ackOverage?: boolean };
   try {
-    body = (await req.json()) as { urn?: string; force?: boolean };
+    body = (await req.json()) as { urn?: string; force?: boolean; ackOverage?: boolean };
   } catch {
     return json({ error: 'JSON 본문 필요' }, 400);
   }
@@ -165,6 +188,18 @@ export default async function handler(req: Request): Promise<Response> {
     const st = await cacheState(urn);
     if ('ready' in st && st.ready) return json({ ready: true, url: st.url });
     if ('failed' in st) await clearCache(urn);
+  }
+
+  // 저장소 임박 경고: 9GB 이상이면 변환(=새 업로드) 전에 경고. 사용자가 ackOverage 로 진행.
+  if (!body.ackOverage) {
+    const used = await r2TotalSize();
+    if (used >= WARN_BYTES) {
+      return json({
+        warn: true,
+        usedGB: +(used / 1e9).toFixed(2),
+        freeGB: +Math.max(0, (FREE_BYTES - used) / 1e9).toFixed(2),
+      });
+    }
   }
 
   if (!GH_REPO || !GH_TOKEN) {

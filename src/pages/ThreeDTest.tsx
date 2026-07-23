@@ -31,6 +31,9 @@ export function ThreeDTest() {
   const [dragOver, setDragOver] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [lastFile, setLastFile] = useState<PickedAccFile | null>(null);
+  const [overage, setOverage] = useState<
+    { file: PickedAccFile; force: boolean; usedGB: number; freeGB: number } | null
+  >(null);
 
   // xeokit Viewer 1회 생성/파기.
   useEffect(() => {
@@ -96,7 +99,7 @@ export function ThreeDTest() {
   /** ACC 모델 선택 → (캐시/실패 조회 → 없으면 변환 dispatch → 폴링) → GLB 로드.
    *  force=true 면 캐시/실패 마커를 지우고 재변환(빈 캐시 갱신·재시도). */
   const openFromAcc = useCallback(
-    async (f: PickedAccFile, force = false) => {
+    async (f: PickedAccFile, force = false, ackOverage = false) => {
       if (!isAccModel(f.name)) {
         setStatus(`3D 모델(rvt·nwd·dwg·ifc)만 지원합니다 (선택: ${f.name})`);
         return;
@@ -112,7 +115,16 @@ export function ThreeDTest() {
         : {};
       const urn = f.accUrn;
 
-      type State = { ready?: boolean; url?: string; failed?: boolean; error?: string; status?: string };
+      type State = {
+        ready?: boolean;
+        url?: string;
+        failed?: boolean;
+        error?: string;
+        status?: string;
+        warn?: boolean;
+        usedGB?: number;
+        freeGB?: number;
+      };
       const getState = async (): Promise<State> => {
         const r = await fetch(`/api/aps-convert?urn=${encodeURIComponent(urn)}`, { headers: authz });
         const text = await r.text();
@@ -147,13 +159,20 @@ export function ThreeDTest() {
         const res = await fetch('/api/aps-convert', {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...authz },
-          body: JSON.stringify({ urn, force }),
+          body: JSON.stringify({ urn, force, ackOverage }),
         });
         let rj: State = {};
         try {
           rj = JSON.parse(await res.text()) as State;
         } catch {
           /* 비-JSON */
+        }
+        if (rj.warn) {
+          // R2 무료 한도 임박 — 사용자 확인 후에만 진행(추가 결제 방지).
+          setOverage({ file: f, force, usedGB: rj.usedGB ?? 0, freeGB: rj.freeGB ?? 0 });
+          setStatus('');
+          setBusy(false);
+          return;
         }
         if (rj.ready && rj.url) {
           setStatus(`불러오는 중… ${f.name}`);
@@ -252,6 +271,30 @@ export function ThreeDTest() {
           (캐시)해 로드합니다. 첫 변환만 대기, 이후 모든 사용자는 즉시.
         </span>
       </div>
+
+      {overage && (
+        <div className="threed-test__overage" role="alert">
+          <span>
+            ⚠️ 저장소 <strong>{overage.usedGB}GB / 10GB</strong> 사용 — 이 변환은 무료 한도를 넘어
+            <strong> 추가 결제</strong>가 발생할 수 있습니다(남은 {overage.freeGB}GB).
+          </span>
+          <div className="threed-test__overage-btns">
+            <button
+              className="btn btn--sm btn--primary"
+              onClick={() => {
+                const o = overage;
+                setOverage(null);
+                void openFromAcc(o.file, o.force, true);
+              }}
+            >
+              추가 결제 감수하고 변환
+            </button>
+            <button className="btn btn--sm" onClick={() => setOverage(null)}>
+              취소
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="threed-test__viewer">
         <div className="viewer-bar">

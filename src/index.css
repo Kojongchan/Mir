@@ -3313,6 +3313,28 @@ button.danger:hover:not(:disabled) {
   font-size: 11px;
   line-height: 1.4;
 }
+.threed-test__overage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 10px 14px;
+  font-size: 13px;
+  background: var(--color-warning-soft, #fff7ed);
+  color: var(--color-warning-strong, #9a3412);
+  border-bottom: 1px solid var(--color-border);
+}
+.threed-test__overage-btns {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+@media (prefers-color-scheme: dark) {
+  .threed-test__overage {
+    background: rgba(154, 52, 18, 0.18);
+    color: #fdba74;
+  }
+}
 
 /* 관리자 콘솔을 셸 안에 임베드할 때 */
 .admin-embed {
