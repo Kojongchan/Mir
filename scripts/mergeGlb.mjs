@@ -259,8 +259,9 @@ export async function buildMergedGlb(imf, opts) {
     materials.push({
       pbrMetallicRoughness: {
         baseColorFactor: baseColor,
-        metallicFactor: mat?.metallic ?? 0,
-        roughnessFactor: mat?.roughness ?? 0.9,
+        // glTF 는 0~1 — svf-utils 가 간혹 범위 밖 값(예: roughness 15624)을 줘서 클램프한다.
+        metallicFactor: Math.min(1, Math.max(0, mat?.metallic ?? 0)),
+        roughnessFactor: Math.min(1, Math.max(0, mat?.roughness ?? 0.9)),
       },
       doubleSided: true,
       ...(baseColor[3] < 1 ? { alphaMode: 'BLEND' } : {}),
