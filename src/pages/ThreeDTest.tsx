@@ -49,7 +49,29 @@ export function ThreeDTest() {
     viewer.camera.look = [0, 0, 0];
     viewer.camera.up = [0, 1, 0];
     viewerRef.current = viewer;
-    loaderRef.current = new GLTFLoaderPlugin(viewer);
+    // 커스텀 데이터소스: xeokit 기본 XHR 은 URL 에 캐시버스터(&_=timestamp)를 붙이는데,
+    // 이게 R2 presigned URL 의 서명을 깨서 403 을 낸다. fetch 로 URL 을 '그대로' 가져온다.
+    const fetchBuf = (url: string, ok: (b: ArrayBuffer) => void, err: (e: string) => void) =>
+      fetch(url)
+        .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then(ok)
+        .catch((e) => err(String(e)));
+    const dataSource = {
+      getMetaModel: (src: string, ok: (j: unknown) => void, err: (e: string) => void) =>
+        fetch(src)
+          .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+          .then(ok)
+          .catch((e) => err(String(e))),
+      getGLTF: (src: string, ok: (b: ArrayBuffer) => void, err: (e: string) => void) =>
+        fetchBuf(src, ok, err),
+      getArrayBuffer: (src: string, binSrc: string, ok: (b: ArrayBuffer) => void, err: (e: string) => void) => {
+        const u = /^(https?:|blob:|data:)/.test(binSrc) ? binSrc : new URL(binSrc, src).href;
+        fetchBuf(u, ok, err);
+      },
+    };
+    loaderRef.current = new GLTFLoaderPlugin(viewer, {
+      dataSource,
+    } as unknown as ConstructorParameters<typeof GLTFLoaderPlugin>[1]);
 
     // 클릭 픽 → 엔티티 ID(+메타) → MIR_SMART DB 조인 지점.
     const onClick = viewer.scene.input.on('mouseclicked', (canvasPos: number[]) => {
