@@ -130,6 +130,27 @@ xeokit 렌더(Z-up 보정)** 실동작 확인 완료. convert4d 수정은 브랜
 R2 이전 + DWG 색상(정점색→재질 승격) · 선/점(포맷별) 복원 · IFC 합성 엣지선 제거 완료(같은 DWG
 재변환 로그로 실색 검증). 다음은 초대형 IFC 메타 한계 대응. 브랜치 한정·미머지 유지.
 
+### ✅ 한 일 (7차 — 토목 DWG '콩알' 렌더/네비게이션: 거대 측량좌표 대응)
+- **증상**: 토목 DWG(토공_갱구부 사면 등)가 화면 중앙 콩알로 뜨고 줌으로 다가가지지 않음.
+- **원인(변환 로그 bbox 로 확진)**: 실측좌표(X≈225km·폭 20.7km × 10.2km). ① near/far 범위가
+  극단이라 전체를 담으면 가까이 못 가고 ② flyTo 가 20km 전체(대부분 빈 공간)를 맞춰 콩알 ③
+  흩어진 측량선이 bbox 를 20km 로 부풀림(실제 밀집부는 5.7km).
+- **해결**:
+  1) Viewer `logarithmicDepthBufferEnabled:true` — km~m 스케일 한 화면에서 오감(클리핑/콩알).
+  2) `cameraControl.followPointer=true`(+smartPivot) — 줌이 커서 아래 지오메트리로 다가감.
+  3) **focus 박스**(변환기가 프래그먼트 중심점의 가중치 85% 최소구간=밀집영역 계산 →
+     `<key>/focus.json` R2 업로드 → api 가 cacheState 에 실어줌 → 프런트가 로드 회전과 같은
+     축변환 후 그 박스로 flyTo). 이 DWG 는 focus half (8800→2830)로 실제 밀집부만 잡힘 확인.
+  4) Draco 위치 14→16bit — 20km 범위에서 1.2m→0.3m 형상 보존.
+- **적용 범위**: ①②는 프런트(전 모델 즉시 개선), ③④는 재변환 필요(focus.json 은 새 변환부터
+  생김). 이 DWG 는 재변환 완료(캐시에 focus 반영). 기존 캐시 모델은 focus 없이도 로그깊이+
+  followPointer 로 네비 개선됨(원하면 재변환).
+- 검증: 변환 로그 bbox/focus 직접 조회. **사용자 액션: Vercel 재배포 후 DWG 다시 열기(캐시 즉시).**
+
+### 인수인계 한 줄 (7차)
+토목 DWG 콩알/줌불가 = 거대 측량좌표(20km) 문제. 로그깊이버퍼+followPointer+밀집 focus 박스
+(focus.json)+Draco 16bit 로 해결. 프런트 재배포 필요. 다음은 초대형 IFC 메타 한계.
+
 ---
 ## 📋 F2 — 협업·이슈 고도화(타입 분화·3뷰·뷰포인트·출력·현장등록) (2026-07-10)
 > branch `claude/issue-collaboration-upgrade-o4uzc0`. typecheck·build 통과.
