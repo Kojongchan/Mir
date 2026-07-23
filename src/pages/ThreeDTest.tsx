@@ -63,7 +63,15 @@ export function ThreeDTest() {
       // VBO 로 그려도 60fps 나오므로 끈다. (더블프리시전은 DTX 와 무관 — RTC 로 자동 처리)
       dtxEnabled: false,
       saoEnabled: true,
+      // 로그 깊이버퍼 — 토목 DWG 는 측량좌표(예: X≈230km, 폭 20km)라 near/far 범위가
+      // 극단적이다. 이게 없으면 전체를 담으면 near 가 커져 가까이 못 가고(콩알), 가까이
+      // 맞추면 far 가 작아 잘린다. 로그버퍼로 km~m 스케일을 한 화면에서 오가게 한다.
+      logarithmicDepthBufferEnabled: true,
     });
+    // 줌이 '커서 아래 지오메트리'로 다가가게(followPointer) — 거대 좌표 모델에서 화면
+    // 중앙 빈 공간으로 줌돼 대상에 못 닿던 문제 해결. smartPivot 으로 회전 피벗도 안정화.
+    viewer.cameraControl.followPointer = true;
+    viewer.cameraControl.smartPivot = true;
     viewer.camera.eye = [15, 15, 15];
     viewer.camera.look = [0, 0, 0];
     viewer.camera.up = [0, 1, 0];

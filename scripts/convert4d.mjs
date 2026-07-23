@@ -287,7 +287,9 @@ async function main() {
     const compressed = await gltfPipeline.processGlb(fs.readFileSync(outPath), {
       dracoOptions: {
         compressionLevel: 7,
-        quantizePositionBits: 14,
+        // 위치 16bit — 토목 DWG 는 실측좌표라 범위가 크다(예: 폭 20km). 14bit 면
+        // 20000/2^14≈1.2m 로 뭉개져 형상이 무너진다. 16bit(≈0.3m)로 보존.
+        quantizePositionBits: 16,
         quantizeNormalBits: 10,
         quantizeTexcoordBits: 12,
         quantizeGenericBits: 16, // _DBID 최대한 보존
