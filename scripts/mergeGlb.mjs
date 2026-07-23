@@ -12,6 +12,7 @@ import { MeshoptSimplifier } from 'meshoptimizer';
 
 const NODE_OBJECT = 1; // IMF.NodeKind.Object
 const GEOM_MESH = 0; // IMF.GeometryKind.Mesh
+const GEOM_LINES = 1; // IMF.GeometryKind.Lines (DWG 선형 등)
 const TRANSFORM_MATRIX = 0; // IMF.TransformKind.Matrix
 
 function composeMatrix(t) {
@@ -74,12 +75,53 @@ export async function buildMergedGlb(imf, opts) {
     return g;
   };
 
+  // 선(line) 전용 그룹 — 삼각형과 프리미티브 모드가 달라(1 vs 4) 분리 누적. 법선 없음.
+  // DWG/도면·선형이 여기로 들어간다(예전엔 통째로 버려서 DWG 가 안 보였음).
+  const lineGroups = new Map();
+  const lineGroupOf = (matId) => {
+    let g = lineGroups.get(matId);
+    if (!g) {
+      g = { posCh: [], dbCh: [], idxCh: [], base: 0, vtx: 0, idxN: 0, min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
+      lineGroups.set(matId, g);
+    }
+    return g;
+  };
+  let lineFrag = 0;
+  const addLine = (node, geom) => {
+    const verts = geom.getVertices();
+    const idx = geom.getIndices();
+    if (!verts || !idx || verts.length === 0 || idx.length === 0) return;
+    lineFrag++;
+    const idx32 = idx instanceof Uint32Array ? idx : Uint32Array.from(idx);
+    const nv = verts.length / 3;
+    const m = matrixOf(node.transform);
+    const pos = new Float32Array(nv * 3);
+    const db = new Float32Array(nv);
+    const g = lineGroupOf(node.material ?? -1);
+    for (let v = 0; v < nv; v++) {
+      const x = verts[v * 3], y = verts[v * 3 + 1], z = verts[v * 3 + 2];
+      let ox, oy, oz;
+      if (m) { ox = m[0] * x + m[4] * y + m[8] * z + m[12]; oy = m[1] * x + m[5] * y + m[9] * z + m[13]; oz = m[2] * x + m[6] * y + m[10] * z + m[14]; }
+      else { ox = x; oy = y; oz = z; }
+      pos[v * 3] = ox; pos[v * 3 + 1] = oy; pos[v * 3 + 2] = oz;
+      if (ox < g.min[0]) g.min[0] = ox; if (oy < g.min[1]) g.min[1] = oy; if (oz < g.min[2]) g.min[2] = oz;
+      if (ox > g.max[0]) g.max[0] = ox; if (oy > g.max[1]) g.max[1] = oy; if (oz > g.max[2]) g.max[2] = oz;
+      db[v] = node.dbid;
+    }
+    const reidx = new Uint32Array(idx32.length);
+    for (let k = 0; k < idx32.length; k++) reidx[k] = idx32[k] + g.base;
+    g.posCh.push(pos); g.dbCh.push(db); g.idxCh.push(reidx);
+    g.base += nv; g.vtx += nv; g.idxN += reidx.length;
+  };
+
   let processed = 0, decimated = 0, fragCount = 0;
   for (let i = 0; i < nodeCount; i++) {
     const node = imf.getNode(i);
     if (node.kind !== NODE_OBJECT) continue;
     const geom = imf.getGeometry(node.geometry);
-    if (!geom || geom.kind !== GEOM_MESH) continue;
+    if (!geom) continue;
+    if (geom.kind === GEOM_LINES) { addLine(node, geom); continue; }
+    if (geom.kind !== GEOM_MESH) continue;
     let verts = geom.getVertices();
     let idx = geom.getIndices();
     let normals = geom.getNormals();
@@ -138,7 +180,7 @@ export async function buildMergedGlb(imf, opts) {
 
     if (++processed % 50000 === 0) log(`[merge]   ${processed} 객체 (단순화 ${decimated})`);
   }
-  log(`[merge] 프래그먼트 ${fragCount} · 재질그룹 ${groups.size} · 단순화 ${decimated}`);
+  log(`[merge] 프래그먼트 ${fragCount} · 재질그룹 ${groups.size} · 단순화 ${decimated} · 선 ${lineFrag}`);
 
   // 청크 → 그룹별 연속 배열로 합치고 glTF/GLB 작성.
   const concatF = (chunks, total) => { const out = new Float32Array(total); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; } return out; };
@@ -171,6 +213,26 @@ export async function buildMergedGlb(imf, opts) {
     const baseColor = d ? [d.x, d.y, d.z, mat?.opacity ?? 1] : [0.72, 0.74, 0.77, 1];
     materials.push({ pbrMetallicRoughness: { baseColorFactor: baseColor, metallicFactor: 0, roughnessFactor: 0.9 }, doubleSided: true, ...(baseColor[3] < 1 ? { alphaMode: 'BLEND' } : {}) });
     meshes.push({ primitives: [{ mode: 4, attributes: { POSITION: posAcc, NORMAL: nrmAcc, _DBID: dbAcc }, indices: idxAcc, material: materials.length - 1 }] });
+    nodes.push({ mesh: meshes.length - 1 });
+  }
+
+  // 선(line) 그룹 → mode:1 프리미티브(법선 없음). DWG 선형이 보이게 된다.
+  for (const [matId, g] of lineGroups) {
+    if (g.vtx === 0) continue;
+    const pos = concatF(g.posCh, g.vtx * 3); g.posCh.length = 0;
+    const dbid = concatF(g.dbCh, g.vtx); g.dbCh.length = 0;
+    const idxA = concatU(g.idxCh, g.idxN); g.idxCh.length = 0;
+    totalV += g.vtx;
+
+    const posAcc = accessors.push({ bufferView: addView(pos, 34962), componentType: 5126, count: g.vtx, type: 'VEC3', min: g.min, max: g.max }) - 1;
+    const dbAcc = accessors.push({ bufferView: addView(dbid, 34962), componentType: 5126, count: g.vtx, type: 'SCALAR' }) - 1;
+    const idxAcc = accessors.push({ bufferView: addView(idxA, 34963), componentType: 5125, count: idxA.length, type: 'SCALAR' }) - 1;
+
+    const mat = imf.getMaterial(matId);
+    const d = mat?.diffuse;
+    const baseColor = d ? [d.x, d.y, d.z, mat?.opacity ?? 1] : [0.1, 0.12, 0.16, 1];
+    materials.push({ pbrMetallicRoughness: { baseColorFactor: baseColor, metallicFactor: 0, roughnessFactor: 1 }, ...(baseColor[3] < 1 ? { alphaMode: 'BLEND' } : {}) });
+    meshes.push({ primitives: [{ mode: 1, attributes: { POSITION: posAcc, _DBID: dbAcc }, indices: idxAcc, material: materials.length - 1 }] });
     nodes.push({ mesh: meshes.length - 1 });
   }
 

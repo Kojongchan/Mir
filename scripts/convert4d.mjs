@@ -244,22 +244,28 @@ async function main() {
   // (xeokit 는 KHR_draco_mesh_compression 디코드 지원. meshopt 는 xeokit 가 요구하는
   //  KHR_mesh_quantization 미지원이라 부적합 → Draco 사용.) 위치 14bit 로 형상 보존.
   const rawBytes = res.bytes;
-  console.log(`[convert4d] Draco 압축 중…`);
-  const compressed = await gltfPipeline.processGlb(fs.readFileSync(outPath), {
-    dracoOptions: {
-      compressionLevel: 7,
-      quantizePositionBits: 14,
-      quantizeNormalBits: 10,
-      quantizeTexcoordBits: 12,
-      quantizeGenericBits: 16, // _DBID 최대한 보존
-      unifiedQuantization: true, // 병합 모델(실좌표) 정합
-    },
-  });
-  fs.writeFileSync(outPath, compressed.glb);
-  const cBytes = fs.statSync(outPath).size;
-  console.log(
-    `[convert4d] 압축 완료: ${(rawBytes / 1048576).toFixed(1)}MB → ${(cBytes / 1048576).toFixed(1)}MB`,
-  );
+  // Draco 는 삼각형만 압축 — 선(DWG)만 있는 GLB 는 압축이 실패/무의미할 수 있으니 best-effort.
+  // (선형 GLB 는 보통 작아 50MB 미만이라 비압축이어도 업로드됨.)
+  try {
+    console.log(`[convert4d] Draco 압축 중…`);
+    const compressed = await gltfPipeline.processGlb(fs.readFileSync(outPath), {
+      dracoOptions: {
+        compressionLevel: 7,
+        quantizePositionBits: 14,
+        quantizeNormalBits: 10,
+        quantizeTexcoordBits: 12,
+        quantizeGenericBits: 16, // _DBID 최대한 보존
+        unifiedQuantization: true, // 병합 모델(실좌표) 정합
+      },
+    });
+    fs.writeFileSync(outPath, compressed.glb);
+    const cBytes = fs.statSync(outPath).size;
+    console.log(
+      `[convert4d] 압축 완료: ${(rawBytes / 1048576).toFixed(1)}MB → ${(cBytes / 1048576).toFixed(1)}MB`,
+    );
+  } catch (e) {
+    console.warn(`[convert4d] Draco 압축 건너뜀(${e?.message || e}) — 원본 GLB 사용`);
+  }
 
   // Supabase Storage 업로드(버킷 없으면 생성). 실패는 치명적으로 — 캐시가 없으면
   // 프런트가 무한 폴링하므로, 조용히 넘어가지 않고 잡을 실패시켜 로그로 드러낸다.
