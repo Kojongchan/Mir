@@ -36,7 +36,7 @@ jobs:
           node-version: 22
 
       - name: Install converter deps
-        run: npm install --no-save svf-utils@8 @supabase/supabase-js@2 @aps_sdk/authentication @aps_sdk/model-derivative adm-zip meshoptimizer gltf-pipeline@4
+        run: npm install --no-save svf-utils@8 @supabase/supabase-js@2 @aps_sdk/authentication @aps_sdk/model-derivative adm-zip meshoptimizer gltf-pipeline@4 @aws-sdk/client-s3@3
 
       - name: Convert SVF → GLB → upload
         env:

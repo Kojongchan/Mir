@@ -26,6 +26,7 @@ import { AuthenticationClient, Scopes } from '@aps_sdk/authentication';
 import { ModelDerivativeClient } from '@aps_sdk/model-derivative';
 import AdmZip from 'adm-zip';
 import gltfPipeline from 'gltf-pipeline';
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { buildMergedGlb } from './mergeGlb.mjs';
 
 const APS_BASE = 'https://developer.api.autodesk.com';
@@ -49,6 +50,31 @@ function cleanUrl(u) {
   return s.replace(/\/+$/, '');
 }
 const SUPABASE_URL = cleanUrl(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL);
+
+// Cloudflare R2 (결과 GLB 저장소) — Supabase 무료 50MB 상한 회피(무료 10GB·egress 무료).
+const {
+  R2_ACCOUNT_ID,
+  R2_ACCESS_KEY_ID,
+  R2_SECRET_ACCESS_KEY,
+  R2_BUCKET,
+} = process.env;
+let _r2 = null;
+function r2() {
+  if (!_r2) {
+    _r2 = new S3Client({
+      region: 'auto',
+      endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+      credentials: { accessKeyId: R2_ACCESS_KEY_ID, secretAccessKey: R2_SECRET_ACCESS_KEY },
+    });
+  }
+  return _r2;
+}
+async function r2Put(key, body, contentType) {
+  await r2().send(new PutObjectCommand({ Bucket: R2_BUCKET, Key: key, Body: body, ContentType: contentType }));
+}
+async function r2Delete(key) {
+  await r2().send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: key })).catch(() => {});
+}
 
 function need(name, v) {
   if (!v) throw new Error(`환경변수 누락: ${name}`);
@@ -198,6 +224,10 @@ async function main() {
   need('APS_CLIENT_SECRET', APS_CLIENT_SECRET);
   need('SUPABASE_URL', SUPABASE_URL);
   need('SUPABASE_SERVICE_ROLE_KEY', SUPABASE_SERVICE_ROLE_KEY);
+  need('R2_ACCOUNT_ID', R2_ACCOUNT_ID);
+  need('R2_ACCESS_KEY_ID', R2_ACCESS_KEY_ID);
+  need('R2_SECRET_ACCESS_KEY', R2_SECRET_ACCESS_KEY);
+  need('R2_BUCKET', R2_BUCKET);
   let host = '';
   try {
     host = new URL(SUPABASE_URL).host;
@@ -216,9 +246,9 @@ async function main() {
   const urn = await resolveUrn(supabase);
   const keyBase = PROJECT_ID || urn.replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
   console.log(`[convert4d] URN=${urn.slice(0, 24)}… region=${APS_REGION} bucket=${STORAGE_BUCKET} key=${keyBase}`);
-  errCtx = { supabase, keyBase };
+  errCtx = { keyBase };
   // 이전 실패 마커 제거 — 재시도 중엔 '처리중'으로 보이게(실패로 오인 방지).
-  await supabase.storage.from(STORAGE_BUCKET).remove([`${keyBase}/error.json`]).catch(() => {});
+  await r2Delete(`${keyBase}/error.json`);
 
   const derivatives = await getSvfDerivatives(urn);
   if (derivatives.length === 0) throw new Error('SVF 파생물을 찾지 못했습니다.');
@@ -273,41 +303,27 @@ async function main() {
     console.warn(`[convert4d] Draco 압축 건너뜀(${e?.message || e}) — 원본 GLB 사용`);
   }
 
-  // Supabase Storage 업로드(버킷 없으면 생성). 실패는 치명적으로 — 캐시가 없으면
-  // 프런트가 무한 폴링하므로, 조용히 넘어가지 않고 잡을 실패시켜 로그로 드러낸다.
-  await supabase.storage.createBucket(STORAGE_BUCKET, { public: false }).catch(() => {});
+  // Cloudflare R2 업로드(파일당 50MB 제한 없음). 실패는 치명적으로 처리(main().catch
+  // 에서 error.json 마커 → 프런트가 무한 폴링 대신 즉시 실패 표시).
   const objectPath = `${keyBase}/model.glb`;
   const fileBuf = fs.readFileSync(outPath);
-  if (fileBuf.length > 49 * 1024 * 1024) {
-    throw new Error(
-      `압축 후에도 ${(fileBuf.length / 1048576).toFixed(1)}MB 로 Supabase 무료 상한(50MB) 초과 — ` +
-        `더 강한 데시메이션(DECIMATE_RATIO↓) 또는 모델 분할 필요`,
-    );
-  }
-  const up = await supabase.storage.from(STORAGE_BUCKET).upload(objectPath, fileBuf, {
-    contentType: 'model/gltf-binary',
-    upsert: true,
-  });
-  if (up.error) throw new Error(`Supabase 업로드 실패: ${up.error.message}`);
-  await supabase.storage.from(STORAGE_BUCKET).remove([`${keyBase}/error.json`]).catch(() => {});
+  await r2Put(objectPath, fileBuf, 'model/gltf-binary');
+  await r2Delete(`${keyBase}/error.json`);
   console.log(
-    `[convert4d] 업로드 완료: ${STORAGE_BUCKET}/${objectPath} (${(fileBuf.length / 1048576).toFixed(1)}MB)`,
+    `[convert4d] 업로드 완료(R2): ${R2_BUCKET}/${objectPath} (${(fileBuf.length / 1048576).toFixed(1)}MB)`,
   );
   console.log(`[convert4d] DONE`);
 }
 
 main().catch(async (e) => {
   console.error('[convert4d] 실패:', e?.stack || e?.message || e);
-  // 실패 마커를 캐시에 남겨 프런트가 즉시 감지하게 한다(무한 폴링 방지).
+  // 실패 마커를 R2 에 남겨 프런트가 즉시 감지하게 한다(무한 폴링 방지).
   if (errCtx) {
-    await errCtx.supabase.storage
-      .from(STORAGE_BUCKET)
-      .upload(
-        `${errCtx.keyBase}/error.json`,
-        Buffer.from(JSON.stringify({ error: String(e?.message || e).slice(0, 300), at: new Date().toISOString() })),
-        { contentType: 'application/json', upsert: true },
-      )
-      .catch(() => {});
+    await r2Put(
+      `${errCtx.keyBase}/error.json`,
+      Buffer.from(JSON.stringify({ error: String(e?.message || e).slice(0, 300), at: new Date().toISOString() })),
+      'application/json',
+    ).catch(() => {});
   }
   process.exit(1);
 });
