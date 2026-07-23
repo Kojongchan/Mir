@@ -215,12 +215,10 @@ export async function buildMergedGlb(imf, opts) {
 
     if (++processed % 50000 === 0) log(`[merge]   ${processed} 객체 (단순화 ${decimated})`);
   }
-  let triVerts = 0; for (const g of groups.values()) triVerts += g.vtx;
-  let lineVerts = 0; for (const g of lineGroups.values()) lineVerts += g.vtx;
-  let pointVerts = 0; for (const g of pointGroups.values()) pointVerts += g.vtx;
-  // 솔리드가 지배적이면 선/점은 대개 엣지/주석 클러터(IFC/RVT 의 와이어프레임) → 제외.
-  // 선형 위주(DWG 도면)면 유지. INCLUDE_LINES=1 로 강제 포함 가능.
-  const includeLines = process.env.INCLUDE_LINES === '1' || lineVerts + pointVerts >= triVerts;
+  // 솔리드(삼각형) 부재가 하나라도 있으면 선/점은 대개 엣지/주석 클러터(IFC 의 와이어프레임
+  // 11만개 등) → 제외. 순수 선형(솔리드 0 = DWG 도면)만 선/점 유지. 정점수 비율은 엣지선이
+  // 많아 오판하므로 '솔리드 존재 여부'로 판단. INCLUDE_LINES=1 로 강제 포함 가능.
+  const includeLines = process.env.INCLUDE_LINES === '1' || fragCount === 0;
   log(`[merge] 프래그먼트 ${fragCount} · 재질그룹 ${groups.size} · 단순화 ${decimated} · 선 ${lineFrag} · 점 ${pointFrag} · 선/점포함 ${includeLines}`);
 
   // 청크 → 그룹별 연속 배열로 합치고 glTF/GLB 작성.
