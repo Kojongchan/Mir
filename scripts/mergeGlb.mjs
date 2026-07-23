@@ -77,6 +77,27 @@ function groupKey(matId, color) {
   return `m${matId}#${q[0]}_${q[1]}_${q[2]}_${q[3]}`;
 }
 
+// 프래그먼트 중심점들의 축별 가중 분위수(1~99%)로 이상치를 뺀 카메라 초점 박스.
+// {center:[x,y,z], half:[hx,hy,hz]}. 멀리 떨어진 소수 이상치(타이틀블록·측점 등)가
+// 전체 AABB 를 부풀려 flyTo 가 빈 공간을 맞추는 문제를 막는다. 실좌표(회전 전) 기준.
+function robustFocus(foci) {
+  if (!foci.length) return null;
+  const total = foci.reduce((s, f) => s + f.w, 0);
+  const axis = (i) => {
+    const arr = foci.map((f) => ({ v: f.c[i], w: f.w })).sort((a, b) => a.v - b.v);
+    const q = (p) => {
+      let acc = 0; const target = total * p;
+      for (const x of arr) { acc += x.w; if (acc >= target) return x.v; }
+      return arr[arr.length - 1].v;
+    };
+    const lo = q(0.01), hi = q(0.99);
+    // 초점은 중심점 분포 → 부재 크기만큼 여유(15%+최소치)를 둔다.
+    return { center: (lo + hi) / 2, half: Math.max((hi - lo) / 2 * 1.15, 0.5) };
+  };
+  const fx = axis(0), fy = axis(1), fz = axis(2);
+  return { center: [fx.center, fy.center, fz.center], half: [fx.half, fy.half, fz.half] };
+}
+
 export async function buildMergedGlb(imf, opts) {
   const log = opts.log || (() => {});
   const decimate = process.env.DECIMATE !== '0';
@@ -86,6 +107,16 @@ export async function buildMergedGlb(imf, opts) {
   if (decimate) await MeshoptSimplifier.ready;
 
   const nodeCount = imf.getNodeCount();
+  // 프래그먼트별 중심점(가중=정점수) — 카메라 초점(focus) 계산용. DWG 등은 원점의 타이틀블록
+  // + 실측좌표의 도면처럼 **멀리 떨어진 이상치**가 섞여 전체 AABB 가 거대해지면 flyTo 가 빈
+  // 공간을 맞춰 모델이 콩알처럼 보인다. 중심점 분위수(1~99%)로 이상치를 뺀 초점을 구워둔다.
+  const foci = [];
+  // 전체 실제 좌표 범위(진단 로그용).
+  const gmin = [Infinity, Infinity, Infinity], gmax = [-Infinity, -Infinity, -Infinity];
+  const bump = (x, y, z) => {
+    if (x < gmin[0]) gmin[0] = x; if (y < gmin[1]) gmin[1] = y; if (z < gmin[2]) gmin[2] = z;
+    if (x > gmax[0]) gmax[0] = x; if (y > gmax[1]) gmax[1] = y; if (z > gmax[2]) gmax[2] = z;
+  };
   // 그룹((재질,색))별 청크 누적. key -> { matId, color, posCh, nrmCh, dbCh, idxCh, ... }
   const groups = new Map();
   const groupOf = (matId, color) => {
@@ -122,6 +153,7 @@ export async function buildMergedGlb(imf, opts) {
     const pos = new Float32Array(nv * 3);
     const db = new Float32Array(nv);
     const g = lineGroupOf(node.material ?? -1, fragColor(geom.getColors?.(), nv, 3));
+    let sx = 0, sy = 0, sz = 0;
     for (let v = 0; v < nv; v++) {
       const x = verts[v * 3], y = verts[v * 3 + 1], z = verts[v * 3 + 2];
       let ox, oy, oz;
@@ -130,8 +162,11 @@ export async function buildMergedGlb(imf, opts) {
       pos[v * 3] = ox; pos[v * 3 + 1] = oy; pos[v * 3 + 2] = oz;
       if (ox < g.min[0]) g.min[0] = ox; if (oy < g.min[1]) g.min[1] = oy; if (oz < g.min[2]) g.min[2] = oz;
       if (ox > g.max[0]) g.max[0] = ox; if (oy > g.max[1]) g.max[1] = oy; if (oz > g.max[2]) g.max[2] = oz;
+      sx += ox; sy += oy; sz += oz;
       db[v] = node.dbid;
     }
+    bump(g.min[0], g.min[1], g.min[2]); bump(g.max[0], g.max[1], g.max[2]);
+    foci.push({ c: [sx / nv, sy / nv, sz / nv], w: nv });
     const reidx = new Uint32Array(idx32.length);
     for (let k = 0; k < idx32.length; k++) reidx[k] = idx32[k] + g.base;
     g.posCh.push(pos); g.dbCh.push(db); g.idxCh.push(reidx);
@@ -159,6 +194,7 @@ export async function buildMergedGlb(imf, opts) {
     const pos = new Float32Array(nv * 3);
     const db = new Float32Array(nv);
     const g = pointGroupOf(node.material ?? -1, fragColor(geom.getColors?.(), nv, 3));
+    let sx = 0, sy = 0, sz = 0;
     for (let v = 0; v < nv; v++) {
       const x = verts[v * 3], y = verts[v * 3 + 1], z = verts[v * 3 + 2];
       let ox, oy, oz;
@@ -167,8 +203,11 @@ export async function buildMergedGlb(imf, opts) {
       pos[v * 3] = ox; pos[v * 3 + 1] = oy; pos[v * 3 + 2] = oz;
       if (ox < g.min[0]) g.min[0] = ox; if (oy < g.min[1]) g.min[1] = oy; if (oz < g.min[2]) g.min[2] = oz;
       if (ox > g.max[0]) g.max[0] = ox; if (oy > g.max[1]) g.max[1] = oy; if (oz > g.max[2]) g.max[2] = oz;
+      sx += ox; sy += oy; sz += oz;
       db[v] = node.dbid;
     }
+    bump(g.min[0], g.min[1], g.min[2]); bump(g.max[0], g.max[1], g.max[2]);
+    foci.push({ c: [sx / nv, sy / nv, sz / nv], w: nv });
     g.posCh.push(pos); g.dbCh.push(db); g.vtx += nv;
   };
 
@@ -213,6 +252,7 @@ export async function buildMergedGlb(imf, opts) {
     const db = new Float32Array(nv);
     const g = groupOf(node.material ?? -1, color);
 
+    let sx = 0, sy = 0, sz = 0;
     for (let v = 0; v < nv; v++) {
       const x = verts[v * 3], y = verts[v * 3 + 1], z = verts[v * 3 + 2];
       let ox, oy, oz;
@@ -224,6 +264,7 @@ export async function buildMergedGlb(imf, opts) {
       pos[v * 3] = ox; pos[v * 3 + 1] = oy; pos[v * 3 + 2] = oz;
       if (ox < g.min[0]) g.min[0] = ox; if (oy < g.min[1]) g.min[1] = oy; if (oz < g.min[2]) g.min[2] = oz;
       if (ox > g.max[0]) g.max[0] = ox; if (oy > g.max[1]) g.max[1] = oy; if (oz > g.max[2]) g.max[2] = oz;
+      sx += ox; sy += oy; sz += oz;
       let nx = 0, ny = 0, nz = 1;
       if (normals) {
         const a = normals[v * 3], b = normals[v * 3 + 1], c = normals[v * 3 + 2];
@@ -234,6 +275,8 @@ export async function buildMergedGlb(imf, opts) {
       nrm[v * 3] = nx; nrm[v * 3 + 1] = ny; nrm[v * 3 + 2] = nz;
       db[v] = node.dbid;
     }
+    bump(g.min[0], g.min[1], g.min[2]); bump(g.max[0], g.max[1], g.max[2]);
+    foci.push({ c: [sx / nv, sy / nv, sz / nv], w: nv });
     const reidx = new Uint32Array(idx32.length);
     for (let k = 0; k < idx32.length; k++) reidx[k] = idx32[k] + g.base;
     g.posCh.push(pos); g.nrmCh.push(nrm); g.dbCh.push(db); g.idxCh.push(reidx);
@@ -247,6 +290,11 @@ export async function buildMergedGlb(imf, opts) {
   const includeLines = process.env.INCLUDE_LINES === '1' || fragCount === 0;
   const colGroups = [...groups.values(), ...lineGroups.values(), ...pointGroups.values()].filter((g) => g.color).length;
   log(`[merge] 프래그먼트 ${fragCount} · 재질그룹 ${groups.size} · 단순화 ${decimated} · 선 ${lineFrag} · 점 ${pointFrag} · 선/점포함 ${includeLines} · 색그룹 ${colGroups}`);
+  const focus = robustFocus(foci);
+  const fmt = (a) => a.map((x) => (Number.isFinite(x) ? x.toFixed(1) : x)).join(',');
+  const span = gmax.map((v, i) => v - gmin[i]);
+  log(`[merge] bbox min=(${fmt(gmin)}) max=(${fmt(gmax)}) span=(${fmt(span)})`);
+  if (focus) log(`[merge] focus center=(${fmt(focus.center)}) half=(${fmt(focus.half)})`);
 
   // 청크 → 그룹별 연속 배열로 합치고 glTF/GLB 작성.
   const concatF = (chunks, total) => { const out = new Float32Array(total); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; } return out; };
@@ -359,5 +407,5 @@ export async function buildMergedGlb(imf, opts) {
   for (const piece of pieces) fs.writeSync(fd, piece);
   fs.closeSync(fd);
 
-  return { glbPath: opts.outPath, bytes: total, groups: nodes.length, vertices: totalV, decimated };
+  return { glbPath: opts.outPath, bytes: total, groups: nodes.length, vertices: totalV, decimated, focus };
 }

@@ -101,16 +101,27 @@ async function r2TotalSize(): Promise<number> {
   return total;
 }
 
+type Focus = { center: [number, number, number]; half: [number, number, number] };
 type CacheState =
-  | { ready: true; url: string }
+  | { ready: true; url: string; focus?: Focus }
   | { failed: true; error: string }
   | { ready: false };
 
-/** R2 캐시 상태: model.glb 있으면 ready(presigned), error.json 있으면 failed, 없으면 처리중. */
+/** R2 캐시 상태: model.glb 있으면 ready(presigned + focus), error.json 있으면 failed, 없으면 처리중. */
 async function cacheState(urn: string): Promise<CacheState> {
   const dir = glbKey(urn);
   if (await r2Head(`${dir}/model.glb`)) {
-    return { ready: true, url: await r2PresignGet(`${dir}/model.glb`) };
+    const url = await r2PresignGet(`${dir}/model.glb`);
+    let focus: Focus | undefined;
+    const focusText = await r2GetText(`${dir}/focus.json`);
+    if (focusText) {
+      try {
+        focus = JSON.parse(focusText) as Focus;
+      } catch {
+        /* 무시 */
+      }
+    }
+    return { ready: true, url, focus };
   }
   const errText = await r2GetText(`${dir}/error.json`);
   if (errText) {
@@ -200,7 +211,7 @@ export default async function handler(req: Request): Promise<Response> {
     await clearCache(urn);
   } else {
     const st = await cacheState(urn);
-    if ('ready' in st && st.ready) return json({ ready: true, url: st.url });
+    if ('ready' in st && st.ready) return json({ ready: true, url: st.url, focus: st.focus });
     if ('failed' in st) await clearCache(urn);
   }
 

@@ -308,6 +308,12 @@ async function main() {
   const objectPath = `${keyBase}/model.glb`;
   const fileBuf = fs.readFileSync(outPath);
   await r2Put(objectPath, fileBuf, 'model/gltf-binary');
+  // 카메라 초점(이상치 제외 focus 박스) — 프런트가 flyTo 대상으로 사용(콩알 렌더 방지).
+  if (res.focus) {
+    await r2Put(`${keyBase}/focus.json`, Buffer.from(JSON.stringify(res.focus)), 'application/json');
+  } else {
+    await r2Delete(`${keyBase}/focus.json`);
+  }
   await r2Delete(`${keyBase}/error.json`);
   console.log(
     `[convert4d] 업로드 완료(R2): ${R2_BUCKET}/${objectPath} (${(fileBuf.length / 1048576).toFixed(1)}MB)`,

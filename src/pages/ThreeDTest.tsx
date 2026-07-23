@@ -8,6 +8,23 @@ import { isAccModel } from '../lib/aps';
 import { UiIcon } from '../components/icons/UiIcon';
 import { errMessage } from '../lib/errors';
 
+/** 변환기가 구운 카메라 초점 박스(회전 전 실좌표). 이상치 제외한 중심/반경. */
+type Focus = { center: [number, number, number]; half: [number, number, number] };
+
+/**
+ * focus(회전 전 실좌표)를 로드 회전 [-90,0,0]과 같은 축변환((x,y,z)→(x,z,-y))으로 돌려
+ * xeokit world AABB [xmin,ymin,zmin,xmax,ymax,zmax] 로 변환. 없으면 null.
+ */
+function focusToAabb(focus?: Focus): number[] | null {
+  if (!focus || !focus.center || !focus.half) return null;
+  const [cx, cy, cz] = focus.center;
+  const [hx, hy, hz] = focus.half;
+  // (x,y,z) → (x, z, -y):  center'=(cx, cz, -cy),  half'=(hx, hz, hy)
+  const wcx = cx, wcy = cz, wcz = -cy;
+  const whx = hx, why = hz, whz = hy;
+  return [wcx - whx, wcy - why, wcz - whz, wcx + whx, wcy + why, wcz + whz];
+}
+
 /**
  * 3D뷰 (신규 테스트) — 엔진 xeokit(더블프리시전) + 서버 사전변환 GLB.
  *
@@ -96,8 +113,8 @@ export function ThreeDTest() {
     };
   }, []);
 
-  /** GLB(원격 URL 또는 로컬 objectURL)를 뷰어에 올린다. */
-  const mountGlb = useCallback((src: string, label: string) => {
+  /** GLB(원격 URL 또는 로컬 objectURL)를 뷰어에 올린다. focus 있으면 그 박스로 flyTo. */
+  const mountGlb = useCallback((src: string, label: string, focus?: Focus) => {
     const viewer = viewerRef.current;
     const loader = loaderRef.current;
     if (!viewer || !loader) return;
@@ -119,7 +136,12 @@ export function ThreeDTest() {
       dtxEnabled: false,
     } as unknown as Parameters<typeof loader.load>[0]);
     model.on('loaded', () => {
-      viewer.cameraFlight.flyTo(model);
+      // focus(변환기가 이상치 제외해 구운 초점 박스)가 있으면 전체 AABB 대신 그걸 맞춘다.
+      // DWG 등 멀리 떨어진 이상치로 모델이 콩알처럼 보이던 문제 해결. focus 좌표는 회전 전
+      // (실좌표)이라 로드 회전 [-90,0,0]과 동일한 축변환((x,y,z)→(x,z,-y))을 적용한다.
+      const aabb = focusToAabb(focus);
+      if (aabb) viewer.cameraFlight.flyTo({ aabb });
+      else viewer.cameraFlight.flyTo(model);
       setModelName(label);
       setStatus('');
       setBusy(false);
@@ -152,6 +174,7 @@ export function ThreeDTest() {
       type State = {
         ready?: boolean;
         url?: string;
+        focus?: Focus;
         failed?: boolean;
         error?: string;
         status?: string;
@@ -179,7 +202,7 @@ export function ThreeDTest() {
           const st = await getState();
           if (st.ready && st.url) {
             setStatus(`불러오는 중… ${f.name}`);
-            mountGlb(st.url, f.name);
+            mountGlb(st.url, f.name, st.focus);
             return;
           }
           if (st.failed) {
@@ -210,7 +233,7 @@ export function ThreeDTest() {
         }
         if (rj.ready && rj.url) {
           setStatus(`불러오는 중… ${f.name}`);
-          mountGlb(rj.url, f.name);
+          mountGlb(rj.url, f.name, rj.focus);
           return;
         }
         if (!res.ok) {
@@ -239,7 +262,7 @@ export function ThreeDTest() {
           }
           if (st.ready && st.url) {
             setStatus(`불러오는 중… ${f.name}`);
-            mountGlb(st.url, f.name);
+            mountGlb(st.url, f.name, st.focus);
             return;
           }
           if (st.failed) {
