@@ -77,7 +77,9 @@ export function ThreeDTest() {
     const prev = viewer.scene.models['test'];
     if (prev) prev.destroy();
 
-    const model = loader.load({ id: 'test', src, edges: true });
+    // BIM/APS(SVF)는 Z-up, xeokit/glTF는 Y-up → -90°(X축) 회전으로 세운다.
+    // (안 하면 교량 등 모든 모델이 90° 누움.)
+    const model = loader.load({ id: 'test', src, edges: true, rotation: [-90, 0, 0] });
     model.on('loaded', () => {
       viewer.cameraFlight.flyTo(model);
       setModelName(label);
