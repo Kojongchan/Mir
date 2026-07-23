@@ -1,11 +1,14 @@
 // =====================================================================
-// 병합 GLB 빌더 — svf-utils IMF 장면을 "재질별 소수 메시"로 병합하고 각 정점에
-// dbId(_DBID)를 심어 단일 GLB 로 만든다. 거대 모델은 큰 메시를 meshoptimizer 로
+// 병합 GLB 빌더 — svf-utils IMF 장면을 "(재질 + 정점색)별 소수 메시"로 병합하고 각
+// 정점에 dbId(_DBID)를 심어 단일 GLB 로 만든다. 거대 모델은 큰 메시를 meshoptimizer 로
 // 단순화(decimation)해 정점·메모리를 급감시켜 브라우저가 감당하게 한다.
 //   - 객체-당-노드(수십만 노드) → glTF JSON 512MB 한계 회피(노드=재질 수준).
 //   - 큰 Civil 3D 솔리드 단순화 → 정점 1억 → 수백만, GLB 수백 MB → 데스크톱 로드 가능.
 //   - 단일 패스 + 그룹별 청크 누적(메모리 피크 최소화 → OOM 회피).
-// 런타임(자체 Three.js 뷰어)은 _DBID 로 객체별 시공/철거/미시공을 셰이더로 표현.
+// 색: DWG 등은 재질(diffuse)이 흰색이고 실제 색(ACI 색상)이 **정점색**(getColors)에
+//   실려 온다. xeokit GLTFLoaderPlugin 은 정점색(COLOR_0)을 렌더하지 않으므로, 프래그
+//   먼트의 대표 정점색을 재질 baseColor 로 승격시켜 "(재질,색) 조합"별로 그룹핑한다.
+// 런타임(자체 뷰어)은 _DBID 로 객체별 시공/철거/미시공을 셰이더로 표현.
 // =====================================================================
 import fs from 'node:fs';
 import { MeshoptSimplifier } from 'meshoptimizer';
@@ -56,6 +59,24 @@ function compact(indices, verts, normals) {
   return { idx: newIdx, verts: pos, normals: nrm, nv: n };
 }
 
+// 프래그먼트의 대표 정점색(0~1 RGBA). 프래그먼트는 대개 단색(엔티티 1개 = ACI 색 1개)
+// 이므로 평균으로 충분. 색이 없으면 null. channels=3(선/점) 또는 4(메시).
+function fragColor(raw, nv, channels) {
+  if (!raw || nv <= 0 || raw.length < nv * channels) return null;
+  let r = 0, g = 0, b = 0, a = 0;
+  for (let v = 0; v < nv; v++) {
+    r += raw[v * channels]; g += raw[v * channels + 1]; b += raw[v * channels + 2];
+    a += channels === 4 ? raw[v * channels + 3] : 1;
+  }
+  return [r / nv, g / nv, b / nv, a / nv];
+}
+// (재질, 대표색) 조합을 그룹 키로. 색 없으면 재질 단독.
+function groupKey(matId, color) {
+  if (!color) return `m${matId}`;
+  const q = color.map((x) => Math.round(Math.min(1, Math.max(0, x)) * 255));
+  return `m${matId}#${q[0]}_${q[1]}_${q[2]}_${q[3]}`;
+}
+
 export async function buildMergedGlb(imf, opts) {
   const log = opts.log || (() => {});
   const decimate = process.env.DECIMATE !== '0';
@@ -65,13 +86,14 @@ export async function buildMergedGlb(imf, opts) {
   if (decimate) await MeshoptSimplifier.ready;
 
   const nodeCount = imf.getNodeCount();
-  // 그룹(재질)별 청크 누적.
-  const groups = new Map(); // matId -> { posCh:[], nrmCh:[], dbCh:[], idxCh:[], base, vtx, idxN, min, max }
-  const groupOf = (matId) => {
-    let g = groups.get(matId);
+  // 그룹((재질,색))별 청크 누적. key -> { matId, color, posCh, nrmCh, dbCh, idxCh, ... }
+  const groups = new Map();
+  const groupOf = (matId, color) => {
+    const key = groupKey(matId, color);
+    let g = groups.get(key);
     if (!g) {
-      g = { posCh: [], nrmCh: [], dbCh: [], idxCh: [], base: 0, vtx: 0, idxN: 0, min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
-      groups.set(matId, g);
+      g = { matId, color, posCh: [], nrmCh: [], dbCh: [], idxCh: [], base: 0, vtx: 0, idxN: 0, min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
+      groups.set(key, g);
     }
     return g;
   };
@@ -79,11 +101,12 @@ export async function buildMergedGlb(imf, opts) {
   // 선(line) 전용 그룹 — 삼각형과 프리미티브 모드가 달라(1 vs 4) 분리 누적. 법선 없음.
   // DWG/도면·선형이 여기로 들어간다(예전엔 통째로 버려서 DWG 가 안 보였음).
   const lineGroups = new Map();
-  const lineGroupOf = (matId) => {
-    let g = lineGroups.get(matId);
+  const lineGroupOf = (matId, color) => {
+    const key = groupKey(matId, color);
+    let g = lineGroups.get(key);
     if (!g) {
-      g = { posCh: [], dbCh: [], idxCh: [], base: 0, vtx: 0, idxN: 0, min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
-      lineGroups.set(matId, g);
+      g = { matId, color, posCh: [], dbCh: [], idxCh: [], base: 0, vtx: 0, idxN: 0, min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
+      lineGroups.set(key, g);
     }
     return g;
   };
@@ -98,7 +121,7 @@ export async function buildMergedGlb(imf, opts) {
     const m = matrixOf(node.transform);
     const pos = new Float32Array(nv * 3);
     const db = new Float32Array(nv);
-    const g = lineGroupOf(node.material ?? -1);
+    const g = lineGroupOf(node.material ?? -1, fragColor(geom.getColors?.(), nv, 3));
     for (let v = 0; v < nv; v++) {
       const x = verts[v * 3], y = verts[v * 3 + 1], z = verts[v * 3 + 2];
       let ox, oy, oz;
@@ -117,11 +140,12 @@ export async function buildMergedGlb(imf, opts) {
 
   // 점(point) 전용 그룹 — mode:0(POINTS), 인덱스 없음.
   const pointGroups = new Map();
-  const pointGroupOf = (matId) => {
-    let g = pointGroups.get(matId);
+  const pointGroupOf = (matId, color) => {
+    const key = groupKey(matId, color);
+    let g = pointGroups.get(key);
     if (!g) {
-      g = { posCh: [], dbCh: [], vtx: 0, min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
-      pointGroups.set(matId, g);
+      g = { matId, color, posCh: [], dbCh: [], vtx: 0, min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
+      pointGroups.set(key, g);
     }
     return g;
   };
@@ -134,7 +158,7 @@ export async function buildMergedGlb(imf, opts) {
     const m = matrixOf(node.transform);
     const pos = new Float32Array(nv * 3);
     const db = new Float32Array(nv);
-    const g = pointGroupOf(node.material ?? -1);
+    const g = pointGroupOf(node.material ?? -1, fragColor(geom.getColors?.(), nv, 3));
     for (let v = 0; v < nv; v++) {
       const x = verts[v * 3], y = verts[v * 3 + 1], z = verts[v * 3 + 2];
       let ox, oy, oz;
@@ -162,6 +186,8 @@ export async function buildMergedGlb(imf, opts) {
     let normals = geom.getNormals();
     if (!verts || !idx || verts.length === 0 || idx.length === 0) continue;
     fragCount++;
+    // 대표 정점색은 단순화 전 원본에서(메시 색은 RGBA=정점당 4). DWG 등의 실제 색.
+    const color = fragColor(geom.getColors?.(), verts.length / 3, 4);
 
     let idx32 = idx instanceof Uint32Array ? idx : Uint32Array.from(idx);
 
@@ -185,7 +211,7 @@ export async function buildMergedGlb(imf, opts) {
     const pos = new Float32Array(nv * 3);
     const nrm = new Float32Array(nv * 3);
     const db = new Float32Array(nv);
-    const g = groupOf(node.material ?? -1);
+    const g = groupOf(node.material ?? -1, color);
 
     for (let v = 0; v < nv; v++) {
       const x = verts[v * 3], y = verts[v * 3 + 1], z = verts[v * 3 + 2];
@@ -219,7 +245,8 @@ export async function buildMergedGlb(imf, opts) {
   // 11만개 등) → 제외. 순수 선형(솔리드 0 = DWG 도면)만 선/점 유지. 정점수 비율은 엣지선이
   // 많아 오판하므로 '솔리드 존재 여부'로 판단. INCLUDE_LINES=1 로 강제 포함 가능.
   const includeLines = process.env.INCLUDE_LINES === '1' || fragCount === 0;
-  log(`[merge] 프래그먼트 ${fragCount} · 재질그룹 ${groups.size} · 단순화 ${decimated} · 선 ${lineFrag} · 점 ${pointFrag} · 선/점포함 ${includeLines}`);
+  const colGroups = [...groups.values(), ...lineGroups.values(), ...pointGroups.values()].filter((g) => g.color).length;
+  log(`[merge] 프래그먼트 ${fragCount} · 재질그룹 ${groups.size} · 단순화 ${decimated} · 선 ${lineFrag} · 점 ${pointFrag} · 선/점포함 ${includeLines} · 색그룹 ${colGroups}`);
 
   // 청크 → 그룹별 연속 배열로 합치고 glTF/GLB 작성.
   const concatF = (chunks, total) => { const out = new Float32Array(total); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; } return out; };
@@ -233,7 +260,16 @@ export async function buildMergedGlb(imf, opts) {
     pieces.push(buf); byteOffset += buf.length; return bufferViews.length - 1;
   };
 
-  for (const [matId, g] of groups) {
+  // 그룹의 baseColor: 대표 정점색이 있으면 그 색(DWG ACI 등), 없으면 재질 diffuse,
+  // 그것도 없으면 포맷별 기본색.
+  const baseColorOf = (g, fallback) => {
+    if (g.color) return [g.color[0], g.color[1], g.color[2], g.color[3] ?? 1];
+    const mat = imf.getMaterial(g.matId);
+    const d = mat?.diffuse;
+    return d ? [d.x, d.y, d.z, mat?.opacity ?? 1] : fallback;
+  };
+
+  for (const g of groups.values()) {
     if (g.vtx === 0) continue;
     const pos = concatF(g.posCh, g.vtx * 3); g.posCh.length = 0;
     const nrm = concatF(g.nrmCh, g.vtx * 3); g.nrmCh.length = 0;
@@ -247,19 +283,18 @@ export async function buildMergedGlb(imf, opts) {
     const dbAcc = accessors.push({ bufferView: addView(dbid, 34962), componentType: 5126, count: g.vtx, type: 'SCALAR' }) - 1;
     const idxAcc = accessors.push({ bufferView: addView(idxA, 34963), componentType: 5125, count: idxA.length, type: 'SCALAR' }) - 1;
 
-    const mat = imf.getMaterial(matId);
-    const d = mat?.diffuse;
-    const baseColor = d ? [d.x, d.y, d.z, mat?.opacity ?? 1] : [0.72, 0.74, 0.77, 1];
+    const mat = imf.getMaterial(g.matId);
+    const baseColor = baseColorOf(g, [0.72, 0.74, 0.77, 1]);
     // 색 진단용 로그(포맷별 재질 색이 원본과 다른지 확인).
-    log(`[merge] mat ${matId}: rgb=(${baseColor.slice(0, 3).map((x) => (+x).toFixed(2)).join(',')}) a=${(+baseColor[3]).toFixed(2)} metal=${mat?.metallic ?? '-'} rough=${mat?.roughness ?? '-'}`);
+    log(`[merge] mat ${g.matId}: rgb=(${baseColor.slice(0, 3).map((x) => (+x).toFixed(2)).join(',')}) a=${(+baseColor[3]).toFixed(2)} metal=${mat?.metallic ?? '-'} rough=${mat?.roughness ?? '-'} vtxColor=${!!g.color}`);
     // 원본 재질의 metallic/roughness 를 그대로 반영(예전엔 0/0.9 로 하드코딩해 금속 등이
-    // 무광 플라스틱처럼 보였다). 값 없으면 비금속 기본값.
+    // 무광 플라스틱처럼 보였다). 정점색으로 온 경우는 재질 정보가 없으니 비금속 기본값.
     materials.push({
       pbrMetallicRoughness: {
         baseColorFactor: baseColor,
         // glTF 는 0~1 — svf-utils 가 간혹 범위 밖 값(예: roughness 15624)을 줘서 클램프한다.
-        metallicFactor: Math.min(1, Math.max(0, mat?.metallic ?? 0)),
-        roughnessFactor: Math.min(1, Math.max(0, mat?.roughness ?? 0.9)),
+        metallicFactor: g.color ? 0 : Math.min(1, Math.max(0, mat?.metallic ?? 0)),
+        roughnessFactor: g.color ? 0.9 : Math.min(1, Math.max(0, mat?.roughness ?? 0.9)),
       },
       doubleSided: true,
       ...(baseColor[3] < 1 ? { alphaMode: 'BLEND' } : {}),
@@ -269,7 +304,7 @@ export async function buildMergedGlb(imf, opts) {
   }
 
   // 선(line) 그룹 → mode:1 프리미티브(법선 없음). 솔리드 지배 모델에선 제외(클러터).
-  for (const [matId, g] of includeLines ? lineGroups : []) {
+  for (const g of includeLines ? lineGroups.values() : []) {
     if (g.vtx === 0) continue;
     const pos = concatF(g.posCh, g.vtx * 3); g.posCh.length = 0;
     const dbid = concatF(g.dbCh, g.vtx); g.dbCh.length = 0;
@@ -280,16 +315,14 @@ export async function buildMergedGlb(imf, opts) {
     const dbAcc = accessors.push({ bufferView: addView(dbid, 34962), componentType: 5126, count: g.vtx, type: 'SCALAR' }) - 1;
     const idxAcc = accessors.push({ bufferView: addView(idxA, 34963), componentType: 5125, count: idxA.length, type: 'SCALAR' }) - 1;
 
-    const mat = imf.getMaterial(matId);
-    const d = mat?.diffuse;
-    const baseColor = d ? [d.x, d.y, d.z, mat?.opacity ?? 1] : [0.1, 0.12, 0.16, 1];
+    const baseColor = baseColorOf(g, [0.1, 0.12, 0.16, 1]);
     materials.push({ pbrMetallicRoughness: { baseColorFactor: baseColor, metallicFactor: 0, roughnessFactor: 1 }, ...(baseColor[3] < 1 ? { alphaMode: 'BLEND' } : {}) });
     meshes.push({ primitives: [{ mode: 1, attributes: { POSITION: posAcc, _DBID: dbAcc }, indices: idxAcc, material: materials.length - 1 }] });
     nodes.push({ mesh: meshes.length - 1 });
   }
 
   // 점(point) 그룹 → mode:0 프리미티브(인덱스 없음).
-  for (const [matId, g] of includeLines ? pointGroups : []) {
+  for (const g of includeLines ? pointGroups.values() : []) {
     if (g.vtx === 0) continue;
     const pos = concatF(g.posCh, g.vtx * 3); g.posCh.length = 0;
     const dbid = concatF(g.dbCh, g.vtx); g.dbCh.length = 0;
@@ -297,9 +330,7 @@ export async function buildMergedGlb(imf, opts) {
 
     const posAcc = accessors.push({ bufferView: addView(pos, 34962), componentType: 5126, count: g.vtx, type: 'VEC3', min: g.min, max: g.max }) - 1;
     const dbAcc = accessors.push({ bufferView: addView(dbid, 34962), componentType: 5126, count: g.vtx, type: 'SCALAR' }) - 1;
-    const mat = imf.getMaterial(matId);
-    const d = mat?.diffuse;
-    const baseColor = d ? [d.x, d.y, d.z, mat?.opacity ?? 1] : [0.1, 0.12, 0.16, 1];
+    const baseColor = baseColorOf(g, [0.1, 0.12, 0.16, 1]);
     materials.push({ pbrMetallicRoughness: { baseColorFactor: baseColor, metallicFactor: 0, roughnessFactor: 1 } });
     meshes.push({ primitives: [{ mode: 0, attributes: { POSITION: posAcc, _DBID: dbAcc }, material: materials.length - 1 }] });
     nodes.push({ mesh: meshes.length - 1 });

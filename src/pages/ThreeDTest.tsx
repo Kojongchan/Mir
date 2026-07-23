@@ -108,14 +108,13 @@ export function ThreeDTest() {
     // BIM/APS(SVF)는 Z-up, xeokit/glTF는 Y-up → -90°(X축) 회전으로 세운다.
     // dtxEnabled:false — DTX(데이터텍스처)는 line/point 프리미티브를 렌더 안 함(DWG 선형이
     // 안 보이던 원인). GLTFLoaderPlugin 은 Viewer 기본이 아니라 load() 의 dtxEnabled 를 쓴다.
-    // edges — xeokit 이 솔리드 메시에 계산해 그리는 엣지선. IFC/RVT/NWD 는 이게 불필요한
-    // 잡음 선으로 보였으므로 끈다. DWG 는 솔리드 윤곽 정의에 도움이 되고 실제 선형(CAD
-    // linework)은 line 프리미티브로 별도 로드되므로 켠다.
-    const ext = (label.split('.').pop() || '').toLowerCase();
+    // edges:false — xeokit 이 솔리드에 '계산해' 그리는 합성 엣지선(원본 데이터 아님).
+    // IFC 등에서 불필요한 잡음 선으로 보였다. DWG 의 진짜 선형은 line 프리미티브로 별도
+    // 로드되므로, 모든 포맷에서 합성 엣지는 끈다.
     const model = loader.load({
       id: 'test',
       src,
-      edges: ext === 'dwg',
+      edges: false,
       rotation: [-90, 0, 0],
       dtxEnabled: false,
     } as unknown as Parameters<typeof loader.load>[0]);
