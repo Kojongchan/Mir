@@ -78,10 +78,30 @@
 - **판단 대기**: GLB는 병합+데시메이션(4D용) → ①객체별 클릭 granularity ②형상 정밀도 확인 후,
   필요하면 convert4d 다운로더 재사용한 **XKT 변형(B)**으로 갈지 결정.
 
+### ✅ 라이브 검증 완료 (5차 — 4포맷 실렌더 + 변환 버그 격파)
+사용자 설정(Vercel `GH_REPO/GH_TOKEN/GH_REF`=브랜치, GitHub Actions Secrets)이 완료돼 **실 ACC 모델을
+xeokit로 여는 것을 4포맷 모두 실측 확인**: IFC·RVT·NWD·DWG. 그 과정에서 convert4d.mjs 버그 연쇄 격파:
+1. **공유 속성DB `../` 404**(RVT) → URN 정규화. → 그래도 **DWG는 존재하지 않는 속성DB(objects_avs) 404**.
+   최종해결: **`read({skipPropertyDb:true})` + objects_*.json.gz 다운로드 제외**(속성DB는 지오메트리에
+   불필요, dbId는 fragment에서). 두 실패 모드 근본 제거 + 변환 소폭 가속.
+2. **GLB > 50MB(Supabase 무료 상한) 업로드 실패**(NWD 94.8MB) → **gltf-pipeline Draco 압축**(94.8→~7MB,
+   position 14bit). xeokit는 KHR_draco 디코드 지원(meshopt은 xeokit 미지원 KHR_mesh_quantization 요구라 배제).
+3. **업로드 실패를 삼켜 run이 가짜 success** → **치명적 처리(throw/exit1)**. 이제 실패는 Actions에서 실패로.
+4. **모든 모델 90° 눕힘(Z-up vs Y-up)** → 프런트 로드 시 **rotation [-90,0,0]**(GLTFLoaderPlugin).
+- 이 convert4d.mjs 수정들은 **브랜치 한정**(GH_REF=branch) — main의 4D 기능(비-Draco 로더)엔 영향 없음.
+  (나중 main 머지 시 4D 뷰어의 Draco 지원 필요 — 주의.)
+- 디버깅은 GitHub MCP(actions_list/get_job_logs/run_trigger)로 Actions 로그 직접 조회하며 진행.
+
+### 🔜 다음 할 일 / 미해결
+- **①실패 감지**: 잡이 실패해도 프런트가 최대 30분 헛폴링 → api가 최근 run 상태를 봐서 실패를 즉시 알리기.
+- **②사전변환(대기 0)**: 업로드/프로젝트 진입 시 백그라운드 프리페치 → 첫 열람도 캐시 히트.
+- (검토) GLB 병합+데시메이션이라 **객체별 클릭 granularity / 형상 정밀도** 충분한지 → 부족하면 XKT 변형.
+- (검토) 첫 변환 속도: 러너 `npm install`(~12s) 매번 고정비 — 캐시로 단축 가능(main 워크플로 수정 필요).
+
 ### 인수인계 한 줄
-'A' 채택 — **기존 검증된 convert-4d.yml(GitHub Actions, 무료) 재사용**: api/aps-convert(edge)가 urn으로
-dispatch, 결과 GLB(models4d 캐시)를 xeokit(GLTFLoaderPlugin)로 로드. main 변경 0, typecheck·build OK, 미머지.
-다음은 Vercel env(GH_REPO/GH_TOKEN) 설정 후 실렌더 확인 → GLB 정밀도/픽 보고 XKT 변형 여부 판단.
+**ACC 4포맷(IFC·RVT·NWD·DWG) → GitHub Actions 변환(속성DB 스킵·Draco 압축) → Supabase 캐시 →
+xeokit 렌더(Z-up 보정)** 실동작 확인 완료. convert4d 수정은 브랜치 한정, 확정 전 미머지. 다음은
+실패 감지 + 사전변환(대기 0).
 
 ---
 ## 📋 F2 — 협업·이슈 고도화(타입 분화·3뷰·뷰포인트·출력·현장등록) (2026-07-10)
