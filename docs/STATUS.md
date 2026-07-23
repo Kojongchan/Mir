@@ -103,6 +103,33 @@ xeokit로 여는 것을 4포맷 모두 실측 확인**: IFC·RVT·NWD·DWG. 그 
 xeokit 렌더(Z-up 보정)** 실동작 확인 완료. convert4d 수정은 브랜치 한정, 확정 전 미머지. 다음은
 실패 감지 + 사전변환(대기 0).
 
+### ✅ 한 일 (6차 — R2 이전 + DWG 색상/선 복원 + IFC 잡음선 제거)
+- **저장소 R2 이전**: Supabase 50MB 벽(대형 NWD 등) 회피 → Cloudflare R2(무료 10GB·egress 무료).
+  `scripts/convert4d.mjs` S3Client 업로드, `api/aps-convert.ts`(edge) aws4fetch 서명·캐시조회. 9GB
+  부터 경고배너(ackOverage 확인 후 진행 — 자동결제 방지). xeokit 캐시버스터가 presign 서명 깨던
+  문제는 커스텀 fetch dataSource 로 우회.
+- **🐞 DWG 전부 흰색 → 실제 색 복원(핵심)**: SVF DWG 는 재질(diffuse)이 흰색이고 **실제 ACI 색이
+  정점색(getColors)** 에 실려 온다(로그 확인: 변환 전 `재질그룹 1 · mat 1 rgb=(1,1,1)`). 그런데
+  xeokit GLTFLoaderPlugin 은 **정점색(COLOR_0)을 렌더하지 않음**(POSITION/NORMAL/TEXCOORD/uniform
+  color 만). → `mergeGlb.mjs` 를 **(재질 + 대표 정점색)별 그룹핑**으로 재작성: 프래그먼트 대표
+  정점색을 재질 baseColor 로 승격 → 각 색이 고유 uniform 재질로 렌더. 검증(같은 DWG 재변환 로그):
+  `재질그룹 7 · 색그룹 15`, rgb=(0,1,0)초록·(0.64,0.40,0.32)탠·(0.48,0.64,0.32)올리브 등 실색 확인.
+- **DWG 선/점 유지 vs IFC 잡음선 제거(포맷 인지)**: 파일 확장자로 `include_lines` 판단 —
+  DWG=선 유지, 그 외=엣지선 제외. 프런트(name)→api(include_lines)→convert-4d.yml(INCLUDE_LINES)→
+  mergeGlb. 또한 xeokit **합성 엣지선(edges) 전 포맷 off**(원본 아님) — IFC 불필요 선 소거, DWG
+  진짜 선형은 line 프리미티브(mode:1, 색 포함)로 유지.
+- 디버깅은 GitHub MCP 로 Actions 로그 직접 조회하며 진행(사용자에게 로그 요청 X).
+
+### 🔜 다음 할 일 / 미해결
+- **초대형 IFC "Too many properties to enumerate"**(PO05_F_AB_BR02.ifc): xeokit metaModel JS 한계.
+  메타(속성) 없이 지오메트리만 로드하거나 메타 분할 필요 — 별도 대응.
+- (검토) 텍스처 재질(RVT 등 maps.diffuse) 지원 — 현재는 diffuse 단색만.
+- 사용자 눈확인 대기: DWG 색/선, IFC 잡음선 제거(R2 캐시 이미 갱신됨 — 재변환 없이 열면 반영).
+
+### 인수인계 한 줄 (6차)
+R2 이전 + DWG 색상(정점색→재질 승격) · 선/점(포맷별) 복원 · IFC 합성 엣지선 제거 완료(같은 DWG
+재변환 로그로 실색 검증). 다음은 초대형 IFC 메타 한계 대응. 브랜치 한정·미머지 유지.
+
 ---
 ## 📋 F2 — 협업·이슈 고도화(타입 분화·3뷰·뷰포인트·출력·현장등록) (2026-07-10)
 > branch `claude/issue-collaboration-upgrade-o4uzc0`. typecheck·build 통과.
