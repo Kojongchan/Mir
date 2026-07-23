@@ -30,6 +30,7 @@ export function ThreeDTest() {
   const [pick, setPick] = useState<{ id: string; name?: string; type?: string } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [lastFile, setLastFile] = useState<PickedAccFile | null>(null);
 
   // xeokit Viewer 1회 생성/파기.
   useEffect(() => {
@@ -92,9 +93,10 @@ export function ThreeDTest() {
     });
   }, []);
 
-  /** ACC 모델 선택 → (캐시 조회 → 없으면 변환 워크플로 dispatch → 폴링) → GLB 로드. */
+  /** ACC 모델 선택 → (캐시/실패 조회 → 없으면 변환 dispatch → 폴링) → GLB 로드.
+   *  force=true 면 캐시/실패 마커를 지우고 재변환(빈 캐시 갱신·재시도). */
   const openFromAcc = useCallback(
-    async (f: PickedAccFile) => {
+    async (f: PickedAccFile, force = false) => {
       if (!isAccModel(f.name)) {
         setStatus(`3D 모델(rvt·nwd·dwg·ifc)만 지원합니다 (선택: ${f.name})`);
         return;
@@ -103,44 +105,56 @@ export function ThreeDTest() {
         setStatus('이 파일은 아직 APS 파생(URN)이 없습니다. ACC에서 변환 완료 후 다시 시도하세요.');
         return;
       }
+      setLastFile(f);
       const { data } = await supabase.auth.getSession();
       const authz: Record<string, string> = data.session
         ? { authorization: `Bearer ${data.session.access_token}` }
         : {};
       const urn = f.accUrn;
 
-      const readJson = async (r: Response): Promise<Record<string, unknown>> => {
+      type State = { ready?: boolean; url?: string; failed?: boolean; error?: string; status?: string };
+      const getState = async (): Promise<State> => {
+        const r = await fetch(`/api/aps-convert?urn=${encodeURIComponent(urn)}`, { headers: authz });
         const text = await r.text();
         try {
-          return JSON.parse(text) as Record<string, unknown>;
+          return JSON.parse(text) as State;
         } catch {
           throw new Error(`서버 오류(${r.status}): ${text.slice(0, 160)}`);
         }
       };
-      const checkCache = async () => {
-        const r = await fetch(`/api/aps-convert?urn=${encodeURIComponent(urn)}`, { headers: authz });
-        return (await readJson(r)) as { ready?: boolean; url?: string };
-      };
       const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
       setBusy(true);
-      setStatus(`변환 캐시 확인 중… ${f.name}`);
+      setPick(null);
+      setStatus(force ? `재변환 요청 중… ${f.name}` : `변환 캐시 확인 중… ${f.name}`);
       try {
-        // 1) 캐시 조회 — 이미 있으면 즉시 로드(모든 사용자 공통).
-        const cj = await checkCache();
-        if (cj.ready && cj.url) {
-          setStatus(`불러오는 중… ${f.name}`);
-          mountGlb(cj.url, f.name);
-          return;
+        // 1) 캐시/실패 조회(강제 재변환이면 건너뜀).
+        if (!force) {
+          const st = await getState();
+          if (st.ready && st.url) {
+            setStatus(`불러오는 중… ${f.name}`);
+            mountGlb(st.url, f.name);
+            return;
+          }
+          if (st.failed) {
+            setStatus(`변환 실패: ${st.error ?? '알 수 없음'} — '재변환'으로 다시 시도할 수 있습니다.`);
+            setBusy(false);
+            return;
+          }
         }
 
-        // 2) 변환 워크플로(GitHub Actions)에 위임(즉시 반환).
+        // 2) 변환 워크플로 dispatch(즉시 반환).
         const res = await fetch('/api/aps-convert', {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...authz },
-          body: JSON.stringify({ urn }),
+          body: JSON.stringify({ urn, force }),
         });
-        const rj = (await readJson(res)) as { ready?: boolean; url?: string; status?: string; error?: string };
+        let rj: State = {};
+        try {
+          rj = JSON.parse(await res.text()) as State;
+        } catch {
+          /* 비-JSON */
+        }
         if (rj.ready && rj.url) {
           setStatus(`불러오는 중… ${f.name}`);
           mountGlb(rj.url, f.name);
@@ -152,7 +166,7 @@ export function ThreeDTest() {
           return;
         }
 
-        // 3) 백그라운드 변환 중 — 캐시에 GLB 뜰 때까지 폴링(최대 30분).
+        // 3) 백그라운드 변환 중 — 완료(GLB) 또는 실패(error.json) 까지 폴링.
         const started = Date.now();
         const MAX_MS = 30 * 60 * 1000;
         for (;;) {
@@ -162,13 +176,22 @@ export function ThreeDTest() {
             return;
           }
           const secs = Math.round((Date.now() - started) / 1000);
-          const hint = secs > 240 ? ' · 오래 걸리면 GitHub Actions 로그를 확인하세요' : '';
-          setStatus(`변환 중… ${f.name} (최초 1회, ${secs}s 경과 · 완료되면 자동 표시${hint})`);
+          setStatus(`변환 중… ${f.name} (최초 1회, ${secs}s 경과 · 완료되면 자동 표시)`);
           await sleep(5000);
-          const poll = await checkCache().catch(() => ({ ready: false }) as { ready?: boolean; url?: string });
-          if (poll.ready && poll.url) {
+          let st: State;
+          try {
+            st = await getState();
+          } catch {
+            st = { ready: false };
+          }
+          if (st.ready && st.url) {
             setStatus(`불러오는 중… ${f.name}`);
-            mountGlb(poll.url, f.name);
+            mountGlb(st.url, f.name);
+            return;
+          }
+          if (st.failed) {
+            setStatus(`변환 실패: ${st.error ?? '알 수 없음'} — '재변환'으로 다시 시도할 수 있습니다.`);
+            setBusy(false);
             return;
           }
         }
@@ -237,6 +260,14 @@ export function ThreeDTest() {
           </button>
           <button className="btn btn--sm" onClick={fitAll} disabled={!modelName}>
             전체 맞춤
+          </button>
+          <button
+            className="btn btn--sm"
+            onClick={() => lastFile && void openFromAcc(lastFile, true)}
+            disabled={busy || !lastFile}
+            title="캐시를 지우고 다시 변환(빈 캐시·실패 재시도)"
+          >
+            재변환
           </button>
           <label className="btn btn--sm threed-test__open" title="이미 변환된 .glb 눈확인">
             .glb

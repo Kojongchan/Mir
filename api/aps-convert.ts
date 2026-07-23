@@ -44,14 +44,38 @@ function supa() {
   });
 }
 
-/** 캐시에 model.glb 가 실제로 있으면 서명 URL, 없으면 null. */
-async function cachedUrl(urn: string): Promise<string | null> {
+type CacheState =
+  | { ready: true; url: string }
+  | { failed: true; error: string }
+  | { ready: false };
+
+/** 캐시 상태: model.glb 있으면 ready, error.json 있으면 failed, 둘 다 없으면 처리중. */
+async function cacheState(urn: string): Promise<CacheState> {
   const dir = glbKey(urn);
   const client = supa();
-  const { data: list } = await client.storage.from(BUCKET).list(dir, { search: 'model.glb' });
-  if (!list?.some((f) => f.name === 'model.glb')) return null;
-  const { data } = await client.storage.from(BUCKET).createSignedUrl(`${dir}/model.glb`, 3600);
-  return data?.signedUrl ?? null;
+  const { data: list } = await client.storage.from(BUCKET).list(dir);
+  const names = new Set((list ?? []).map((f) => f.name));
+  if (names.has('model.glb')) {
+    const { data } = await client.storage.from(BUCKET).createSignedUrl(`${dir}/model.glb`, 3600);
+    if (data?.signedUrl) return { ready: true, url: data.signedUrl };
+  }
+  if (names.has('error.json')) {
+    let error = '변환 실패';
+    try {
+      const { data } = await client.storage.from(BUCKET).download(`${dir}/error.json`);
+      if (data) error = (JSON.parse(await data.text()) as { error?: string }).error ?? error;
+    } catch {
+      /* 마커 읽기 실패는 무시 */
+    }
+    return { failed: true, error };
+  }
+  return { ready: false };
+}
+
+/** 강제 재변환 전 캐시/실패 마커 제거. */
+async function clearCache(urn: string): Promise<void> {
+  const dir = glbKey(urn);
+  await supa().storage.from(BUCKET).remove([`${dir}/model.glb`, `${dir}/error.json`]).catch(() => {});
 }
 
 /** GitHub Actions 변환 워크플로를 urn 으로 실행(비동기). 성공 시 204. */
@@ -85,28 +109,34 @@ export default async function handler(req: Request): Promise<Response> {
 
   const url = new URL(req.url);
 
-  // ── GET: 캐시 조회 ────────────────────────────────────────────────
+  // ── GET: 캐시/실패 상태 조회 ──────────────────────────────────────
   if (req.method === 'GET') {
     const urn = url.searchParams.get('urn') ?? '';
     if (!urn) return json({ error: 'urn 필요' }, 400);
-    const cached = await cachedUrl(urn);
-    return json(cached ? { ready: true, url: cached } : { ready: false });
+    return json(await cacheState(urn));
   }
 
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
 
   // ── POST: 캐시 확인 후 없으면 변환 워크플로 dispatch ───────────────
-  let body: { urn?: string };
+  let body: { urn?: string; force?: boolean };
   try {
-    body = (await req.json()) as { urn?: string };
+    body = (await req.json()) as { urn?: string; force?: boolean };
   } catch {
     return json({ error: 'JSON 본문 필요' }, 400);
   }
   const urn = body.urn ?? '';
   if (!urn) return json({ error: 'urn 필요' }, 400);
 
-  const already = await cachedUrl(urn);
-  if (already) return json({ ready: true, url: already });
+  if (body.force) {
+    // 강제 재변환: 기존 GLB·실패 마커 제거 후 새로 돌린다(빈 캐시 갱신·재시도).
+    await clearCache(urn);
+  } else {
+    const st = await cacheState(urn);
+    if ('ready' in st && st.ready) return json({ ready: true, url: st.url });
+    // 실패 마커가 남아 있으면(직전 실패) 재시도 위해 제거하고 재dispatch.
+    if ('failed' in st) await clearCache(urn);
+  }
 
   if (!GH_REPO || !GH_TOKEN) {
     return json({ error: '변환 워크플로가 설정되지 않았습니다(GH_REPO/GH_TOKEN).' }, 503);

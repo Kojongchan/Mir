@@ -190,6 +190,9 @@ async function downloadSvfToDisk(derivative, outDir) {
   return path.join(outDir, svfName);
 }
 
+// 실패 마커(error.json)를 남길 컨텍스트 — 프런트가 실패를 즉시 감지하도록.
+let errCtx = null;
+
 async function main() {
   need('APS_CLIENT_ID', APS_CLIENT_ID);
   need('APS_CLIENT_SECRET', APS_CLIENT_SECRET);
@@ -213,6 +216,9 @@ async function main() {
   const urn = await resolveUrn(supabase);
   const keyBase = PROJECT_ID || urn.replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
   console.log(`[convert4d] URN=${urn.slice(0, 24)}… region=${APS_REGION} bucket=${STORAGE_BUCKET} key=${keyBase}`);
+  errCtx = { supabase, keyBase };
+  // 이전 실패 마커 제거 — 재시도 중엔 '처리중'으로 보이게(실패로 오인 방지).
+  await supabase.storage.from(STORAGE_BUCKET).remove([`${keyBase}/error.json`]).catch(() => {});
 
   const derivatives = await getSvfDerivatives(urn);
   if (derivatives.length === 0) throw new Error('SVF 파생물을 찾지 못했습니다.');
@@ -283,13 +289,25 @@ async function main() {
     upsert: true,
   });
   if (up.error) throw new Error(`Supabase 업로드 실패: ${up.error.message}`);
+  await supabase.storage.from(STORAGE_BUCKET).remove([`${keyBase}/error.json`]).catch(() => {});
   console.log(
     `[convert4d] 업로드 완료: ${STORAGE_BUCKET}/${objectPath} (${(fileBuf.length / 1048576).toFixed(1)}MB)`,
   );
   console.log(`[convert4d] DONE`);
 }
 
-main().catch((e) => {
+main().catch(async (e) => {
   console.error('[convert4d] 실패:', e?.stack || e?.message || e);
+  // 실패 마커를 캐시에 남겨 프런트가 즉시 감지하게 한다(무한 폴링 방지).
+  if (errCtx) {
+    await errCtx.supabase.storage
+      .from(STORAGE_BUCKET)
+      .upload(
+        `${errCtx.keyBase}/error.json`,
+        Buffer.from(JSON.stringify({ error: String(e?.message || e).slice(0, 300), at: new Date().toISOString() })),
+        { contentType: 'application/json', upsert: true },
+      )
+      .catch(() => {});
+  }
   process.exit(1);
 });
