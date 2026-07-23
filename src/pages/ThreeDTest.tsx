@@ -106,8 +106,15 @@ export function ThreeDTest() {
     if (prev) prev.destroy();
 
     // BIM/APS(SVF)는 Z-up, xeokit/glTF는 Y-up → -90°(X축) 회전으로 세운다.
-    // (안 하면 교량 등 모든 모델이 90° 누움.)
-    const model = loader.load({ id: 'test', src, edges: true, rotation: [-90, 0, 0] });
+    // dtxEnabled:false — DTX(데이터텍스처)는 line/point 프리미티브를 렌더 안 함(DWG 선형이
+    // 안 보이던 원인). GLTFLoaderPlugin 은 Viewer 기본이 아니라 load() 의 dtxEnabled 를 쓴다.
+    const model = loader.load({
+      id: 'test',
+      src,
+      edges: true,
+      rotation: [-90, 0, 0],
+      dtxEnabled: false,
+    } as unknown as Parameters<typeof loader.load>[0]);
     model.on('loaded', () => {
       viewer.cameraFlight.flyTo(model);
       setModelName(label);
