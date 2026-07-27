@@ -288,29 +288,34 @@ async function main() {
   // (xeokit 는 KHR_draco_mesh_compression 디코드 지원. meshopt 는 xeokit 가 요구하는
   //  KHR_mesh_quantization 미지원이라 부적합 → Draco 사용.) 위치 14bit 로 형상 보존.
   const rawBytes = res.bytes;
-  // Draco 는 삼각형만 압축 — 선(DWG)만 있는 GLB 는 압축이 실패/무의미할 수 있으니 best-effort.
-  // (선형 GLB 는 보통 작아 50MB 미만이라 비압축이어도 업로드됨.)
-  try {
-    console.log(`[convert4d] Draco 압축 중…`);
-    const compressed = await gltfPipeline.processGlb(fs.readFileSync(outPath), {
-      dracoOptions: {
-        compressionLevel: 7,
-        // 위치 16bit — 토목 DWG 는 실측좌표라 범위가 크다(예: 폭 20km). 14bit 면
-        // 20000/2^14≈1.2m 로 뭉개져 형상이 무너진다. 16bit(≈0.3m)로 보존.
-        quantizePositionBits: 16,
-        quantizeNormalBits: 10,
-        quantizeTexcoordBits: 12,
-        quantizeGenericBits: 16, // _DBID 최대한 보존
-        unifiedQuantization: true, // 병합 모델(실좌표) 정합
-      },
-    });
-    fs.writeFileSync(outPath, compressed.glb);
-    const cBytes = fs.statSync(outPath).size;
-    console.log(
-      `[convert4d] 압축 완료: ${(rawBytes / 1048576).toFixed(1)}MB → ${(cBytes / 1048576).toFixed(1)}MB`,
-    );
-  } catch (e) {
-    console.warn(`[convert4d] Draco 압축 건너뜀(${e?.message || e}) — 원본 GLB 사용`);
+  // Draco 는 삼각형/점 전용 — 선(line) 프리미티브를 제대로 못 다뤄 대형 선형이 깨지거나
+  // 드롭된다(DWG 지형 삼각망 50만 선분이 안 보이던 원인). DWG(선 포함)는 Draco 를 건너뛴다.
+  // R2 는 파일 크기 제한이 없어 비압축(수십 MB)도 문제없다.
+  const skipDraco = process.env.INCLUDE_LINES === '1';
+  if (skipDraco) {
+    console.log(`[convert4d] Draco 건너뜀(DWG 선형 보존) — 비압축 ${(rawBytes / 1048576).toFixed(1)}MB 업로드`);
+  } else {
+    // Draco 는 삼각형만 압축 — best-effort(실패 시 원본 사용).
+    try {
+      console.log(`[convert4d] Draco 압축 중…`);
+      const compressed = await gltfPipeline.processGlb(fs.readFileSync(outPath), {
+        dracoOptions: {
+          compressionLevel: 7,
+          quantizePositionBits: 16,
+          quantizeNormalBits: 10,
+          quantizeTexcoordBits: 12,
+          quantizeGenericBits: 16, // _DBID 최대한 보존
+          unifiedQuantization: true, // 병합 모델(실좌표) 정합
+        },
+      });
+      fs.writeFileSync(outPath, compressed.glb);
+      const cBytes = fs.statSync(outPath).size;
+      console.log(
+        `[convert4d] 압축 완료: ${(rawBytes / 1048576).toFixed(1)}MB → ${(cBytes / 1048576).toFixed(1)}MB`,
+      );
+    } catch (e) {
+      console.warn(`[convert4d] Draco 압축 건너뜀(${e?.message || e}) — 원본 GLB 사용`);
+    }
   }
 
   // Cloudflare R2 업로드(파일당 50MB 제한 없음). 실패는 치명적으로 처리(main().catch
