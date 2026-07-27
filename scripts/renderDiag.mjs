@@ -23,7 +23,7 @@ const html = `<!doctype html><html><head><meta charset=utf-8><style>html,body{ma
 <canvas id=c width=${W} height=${H}></canvas>
 <script type=module>
 import {Viewer,GLTFLoaderPlugin} from '/xeokit.js';
-const v=new Viewer({canvasId:'c',transparent:false,backgroundColor:[1,1,1],dtxEnabled:false,saoEnabled:true,logarithmicDepthBufferEnabled:true});
+const v=new Viewer({canvasId:'c',transparent:false,backgroundColor:[0.13,0.14,0.16],dtxEnabled:false,saoEnabled:true,logarithmicDepthBufferEnabled:true});
 v.camera.perspective.near=0.5;v.camera.perspective.far=1e7;v.camera.ortho.near=0.5;v.camera.ortho.far=1e7;
 const l=new GLTFLoaderPlugin(v);
 const m=l.load({id:'t',src:'/model.glb',edges:false,rotation:[-90,0,0],dtxEnabled:false});
@@ -55,6 +55,9 @@ try { await p.waitForFunction('window.__done===1', { timeout: 60000 }); } catch 
 const buf = await p.screenshot();
 const png = PNG.sync.read(buf);
 
+// 배경(어두운 회색 ~33,36,41)과 다른 픽셀 = 그려진 지오메트리. 밝기 대신 '배경과의 거리'로
+// 판정해 밝은 색(노랑·시안)도 잡는다. ASCII 는 배경차이 강도.
+const BG = [33, 36, 41];
 const cols = 120, rows = 48, chars = ' .:-=+*#%@';
 let ascii = '';
 for (let ry = 0; ry < rows; ry++) {
@@ -62,14 +65,27 @@ for (let ry = 0; ry < rows; ry++) {
   for (let cx = 0; cx < cols; cx++) {
     const px = Math.floor((cx / cols) * png.width), py = Math.floor((ry / rows) * png.height);
     const i = (py * png.width + px) * 4;
-    const lum = (png.data[i] + png.data[i + 1] + png.data[i + 2]) / 3;
-    const ci = Math.min(chars.length - 1, Math.floor(((255 - lum) / 255) * chars.length));
+    const d = Math.abs(png.data[i] - BG[0]) + Math.abs(png.data[i + 1] - BG[1]) + Math.abs(png.data[i + 2] - BG[2]);
+    const ci = Math.min(chars.length - 1, Math.floor((d / 300) * chars.length));
     line += chars[ci];
   }
   ascii += line + '\n';
 }
-let nonwhite = 0;
-for (let i = 0; i < png.data.length; i += 4) if (png.data[i] < 245 || png.data[i + 1] < 245 || png.data[i + 2] < 245) nonwhite++;
-console.log(`[diag-render] 비흰색 픽셀 ${nonwhite} / ${png.width * png.height} (${(nonwhite / (png.width * png.height) * 100).toFixed(1)}%)`);
+// 렌더된(배경과 다른) 픽셀 수 + 색 히스토그램(3단계 양자화).
+let drawn = 0;
+const hist = new Map();
+for (let i = 0; i < png.data.length; i += 4) {
+  const r = png.data[i], g = png.data[i + 1], b = png.data[i + 2];
+  const d = Math.abs(r - BG[0]) + Math.abs(g - BG[1]) + Math.abs(b - BG[2]);
+  if (d > 40) {
+    drawn++;
+    const q = `${Math.round(r / 85)}_${Math.round(g / 85)}_${Math.round(b / 85)}`; // 0..3 각채널
+    hist.set(q, (hist.get(q) || 0) + 1);
+  }
+}
+console.log(`[diag-render] 렌더된(배경≠) 픽셀 ${drawn} / ${png.width * png.height} (${(drawn / (png.width * png.height) * 100).toFixed(1)}%)`);
+const topH = [...hist.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15);
+console.log('[diag-render] 렌더된 색 히스토그램 r_g_b(0~3) → 픽셀수:');
+for (const [k, c] of topH) console.log(`[diag-render]   ${k} → ${c.toLocaleString()}`);
 console.log('[diag-render] ASCII(120x48):\n' + ascii);
 await b.close(); server.close(); process.exit(0);
