@@ -86,6 +86,7 @@ export function ThreeDTest() {
   const [modelName, setModelName] = useState<string | null>(null);
   const [pick, setPick] = useState<{ id: string; name?: string; type?: string } | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [bgDark, setBgDark] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [lastFile, setLastFile] = useState<PickedAccFile | null>(null);
   const [overage, setOverage] = useState<
@@ -113,7 +114,10 @@ export function ThreeDTest() {
     // ACC(Autodesk) 뷰어처럼: 더블클릭한 표면으로 카메라가 날아가고(doublePickFlyTo),
     // 우클릭 드래그로 팬. 이 조합으로 넓은 측량좌표 모델에서도 원하는 곳에 바로 접근.
     viewer.cameraControl.navMode = 'orbit';
-    viewer.cameraControl.smartPivot = true;
+    // smartPivot=true 는 '씬 경계 크기의 가상 구'(=20km) 위 지점을 피벗으로 잡아, 측량좌표
+    // 모델에선 회전 시 20km 밖을 중심으로 돌아 화면 밖으로 튕긴다(=회전 안 됨). false 로
+    // 두면 camera.look(=지오메트리) 기준 회전 → 정상 orbit.
+    viewer.cameraControl.smartPivot = false;
     viewer.cameraControl.panRightClick = true;
     // 내장 휠 줌은 절대속도라 측량좌표(225km)에선 안 움직인다 → 끄고(rate=0), 아래에서
     // 비율 기반 커스텀 휠로 대체. doublePickFlyTo(엔티티=전체 20km)도 끔. followPointer 는
@@ -211,6 +215,17 @@ export function ThreeDTest() {
     };
   }, []);
 
+  // 배경색 토글 — CAD 선형 상당수가 '색상 7(흰색/자동)'이라 흰 배경에선 흰 선이 안 보인다.
+  // 어두운 배경(Civil3D 모델공간처럼)으로 두면 흰 선형이 드러난다.
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (viewer) {
+      (viewer.scene.canvas as unknown as { backgroundColor: number[] }).backgroundColor = bgDark
+        ? [0.13, 0.14, 0.16]
+        : [1, 1, 1];
+    }
+  }, [bgDark]);
+
   /** 클릭한 '지점'으로 확대(ACC '선택 확대' 유사). 병합 메시라 엔티티 AABB(=전체)가 아니라
    *  클릭 표면 지점으로 당긴다. 클릭한 지점이 없으면 전체 맞춤. */
   const zoomToSelection = useCallback(() => {
@@ -236,6 +251,8 @@ export function ThreeDTest() {
     const loader = loaderRef.current;
     if (!viewer || !loader) return;
     setPick(null);
+    // DWG 는 흰색(색상7) 선형이 많아 어두운 배경 기본(Civil3D 처럼) — 나머지 포맷은 흰 배경.
+    setBgDark((label.split('.').pop() || '').toLowerCase() === 'dwg');
     const prev = viewer.scene.models['test'];
     if (prev) prev.destroy();
 
@@ -491,6 +508,13 @@ export function ThreeDTest() {
           </button>
           <button className="btn btn--sm" onClick={() => zoomStep(1.43)} disabled={!modelName} title="축소(휠 아래와 동일)">
             －
+          </button>
+          <button
+            className="btn btn--sm"
+            onClick={() => setBgDark((v) => !v)}
+            title="배경 밝기 전환 — CAD의 흰색(색상7) 선형은 어두운 배경에서 보입니다."
+          >
+            배경 {bgDark ? '흰색' : '어둡게'}
           </button>
           <button
             className="btn btn--sm"
