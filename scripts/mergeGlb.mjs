@@ -314,15 +314,9 @@ export async function buildMergedGlb(imf, opts) {
     pieces.push(buf); byteOffset += buf.length; return bufferViews.length - 1;
   };
 
-  // 선/점 색이 순수 흰색(CAD '색상 7 자동'이 SVF 에서 흰색으로 옴)이면 흰 배경에서 안
-  // 보인다 → CAD 가 흰 종이에서 색상7 을 검정으로 그리듯 어두운 색으로 보정.
-  const lineColorForWhiteBg = (c) => {
-    const nearWhite = c[0] > 0.9 && c[1] > 0.9 && c[2] > 0.9;
-    return nearWhite ? [0.1, 0.1, 0.12, c[3] ?? 1] : c;
-  };
-
-  // 그룹의 baseColor: 대표 정점색이 있으면 그 색(DWG ACI 등), 없으면 재질 diffuse,
-  // 그것도 없으면 포맷별 기본색.
+  // 그룹의 baseColor: 대표 정점색이 있으면 그 색(DWG ACI/레이어색 등), 없으면 재질
+  // diffuse, 그것도 없으면 포맷별 기본색. 선/점은 SVF 원색을 그대로 보존한다(레이어 색을
+  // 뭉개지 않음). 흰 색상7 선은 어두운 배경에서 CAD 처럼 흰색으로 보인다.
   const baseColorOf = (g, fallback) => {
     if (g.color) return [g.color[0], g.color[1], g.color[2], g.color[3] ?? 1];
     const mat = imf.getMaterial(g.matId);
@@ -381,7 +375,7 @@ export async function buildMergedGlb(imf, opts) {
     const dbAcc = accessors.push({ bufferView: addView(dbid, 34962), componentType: 5126, count: g.vtx, type: 'SCALAR' }) - 1;
     const idxAcc = accessors.push({ bufferView: addView(idxA, 34963), componentType: 5125, count: idxA.length, type: 'SCALAR' }) - 1;
 
-    const baseColor = lineColorForWhiteBg(baseColorOf(g, [0.1, 0.12, 0.16, 1]));
+    const baseColor = baseColorOf(g, [0.1, 0.12, 0.16, 1]);
     materials.push({ pbrMetallicRoughness: { baseColorFactor: baseColor, metallicFactor: 0, roughnessFactor: 1 }, ...(baseColor[3] < 1 ? { alphaMode: 'BLEND' } : {}) });
     meshes.push({ primitives: [{ mode: 1, attributes: { POSITION: posAcc, _DBID: dbAcc }, indices: idxAcc, material: materials.length - 1 }] });
     nodes.push({ mesh: meshes.length - 1 });
@@ -396,7 +390,7 @@ export async function buildMergedGlb(imf, opts) {
 
     const posAcc = accessors.push({ bufferView: addView(pos, 34962), componentType: 5126, count: g.vtx, type: 'VEC3', min: g.min, max: g.max }) - 1;
     const dbAcc = accessors.push({ bufferView: addView(dbid, 34962), componentType: 5126, count: g.vtx, type: 'SCALAR' }) - 1;
-    const baseColor = lineColorForWhiteBg(baseColorOf(g, [0.1, 0.12, 0.16, 1]));
+    const baseColor = baseColorOf(g, [0.1, 0.12, 0.16, 1]);
     materials.push({ pbrMetallicRoughness: { baseColorFactor: baseColor, metallicFactor: 0, roughnessFactor: 1 } });
     meshes.push({ primitives: [{ mode: 0, attributes: { POSITION: posAcc, _DBID: dbAcc }, material: materials.length - 1 }] });
     nodes.push({ mesh: meshes.length - 1 });

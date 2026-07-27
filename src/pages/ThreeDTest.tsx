@@ -250,6 +250,9 @@ export function ThreeDTest() {
     const loader = loaderRef.current;
     if (!viewer || !loader) return;
     setPick(null);
+    // DWG 는 CAD 모델공간처럼 어두운 배경 기본 — 레이어 색(흰색 색상7 포함)이 그대로 보인다.
+    // (원색 보존 + 어두운 배경 = Civil3D 와 동일한 색감.) 나머지 포맷은 흰 배경.
+    setBgDark((label.split('.').pop() || '').toLowerCase() === 'dwg');
     const prev = viewer.scene.models['test'];
     if (prev) prev.destroy();
 
