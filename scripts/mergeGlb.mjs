@@ -210,6 +210,12 @@ export async function buildMergedGlb(imf, opts) {
     }
     const vColor = (v) => (hasColor ? [raw[v * 3], raw[v * 3 + 1], raw[v * 3 + 2]] : null);
 
+    // 초점(focus)은 '프래그먼트 로컬 중심' 1개만 등록한다. (색 버킷은 도면 전체에 걸쳐
+    // 누적되므로 그 중심을 쓰면 모든 색의 중심이 도면 중앙 한 점에 몰려 focus 가 1m로 붕괴됨.)
+    let fsx = 0, fsy = 0, fsz = 0;
+    for (let v = 0; v < nv; v++) { fsx += wx[v]; fsy += wy[v]; fsz += wz[v]; }
+    if (nv > 0) foci.push({ c: [fsx / nv, fsy / nv, fsz / nv], w: nv });
+
     // 프래그먼트 내부에서 (양자화색)별로 선분을 모은다 — 정점 로컬 재색인.
     const perColor = new Map(); // ckey -> { color, map:Map(globalV->localIdx), pos:[], idx:[] }
     for (let k = 0; k + 1 < idx32.length; k += 2) {
@@ -234,15 +240,12 @@ export async function buildMergedGlb(imf, opts) {
       const g = lineGroupOf(matId, color, cnt);
       const pos = Float32Array.from(pc.pos);
       const db = new Float32Array(cnt); db.fill(node.dbid);
-      let sx = 0, sy = 0, sz = 0;
       for (let v = 0; v < cnt; v++) {
         const ox = pos[v * 3], oy = pos[v * 3 + 1], oz = pos[v * 3 + 2];
         if (ox < g.min[0]) g.min[0] = ox; if (oy < g.min[1]) g.min[1] = oy; if (oz < g.min[2]) g.min[2] = oz;
         if (ox > g.max[0]) g.max[0] = ox; if (oy > g.max[1]) g.max[1] = oy; if (oz > g.max[2]) g.max[2] = oz;
-        sx += ox; sy += oy; sz += oz;
       }
       bump(g.min[0], g.min[1], g.min[2]); bump(g.max[0], g.max[1], g.max[2]);
-      foci.push({ c: [sx / cnt, sy / cnt, sz / cnt], w: cnt });
       const reidx = new Uint32Array(pc.idx.length);
       for (let k = 0; k < pc.idx.length; k++) reidx[k] = pc.idx[k] + g.base;
       g.posCh.push(pos); g.dbCh.push(db); g.idxCh.push(reidx);
