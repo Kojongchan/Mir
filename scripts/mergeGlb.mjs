@@ -217,19 +217,28 @@ export async function buildMergedGlb(imf, opts) {
     g.posCh.push(pos); g.dbCh.push(db); g.vtx += nv;
   };
 
+  // 진단: SVF 가 실제로 무엇을 담고 있는지 파악(지형 TIN 누락 여부 확정용).
+  const diag = { objNodes: 0, groupNodes: 0, otherNodes: 0, noGeom: 0, kMesh: 0, kLines: 0, kPoints: 0, kEmpty: 0, kOther: 0, emptyMesh: 0 };
   let processed = 0, decimated = 0, fragCount = 0;
   for (let i = 0; i < nodeCount; i++) {
     const node = imf.getNode(i);
-    if (node.kind !== NODE_OBJECT) continue;
+    if (node.kind === NODE_OBJECT) diag.objNodes++;
+    else if (node.kind === 0) { diag.groupNodes++; continue; }
+    else { diag.otherNodes++; continue; }
     const geom = imf.getGeometry(node.geometry);
-    if (!geom) continue;
+    if (!geom) { diag.noGeom++; continue; }
+    if (geom.kind === GEOM_MESH) diag.kMesh++;
+    else if (geom.kind === GEOM_LINES) diag.kLines++;
+    else if (geom.kind === GEOM_POINTS) diag.kPoints++;
+    else if (geom.kind === 3) diag.kEmpty++;
+    else diag.kOther++;
     if (geom.kind === GEOM_LINES) { addLine(node, geom); continue; }
     if (geom.kind === GEOM_POINTS) { addPoint(node, geom); continue; }
     if (geom.kind !== GEOM_MESH) continue;
     let verts = geom.getVertices();
     let idx = geom.getIndices();
     let normals = geom.getNormals();
-    if (!verts || !idx || verts.length === 0 || idx.length === 0) continue;
+    if (!verts || !idx || verts.length === 0 || idx.length === 0) { diag.emptyMesh++; continue; }
     fragCount++;
     // 대표 정점색은 단순화 전 원본에서(메시 색은 RGBA=정점당 4). DWG 등의 실제 색.
     const color = fragColor(geom.getColors?.(), verts.length / 3, 4);
@@ -301,6 +310,22 @@ export async function buildMergedGlb(imf, opts) {
   const span = gmax.map((v, i) => v - gmin[i]);
   log(`[merge] bbox min=(${fmt(gmin)}) max=(${fmt(gmax)}) span=(${fmt(span)})`);
   if (focus) log(`[merge] focus center=(${fmt(focus.center)}) half=(${fmt(focus.half)})`);
+
+  // === 진단: SVF 내용물 상세 ===
+  let triTotal = 0, biggestMeshVtx = 0, biggestMeshTris = 0, biggestMeshSpan = [0, 0, 0];
+  for (const g of groups.values()) {
+    triTotal += g.idxN / 3;
+    if (g.vtx > biggestMeshVtx) {
+      biggestMeshVtx = g.vtx; biggestMeshTris = g.idxN / 3;
+      biggestMeshSpan = [g.max[0] - g.min[0], g.max[1] - g.min[1], g.max[2] - g.min[2]];
+    }
+  }
+  let segTotal = 0;
+  for (const g of lineGroups.values()) segTotal += g.idxN / 2;
+  log(`[diag] SVF노드 총 ${nodeCount} · Object ${diag.objNodes} · Group ${diag.groupNodes} · 기타 ${diag.otherNodes} · 지오없음 ${diag.noGeom}`);
+  log(`[diag] geom종류: 메시 ${diag.kMesh}(빈 ${diag.emptyMesh}) · 선 ${diag.kLines} · 점 ${diag.kPoints} · Empty ${diag.kEmpty} · 기타 ${diag.kOther}`);
+  log(`[diag] 삼각형 총 ${Math.round(triTotal).toLocaleString()} · 선분 총 ${Math.round(segTotal).toLocaleString()}`);
+  log(`[diag] 최대메시: 정점 ${biggestMeshVtx.toLocaleString()} · 삼각형 ${Math.round(biggestMeshTris).toLocaleString()} · 크기(${fmt(biggestMeshSpan)}) ← 지형 TIN 이면 여기 잡힘`);
 
   // 청크 → 그룹별 연속 배열로 합치고 glTF/GLB 작성.
   const concatF = (chunks, total) => { const out = new Float32Array(total); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; } return out; };
