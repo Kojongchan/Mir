@@ -36,6 +36,20 @@ function flyToWorldPoint(
 }
 
 /**
+ * 카메라를 target 방향으로 '비율'만큼 당긴다(축척 무관). xeokit 기본 휠 줌은 절대속도(초당
+ * ~10 units)라 측량좌표(225km)에선 사실상 안 움직인다 → 현재 거리의 비율로 dolly. factor<1
+ * 이면 확대(target 쪽으로), >1 이면 축소. eye·look 을 함께 옮겨 target 이 화면 중앙으로.
+ */
+function dollyToward(viewer: Viewer, target: number[], factor: number): void {
+  const cam = viewer.camera;
+  const eye = [...(cam.eye as number[])];
+  const look = [...(cam.look as number[])];
+  const t = 1 - factor; // target 쪽으로 이동할 비율
+  cam.eye = [eye[0] + (target[0] - eye[0]) * t, eye[1] + (target[1] - eye[1]) * t, eye[2] + (target[2] - eye[2]) * t];
+  cam.look = [look[0] + (target[0] - look[0]) * t, look[1] + (target[1] - look[1]) * t, look[2] + (target[2] - look[2]) * t];
+}
+
+/**
  * focus(회전 전 실좌표)를 로드 회전 [-90,0,0]과 같은 축변환((x,y,z)→(x,z,-y))으로 돌려
  * xeokit world AABB [xmin,ymin,zmin,xmax,ymax,zmax] 로 변환. 없으면 null.
  */
@@ -99,12 +113,14 @@ export function ThreeDTest() {
     // ACC(Autodesk) 뷰어처럼: 더블클릭한 표면으로 카메라가 날아가고(doublePickFlyTo),
     // 우클릭 드래그로 팬. 이 조합으로 넓은 측량좌표 모델에서도 원하는 곳에 바로 접근.
     viewer.cameraControl.navMode = 'orbit';
-    viewer.cameraControl.followPointer = true;
     viewer.cameraControl.smartPivot = true;
-    // doublePickFlyTo(내장)는 '엔티티'로 날아가는데, 우리 GLB 는 재질별 병합 메시라 엔티티가
-    // 모델 전체(20km)라서 전체맞춤처럼 돼버린다 → 끄고, 아래에서 '클릭 지점'으로 당긴다.
-    viewer.cameraControl.doublePickFlyTo = false;
     viewer.cameraControl.panRightClick = true;
+    // 내장 휠 줌은 절대속도라 측량좌표(225km)에선 안 움직인다 → 끄고(rate=0), 아래에서
+    // 비율 기반 커스텀 휠로 대체. doublePickFlyTo(엔티티=전체 20km)도 끔. followPointer 는
+    // 커스텀 휠이 커서 지점을 직접 계산하므로 불필요.
+    viewer.cameraControl.followPointer = false;
+    viewer.cameraControl.doublePickFlyTo = false;
+    viewer.cameraControl.mouseWheelDollyRate = 0;
     viewer.camera.eye = [15, 15, 15];
     viewer.camera.look = [0, 0, 0];
     viewer.camera.up = [0, 1, 0];
@@ -163,9 +179,19 @@ export function ThreeDTest() {
       }
     });
 
-    // 더블클릭 → 클릭한 표면 지점으로 카메라를 당긴다(반복 시 점점 접근). 병합 메시라
-    // 내장 doublePickFlyTo 는 전체를 맞추므로 직접 처리.
     const canvasEl = canvasRef.current;
+    // 비율 기반 커스텀 휠 줌 — 커서 아래 표면 지점(worldPos)을 향해, 없으면 현재 look 을
+    // 향해 당긴다. 측량좌표(225km)에서도 축척 무관하게 즉시 확대/축소.
+    const onWheel = (ev: WheelEvent) => {
+      ev.preventDefault();
+      const rect = canvasEl.getBoundingClientRect();
+      const canvasPos = [ev.clientX - rect.left, ev.clientY - rect.top];
+      const hit = viewer.scene.pick({ canvasPos, pickSurface: true }) as { worldPos?: number[] } | undefined;
+      const target = hit?.worldPos ?? [...(viewer.camera.look as number[])];
+      dollyToward(viewer, target, ev.deltaY > 0 ? 1.18 : 0.82); // 축소 : 확대(약 18%/노치)
+    };
+    canvasEl.addEventListener('wheel', onWheel, { passive: false });
+    // 더블클릭 → 클릭한 표면 지점으로 부드럽게 당긴다(반복 시 점점 접근).
     const onDblClick = (ev: MouseEvent) => {
       const rect = canvasEl.getBoundingClientRect();
       const canvasPos = [ev.clientX - rect.left, ev.clientY - rect.top];
@@ -175,6 +201,7 @@ export function ThreeDTest() {
     canvasEl.addEventListener('dblclick', onDblClick);
 
     return () => {
+      canvasEl.removeEventListener('wheel', onWheel);
       canvasEl.removeEventListener('dblclick', onDblClick);
       viewer.scene.input.off(onClick);
       navCube?.destroy();
@@ -195,6 +222,12 @@ export function ThreeDTest() {
       const model = viewer.scene.models['test'];
       if (model) viewer.cameraFlight.flyTo(model);
     }
+  }, []);
+
+  /** 확대(+)/축소(−) — 항상 동작하는 비율 줌(현재 look 기준). 픽 실패와 무관. */
+  const zoomStep = useCallback((factor: number) => {
+    const viewer = viewerRef.current;
+    if (viewer) dollyToward(viewer, [...(viewer.camera.look as number[])], factor);
   }, []);
 
   /** GLB(원격 URL 또는 로컬 objectURL)를 뷰어에 올린다. focus 있으면 그 박스로 flyTo. */
@@ -452,6 +485,12 @@ export function ThreeDTest() {
             title="먼저 객체를 클릭한 뒤 누르면 그 지점으로 확대(반복하면 더 가까이). 뷰에서 더블클릭해도 그 지점으로 당겨집니다."
           >
             선택 확대
+          </button>
+          <button className="btn btn--sm" onClick={() => zoomStep(0.7)} disabled={!modelName} title="확대(휠 위와 동일)">
+            ＋
+          </button>
+          <button className="btn btn--sm" onClick={() => zoomStep(1.43)} disabled={!modelName} title="축소(휠 아래와 동일)">
+            －
           </button>
           <button
             className="btn btn--sm"
