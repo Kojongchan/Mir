@@ -29,11 +29,10 @@ const l=new GLTFLoaderPlugin(v);
 const m=l.load({id:'t',src:'/model.glb',edges:false,rotation:[-90,0,0],dtxEnabled:false});
 const FOCUS=${focusAabb ? JSON.stringify(focusAabb) : 'null'};
 m.on('loaded',()=>{const a=m.aabb;console.log('AABB',JSON.stringify(a));
-  const box=FOCUS||a;
-  const cx=(box[0]+box[3])/2, cy=(box[1]+box[4])/2, cz=(box[2]+box[5])/2;
-  const horiz=Math.max(box[3]-box[0], box[5]-box[2], 100);
-  // 평면 도면은 XZ 평면(Y=고도)에 눕는다 → Y 위에서 수직 하방(top-down)으로 봐야 면이 보인다.
-  v.camera.eye=[cx, cy+horiz*0.75, cz]; v.camera.look=[cx,cy,cz]; v.camera.up=[0,0,-1];
+  // 전체 모델(a) 기준 비스듬(oblique) 3/4 시점 — 3D 구조(면·선 위치)를 눈으로 파악.
+  const cx=(a[0]+a[3])/2, cy=(a[1]+a[4])/2, cz=(a[2]+a[5])/2;
+  const r=0.5*Math.max(a[3]-a[0], a[4]-a[1], a[5]-a[2], 100);
+  v.camera.eye=[cx+r*1.6, cy+r*1.6, cz+r*1.6]; v.camera.look=[cx,cy,cz]; v.camera.up=[0,1,0];
   setTimeout(()=>{window.__done=1;document.title='DONE';},1500);});
 m.on('error',e=>{document.title='ERR:'+e;window.__done=1;});
 </script></body></html>`;

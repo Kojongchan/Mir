@@ -186,8 +186,9 @@ export async function buildMergedGlb(imf, opts) {
 
   // 색 양자화: 원본 정점색을 1/8 단계로 반올림(원색은 그대로, 잡음만 병합). ACI 빨강
   // (1,0,0)·청록(0,1,1)·노랑(1,1,0) 등이 각자 보존된다.
-  const clamp01 = (x) => Math.min(1, Math.max(0, x));
-  const quantColor = (c) => (c ? [Math.round(clamp01(c[0]) * 8) / 8, Math.round(clamp01(c[1]) * 8) / 8, Math.round(clamp01(c[2]) * 8) / 8] : null);
+  const clamp01 = (x) => (Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : 0);
+  const quantColor = (c) => (c && Number.isFinite(c[0]) && Number.isFinite(c[1]) && Number.isFinite(c[2])
+    ? [Math.round(clamp01(c[0]) * 8) / 8, Math.round(clamp01(c[1]) * 8) / 8, Math.round(clamp01(c[2]) * 8) / 8] : null);
 
   let lineFrag = 0;
   // SVF 는 색이 다른 수천 개의 선을 '한 프래그먼트'로 묶어 준다(한 프래그먼트 색범위가
@@ -230,6 +231,9 @@ export async function buildMergedGlb(imf, opts) {
     const perColor = new Map(); // ckey -> { color, pos:number[] }
     for (let k = 0; k + 1 < idx32.length; k += 2) {
       const a = idx32[k], b = idx32[k + 1];
+      // NaN 좌표(불량 변환행렬 등) 선분은 건너뛴다 — glTF 에 NaN 이 들어가면 렌더가 깨진다.
+      if (!(Number.isFinite(wx[a]) && Number.isFinite(wy[a]) && Number.isFinite(wz[a]) &&
+            Number.isFinite(wx[b]) && Number.isFinite(wy[b]) && Number.isFinite(wz[b]))) continue;
       const qc = quantColor(vColor(a) || vColor(b));
       const ckey = qc ? `${qc[0]}_${qc[1]}_${qc[2]}` : 'none';
       let pc = perColor.get(ckey);
