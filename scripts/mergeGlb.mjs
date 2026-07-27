@@ -137,13 +137,20 @@ export async function buildMergedGlb(imf, opts) {
 
   // 선(line) 전용 그룹 — 삼각형과 프리미티브 모드가 달라(1 vs 4) 분리 누적. 법선 없음.
   // DWG/도면·선형이 여기로 들어간다(예전엔 통째로 버려서 DWG 가 안 보였음).
-  const lineGroups = new Map();
-  const lineGroupOf = (matId, color) => {
+  // xeokit 은 line(mode:1) 프리미티브를 정점 65,535개(Uint16 인덱스)까지만 렌더한다 —
+  // 그걸 넘는 대형 선 그룹(지형 삼각망 50만 선분 등)은 통째로 안 그려졌다. 그래서 한 그룹이
+  // 이 한도 아래가 되도록 '버킷'으로 쪼갠다(같은 (재질,색)이라도 여러 프리미티브로).
+  const LINE_VTX_LIMIT = 60000;
+  const lineGroups = new Map(); // uniqueKey -> group
+  const lineBucket = new Map(); // baseKey -> 현재(안 찬) 버킷
+  let lineBucketSeq = 0;
+  const lineGroupOf = (matId, color, nv) => {
     const key = groupKey(matId, color);
-    let g = lineGroups.get(key);
-    if (!g) {
+    let g = lineBucket.get(key);
+    if (!g || g.vtx + nv > LINE_VTX_LIMIT) {
       g = { matId, color, posCh: [], dbCh: [], idxCh: [], base: 0, vtx: 0, idxN: 0, min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
-      lineGroups.set(key, g);
+      lineGroups.set(`${key}#b${lineBucketSeq++}`, g);
+      lineBucket.set(key, g);
     }
     return g;
   };
@@ -158,7 +165,7 @@ export async function buildMergedGlb(imf, opts) {
     const m = matrixOf(node.transform);
     const pos = new Float32Array(nv * 3);
     const db = new Float32Array(nv);
-    const g = lineGroupOf(node.material ?? -1, fragColor(geom.getColors?.(), nv, 3));
+    const g = lineGroupOf(node.material ?? -1, fragColor(geom.getColors?.(), nv, 3), nv);
     let sx = 0, sy = 0, sz = 0;
     for (let v = 0; v < nv; v++) {
       const x = verts[v * 3], y = verts[v * 3 + 1], z = verts[v * 3 + 2];
