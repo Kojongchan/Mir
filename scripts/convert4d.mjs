@@ -97,10 +97,18 @@ async function getSvfDerivatives(urn) {
   const manifest = await md.getManifest(urn, { accessToken: cred.access_token, region: APS_REGION });
   const out = [];
   const walk = (d) => {
+    // 진단: 이 URN 이 어떤 파생물(뷰어블)을 갖는지 전부 출력 — 2D(f2d)에 텍스트·주석·
+    // 전체 도면요소가 있을 수 있어 무엇이 있는지 확인용.
+    if (d.type === 'resource' && d.role === 'graphics') {
+      console.log(`[convert4d] 파생물: role=${d.role} mime=${d.mime} name=${d.name || '-'} guid=${d.guid || '-'}`);
+    }
     if (d.type === 'resource' && d.role === 'graphics' && d.mime === 'application/autodesk-svf') out.push(d);
     d.children?.forEach(walk);
   };
-  manifest.derivatives?.forEach((d) => d.children?.forEach(walk));
+  manifest.derivatives?.forEach((d) => {
+    console.log(`[convert4d] derivative: outputType=${d.outputType} name=${d.name || '-'}`);
+    d.children?.forEach(walk);
+  });
   return out;
 }
 
