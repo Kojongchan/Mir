@@ -216,20 +216,16 @@ export async function buildMergedGlb(imf, opts) {
     for (let v = 0; v < nv; v++) { fsx += wx[v]; fsy += wy[v]; fsz += wz[v]; }
     if (nv > 0) foci.push({ c: [fsx / nv, fsy / nv, fsz / nv], w: nv });
 
-    // 프래그먼트 내부에서 (양자화색)별로 선분을 모은다 — 정점 로컬 재색인.
-    const perColor = new Map(); // ckey -> { color, map:Map(globalV->localIdx), pos:[], idx:[] }
+    // 프래그먼트 내부에서 (양자화색)별로 선분을 모은다. 각 선분(2정점)을 '독립 정점'으로
+    // 펼쳐서 담는다(정점 공유·재색인 없음) → 인덱스 오류 원천 차단. 인덱스는 순차(0,1,2,…).
+    const perColor = new Map(); // ckey -> { color, pos:number[] }
     for (let k = 0; k + 1 < idx32.length; k += 2) {
       const a = idx32[k], b = idx32[k + 1];
       const qc = quantColor(vColor(a) || vColor(b));
       const ckey = qc ? `${qc[0]}_${qc[1]}_${qc[2]}` : 'none';
       let pc = perColor.get(ckey);
-      if (!pc) { pc = { color: qc, map: new Map(), pos: [], idx: [] }; perColor.set(ckey, pc); }
-      const local = (gv) => {
-        let l = pc.map.get(gv);
-        if (l === undefined) { l = pc.map.size; pc.map.set(gv, l); pc.pos.push(wx[gv], wy[gv], wz[gv]); }
-        return l;
-      };
-      pc.idx.push(local(a), local(b));
+      if (!pc) { pc = { color: qc, pos: [] }; perColor.set(ckey, pc); }
+      pc.pos.push(wx[a], wy[a], wz[a], wx[b], wy[b], wz[b]);
     }
 
     // 각 색 버킷을 해당 색의 선 그룹으로 방출(그룹은 60k 정점 버킷으로 자동 분할).
@@ -246,8 +242,9 @@ export async function buildMergedGlb(imf, opts) {
         if (ox > g.max[0]) g.max[0] = ox; if (oy > g.max[1]) g.max[1] = oy; if (oz > g.max[2]) g.max[2] = oz;
       }
       bump(g.min[0], g.min[1], g.min[2]); bump(g.max[0], g.max[1], g.max[2]);
-      const reidx = new Uint32Array(pc.idx.length);
-      for (let k = 0; k < pc.idx.length; k++) reidx[k] = pc.idx[k] + g.base;
+      // 순차 인덱스: [base, base+1, …] — 연속 2개가 한 선분.
+      const reidx = new Uint32Array(cnt);
+      for (let k = 0; k < cnt; k++) reidx[k] = g.base + k;
       g.posCh.push(pos); g.dbCh.push(db); g.idxCh.push(reidx);
       g.base += cnt; g.vtx += cnt; g.idxN += reidx.length;
     }
