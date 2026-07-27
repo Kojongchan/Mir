@@ -154,6 +154,30 @@ export async function buildMergedGlb(imf, opts) {
     }
     return g;
   };
+  // === 색 진단: SVF '원본' per-vertex 색(평균 뭉개기 전)이 실제로 무엇인지 확인. ===
+  // 파랑·분홍만 보이고 하늘·빨강·연두·노랑이 안 보이는 원인 규명: (1) 원본에 그 색이
+  // 애초에 없는지(APS SVF 한계), (2) 한 프래그먼트에 여러 색이 섞여 fragColor 평균이 회색으로
+  // 뭉개는지. 정점색을 8단계로 양자화해 히스토그램 + 프래그먼트별 색분산을 집계.
+  const rawColorHist = new Map();
+  let lineMultiColor = 0, lineSingleColor = 0, lineNoColor = 0;
+  const lineFragSamples = [];
+  const tallyRaw = (raw, nv, ch, kind) => {
+    if (!raw || raw.length < nv * ch) { if (kind === 'L') lineNoColor++; return; }
+    let mn0 = 1, mn1 = 1, mn2 = 1, mx0 = 0, mx1 = 0, mx2 = 0;
+    for (let v = 0; v < nv; v++) {
+      const r = raw[v * ch], g = raw[v * ch + 1], b = raw[v * ch + 2];
+      const q = `${Math.round(Math.min(1, Math.max(0, r)) * 8)}_${Math.round(Math.min(1, Math.max(0, g)) * 8)}_${Math.round(Math.min(1, Math.max(0, b)) * 8)}`;
+      rawColorHist.set(q, (rawColorHist.get(q) || 0) + 1);
+      if (r < mn0) mn0 = r; if (g < mn1) mn1 = g; if (b < mn2) mn2 = b;
+      if (r > mx0) mx0 = r; if (g > mx1) mx1 = g; if (b > mx2) mx2 = b;
+    }
+    if (kind === 'L') {
+      const spread = Math.max(mx0 - mn0, mx1 - mn1, mx2 - mn2);
+      if (spread > 0.15) lineMultiColor++; else lineSingleColor++;
+      if (lineFragSamples.length < 12) lineFragSamples.push({ nv, min: [+mn0.toFixed(2), +mn1.toFixed(2), +mn2.toFixed(2)], max: [+mx0.toFixed(2), +mx1.toFixed(2), +mx2.toFixed(2)] });
+    }
+  };
+
   let lineFrag = 0;
   const addLine = (node, geom) => {
     const verts = geom.getVertices();
@@ -165,6 +189,7 @@ export async function buildMergedGlb(imf, opts) {
     const m = matrixOf(node.transform);
     const pos = new Float32Array(nv * 3);
     const db = new Float32Array(nv);
+    tallyRaw(geom.getColors?.(), nv, 3, 'L');
     const g = lineGroupOf(node.material ?? -1, fragColor(geom.getColors?.(), nv, 3), nv);
     let sx = 0, sy = 0, sz = 0;
     for (let v = 0; v < nv; v++) {
@@ -332,6 +357,12 @@ export async function buildMergedGlb(imf, opts) {
   log(`[diag] SVF노드 총 ${nodeCount} · Object ${diag.objNodes} · Group ${diag.groupNodes} · 기타 ${diag.otherNodes} · 지오없음 ${diag.noGeom}`);
   log(`[diag] geom종류: 메시 ${diag.kMesh}(빈 ${diag.emptyMesh}) · 선 ${diag.kLines} · 점 ${diag.kPoints} · Empty ${diag.kEmpty} · 기타 ${diag.kOther}`);
   log(`[diag] 삼각형 총 ${Math.round(triTotal).toLocaleString()} · 선분 총 ${Math.round(segTotal).toLocaleString()}`);
+  // === 색 진단 결과 ===
+  log(`[color] 선프래그: 단색 ${lineSingleColor} · 다색(평균이 회색으로 뭉갬) ${lineMultiColor} · 정점색없음(재질색) ${lineNoColor}`);
+  const topCols = [...rawColorHist.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30);
+  log(`[color] SVF 원본 정점색 히스토그램 — r_g_b(0~8 양자화) → 정점수 (상위 30):`);
+  for (const [k, c] of topCols) log(`[color]   ${k} → ${c.toLocaleString()}`);
+  log(`[color] 선프래그 색범위 샘플(12): ${JSON.stringify(lineFragSamples)}`);
   log(`[diag] 최대메시: 정점 ${biggestMeshVtx.toLocaleString()} · 삼각형 ${Math.round(biggestMeshTris).toLocaleString()} · 크기(${fmt(biggestMeshSpan)}) ← 지형 TIN 이면 여기 잡힘`);
   // 모든 그룹(선/메시) 상세 — 색·정점·프리미티브수·크기. 정점수 내림차순 상위 40개.
   const allG = [
