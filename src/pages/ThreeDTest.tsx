@@ -124,6 +124,13 @@ export function ThreeDTest() {
     // 비율 휠로 대체. doublePickFlyTo(엔티티=전체 20km)도 끔.
     viewer.cameraControl.doublePickFlyTo = false;
     viewer.cameraControl.mouseWheelDollyRate = 0;
+    // 원거리 클리핑(far) 평면을 크게 — 이게 없으면(기본 far 작음) 17km 로 뻗은 지형 삼각망
+    // 등 카메라에서 먼 지오메트리가 far 너머로 잘려 통째로 안 보인다(헤드리스 xeokit 테스트로
+    // 확진: far 키우니 전부 렌더). 로그 깊이버퍼가 켜져 있어 near 작아도 z-파이팅 없다.
+    viewer.camera.perspective.near = 0.5;
+    viewer.camera.perspective.far = 1e7;
+    viewer.camera.ortho.near = 0.5;
+    viewer.camera.ortho.far = 1e7;
     viewer.camera.eye = [15, 15, 15];
     viewer.camera.look = [0, 0, 0];
     viewer.camera.up = [0, 1, 0];
