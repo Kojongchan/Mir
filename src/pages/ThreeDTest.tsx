@@ -114,15 +114,14 @@ export function ThreeDTest() {
     // ACC(Autodesk) 뷰어처럼: 더블클릭한 표면으로 카메라가 날아가고(doublePickFlyTo),
     // 우클릭 드래그로 팬. 이 조합으로 넓은 측량좌표 모델에서도 원하는 곳에 바로 접근.
     viewer.cameraControl.navMode = 'orbit';
-    // smartPivot=true 는 '씬 경계 크기의 가상 구'(=20km) 위 지점을 피벗으로 잡아, 측량좌표
-    // 모델에선 회전 시 20km 밖을 중심으로 돌아 화면 밖으로 튕긴다(=회전 안 됨). false 로
-    // 두면 camera.look(=지오메트리) 기준 회전 → 정상 orbit.
+    // followPointer=true 는 orbit 회전의 '피벗 시작' 조건(CameraControl 내부: 이게 false 면
+    // 좌드래그 회전이 아예 동작 안 함). smartPivot=false 로 두면 빈 곳 드래그 시 피벗이
+    // 20km 가상 구가 아니라 camera.look(=지오메트리) 이 되어 정상 회전한다.
+    viewer.cameraControl.followPointer = true;
     viewer.cameraControl.smartPivot = false;
     viewer.cameraControl.panRightClick = true;
-    // 내장 휠 줌은 절대속도라 측량좌표(225km)에선 안 움직인다 → 끄고(rate=0), 아래에서
-    // 비율 기반 커스텀 휠로 대체. doublePickFlyTo(엔티티=전체 20km)도 끔. followPointer 는
-    // 커스텀 휠이 커서 지점을 직접 계산하므로 불필요.
-    viewer.cameraControl.followPointer = false;
+    // 내장 휠 줌은 절대속도라 측량좌표(225km)에선 안 움직인다 → 끄고(rate=0) 아래 커스텀
+    // 비율 휠로 대체. doublePickFlyTo(엔티티=전체 20km)도 끔.
     viewer.cameraControl.doublePickFlyTo = false;
     viewer.cameraControl.mouseWheelDollyRate = 0;
     viewer.camera.eye = [15, 15, 15];
@@ -251,8 +250,6 @@ export function ThreeDTest() {
     const loader = loaderRef.current;
     if (!viewer || !loader) return;
     setPick(null);
-    // DWG 는 흰색(색상7) 선형이 많아 어두운 배경 기본(Civil3D 처럼) — 나머지 포맷은 흰 배경.
-    setBgDark((label.split('.').pop() || '').toLowerCase() === 'dwg');
     const prev = viewer.scene.models['test'];
     if (prev) prev.destroy();
 
