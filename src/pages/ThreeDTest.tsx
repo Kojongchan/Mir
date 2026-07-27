@@ -12,6 +12,30 @@ import { errMessage } from '../lib/errors';
 type Focus = { center: [number, number, number]; half: [number, number, number] };
 
 /**
+ * 클릭한 '표면 지점'(worldPos)으로 카메라를 당긴다 — 병합 메시라 엔티티 AABB 로 flyTo 하면
+ * 전체(20km)를 맞춰(=전체맞춤처럼) 확대가 안 되던 문제 해결. 시선 방향은 유지하고 그 지점을
+ * 새 look 으로, eye 는 현재 거리의 factor 배(기본 35%=매번 65% 접근)로 당긴다. 반복 클릭 시
+ * 점점 가까워짐. minDist 로 과접근(면 뚫기) 방지.
+ */
+function flyToWorldPoint(
+  viewer: Viewer,
+  worldPos: number[],
+  factor = 0.35,
+  minDist = 2,
+): void {
+  const cam = viewer.camera;
+  const eye = cam.eye as number[];
+  const look = cam.look as number[];
+  let dx = look[0] - eye[0], dy = look[1] - eye[1], dz = look[2] - eye[2];
+  const len = Math.hypot(dx, dy, dz) || 1;
+  dx /= len; dy /= len; dz /= len;
+  const cur = Math.hypot(worldPos[0] - eye[0], worldPos[1] - eye[1], worldPos[2] - eye[2]);
+  const dist = Math.max(cur * factor, minDist);
+  const newEye = [worldPos[0] - dx * dist, worldPos[1] - dy * dist, worldPos[2] - dz * dist];
+  viewer.cameraFlight.flyTo({ eye: newEye, look: worldPos, up: cam.up, duration: 0.4 });
+}
+
+/**
  * focus(회전 전 실좌표)를 로드 회전 [-90,0,0]과 같은 축변환((x,y,z)→(x,z,-y))으로 돌려
  * xeokit world AABB [xmin,ymin,zmin,xmax,ymax,zmax] 로 변환. 없으면 null.
  */
@@ -42,7 +66,7 @@ export function ThreeDTest() {
   const navCubeRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
   const loaderRef = useRef<GLTFLoaderPlugin | null>(null);
-  const pickedRef = useRef<{ id?: string | number } | null>(null);
+  const pickedRef = useRef<{ id?: string | number; worldPos?: number[] } | null>(null);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [modelName, setModelName] = useState<string | null>(null);
@@ -77,7 +101,9 @@ export function ThreeDTest() {
     viewer.cameraControl.navMode = 'orbit';
     viewer.cameraControl.followPointer = true;
     viewer.cameraControl.smartPivot = true;
-    viewer.cameraControl.doublePickFlyTo = true;
+    // doublePickFlyTo(내장)는 '엔티티'로 날아가는데, 우리 GLB 는 재질별 병합 메시라 엔티티가
+    // 모델 전체(20km)라서 전체맞춤처럼 돼버린다 → 끄고, 아래에서 '클릭 지점'으로 당긴다.
+    viewer.cameraControl.doublePickFlyTo = false;
     viewer.cameraControl.panRightClick = true;
     viewer.camera.eye = [15, 15, 15];
     viewer.camera.look = [0, 0, 0];
@@ -119,22 +145,37 @@ export function ThreeDTest() {
       dataSource,
     } as unknown as ConstructorParameters<typeof GLTFLoaderPlugin>[1]);
 
-    // 클릭 픽 → 엔티티 ID(+메타) → MIR_SMART DB 조인 지점. 선택 엔티티는 '선택 확대'용 보관.
+    // 클릭 픽 → 엔티티 ID(+메타) → MIR_SMART DB 조인 지점. 표면 지점(worldPos)도 보관해
+    // '선택 확대'·더블클릭 줌이 그 지점으로 당기게 한다(pickSurface:true).
     const onClick = viewer.scene.input.on('mouseclicked', (canvasPos: number[]) => {
-      const hit = viewer.scene.pick({ canvasPos });
-      const entity = hit?.entity as { id?: string | number; isObject?: boolean } | undefined;
+      const hit = viewer.scene.pick({ canvasPos, pickSurface: true }) as
+        | { entity?: { id?: string | number; isObject?: boolean }; worldPos?: number[] }
+        | undefined;
+      const entity = hit?.entity;
       if (entity?.isObject && entity.id != null) {
         const id = String(entity.id);
-        pickedRef.current = { id: entity.id };
+        pickedRef.current = { id: entity.id, worldPos: hit?.worldPos };
         const meta = viewer.metaScene?.metaObjects?.[id];
         setPick({ id, name: meta?.name, type: meta?.type });
       } else {
-        pickedRef.current = null;
+        pickedRef.current = hit?.worldPos ? { worldPos: hit.worldPos } : null;
         setPick(null);
       }
     });
 
+    // 더블클릭 → 클릭한 표면 지점으로 카메라를 당긴다(반복 시 점점 접근). 병합 메시라
+    // 내장 doublePickFlyTo 는 전체를 맞추므로 직접 처리.
+    const canvasEl = canvasRef.current;
+    const onDblClick = (ev: MouseEvent) => {
+      const rect = canvasEl.getBoundingClientRect();
+      const canvasPos = [ev.clientX - rect.left, ev.clientY - rect.top];
+      const hit = viewer.scene.pick({ canvasPos, pickSurface: true }) as { worldPos?: number[] } | undefined;
+      if (hit?.worldPos) flyToWorldPoint(viewer, hit.worldPos);
+    };
+    canvasEl.addEventListener('dblclick', onDblClick);
+
     return () => {
+      canvasEl.removeEventListener('dblclick', onDblClick);
       viewer.scene.input.off(onClick);
       navCube?.destroy();
       viewerRef.current = null;
@@ -143,13 +184,13 @@ export function ThreeDTest() {
     };
   }, []);
 
-  /** 현재 클릭한 객체(없으면 전체)로 카메라 이동 — ACC '선택 확대' 유사. */
+  /** 클릭한 '지점'으로 확대(ACC '선택 확대' 유사). 병합 메시라 엔티티 AABB(=전체)가 아니라
+   *  클릭 표면 지점으로 당긴다. 클릭한 지점이 없으면 전체 맞춤. */
   const zoomToSelection = useCallback(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
-    const id = pickedRef.current?.id;
-    const entity = id != null ? viewer.scene.objects[String(id)] : undefined;
-    if (entity) viewer.cameraFlight.flyTo({ aabb: (entity as { aabb: number[] }).aabb, duration: 0.5 });
+    const wp = pickedRef.current?.worldPos;
+    if (wp) flyToWorldPoint(viewer, wp);
     else {
       const model = viewer.scene.models['test'];
       if (model) viewer.cameraFlight.flyTo(model);
@@ -408,7 +449,7 @@ export function ThreeDTest() {
             className="btn btn--sm"
             onClick={zoomToSelection}
             disabled={!modelName}
-            title="클릭한 객체로 확대(없으면 전체). 뷰에서 더블클릭해도 그 지점으로 이동합니다."
+            title="먼저 객체를 클릭한 뒤 누르면 그 지점으로 확대(반복하면 더 가까이). 뷰에서 더블클릭해도 그 지점으로 당겨집니다."
           >
             선택 확대
           </button>
