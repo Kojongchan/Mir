@@ -9,6 +9,16 @@ const glbPath = process.argv[2] || 'out/model.glb';
 const xeokitDist = 'node_modules/@xeokit/xeokit-sdk/dist/xeokit-sdk.es.js';
 const W = 1000, H = 700;
 
+// focus(회전 전 실좌표)를 로드 회전 [-90,0,0] 축변환((x,y,z)→(x,z,-y))으로 world AABB 로.
+let focusAabb = null;
+try {
+  const f = JSON.parse(fs.readFileSync('out/focus.json', 'utf8'));
+  const [cx, cy, cz] = f.center, [hx, hy, hz] = f.half;
+  const wc = [cx, cz, -cy], wh = [hx, hz, hy];
+  focusAabb = [wc[0] - wh[0], wc[1] - wh[1], wc[2] - wh[2], wc[0] + wh[0], wc[1] + wh[1], wc[2] + wh[2]];
+  console.log('[diag-render] focus aabb', JSON.stringify(focusAabb));
+} catch { console.log('[diag-render] focus.json 없음 — 전체 fit'); }
+
 const html = `<!doctype html><html><head><meta charset=utf-8><style>html,body{margin:0}#c{width:${W}px;height:${H}px}</style></head><body>
 <canvas id=c width=${W} height=${H}></canvas>
 <script type=module>
@@ -17,7 +27,8 @@ const v=new Viewer({canvasId:'c',transparent:false,backgroundColor:[1,1,1],dtxEn
 v.camera.perspective.near=0.5;v.camera.perspective.far=1e7;v.camera.ortho.near=0.5;v.camera.ortho.far=1e7;
 const l=new GLTFLoaderPlugin(v);
 const m=l.load({id:'t',src:'/model.glb',edges:false,rotation:[-90,0,0],dtxEnabled:false});
-m.on('loaded',()=>{const a=m.aabb;console.log('AABB',JSON.stringify(a));v.cameraFlight.flyTo(m,()=>{setTimeout(()=>{window.__done=1;document.title='DONE';},1500);});});
+const FOCUS=${focusAabb ? JSON.stringify(focusAabb) : 'null'};
+m.on('loaded',()=>{const a=m.aabb;console.log('AABB',JSON.stringify(a));const tgt=FOCUS?{aabb:FOCUS}:m;v.cameraFlight.flyTo(tgt,()=>{setTimeout(()=>{window.__done=1;document.title='DONE';},1500);});});
 m.on('error',e=>{document.title='ERR:'+e;window.__done=1;});
 </script></body></html>`;
 

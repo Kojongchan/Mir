@@ -326,6 +326,7 @@ async function main() {
   // 카메라 초점(이상치 제외 focus 박스) — 프런트가 flyTo 대상으로 사용(콩알 렌더 방지).
   if (res.focus) {
     await r2Put(`${keyBase}/focus.json`, Buffer.from(JSON.stringify(res.focus)), 'application/json');
+    try { fs.writeFileSync('out/focus.json', JSON.stringify(res.focus)); } catch { /* 진단용, 무시 */ }
   } else {
     await r2Delete(`${keyBase}/focus.json`);
   }
