@@ -326,6 +326,18 @@ export async function buildMergedGlb(imf, opts) {
   log(`[diag] geom종류: 메시 ${diag.kMesh}(빈 ${diag.emptyMesh}) · 선 ${diag.kLines} · 점 ${diag.kPoints} · Empty ${diag.kEmpty} · 기타 ${diag.kOther}`);
   log(`[diag] 삼각형 총 ${Math.round(triTotal).toLocaleString()} · 선분 총 ${Math.round(segTotal).toLocaleString()}`);
   log(`[diag] 최대메시: 정점 ${biggestMeshVtx.toLocaleString()} · 삼각형 ${Math.round(biggestMeshTris).toLocaleString()} · 크기(${fmt(biggestMeshSpan)}) ← 지형 TIN 이면 여기 잡힘`);
+  // 모든 그룹(선/메시) 상세 — 색·정점·프리미티브수·크기. 정점수 내림차순 상위 40개.
+  const allG = [
+    ...[...groups.values()].map((g) => ({ t: 'MESH', g, prim: Math.round(g.idxN / 3) })),
+    ...[...lineGroups.values()].map((g) => ({ t: 'LINE', g, prim: Math.round(g.idxN / 2) })),
+    ...[...pointGroups.values()].map((g) => ({ t: 'PT', g, prim: g.vtx })),
+  ].sort((a, b) => b.g.vtx - a.g.vtx);
+  log(`[diag] 총 그룹 ${allG.length}개 (상위 40 표시):`);
+  for (const { t, g, prim } of allG.slice(0, 40)) {
+    const c = g.color ? g.color.map((x) => (+x).toFixed(2)).join(',') : (imf.getMaterial(g.matId)?.diffuse ? 'mat' : 'none');
+    const sz = [g.max[0] - g.min[0], g.max[1] - g.min[1], g.max[2] - g.min[2]];
+    log(`[grp] ${t} vtx=${g.vtx} prim=${prim} color=(${c}) size=(${fmt(sz)})`);
+  }
 
   // 청크 → 그룹별 연속 배열로 합치고 glTF/GLB 작성.
   const concatF = (chunks, total) => { const out = new Float32Array(total); let o = 0; for (const c of chunks) { out.set(c, o); o += c.length; } return out; };
