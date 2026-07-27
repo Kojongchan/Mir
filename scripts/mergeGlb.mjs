@@ -365,8 +365,20 @@ export async function buildMergedGlb(imf, opts) {
     return d ? [d.x, d.y, d.z, mat?.opacity ?? 1] : fallback;
   };
 
+  // DWG(선 포함 모드)에서 '흰색 채움면'은 CAD 색상7 배경/지형 채움인데, 흰 배경에선 안
+  // 보이면서 뒤의 선형(지형 삼각망 등)을 불투명하게 가린다 → 렌더에서 제외(와이어프레임으로
+  // 표현). BIM(IFC/RVT)의 흰 벽 등은 보존해야 하므로 DWG 일 때만 적용.
+  const isDwg = process.env.INCLUDE_LINES === '1';
+  let skippedWhite = 0;
   for (const g of groups.values()) {
     if (g.vtx === 0) continue;
+    const mat = imf.getMaterial(g.matId);
+    const rawColor = baseColorOf(g, [0.72, 0.74, 0.77, 1]);
+    if (isDwg && rawColor[0] > 0.95 && rawColor[1] > 0.95 && rawColor[2] > 0.95) {
+      skippedWhite += g.vtx;
+      g.posCh.length = 0; g.nrmCh.length = 0; g.dbCh.length = 0; g.idxCh.length = 0;
+      continue;
+    }
     const pos = concatF(g.posCh, g.vtx * 3); g.posCh.length = 0;
     const nrm = concatF(g.nrmCh, g.vtx * 3); g.nrmCh.length = 0;
     const dbid = concatF(g.dbCh, g.vtx); g.dbCh.length = 0;
@@ -378,9 +390,6 @@ export async function buildMergedGlb(imf, opts) {
     const nrmAcc = accessors.push({ bufferView: addView(nrm, 34962), componentType: 5126, count: g.vtx, type: 'VEC3' }) - 1;
     const dbAcc = accessors.push({ bufferView: addView(dbid, 34962), componentType: 5126, count: g.vtx, type: 'SCALAR' }) - 1;
     const idxAcc = accessors.push({ bufferView: addView(idxA, 34963), componentType: 5125, count: idxA.length, type: 'SCALAR' }) - 1;
-
-    const mat = imf.getMaterial(g.matId);
-    const rawColor = baseColorOf(g, [0.72, 0.74, 0.77, 1]);
     // 솔리드가 순수 검정(CAD '색상7 자동'·ByLayer 미해결이 SVF 에서 흔히 검정으로 옴)이면
     // 조명을 받아도 검정이라 코리더 등이 형체 없는 검은 덩어리로 보인다 → 음영이 드러나는
     // 중립 회색으로 보정(불투명도는 유지). 선/점은 흰 배경에서 잘 보이므로 보정 안 함.
@@ -403,6 +412,7 @@ export async function buildMergedGlb(imf, opts) {
     meshes.push({ primitives: [{ mode: 4, attributes: { POSITION: posAcc, NORMAL: nrmAcc, _DBID: dbAcc }, indices: idxAcc, material: materials.length - 1 }] });
     nodes.push({ mesh: meshes.length - 1 });
   }
+  if (skippedWhite) log(`[merge] DWG 흰색 채움면 제외: 정점 ${skippedWhite.toLocaleString()} (뒤 선형 가림 방지)`);
 
   // 선(line) 그룹 → mode:1 프리미티브(법선 없음). 솔리드 지배 모델에선 제외(클러터).
   for (const g of includeLines ? lineGroups.values() : []) {
