@@ -50,6 +50,24 @@ function dollyToward(viewer: Viewer, target: number[], factor: number): void {
 }
 
 /**
+ * world AABB [xmin,ymin,zmin,xmax,ymax,zmax] 를 카메라로 맞춘다. 높이(dy)가 수평폭보다
+ * 훨씬 작은 '평평한 도면'(토목 DWG 지형·평면도)은 xeokit 기본 flyTo 가 비스듬히 잡아
+ * edge-on(옆에서) 으로 얇은 선만 보인다 → 위에서 내려다보는 평면도(top-down) 시점으로.
+ * 높이 있는 3D 모델은 기존대로 aabb fit(비스듬).
+ */
+function flyToFramed(viewer: Viewer, box: number[]): void {
+  const dx = box[3] - box[0], dy = box[4] - box[1], dz = box[5] - box[2];
+  const horiz = Math.max(dx, dz);
+  const cx = (box[0] + box[3]) / 2, cy = (box[1] + box[4]) / 2, cz = (box[2] + box[5]) / 2;
+  if (dy < 0.25 * horiz) {
+    const d = horiz * 0.62;
+    viewer.cameraFlight.flyTo({ eye: [cx, cy + d, cz], look: [cx, cy, cz], up: [0, 0, -1] });
+  } else {
+    viewer.cameraFlight.flyTo({ aabb: box });
+  }
+}
+
+/**
  * focus(회전 전 실좌표)를 로드 회전 [-90,0,0]과 같은 축변환((x,y,z)→(x,z,-y))으로 돌려
  * xeokit world AABB [xmin,ymin,zmin,xmax,ymax,zmax] 로 변환. 없으면 null.
  */
@@ -277,8 +295,8 @@ export function ThreeDTest() {
       // focus(변환기가 이상치 제외해 구운 초점 박스)가 있으면 전체 AABB 대신 그걸 맞춘다.
       // DWG 등 멀리 떨어진 이상치로 모델이 콩알처럼 보이던 문제 해결. focus 좌표는 회전 전
       // (실좌표)이라 로드 회전 [-90,0,0]과 동일한 축변환((x,y,z)→(x,z,-y))을 적용한다.
-      const aabb = focusToAabb(focus);
-      if (aabb) viewer.cameraFlight.flyTo({ aabb });
+      const box = focusToAabb(focus) ?? (model.aabb as number[] | undefined);
+      if (box) flyToFramed(viewer, box);
       else viewer.cameraFlight.flyTo(model);
       setModelName(label);
       setStatus('');
@@ -453,7 +471,11 @@ export function ThreeDTest() {
   const fitAll = () => {
     const viewer = viewerRef.current;
     const model = viewer?.scene.models['test'];
-    if (viewer && model) viewer.cameraFlight.flyTo(model);
+    if (!viewer || !model) return;
+    const box = model.aabb as number[] | undefined;
+    // 평평한 도면은 top-down 으로(edge-on 방지). 3D 모델은 기존대로.
+    if (box) flyToFramed(viewer, box);
+    else viewer.cameraFlight.flyTo(model);
   };
 
   return (
