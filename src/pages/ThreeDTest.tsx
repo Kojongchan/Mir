@@ -304,6 +304,10 @@ export function ThreeDTest() {
       if (box) flyToFramed(viewer, box);
       else viewer.cameraFlight.flyTo(model);
       setModelName(label);
+      // DWG(CAD 선형)는 ACI 색상 체계 — 노랑·하늘색·연두 등 '밝은' 색은 흰 배경에선
+      // 대비가 0에 가까워 사실상 안 보인다(그래서 CAD 모델공간은 검은 배경). Civil3D 원본도
+      // 어두운 배경이라 그 색들이 보이는 것 → DWG 는 어두운 배경을 기본값으로 켠다.
+      if (/\.dwg$/i.test(label)) setBgDark(true);
       setStatus('');
       setBusy(false);
       // === 화면 진단(당신 브라우저에서 실제로 로드/렌더된 상태를 스크린샷으로 확인) ===
