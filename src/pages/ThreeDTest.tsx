@@ -60,8 +60,12 @@ function flyToFramed(viewer: Viewer, box: number[]): void {
   const horiz = Math.max(dx, dz);
   const cx = (box[0] + box[3]) / 2, cy = (box[1] + box[4]) / 2, cz = (box[2] + box[5]) / 2;
   if (dy < 0.25 * horiz) {
+    // 평면 도면 → 카메라를 '직접' top-down 으로 설정(flyTo 애니메이션보다 확실). 헤드리스
+    // xeokit 테스트로 이 방식이 지형 삼각망을 화면 가득 렌더함을 확인.
     const d = horiz * 0.62;
-    viewer.cameraFlight.flyTo({ eye: [cx, cy + d, cz], look: [cx, cy, cz], up: [0, 0, -1] });
+    viewer.camera.eye = [cx, cy + d, cz];
+    viewer.camera.look = [cx, cy, cz];
+    viewer.camera.up = [0, 0, -1];
   } else {
     viewer.cameraFlight.flyTo({ aabb: box });
   }
