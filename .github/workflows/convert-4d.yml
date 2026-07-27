@@ -25,6 +25,10 @@ on:
         description: "선/점 포함 여부('1'=포함(DWG 등), '0'=엣지선 제외(IFC/RVT/NWD))"
         required: false
         default: ''
+      render_test:
+        description: "'1'이면 변환 후 헤드리스 xeokit 렌더 진단(ASCII 로그) 실행"
+        required: false
+        default: ''
 
 jobs:
   convert:
@@ -58,6 +62,14 @@ jobs:
           APS_REGION: ${{ github.event.inputs.region }}
           INCLUDE_LINES: ${{ github.event.inputs.include_lines }}
         run: node scripts/convert4d.mjs
+
+      - name: Headless xeokit 렌더 진단 (ASCII 로그)
+        if: github.event.inputs.render_test == '1'
+        continue-on-error: true
+        run: |
+          npm install --no-save @xeokit/xeokit-sdk@2 playwright-core pngjs
+          npx playwright install --with-deps chromium
+          node scripts/renderDiag.mjs out/model.glb
 
       - name: Upload glb as workflow artifact (백업)
         if: always()
