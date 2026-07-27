@@ -239,12 +239,14 @@ export async function buildMergedGlb(imf, opts) {
     for (let v = 0; v < nv; v++) { fsx += wx[v]; fsy += wy[v]; fsz += wz[v]; }
     if (nv > 0) foci.push({ c: [fsx / nv, fsy / nv, fsz / nv], w: nv });
 
-    // 프래그먼트 내부에서 (양자화색)별로 선분을 모은다. 각 선분(2정점)을 '독립 정점'으로
-    // 펼쳐서 담는다(정점 공유·재색인 없음) → 인덱스 오류 원천 차단. 인덱스는 순차(0,1,2,…).
+    // ⚠ svf-utils 는 선(line) 프래그먼트의 getIndices() 로 '전역 공유버퍼' 인덱스(값이
+    // nv 를 훨씬 초과, 예 maxIdx=16256)를 준다 — 프래그먼트 자체 정점과 안 맞는다. 그래서
+    // 이걸 쓰면 glTF 인덱스가 범위를 벗어나 xeokit 이 선을 통째로 안 그렸다(DWG 선형 미표시의
+    // 진짜 원인). getVertices() 는 이미 '선분 끝점 순서'로 온 로컬 정점이므로, 인덱스를 무시하고
+    // **정점을 순차 2개씩(pair) 묶어** 선분을 만든다. 색은 정점색(끝점) 기준으로 분리.
     const perColor = new Map(); // ckey -> { color, pos:number[] }
-    for (let k = 0; k + 1 < idx32.length; k += 2) {
-      const a = idx32[k], b = idx32[k + 1];
-      // NaN 좌표(불량 변환행렬 등) 선분은 건너뛴다 — glTF 에 NaN 이 들어가면 렌더가 깨진다.
+    for (let a = 0; a + 1 < nv; a += 2) {
+      const b = a + 1;
       if (!(Number.isFinite(wx[a]) && Number.isFinite(wy[a]) && Number.isFinite(wz[a]) &&
             Number.isFinite(wx[b]) && Number.isFinite(wy[b]) && Number.isFinite(wz[b]))) continue;
       const qc = quantColor(vColor(a) || vColor(b));
