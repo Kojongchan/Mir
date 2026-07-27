@@ -178,7 +178,16 @@ export async function buildMergedGlb(imf, opts) {
     }
   };
 
+  // 색 양자화: 원본 정점색을 1/8 단계로 반올림(원색은 그대로, 잡음만 병합). ACI 빨강
+  // (1,0,0)·청록(0,1,1)·노랑(1,1,0) 등이 각자 보존된다.
+  const clamp01 = (x) => Math.min(1, Math.max(0, x));
+  const quantColor = (c) => (c ? [Math.round(clamp01(c[0]) * 8) / 8, Math.round(clamp01(c[1]) * 8) / 8, Math.round(clamp01(c[2]) * 8) / 8] : null);
+
   let lineFrag = 0;
+  // SVF 는 색이 다른 수천 개의 선을 '한 프래그먼트'로 묶어 준다(한 프래그먼트 색범위가
+  // [0,0,0]~[1,1,1]로 확인됨). 프래그먼트를 평균색 하나로 뭉개면(예전 방식) 빨강+초록+파랑이
+  // 회색이 됐다. → **선분(2정점)마다 원본 정점색으로 분리**해 그 색 그룹에 넣는다. 프래그먼트
+  // 안에서 같은 색끼리는 정점을 공유(재색인)해 중복을 최소화.
   const addLine = (node, geom) => {
     const verts = geom.getVertices();
     const idx = geom.getIndices();
@@ -187,28 +196,58 @@ export async function buildMergedGlb(imf, opts) {
     const idx32 = idx instanceof Uint32Array ? idx : Uint32Array.from(idx);
     const nv = verts.length / 3;
     const m = matrixOf(node.transform);
-    const pos = new Float32Array(nv * 3);
-    const db = new Float32Array(nv);
-    tallyRaw(geom.getColors?.(), nv, 3, 'L');
-    const g = lineGroupOf(node.material ?? -1, fragColor(geom.getColors?.(), nv, 3), nv);
-    let sx = 0, sy = 0, sz = 0;
+    const raw = geom.getColors?.();
+    const hasColor = raw && raw.length >= nv * 3;
+    const matId = node.material ?? -1;
+    tallyRaw(raw, nv, 3, 'L');
+
+    // 정점을 월드좌표로 1회 변환.
+    const wx = new Float32Array(nv), wy = new Float32Array(nv), wz = new Float32Array(nv);
     for (let v = 0; v < nv; v++) {
       const x = verts[v * 3], y = verts[v * 3 + 1], z = verts[v * 3 + 2];
-      let ox, oy, oz;
-      if (m) { ox = m[0] * x + m[4] * y + m[8] * z + m[12]; oy = m[1] * x + m[5] * y + m[9] * z + m[13]; oz = m[2] * x + m[6] * y + m[10] * z + m[14]; }
-      else { ox = x; oy = y; oz = z; }
-      pos[v * 3] = ox; pos[v * 3 + 1] = oy; pos[v * 3 + 2] = oz;
-      if (ox < g.min[0]) g.min[0] = ox; if (oy < g.min[1]) g.min[1] = oy; if (oz < g.min[2]) g.min[2] = oz;
-      if (ox > g.max[0]) g.max[0] = ox; if (oy > g.max[1]) g.max[1] = oy; if (oz > g.max[2]) g.max[2] = oz;
-      sx += ox; sy += oy; sz += oz;
-      db[v] = node.dbid;
+      if (m) { wx[v] = m[0] * x + m[4] * y + m[8] * z + m[12]; wy[v] = m[1] * x + m[5] * y + m[9] * z + m[13]; wz[v] = m[2] * x + m[6] * y + m[10] * z + m[14]; }
+      else { wx[v] = x; wy[v] = y; wz[v] = z; }
     }
-    bump(g.min[0], g.min[1], g.min[2]); bump(g.max[0], g.max[1], g.max[2]);
-    foci.push({ c: [sx / nv, sy / nv, sz / nv], w: nv });
-    const reidx = new Uint32Array(idx32.length);
-    for (let k = 0; k < idx32.length; k++) reidx[k] = idx32[k] + g.base;
-    g.posCh.push(pos); g.dbCh.push(db); g.idxCh.push(reidx);
-    g.base += nv; g.vtx += nv; g.idxN += reidx.length;
+    const vColor = (v) => (hasColor ? [raw[v * 3], raw[v * 3 + 1], raw[v * 3 + 2]] : null);
+
+    // 프래그먼트 내부에서 (양자화색)별로 선분을 모은다 — 정점 로컬 재색인.
+    const perColor = new Map(); // ckey -> { color, map:Map(globalV->localIdx), pos:[], idx:[] }
+    for (let k = 0; k + 1 < idx32.length; k += 2) {
+      const a = idx32[k], b = idx32[k + 1];
+      const qc = quantColor(vColor(a) || vColor(b));
+      const ckey = qc ? `${qc[0]}_${qc[1]}_${qc[2]}` : 'none';
+      let pc = perColor.get(ckey);
+      if (!pc) { pc = { color: qc, map: new Map(), pos: [], idx: [] }; perColor.set(ckey, pc); }
+      const local = (gv) => {
+        let l = pc.map.get(gv);
+        if (l === undefined) { l = pc.map.size; pc.map.set(gv, l); pc.pos.push(wx[gv], wy[gv], wz[gv]); }
+        return l;
+      };
+      pc.idx.push(local(a), local(b));
+    }
+
+    // 각 색 버킷을 해당 색의 선 그룹으로 방출(그룹은 60k 정점 버킷으로 자동 분할).
+    for (const pc of perColor.values()) {
+      const cnt = pc.pos.length / 3;
+      if (cnt === 0) continue;
+      const color = pc.color ? [pc.color[0], pc.color[1], pc.color[2], 1] : null;
+      const g = lineGroupOf(matId, color, cnt);
+      const pos = Float32Array.from(pc.pos);
+      const db = new Float32Array(cnt); db.fill(node.dbid);
+      let sx = 0, sy = 0, sz = 0;
+      for (let v = 0; v < cnt; v++) {
+        const ox = pos[v * 3], oy = pos[v * 3 + 1], oz = pos[v * 3 + 2];
+        if (ox < g.min[0]) g.min[0] = ox; if (oy < g.min[1]) g.min[1] = oy; if (oz < g.min[2]) g.min[2] = oz;
+        if (ox > g.max[0]) g.max[0] = ox; if (oy > g.max[1]) g.max[1] = oy; if (oz > g.max[2]) g.max[2] = oz;
+        sx += ox; sy += oy; sz += oz;
+      }
+      bump(g.min[0], g.min[1], g.min[2]); bump(g.max[0], g.max[1], g.max[2]);
+      foci.push({ c: [sx / cnt, sy / cnt, sz / cnt], w: cnt });
+      const reidx = new Uint32Array(pc.idx.length);
+      for (let k = 0; k < pc.idx.length; k++) reidx[k] = pc.idx[k] + g.base;
+      g.posCh.push(pos); g.dbCh.push(db); g.idxCh.push(reidx);
+      g.base += cnt; g.vtx += cnt; g.idxN += reidx.length;
+    }
   };
 
   // 점(point) 전용 그룹 — mode:0(POINTS), 인덱스 없음.
@@ -389,10 +428,14 @@ export async function buildMergedGlb(imf, opts) {
     pieces.push(buf); byteOffset += buf.length; return bufferViews.length - 1;
   };
 
-  // 순수 흰색(=CAD '색상 7')만 검정으로. CAD 가 흰 종이에서 색상7 을 검정으로 플롯하는
-  // 것과 동일 — 흰 배경에서 안 보이던 색상7 선이 보인다. 시안·마젠타 등 실제 레이어색은
-  // 건드리지 않는다(순수 흰색만 판정). 유채색·회색은 그대로 보존.
-  const cadColor7 = (c) => (c[0] > 0.95 && c[1] > 0.95 && c[2] > 0.95 ? [0, 0, 0, c[3] ?? 1] : c);
+  // CAD '색상 7'은 배경색에 따라 흑/백으로 뒤집히는 색 — SVF 는 흰색 또는 검정으로 준다.
+  // 뷰어의 DWG 기본 배경이 어둡다(Civil3D 모델공간과 동일)므로, 순수 흰색·순수 검정(색상7)은
+  // 어두운 배경에서 잘 보이도록 밝은 회백색으로 보정한다. 시안·빨강·노랑 등 유채색은 보존.
+  const cadColor7 = (c) => {
+    const white = c[0] > 0.9 && c[1] > 0.9 && c[2] > 0.9;
+    const black = c[0] < 0.1 && c[1] < 0.1 && c[2] < 0.1;
+    return white || black ? [0.9, 0.9, 0.9, c[3] ?? 1] : c;
+  };
 
   // 그룹의 baseColor: 대표 정점색이 있으면 그 색(DWG ACI/레이어색 등), 없으면 재질
   // diffuse, 그것도 없으면 포맷별 기본색.
@@ -464,7 +507,7 @@ export async function buildMergedGlb(imf, opts) {
     const dbAcc = accessors.push({ bufferView: addView(dbid, 34962), componentType: 5126, count: g.vtx, type: 'SCALAR' }) - 1;
     const idxAcc = accessors.push({ bufferView: addView(idxA, 34963), componentType: 5125, count: idxA.length, type: 'SCALAR' }) - 1;
 
-    const baseColor = cadColor7(baseColorOf(g, [0.1, 0.12, 0.16, 1]));
+    const baseColor = cadColor7(baseColorOf(g, [0.9, 0.9, 0.9, 1]));
     materials.push({ pbrMetallicRoughness: { baseColorFactor: baseColor, metallicFactor: 0, roughnessFactor: 1 }, ...(baseColor[3] < 1 ? { alphaMode: 'BLEND' } : {}) });
     meshes.push({ primitives: [{ mode: 1, attributes: { POSITION: posAcc, _DBID: dbAcc }, indices: idxAcc, material: materials.length - 1 }] });
     nodes.push({ mesh: meshes.length - 1 });
@@ -479,7 +522,7 @@ export async function buildMergedGlb(imf, opts) {
 
     const posAcc = accessors.push({ bufferView: addView(pos, 34962), componentType: 5126, count: g.vtx, type: 'VEC3', min: g.min, max: g.max }) - 1;
     const dbAcc = accessors.push({ bufferView: addView(dbid, 34962), componentType: 5126, count: g.vtx, type: 'SCALAR' }) - 1;
-    const baseColor = cadColor7(baseColorOf(g, [0.1, 0.12, 0.16, 1]));
+    const baseColor = cadColor7(baseColorOf(g, [0.9, 0.9, 0.9, 1]));
     materials.push({ pbrMetallicRoughness: { baseColorFactor: baseColor, metallicFactor: 0, roughnessFactor: 1 } });
     meshes.push({ primitives: [{ mode: 0, attributes: { POSITION: posAcc, _DBID: dbAcc }, material: materials.length - 1 }] });
     nodes.push({ mesh: meshes.length - 1 });
