@@ -314,6 +314,13 @@ export async function buildMergedGlb(imf, opts) {
     pieces.push(buf); byteOffset += buf.length; return bufferViews.length - 1;
   };
 
+  // 선/점 색이 순수 흰색(CAD '색상 7 자동'이 SVF 에서 흰색으로 옴)이면 흰 배경에서 안
+  // 보인다 → CAD 가 흰 종이에서 색상7 을 검정으로 그리듯 어두운 색으로 보정.
+  const lineColorForWhiteBg = (c) => {
+    const nearWhite = c[0] > 0.9 && c[1] > 0.9 && c[2] > 0.9;
+    return nearWhite ? [0.1, 0.1, 0.12, c[3] ?? 1] : c;
+  };
+
   // 그룹의 baseColor: 대표 정점색이 있으면 그 색(DWG ACI 등), 없으면 재질 diffuse,
   // 그것도 없으면 포맷별 기본색.
   const baseColorOf = (g, fallback) => {
@@ -338,9 +345,14 @@ export async function buildMergedGlb(imf, opts) {
     const idxAcc = accessors.push({ bufferView: addView(idxA, 34963), componentType: 5125, count: idxA.length, type: 'SCALAR' }) - 1;
 
     const mat = imf.getMaterial(g.matId);
-    const baseColor = baseColorOf(g, [0.72, 0.74, 0.77, 1]);
+    const rawColor = baseColorOf(g, [0.72, 0.74, 0.77, 1]);
+    // 솔리드가 순수 검정(CAD '색상7 자동'·ByLayer 미해결이 SVF 에서 흔히 검정으로 옴)이면
+    // 조명을 받아도 검정이라 코리더 등이 형체 없는 검은 덩어리로 보인다 → 음영이 드러나는
+    // 중립 회색으로 보정(불투명도는 유지). 선/점은 흰 배경에서 잘 보이므로 보정 안 함.
+    const nearBlack = rawColor[0] < 0.06 && rawColor[1] < 0.06 && rawColor[2] < 0.06;
+    const baseColor = nearBlack ? [0.55, 0.55, 0.55, rawColor[3]] : rawColor;
     // 색 진단용 로그(포맷별 재질 색이 원본과 다른지 확인).
-    log(`[merge] mat ${g.matId}: rgb=(${baseColor.slice(0, 3).map((x) => (+x).toFixed(2)).join(',')}) a=${(+baseColor[3]).toFixed(2)} metal=${mat?.metallic ?? '-'} rough=${mat?.roughness ?? '-'} vtxColor=${!!g.color}`);
+    log(`[merge] mat ${g.matId}: rgb=(${rawColor.slice(0, 3).map((x) => (+x).toFixed(2)).join(',')}) a=${(+rawColor[3]).toFixed(2)}${nearBlack ? '→gray' : ''} metal=${mat?.metallic ?? '-'} rough=${mat?.roughness ?? '-'} vtxColor=${!!g.color}`);
     // 원본 재질의 metallic/roughness 를 그대로 반영(예전엔 0/0.9 로 하드코딩해 금속 등이
     // 무광 플라스틱처럼 보였다). 정점색으로 온 경우는 재질 정보가 없으니 비금속 기본값.
     materials.push({
@@ -369,7 +381,7 @@ export async function buildMergedGlb(imf, opts) {
     const dbAcc = accessors.push({ bufferView: addView(dbid, 34962), componentType: 5126, count: g.vtx, type: 'SCALAR' }) - 1;
     const idxAcc = accessors.push({ bufferView: addView(idxA, 34963), componentType: 5125, count: idxA.length, type: 'SCALAR' }) - 1;
 
-    const baseColor = baseColorOf(g, [0.1, 0.12, 0.16, 1]);
+    const baseColor = lineColorForWhiteBg(baseColorOf(g, [0.1, 0.12, 0.16, 1]));
     materials.push({ pbrMetallicRoughness: { baseColorFactor: baseColor, metallicFactor: 0, roughnessFactor: 1 }, ...(baseColor[3] < 1 ? { alphaMode: 'BLEND' } : {}) });
     meshes.push({ primitives: [{ mode: 1, attributes: { POSITION: posAcc, _DBID: dbAcc }, indices: idxAcc, material: materials.length - 1 }] });
     nodes.push({ mesh: meshes.length - 1 });
@@ -384,7 +396,7 @@ export async function buildMergedGlb(imf, opts) {
 
     const posAcc = accessors.push({ bufferView: addView(pos, 34962), componentType: 5126, count: g.vtx, type: 'VEC3', min: g.min, max: g.max }) - 1;
     const dbAcc = accessors.push({ bufferView: addView(dbid, 34962), componentType: 5126, count: g.vtx, type: 'SCALAR' }) - 1;
-    const baseColor = baseColorOf(g, [0.1, 0.12, 0.16, 1]);
+    const baseColor = lineColorForWhiteBg(baseColorOf(g, [0.1, 0.12, 0.16, 1]));
     materials.push({ pbrMetallicRoughness: { baseColorFactor: baseColor, metallicFactor: 0, roughnessFactor: 1 } });
     meshes.push({ primitives: [{ mode: 0, attributes: { POSITION: posAcc, _DBID: dbAcc }, material: materials.length - 1 }] });
     nodes.push({ mesh: meshes.length - 1 });
