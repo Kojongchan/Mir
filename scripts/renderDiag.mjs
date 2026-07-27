@@ -23,7 +23,7 @@ const html = `<!doctype html><html><head><meta charset=utf-8><style>html,body{ma
 <canvas id=c width=${W} height=${H}></canvas>
 <script type=module>
 import {Viewer,GLTFLoaderPlugin} from '/xeokit.js';
-const v=new Viewer({canvasId:'c',transparent:false,backgroundColor:[0.13,0.14,0.16],dtxEnabled:false,saoEnabled:true,logarithmicDepthBufferEnabled:true});
+const v=new Viewer({canvasId:'c',transparent:false,backgroundColor:[0.13,0.14,0.16],dtxEnabled:false,saoEnabled:false,logarithmicDepthBufferEnabled:true});
 v.camera.perspective.near=0.5;v.camera.perspective.far=1e7;v.camera.ortho.near=0.5;v.camera.ortho.far=1e7;
 const l=new GLTFLoaderPlugin(v);
 const m=l.load({id:'t',src:'/model.glb',edges:false,rotation:[-90,0,0],dtxEnabled:false});
@@ -88,4 +88,21 @@ const topH = [...hist.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15);
 console.log('[diag-render] 렌더된 색 히스토그램 r_g_b(0~3) → 픽셀수:');
 for (const [k, c] of topH) console.log(`[diag-render]   ${k} → ${c.toLocaleString()}`);
 console.log('[diag-render] ASCII(120x48):\n' + ascii);
+
+// 실제 렌더 이미지를 축소해 base64 PNG 로 로그에 남긴다(아티팩트 다운로드가 막혀 있어
+// 러너 밖에서 '눈으로' 확인할 유일한 방법). 로컬에서 base64 를 디코드해 PNG 로 본다.
+const OW = 360, OH = Math.round(OW * png.height / png.width);
+const small = new PNG({ width: OW, height: OH });
+for (let y = 0; y < OH; y++) {
+  for (let x = 0; x < OW; x++) {
+    const sx = Math.floor(x / OW * png.width), sy = Math.floor(y / OH * png.height);
+    const si = (sy * png.width + sx) * 4, di = (y * OW + x) * 4;
+    small.data[di] = png.data[si]; small.data[di + 1] = png.data[si + 1];
+    small.data[di + 2] = png.data[si + 2]; small.data[di + 3] = 255;
+  }
+}
+const b64 = PNG.sync.write(small).toString('base64');
+console.log(`[diag-png] BEGIN ${OW}x${OH} len=${b64.length}`);
+for (let i = 0; i < b64.length; i += 180) console.log('[diag-png] ' + b64.slice(i, i + 180));
+console.log('[diag-png] END');
 await b.close(); server.close(); process.exit(0);

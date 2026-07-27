@@ -117,7 +117,13 @@ export async function buildMergedGlb(imf, opts) {
   // + 실측좌표의 도면처럼 **멀리 떨어진 이상치**가 섞여 전체 AABB 가 거대해지면 flyTo 가 빈
   // 공간을 맞춰 모델이 콩알처럼 보인다. 중심점 분위수(1~99%)로 이상치를 뺀 초점을 구워둔다.
   const foci = [];
-  // 전체 실제 좌표 범위(진단 로그용).
+  // 로컬 원점(ORIGIN): 토목 DWG 는 측량좌표(예 X≈225km)라 Float32 로 저장하면 정밀도가
+  // ~0.03m 로 뭉개져 짧은 선분·세밀한 선형이 한 점으로 붕괴(=거의 안 보임)한다. 그래서 첫
+  // 정점을 원점으로 잡아 '모든 좌표를 원점 기준 상대좌표'로 저장한다(값이 0 근처 → Float32
+  // 풀정밀). 뷰어는 단일 모델만 보므로 상대좌표로 충분(초점·AABB 도 동일 상대좌표라 일관).
+  let ORIGIN = null;
+  const setOrigin = (ox, oy, oz) => { if (!ORIGIN) ORIGIN = [Math.round(ox), Math.round(oy), Math.round(oz)]; };
+  // 전체 실제 좌표 범위(진단 로그용, 상대좌표 기준).
   const gmin = [Infinity, Infinity, Infinity], gmax = [-Infinity, -Infinity, -Infinity];
   const bump = (x, y, z) => {
     if (x < gmin[0]) gmin[0] = x; if (y < gmin[1]) gmin[1] = y; if (z < gmin[2]) gmin[2] = z;
@@ -201,12 +207,15 @@ export async function buildMergedGlb(imf, opts) {
     const matId = node.material ?? -1;
     tallyRaw(raw, nv, 3, 'L');
 
-    // 정점을 월드좌표로 1회 변환.
+    // 정점을 월드좌표(Float64)로 변환 → ORIGIN 빼서 상대좌표(Float32)로 저장.
     const wx = new Float32Array(nv), wy = new Float32Array(nv), wz = new Float32Array(nv);
     for (let v = 0; v < nv; v++) {
       const x = verts[v * 3], y = verts[v * 3 + 1], z = verts[v * 3 + 2];
-      if (m) { wx[v] = m[0] * x + m[4] * y + m[8] * z + m[12]; wy[v] = m[1] * x + m[5] * y + m[9] * z + m[13]; wz[v] = m[2] * x + m[6] * y + m[10] * z + m[14]; }
-      else { wx[v] = x; wy[v] = y; wz[v] = z; }
+      let ox, oy, oz;
+      if (m) { ox = m[0] * x + m[4] * y + m[8] * z + m[12]; oy = m[1] * x + m[5] * y + m[9] * z + m[13]; oz = m[2] * x + m[6] * y + m[10] * z + m[14]; }
+      else { ox = x; oy = y; oz = z; }
+      setOrigin(ox, oy, oz);
+      wx[v] = ox - ORIGIN[0]; wy[v] = oy - ORIGIN[1]; wz[v] = oz - ORIGIN[2];
     }
     const vColor = (v) => (hasColor ? [raw[v * 3], raw[v * 3 + 1], raw[v * 3 + 2]] : null);
 
@@ -274,9 +283,11 @@ export async function buildMergedGlb(imf, opts) {
     let sx = 0, sy = 0, sz = 0;
     for (let v = 0; v < nv; v++) {
       const x = verts[v * 3], y = verts[v * 3 + 1], z = verts[v * 3 + 2];
-      let ox, oy, oz;
-      if (m) { ox = m[0] * x + m[4] * y + m[8] * z + m[12]; oy = m[1] * x + m[5] * y + m[9] * z + m[13]; oz = m[2] * x + m[6] * y + m[10] * z + m[14]; }
-      else { ox = x; oy = y; oz = z; }
+      let wxx, wyy, wzz;
+      if (m) { wxx = m[0] * x + m[4] * y + m[8] * z + m[12]; wyy = m[1] * x + m[5] * y + m[9] * z + m[13]; wzz = m[2] * x + m[6] * y + m[10] * z + m[14]; }
+      else { wxx = x; wyy = y; wzz = z; }
+      setOrigin(wxx, wyy, wzz);
+      const ox = wxx - ORIGIN[0], oy = wyy - ORIGIN[1], oz = wzz - ORIGIN[2];
       pos[v * 3] = ox; pos[v * 3 + 1] = oy; pos[v * 3 + 2] = oz;
       if (ox < g.min[0]) g.min[0] = ox; if (oy < g.min[1]) g.min[1] = oy; if (oz < g.min[2]) g.min[2] = oz;
       if (ox > g.max[0]) g.max[0] = ox; if (oy > g.max[1]) g.max[1] = oy; if (oz > g.max[2]) g.max[2] = oz;
@@ -341,12 +352,14 @@ export async function buildMergedGlb(imf, opts) {
     let sx = 0, sy = 0, sz = 0;
     for (let v = 0; v < nv; v++) {
       const x = verts[v * 3], y = verts[v * 3 + 1], z = verts[v * 3 + 2];
-      let ox, oy, oz;
+      let wxx, wyy, wzz;
       if (m) {
-        ox = m[0] * x + m[4] * y + m[8] * z + m[12];
-        oy = m[1] * x + m[5] * y + m[9] * z + m[13];
-        oz = m[2] * x + m[6] * y + m[10] * z + m[14];
-      } else { ox = x; oy = y; oz = z; }
+        wxx = m[0] * x + m[4] * y + m[8] * z + m[12];
+        wyy = m[1] * x + m[5] * y + m[9] * z + m[13];
+        wzz = m[2] * x + m[6] * y + m[10] * z + m[14];
+      } else { wxx = x; wyy = y; wzz = z; }
+      setOrigin(wxx, wyy, wzz);
+      const ox = wxx - ORIGIN[0], oy = wyy - ORIGIN[1], oz = wzz - ORIGIN[2];
       pos[v * 3] = ox; pos[v * 3 + 1] = oy; pos[v * 3 + 2] = oz;
       if (ox < g.min[0]) g.min[0] = ox; if (oy < g.min[1]) g.min[1] = oy; if (oz < g.min[2]) g.min[2] = oz;
       if (ox > g.max[0]) g.max[0] = ox; if (oy > g.max[1]) g.max[1] = oy; if (oz > g.max[2]) g.max[2] = oz;
@@ -379,7 +392,7 @@ export async function buildMergedGlb(imf, opts) {
   const focus = robustFocus(foci);
   const fmt = (a) => a.map((x) => (Number.isFinite(x) ? x.toFixed(1) : x)).join(',');
   const span = gmax.map((v, i) => v - gmin[i]);
-  log(`[merge] bbox min=(${fmt(gmin)}) max=(${fmt(gmax)}) span=(${fmt(span)})`);
+  log(`[merge] ORIGIN(측량좌표) = ${ORIGIN ? ORIGIN.join(',') : 'none'} · bbox(상대) min=(${fmt(gmin)}) max=(${fmt(gmax)}) span=(${fmt(span)})`);
   if (focus) log(`[merge] focus center=(${fmt(focus.center)}) half=(${fmt(focus.half)})`);
 
   // === 진단: SVF 내용물 상세 ===
