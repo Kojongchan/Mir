@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Viewer, GLTFLoaderPlugin } from '@xeokit/xeokit-sdk';
+import { Viewer, GLTFLoaderPlugin, NavCubePlugin } from '@xeokit/xeokit-sdk';
 import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
 import { useProjectRole } from '../auth/useProjectRole';
 import { supabase } from '../lib/supabase';
@@ -39,8 +39,10 @@ export function ThreeDTest() {
   const { projectId = '' } = useParams();
   const { canEdit } = useProjectRole(projectId);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const navCubeRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
   const loaderRef = useRef<GLTFLoaderPlugin | null>(null);
+  const pickedRef = useRef<{ id?: string | number } | null>(null);
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [modelName, setModelName] = useState<string | null>(null);
@@ -70,12 +72,29 @@ export function ThreeDTest() {
     });
     // 줌이 '커서 아래 지오메트리'로 다가가게(followPointer) — 거대 좌표 모델에서 화면
     // 중앙 빈 공간으로 줌돼 대상에 못 닿던 문제 해결. smartPivot 으로 회전 피벗도 안정화.
+    // ACC(Autodesk) 뷰어처럼: 더블클릭한 표면으로 카메라가 날아가고(doublePickFlyTo),
+    // 우클릭 드래그로 팬. 이 조합으로 넓은 측량좌표 모델에서도 원하는 곳에 바로 접근.
+    viewer.cameraControl.navMode = 'orbit';
     viewer.cameraControl.followPointer = true;
     viewer.cameraControl.smartPivot = true;
+    viewer.cameraControl.doublePickFlyTo = true;
+    viewer.cameraControl.panRightClick = true;
     viewer.camera.eye = [15, 15, 15];
     viewer.camera.look = [0, 0, 0];
     viewer.camera.up = [0, 1, 0];
     viewerRef.current = viewer;
+
+    // 방향 큐브(ACC 뷰큐브 유사) — 코너 캔버스에 렌더. 면/모서리 클릭으로 정면·평면뷰 스냅.
+    let navCube: NavCubePlugin | null = null;
+    if (navCubeRef.current) {
+      navCube = new NavCubePlugin(viewer, {
+        canvasElement: navCubeRef.current,
+        visible: true,
+        cameraFly: true,
+        cameraFlyDuration: 0.5,
+        fitVisible: true,
+      } as unknown as ConstructorParameters<typeof NavCubePlugin>[1]);
+    }
     // 커스텀 데이터소스: xeokit 기본 XHR 은 URL 에 캐시버스터(&_=timestamp)를 붙이는데,
     // 이게 R2 presigned URL 의 서명을 깨서 403 을 낸다. fetch 로 URL 을 '그대로' 가져온다.
     const fetchBuf = (url: string, ok: (b: ArrayBuffer) => void, err: (e: string) => void) =>
@@ -100,25 +119,41 @@ export function ThreeDTest() {
       dataSource,
     } as unknown as ConstructorParameters<typeof GLTFLoaderPlugin>[1]);
 
-    // 클릭 픽 → 엔티티 ID(+메타) → MIR_SMART DB 조인 지점.
+    // 클릭 픽 → 엔티티 ID(+메타) → MIR_SMART DB 조인 지점. 선택 엔티티는 '선택 확대'용 보관.
     const onClick = viewer.scene.input.on('mouseclicked', (canvasPos: number[]) => {
       const hit = viewer.scene.pick({ canvasPos });
       const entity = hit?.entity as { id?: string | number; isObject?: boolean } | undefined;
       if (entity?.isObject && entity.id != null) {
         const id = String(entity.id);
+        pickedRef.current = { id: entity.id };
         const meta = viewer.metaScene?.metaObjects?.[id];
         setPick({ id, name: meta?.name, type: meta?.type });
       } else {
+        pickedRef.current = null;
         setPick(null);
       }
     });
 
     return () => {
       viewer.scene.input.off(onClick);
+      navCube?.destroy();
       viewerRef.current = null;
       loaderRef.current = null;
       viewer.destroy();
     };
+  }, []);
+
+  /** 현재 클릭한 객체(없으면 전체)로 카메라 이동 — ACC '선택 확대' 유사. */
+  const zoomToSelection = useCallback(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const id = pickedRef.current?.id;
+    const entity = id != null ? viewer.scene.objects[String(id)] : undefined;
+    if (entity) viewer.cameraFlight.flyTo({ aabb: (entity as { aabb: number[] }).aabb, duration: 0.5 });
+    else {
+      const model = viewer.scene.models['test'];
+      if (model) viewer.cameraFlight.flyTo(model);
+    }
   }, []);
 
   /** GLB(원격 URL 또는 로컬 objectURL)를 뷰어에 올린다. focus 있으면 그 박스로 flyTo. */
@@ -371,6 +406,14 @@ export function ThreeDTest() {
           </button>
           <button
             className="btn btn--sm"
+            onClick={zoomToSelection}
+            disabled={!modelName}
+            title="클릭한 객체로 확대(없으면 전체). 뷰에서 더블클릭해도 그 지점으로 이동합니다."
+          >
+            선택 확대
+          </button>
+          <button
+            className="btn btn--sm"
             onClick={() => lastFile && void openFromAcc(lastFile, true)}
             disabled={busy || !lastFile}
             title="캐시를 지우고 다시 변환(빈 캐시·실패 재시도)"
@@ -396,6 +439,8 @@ export function ThreeDTest() {
           onDrop={onDrop}
         >
           <canvas ref={canvasRef} className="threed-test__canvas" />
+          {/* 방향 큐브(ACC 뷰큐브 유사) — 우상단 코너. */}
+          <canvas ref={navCubeRef} className="threed-test__navcube" width={140} height={140} />
           {!modelName && !busy && (
             <div className="threed-test__empty">
               <UiIcon name="cube" size={40} />
