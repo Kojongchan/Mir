@@ -104,6 +104,7 @@ export function ThreeDTest() {
   const loaderRef = useRef<GLTFLoaderPlugin | null>(null);
   const pickedRef = useRef<{ id?: string | number; worldPos?: number[] } | null>(null);
   const [status, setStatus] = useState('');
+  const [dbg, setDbg] = useState('');
   const [busy, setBusy] = useState(false);
   const [modelName, setModelName] = useState<string | null>(null);
   const [pick, setPick] = useState<{ id: string; name?: string; type?: string } | null>(null);
@@ -305,6 +306,23 @@ export function ThreeDTest() {
       setModelName(label);
       setStatus('');
       setBusy(false);
+      // === 화면 진단(당신 브라우저에서 실제로 로드/렌더된 상태를 스크린샷으로 확인) ===
+      // 이 오버레이가 보이면 = 새 코드가 배포된 것. 안 보이면 = 옛 코드(하드 새로고침 필요).
+      try {
+        const ids = Object.keys(viewer.scene.objects || {});
+        const a = (model.aabb as number[]) || [0, 0, 0, 0, 0, 0];
+        const span = [a[3] - a[0], a[4] - a[1], a[5] - a[2]].map((x) => Math.round(x));
+        const fx = focusToAabb(focus);
+        const cam = viewer.camera;
+        const r1 = (v: number[]) => v.map((x) => Math.round(x)).join(',');
+        setDbg(
+          `엔티티 ${ids.length}개 · 모델AABB span(${span.join(',')}) · ` +
+            `focus=${fx ? '있음' : '없음(전체AABB사용)'} · ` +
+            `cam eye(${r1(cam.eye as number[])}) look(${r1(cam.look as number[])}) up(${(cam.up as number[]).map((x) => x.toFixed(1)).join(',')})`,
+        );
+      } catch {
+        setDbg('진단 수집 실패');
+      }
     });
     model.on('error', (e: unknown) => {
       setStatus(`불러오기 실패: ${errMessage(e)}`);
@@ -575,6 +593,28 @@ export function ThreeDTest() {
           <canvas ref={canvasRef} className="threed-test__canvas" />
           {/* 방향 큐브(ACC 뷰큐브 유사) — 우상단 코너. */}
           <canvas ref={navCubeRef} className="threed-test__navcube" width={140} height={140} />
+          {/* 진단 오버레이 — 로드된 지오메트리/카메라 상태를 화면에 표시(스크린샷 디버그용). */}
+          {dbg && (
+            <div
+              style={{
+                position: 'absolute',
+                left: 8,
+                bottom: 8,
+                maxWidth: 'calc(100% - 16px)',
+                padding: '6px 10px',
+                background: 'rgba(0,0,0,0.78)',
+                color: '#0f0',
+                font: '11px/1.4 monospace',
+                borderRadius: 6,
+                pointerEvents: 'none',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-all',
+                zIndex: 20,
+              }}
+            >
+              {dbg}
+            </div>
+          )}
           {!modelName && !busy && (
             <div className="threed-test__empty">
               <UiIcon name="cube" size={40} />
