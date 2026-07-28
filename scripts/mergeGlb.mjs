@@ -190,7 +190,7 @@ export async function buildMergedGlb(imf, opts) {
   const quantColor = (c) => (c && Number.isFinite(c[0]) && Number.isFinite(c[1]) && Number.isFinite(c[2])
     ? [Math.round(clamp01(c[0]) * 8) / 8, Math.round(clamp01(c[1]) * 8) / 8, Math.round(clamp01(c[2]) * 8) / 8] : null);
 
-  let lineFrag = 0, lineNanFrag = 0, lineIdxOOR = 0;
+  let lineFrag = 0, lineNanFrag = 0, lineIdxOOR = 0, lineFragPair = 0, lineFragStrip = 0;
   const lineNanSamples = [], lineIdxSamples = [], lineRawDump = [];
   // SVF 는 색이 다른 수천 개의 선을 '한 프래그먼트'로 묶어 준다(한 프래그먼트 색범위가
   // [0,0,0]~[1,1,1]로 확인됨). 프래그먼트를 평균색 하나로 뭉개면(예전 방식) 빨강+초록+파랑이
@@ -241,22 +241,32 @@ export async function buildMergedGlb(imf, opts) {
     for (let v = 0; v < nv; v++) { fsx += wx[v]; fsy += wy[v]; fsz += wz[v]; }
     if (nv > 0) foci.push({ c: [fsx / nv, fsy / nv, fsz / nv], w: nv });
 
-    // ⚠ svf-utils 는 선(line) 프래그먼트의 getIndices() 로 '전역 공유버퍼' 인덱스(값이
-    // nv 를 훨씬 초과, 예 maxIdx=16256)를 준다 — 프래그먼트 자체 정점과 안 맞는다. 그래서
-    // 이걸 쓰면 glTF 인덱스가 범위를 벗어나 xeokit 이 선을 통째로 안 그렸다(DWG 선형 미표시의
-    // 진짜 원인). getVertices() 는 이미 '선분 끝점 순서'로 온 로컬 정점이므로, 인덱스를 무시하고
-    // **정점을 순차 2개씩(pair) 묶어** 선분을 만든다. 색은 정점색(끝점) 기준으로 분리.
+    // ⚠ svf-utils 는 선 프래그먼트의 getIndices() 로 '전역 공유버퍼' 쓰레기 인덱스를 줘서
+    // 못 쓴다. getVertices() 순서로 선분을 복원하는데, 정점 레이아웃이 두 종류다:
+    //  (A) 복제쌍 [p0,p1,p1,p2,p2,p3…] — 일반 폴리선/외곽선. 2개씩 pair 로 묶어야 정상.
+    //  (B) 스트립 [p0,p1,p2,p3…] — 블록 내부 곡선 등. 연속 연결해야 곡선이 안 깨진다.
+    // v[1]==v[2] 복제 여부로 레이아웃을 감지해 분기(오검출 방지: 다수결). pair 는 폴리선
+    // 경계에서 헛선이 안 생기고, strip 은 곡선을 잇는다.
+    let dup = 0, checks = 0;
+    for (let k = 1; k + 1 < nv && checks < 12; k += 2, checks++) {
+      if (wx[k] === wx[k + 1] && wy[k] === wy[k + 1] && wz[k] === wz[k + 1]) dup++;
+    }
+    const usePairs = checks > 0 ? dup >= checks * 0.6 : true;
+    if (usePairs) lineFragPair++; else lineFragStrip++;
+
     const perColor = new Map(); // ckey -> { color, pos:number[] }
-    for (let a = 0; a + 1 < nv; a += 2) {
-      const b = a + 1;
+    const addSeg = (a, b) => {
       if (!(Number.isFinite(wx[a]) && Number.isFinite(wy[a]) && Number.isFinite(wz[a]) &&
-            Number.isFinite(wx[b]) && Number.isFinite(wy[b]) && Number.isFinite(wz[b]))) continue;
+            Number.isFinite(wx[b]) && Number.isFinite(wy[b]) && Number.isFinite(wz[b]))) return;
+      if (wx[a] === wx[b] && wy[a] === wy[b] && wz[a] === wz[b]) return; // 0길이 선분 제외
       const qc = quantColor(vColor(a) || vColor(b));
       const ckey = qc ? `${qc[0]}_${qc[1]}_${qc[2]}` : 'none';
       let pc = perColor.get(ckey);
       if (!pc) { pc = { color: qc, pos: [] }; perColor.set(ckey, pc); }
       pc.pos.push(wx[a], wy[a], wz[a], wx[b], wy[b], wz[b]);
-    }
+    };
+    if (usePairs) { for (let a = 0; a + 1 < nv; a += 2) addSeg(a, a + 1); }
+    else { for (let a = 0; a + 1 < nv; a += 1) addSeg(a, a + 1); }
 
     // 각 색 버킷을 해당 색의 선 그룹으로 방출(그룹은 60k 정점 버킷으로 자동 분할).
     for (const pc of perColor.values()) {
@@ -435,6 +445,7 @@ export async function buildMergedGlb(imf, opts) {
   log(`[nan] NaN 선프래그 ${lineNanFrag}/${lineFrag} · 샘플: ${JSON.stringify(lineNanSamples)}`);
   log(`[idx] idx>nv 선프래그 ${lineIdxOOR}/${lineFrag} · 샘플(nv/idxLen/min/max): ${JSON.stringify(lineIdxSamples)}`);
   log(`[raw] 선 원자료 덤프(nv/idxLen/idx[0:26]/v[0:12]): ${JSON.stringify(lineRawDump)}`);
+  log(`[layout] 선 레이아웃: pair(복제쌍) ${lineFragPair} · strip(블록곡선) ${lineFragStrip}`);
   const topCols = [...rawColorHist.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30);
   log(`[color] SVF 원본 정점색 히스토그램 — r_g_b(0~8 양자화) → 정점수 (상위 30):`);
   for (const [k, c] of topCols) log(`[color]   ${k} → ${c.toLocaleString()}`);
@@ -502,6 +513,15 @@ export async function buildMergedGlb(imf, opts) {
     const dbid = concatF(g.dbCh, g.vtx); g.dbCh.length = 0;
     const idxA = concatU(g.idxCh, g.idxN); g.idxCh.length = 0;
     totalV += g.vtx;
+
+    // #4: DWG '전역폭 폴리선'은 SVF 가 Z 로 살짝 압출(높이 ~0.3m)해 솔리드 상자로 만든다.
+    // 원본은 평면 폴리선(폭만 있음)이므로, Z 스팬이 작은 DWG 메시는 한 평면으로 눕혀
+    // '평평한 폭선(리본)'으로 만든다(3D 상자 형상 제거). 진짜 3D 솔리드(Z 큰)는 유지.
+    if (isDwg && (g.max[2] - g.min[2]) < 1.0) {
+      const zf = (g.min[2] + g.max[2]) / 2;
+      for (let v = 0; v < g.vtx; v++) { pos[v * 3 + 2] = zf; nrm[v * 3] = 0; nrm[v * 3 + 1] = 0; nrm[v * 3 + 2] = 1; }
+      g.min[2] = zf; g.max[2] = zf;
+    }
 
     const posView = addView(pos, 34962);
     const posAcc = accessors.push({ bufferView: posView, componentType: 5126, count: g.vtx, type: 'VEC3', min: g.min, max: g.max }) - 1;
