@@ -96,18 +96,18 @@ async function getSvfDerivatives(urn) {
   const cred = await authClient.getTwoLeggedToken(APS_CLIENT_ID, APS_CLIENT_SECRET, [Scopes.ViewablesRead]);
   const manifest = await md.getManifest(urn, { accessToken: cred.access_token, region: APS_REGION });
   const out = [];
-  const walk = (d) => {
-    // 진단: 이 URN 이 어떤 파생물(뷰어블)을 갖는지 전부 출력 — 2D(f2d)에 텍스트·주석·
-    // 전체 도면요소가 있을 수 있어 무엇이 있는지 확인용.
-    if (d.type === 'resource' && d.role === 'graphics') {
-      console.log(`[convert4d] 파생물: role=${d.role} mime=${d.mime} name=${d.name || '-'} guid=${d.guid || '-'}`);
+  const walk = (d, depth = 0) => {
+    // 진단: 이 URN 의 '모든' 뷰어블/리소스를 출력 — 특히 2D(f2d) 뷰가 있으면 폴리선·호·
+    // 선종류·선가중치·해치·TIN 이 벡터로 보존됐을 수 있어 SVF(3D 테셀레이션) 대신 쓸 수 있다.
+    if (d.type === 'view' || d.type === 'geometry' || d.type === 'resource') {
+      console.log(`[manifest] ${' '.repeat(depth * 2)}type=${d.type} role=${d.role || '-'} mime=${d.mime || '-'} name=${(d.name || '-').slice(0, 40)} guid=${(d.guid || '-').slice(0, 12)}`);
     }
     if (d.type === 'resource' && d.role === 'graphics' && d.mime === 'application/autodesk-svf') out.push(d);
-    d.children?.forEach(walk);
+    d.children?.forEach((c) => walk(c, depth + 1));
   };
   manifest.derivatives?.forEach((d) => {
-    console.log(`[convert4d] derivative: outputType=${d.outputType} name=${d.name || '-'}`);
-    d.children?.forEach(walk);
+    console.log(`[manifest] derivative outputType=${d.outputType} name=${d.name || '-'}`);
+    d.children?.forEach((c) => walk(c, 1));
   });
   return out;
 }

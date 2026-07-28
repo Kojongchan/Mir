@@ -251,7 +251,9 @@ export async function buildMergedGlb(imf, opts) {
     for (let k = 1; k + 1 < nv && checks < 12; k += 2, checks++) {
       if (wx[k] === wx[k + 1] && wy[k] === wy[k + 1] && wz[k] === wz[k + 1]) dup++;
     }
-    const usePairs = checks > 0 ? dup >= checks * 0.6 : true;
+    // NOTE: strip 모드 실험은 곡선을 오히려 더 깨뜨려(헛연결) 되돌림 — 항상 pair 로.
+    // 근본적 선종류·선가중치·폴리선/호 보존은 SVF(테셀레이션)로는 한계 → F2D(2D벡터) 검토.
+    const usePairs = true;
     if (usePairs) lineFragPair++; else lineFragStrip++;
 
     const perColor = new Map(); // ckey -> { color, pos:number[] }
