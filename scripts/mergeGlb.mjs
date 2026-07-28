@@ -241,23 +241,17 @@ export async function buildMergedGlb(imf, opts) {
     for (let v = 0; v < nv; v++) { fsx += wx[v]; fsy += wy[v]; fsz += wz[v]; }
     if (nv > 0) foci.push({ c: [fsx / nv, fsy / nv, fsz / nv], w: nv });
 
-    // ⚠ svf-utils 는 선 프래그먼트의 getIndices() 로 '전역 공유버퍼' 쓰레기 인덱스를 줘서
-    // 못 쓴다. getVertices() 순서로 선분을 복원하는데, 정점 레이아웃이 두 종류다:
-    //  (A) 복제쌍 [p0,p1,p1,p2,p2,p3…] — 일반 폴리선/외곽선. 2개씩 pair 로 묶어야 정상.
-    //  (B) 스트립 [p0,p1,p2,p3…] — 블록 내부 곡선 등. 연속 연결해야 곡선이 안 깨진다.
-    // v[1]==v[2] 복제 여부로 레이아웃을 감지해 분기(오검출 방지: 다수결). pair 는 폴리선
-    // 경계에서 헛선이 안 생기고, strip 은 곡선을 잇는다.
-    let dup = 0, checks = 0;
-    for (let k = 1; k + 1 < nv && checks < 12; k += 2, checks++) {
-      if (wx[k] === wx[k + 1] && wy[k] === wy[k + 1] && wz[k] === wz[k + 1]) dup++;
-    }
-    // NOTE: strip 모드 실험은 곡선을 오히려 더 깨뜨려(헛연결) 되돌림 — 항상 pair 로.
-    // 근본적 선종류·선가중치·폴리선/호 보존은 SVF(테셀레이션)로는 한계 → F2D(2D벡터) 검토.
-    const usePairs = true;
-    if (usePairs) lineFragPair++; else lineFragStrip++;
-
+    // ⚠ svf-utils 의 선 인덱스는 '전역 공유버퍼' 쓰레기라 못 쓴다. 대신 getVertices() 순서로
+    // 복원하는데, 원자료 구조가 [원점(0,0,0), 폴리선정점들…, 원점, 다음폴리선…] 이다 —
+    // 로컬 원점(0,0,0)이 **폴리선 구분자(pen-up)** 역할. 그래서:
+    //  · 연속 연결(strip): 정점을 순서대로 이어 곡선/폴리선을 끊김 없이 잇는다.
+    //  · 원점(0,0,0) 접점 선분 제외: 별개 폴리선끼리 원점을 통해 잘못 이어지는 헛선 차단
+    //    + 원점→첫점 스퍼리어스 방사선(프래그먼트당 1개, 8만 개) 제거.
+    //  · 0길이 선분 제외: 복제정점([A,A]) 처리.
+    const isLocalOrigin = (v) => verts[v * 3] === 0 && verts[v * 3 + 1] === 0 && verts[v * 3 + 2] === 0;
     const perColor = new Map(); // ckey -> { color, pos:number[] }
     const addSeg = (a, b) => {
+      if (isLocalOrigin(a) || isLocalOrigin(b)) return; // 폴리선 구분자(원점 마커)
       if (!(Number.isFinite(wx[a]) && Number.isFinite(wy[a]) && Number.isFinite(wz[a]) &&
             Number.isFinite(wx[b]) && Number.isFinite(wy[b]) && Number.isFinite(wz[b]))) return;
       if (wx[a] === wx[b] && wy[a] === wy[b] && wz[a] === wz[b]) return; // 0길이 선분 제외
@@ -267,8 +261,7 @@ export async function buildMergedGlb(imf, opts) {
       if (!pc) { pc = { color: qc, pos: [] }; perColor.set(ckey, pc); }
       pc.pos.push(wx[a], wy[a], wz[a], wx[b], wy[b], wz[b]);
     };
-    if (usePairs) { for (let a = 0; a + 1 < nv; a += 2) addSeg(a, a + 1); }
-    else { for (let a = 0; a + 1 < nv; a += 1) addSeg(a, a + 1); }
+    for (let a = 0; a + 1 < nv; a += 1) addSeg(a, a + 1);
 
     // 각 색 버킷을 해당 색의 선 그룹으로 방출(그룹은 60k 정점 버킷으로 자동 분할).
     for (const pc of perColor.values()) {
@@ -447,7 +440,6 @@ export async function buildMergedGlb(imf, opts) {
   log(`[nan] NaN 선프래그 ${lineNanFrag}/${lineFrag} · 샘플: ${JSON.stringify(lineNanSamples)}`);
   log(`[idx] idx>nv 선프래그 ${lineIdxOOR}/${lineFrag} · 샘플(nv/idxLen/min/max): ${JSON.stringify(lineIdxSamples)}`);
   log(`[raw] 선 원자료 덤프(nv/idxLen/idx[0:26]/v[0:12]): ${JSON.stringify(lineRawDump)}`);
-  log(`[layout] 선 레이아웃: pair(복제쌍) ${lineFragPair} · strip(블록곡선) ${lineFragStrip}`);
   const topCols = [...rawColorHist.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30);
   log(`[color] SVF 원본 정점색 히스토그램 — r_g_b(0~8 양자화) → 정점수 (상위 30):`);
   for (const [k, c] of topCols) log(`[color]   ${k} → ${c.toLocaleString()}`);
