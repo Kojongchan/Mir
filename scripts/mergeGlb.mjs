@@ -191,7 +191,7 @@ export async function buildMergedGlb(imf, opts) {
     ? [Math.round(clamp01(c[0]) * 8) / 8, Math.round(clamp01(c[1]) * 8) / 8, Math.round(clamp01(c[2]) * 8) / 8] : null);
 
   let lineFrag = 0, lineNanFrag = 0, lineIdxOOR = 0;
-  const lineNanSamples = [], lineIdxSamples = [];
+  const lineNanSamples = [], lineIdxSamples = [], lineRawDump = [];
   // SVF 는 색이 다른 수천 개의 선을 '한 프래그먼트'로 묶어 준다(한 프래그먼트 색범위가
   // [0,0,0]~[1,1,1]로 확인됨). 프래그먼트를 평균색 하나로 뭉개면(예전 방식) 빨강+초록+파랑이
   // 회색이 됐다. → **선분(2정점)마다 원본 정점색으로 분리**해 그 색 그룹에 넣는다. 프래그먼트
@@ -219,7 +219,9 @@ export async function buildMergedGlb(imf, opts) {
     // 인덱스 범위 진단: idx 가 nv 를 넘는가(선분 소실 원인?).
     { let mn = Infinity, mx = -Infinity; for (let q = 0; q < idx32.length; q++) { const ii = idx32[q]; if (ii < mn) mn = ii; if (ii > mx) mx = ii; }
       if (mx >= nv) lineIdxOOR++;
-      if (lineIdxSamples.length < 8) lineIdxSamples.push({ nv, idxLen: idx32.length, minIdx: mn, maxIdx: mx }); }
+      if (lineIdxSamples.length < 8) lineIdxSamples.push({ nv, idxLen: idx32.length, minIdx: mn, maxIdx: mx });
+      // 원자료 덤프: idx·정점 실제 구조 파악(연결성 = pairs vs strip vs 전역풀).
+      if (lineRawDump.length < 4) lineRawDump.push({ nv, idxLen: idx32.length, idx: Array.from(idx32.slice(0, 26)), v: Array.from(verts.slice(0, 12)).map((x) => +(+x).toFixed(1)) }); }
 
     // 정점을 월드좌표(Float64)로 변환 → ORIGIN 빼서 상대좌표(Float32)로 저장.
     const wx = new Float32Array(nv), wy = new Float32Array(nv), wz = new Float32Array(nv);
@@ -432,6 +434,7 @@ export async function buildMergedGlb(imf, opts) {
   log(`[color] 선프래그: 단색 ${lineSingleColor} · 다색(평균이 회색으로 뭉갬) ${lineMultiColor} · 정점색없음(재질색) ${lineNoColor}`);
   log(`[nan] NaN 선프래그 ${lineNanFrag}/${lineFrag} · 샘플: ${JSON.stringify(lineNanSamples)}`);
   log(`[idx] idx>nv 선프래그 ${lineIdxOOR}/${lineFrag} · 샘플(nv/idxLen/min/max): ${JSON.stringify(lineIdxSamples)}`);
+  log(`[raw] 선 원자료 덤프(nv/idxLen/idx[0:26]/v[0:12]): ${JSON.stringify(lineRawDump)}`);
   const topCols = [...rawColorHist.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30);
   log(`[color] SVF 원본 정점색 히스토그램 — r_g_b(0~8 양자화) → 정점수 (상위 30):`);
   for (const [k, c] of topCols) log(`[color]   ${k} → ${c.toLocaleString()}`);
