@@ -149,8 +149,7 @@ function includeLinesFor(name: string): '0' | '1' {
 }
 
 async function dispatchConvert(
-  urn: string,
-  includeLines: '0' | '1',
+  inputs: Record<string, string>,
 ): Promise<{ ok: boolean; status: number; body: string }> {
   const res = await fetch(
     `https://api.github.com/repos/${GH_REPO}/actions/workflows/${WORKFLOW_FILE}/dispatches`,
@@ -163,10 +162,7 @@ async function dispatchConvert(
         'user-agent': 'mir-vdc',
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        ref: GH_REF,
-        inputs: { urn, region: 'US', include_lines: includeLines },
-      }),
+      body: JSON.stringify({ ref: GH_REF, inputs }),
     },
   );
   const body = res.ok ? '' : await res.text().catch(() => '');
@@ -197,14 +193,18 @@ export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
 
   // ── POST: 캐시 확인 후 없으면 변환 워크플로 dispatch ───────────────
-  let body: { urn?: string; name?: string; force?: boolean; ackOverage?: boolean };
+  let body: { urn?: string; name?: string; project?: string; item?: string; force?: boolean; ackOverage?: boolean };
   try {
-    body = (await req.json()) as { urn?: string; name?: string; force?: boolean; ackOverage?: boolean };
+    body = (await req.json()) as typeof body;
   } catch {
     return json({ error: 'JSON 본문 필요' }, 400);
   }
   const urn = body.urn ?? '';
   if (!urn) return json({ error: 'urn 필요' }, 400);
+  const isDwg = (body.name ?? '').split('.').pop()?.toLowerCase() === 'dwg';
+  // DWG 는 SVF(테셀레이션·손실) 대신 자체 파이프라인(원본 DWG→DXF→GLB)으로 변환한다.
+  // 원본 DWG 를 ACC 에서 받으려면 project(b.xxx)·item(lineage urn) 이 필요.
+  const useDxf = isDwg && !!body.project && !!body.item;
   const includeLines = includeLinesFor(body.name ?? '');
 
   if (body.force) {
@@ -231,7 +231,10 @@ export default async function handler(req: Request): Promise<Response> {
     return json({ error: '변환 워크플로가 설정되지 않았습니다(GH_REPO/GH_TOKEN).' }, 503);
   }
 
-  const d = await dispatchConvert(urn, includeLines);
+  const inputs: Record<string, string> = useDxf
+    ? { urn, region: 'US', dxf_test: '1', project: body.project as string, item: body.item as string }
+    : { urn, region: 'US', include_lines: includeLines };
+  const d = await dispatchConvert(inputs);
   if (!d.ok) {
     return json({ error: `워크플로 dispatch 실패(${d.status}): ${d.body.slice(0, 200)}` }, 502);
   }

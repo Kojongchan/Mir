@@ -105,7 +105,6 @@ export function ThreeDTest() {
   const pickedRef = useRef<{ id?: string | number; worldPos?: number[] } | null>(null);
   const [status, setStatus] = useState('');
   const [dbg, setDbg] = useState('');
-  const [accIds, setAccIds] = useState(''); // (임시) 자체 DWG 파이프라인 검증용 ACC 식별자
   const [busy, setBusy] = useState(false);
   const [modelName, setModelName] = useState<string | null>(null);
   const [pick, setPick] = useState<{ id: string; name?: string; type?: string } | null>(null);
@@ -348,8 +347,6 @@ export function ThreeDTest() {
         return;
       }
       setLastFile(f);
-      // (임시) 자체 DWG 파이프라인 검증용 — GLB 로딩에 안 덮이는 별도 표시로 ACC 식별자 노출.
-      setAccIds(`project=${f.accProjectId}\nitem=${f.accItemId}`);
       const { data } = await supabase.auth.getSession();
       const authz: Record<string, string> = data.session
         ? { authorization: `Bearer ${data.session.access_token}` }
@@ -401,7 +398,7 @@ export function ThreeDTest() {
         const res = await fetch('/api/aps-convert', {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...authz },
-          body: JSON.stringify({ urn, name: f.name, force, ackOverage }),
+          body: JSON.stringify({ urn, name: f.name, project: f.accProjectId, item: f.accItemId, force, ackOverage }),
         });
         let rj: State = {};
         try {
@@ -600,19 +597,6 @@ export function ThreeDTest() {
           <canvas ref={canvasRef} className="threed-test__canvas" />
           {/* 방향 큐브(ACC 뷰큐브 유사) — 우상단 코너. */}
           <canvas ref={navCubeRef} className="threed-test__navcube" width={140} height={140} />
-          {/* (임시) ACC 식별자 — 자체 DWG 파이프라인 검증용. 복사해서 전달. */}
-          {accIds && (
-            <div
-              style={{
-                position: 'absolute', left: 8, top: 8, padding: '6px 10px',
-                background: 'rgba(0,0,0,0.82)', color: '#7fd', font: '11px/1.5 monospace',
-                borderRadius: 6, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-                maxWidth: 'calc(100% - 16px)', userSelect: 'all', zIndex: 21,
-              }}
-            >
-              {accIds}
-            </div>
-          )}
           {/* 진단 오버레이 — 로드된 지오메트리/카메라 상태를 화면에 표시(스크린샷 디버그용). */}
           {dbg && (
             <div
