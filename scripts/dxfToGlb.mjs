@@ -53,13 +53,6 @@ const dxf = new DxfParser().parseSync(fs.readFileSync(dxfPath, 'utf8'));
 log('파싱 완료', ((Date.now() - t0) / 1000).toFixed(1), 's · 엔티티', dxf.entities?.length ?? 0, '· 블록', Object.keys(dxf.blocks || {}).length);
 
 const layers = dxf.tables?.layer?.layers || {};
-// CAD 재현: 동결(frozen)·끄기(off, color 음수→visible:false) 레이어는 Civil3D 도 숨긴다.
-// 이런 숨은 레이어를 그리면 화면에 없는 흰 원·점마커 잡음이 잔뜩 생기고 렉이 심해진다.
-function layerHidden(name) {
-  const l = layers[name];
-  if (!l) return false;
-  return l.frozen === true || l.visible === false;
-}
 function rgb01(rgb) { return [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255]; }
 function colorOf(ent) {
   // 엔티티 색 우선(트루컬러 ent.color = 0xRRGGBB), 없으면 레이어색, 그것도 없으면 흰.
@@ -136,13 +129,9 @@ function arcSegs(cx, cy, r, a0, a1, m, color) {
 }
 
 let counts = {};
-let skippedHidden = 0;
-const circLayers = {}; // 흰 원 잡음 원인 추적: CIRCLE/ARC 가 어느 레이어에 몰려있나
+const circLayers = {}; // 진단: CIRCLE/ARC 가 어느 레이어에 몰려있나(잔여 원 잡음 추적용)
 function emit(ent, m, depth = 0) {
   if (!ent || depth > 8) return;
-  // CAD 재현: 개별 숨김 엔티티(code 60=1)·동결/끄기 레이어는 그리지 않는다.
-  if (ent.visible === false) { skippedHidden++; return; }
-  if (layerHidden(ent.layer)) { skippedHidden++; return; }
   counts[ent.type] = (counts[ent.type] || 0) + 1;
   if (ent.type === 'CIRCLE' || ent.type === 'ARC') circLayers[ent.layer] = (circLayers[ent.layer] || 0) + 1;
   const color = colorOf(ent);
@@ -182,32 +171,32 @@ function emit(ent, m, depth = 0) {
   }
 }
 // 폴리선 세그먼트(bulge=호 지원): startAngle/endAngle 대신 bulge 로 원호 근사.
+// bulge = tan(θ/4), θ=포함각(부호: +반시계/−시계), 호는 v1→v2.
 function polySeg(v1, v2, m, color) {
   const b = v1.bulge || 0;
   const dx = v2.x - v1.x, dy = v2.y - v1.y;
   const chord = Math.hypot(dx, dy); if (chord < 1e-9) return;
   const straight = () => { const [x1, y1] = apply(m, v1.x, v1.y), [x2, y2] = apply(m, v2.x, v2.y); seg(x1, y1, x2, y2, color); };
-  // 아주 작은 bulge = 사실상 직선(→ 직선). 그 이하를 원호로 풀면 반경이 폭주(거대 원)한다.
+  // 아주 작은 bulge = 사실상 직선. 그 이하를 원호로 풀면 반경이 폭주(거대 원)한다.
   if (Math.abs(b) < 0.02) { straight(); return; }
-  const inc = 4 * Math.atan(b);        // 포함각(라디안, 부호=방향)
-  const r = chord / (2 * Math.sin(Math.abs(inc) / 2));
-  // 반경이 현 대비 비정상적으로 크면(거의 직선) 직선 처리 — 거대 원 아티팩트 방지.
+  const r = Math.abs(chord / (2 * Math.sin(2 * Math.atan(b)))); // |반경|
   if (!Number.isFinite(r) || r > chord * 400) { straight(); return; }
   const mx = (v1.x + v2.x) / 2, my = (v1.y + v2.y) / 2;
-  const h = r * Math.cos(inc / 2);      // 중심까지 거리(부호)
+  // 중심 = 중점 + (부호있는 apothem)·(왼쪽 수직단위). apothem=(현/2)·cot(θ/2)=(현/2)·(1−b²)/(2b).
+  // b 부호가 apothem 부호로 자동 반영돼 호가 올바른 쪽으로 그려진다(기존엔 반대편→여각 원호).
+  const apothem = (chord / 2) * (1 - b * b) / (2 * b);
   const nx = -dy / chord, ny = dx / chord;
-  const s = b > 0 ? 1 : -1;
-  const cx = mx - s * h * nx, cy = my - s * h * ny;
+  const cx = mx + apothem * nx, cy = my + apothem * ny;
   let a0 = Math.atan2(v1.y - cy, v1.x - cx) * 180 / Math.PI;
   let a1 = Math.atan2(v2.y - cy, v2.x - cx) * 180 / Math.PI;
-  if (b < 0) [a0, a1] = [a1, a0];
+  if (b < 0) [a0, a1] = [a1, a0]; // 시계방향 호 → arcSegs(반시계) 로 뒤집어 그림
   arcSegs(cx, cy, r, a0, a1, m, color);
 }
 
 let bad = 0;
 for (const ent of dxf.entities || []) { try { emit(ent, ID); } catch { bad++; } }
 if (segCount >= MAX_SEG) log('⚠ 선분 캡 도달 — 일부 생략');
-log('선분', segCount.toLocaleString(), '· 그룹', allGroups.length, '· 오류엔티티', bad, '· 숨김레이어스킵', skippedHidden, '· 종류', JSON.stringify(counts));
+log('선분', segCount.toLocaleString(), '· 그룹', allGroups.length, '· 오류엔티티', bad, '· 종류', JSON.stringify(counts));
 const topCirc = Object.entries(circLayers).sort((a, b) => b[1] - a[1]).slice(0, 10);
 if (topCirc.length) log('원/호 상위 레이어:', topCirc.map(([n, c]) => `${n}=${c}`).join(', '));
 
