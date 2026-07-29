@@ -68,29 +68,38 @@ function colorOf(ent) {
   return [0.85, 0.85, 0.85];
 }
 
-// ---- 색상별 선분 누적(로컬 원점 상대좌표) ----
-// xeokit 는 line(mode:1) 을 정점 65,535개까지만 렌더 → 60k 버킷으로 쪼갠다. 폭주 방지 캡.
-let ORIGIN = null;
+// ---- 색상별 선분 누적(로컬 원점 상대좌표, Z 보존) ----
+// xeokit line(mode:1) 은 정점 65,535개까지 → 60k 버킷. 폭주 방지 캡. Z(표고)를 살려 3D 로.
+let ORIGIN = null; // [x,y,z] 측량 기준(Float32 정밀도 보존)
 const MAX_SEG = 15_000_000, BUCKET = 60000;
-const bucketOf = new Map(); // colorKey -> 현재(안 찬) 버킷
-const allGroups = [];        // [{ color, pos:number[] }]
+const bucketOf = new Map();
+const allGroups = [];
 let segCount = 0;
-function seg(x1, y1, x2, y2, color) {
+// 진단: '흰색'(원본에 없다고 지적된 중첩선) 세그먼트가 어느 엔티티/레이어에서 나오나 추적.
+let curType = '', curLayer = '';
+const whiteSeg = {};
+function seg(x1, y1, z1, x2, y2, z2, color) {
   if (segCount >= MAX_SEG) return;
   if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) return;
-  if (x1 === x2 && y1 === y2) return;
-  if (!ORIGIN) ORIGIN = [Math.round(x1), Math.round(y1)];
-  // 원점에서 500km 넘게 튀는 선분은 폭주/불량 데이터 → 제외(도면은 보통 수 km).
+  z1 = Number.isFinite(z1) ? z1 : 0; z2 = Number.isFinite(z2) ? z2 : 0;
+  if (x1 === x2 && y1 === y2 && z1 === z2) return;
+  if (!ORIGIN) ORIGIN = [Math.round(x1), Math.round(y1), Math.round(z1)];
   if (Math.abs(x1 - ORIGIN[0]) > 500000 || Math.abs(y1 - ORIGIN[1]) > 500000 ||
       Math.abs(x2 - ORIGIN[0]) > 500000 || Math.abs(y2 - ORIGIN[1]) > 500000) return;
+  // Z(표고) 폭주 데이터 방지 — 원점 기준 100km 초과 표고는 불량으로 보고 평면(0)으로.
+  if (Math.abs(z1 - ORIGIN[2]) > 100000) z1 = ORIGIN[2];
+  if (Math.abs(z2 - ORIGIN[2]) > 100000) z2 = ORIGIN[2];
   const key = color.map((c) => Math.round(Math.min(1, Math.max(0, c)) * 8)).join('_');
   let g = bucketOf.get(key);
   if (!g || g.pos.length / 3 + 2 > BUCKET) { g = { color, pos: [] }; bucketOf.set(key, g); allGroups.push(g); }
-  g.pos.push(x1 - ORIGIN[0], y1 - ORIGIN[1], 0, x2 - ORIGIN[0], y2 - ORIGIN[1], 0);
+  g.pos.push(x1 - ORIGIN[0], y1 - ORIGIN[1], z1 - ORIGIN[2], x2 - ORIGIN[0], y2 - ORIGIN[1], z2 - ORIGIN[2]);
   segCount++;
+  if (color[0] >= 0.75 && color[1] >= 0.75 && color[2] >= 0.75) {
+    const k = `${curType}|${curLayer}`; whiteSeg[k] = (whiteSeg[k] || 0) + 1;
+  }
 }
 
-// 2D 아핀 변환(블록 인스턴스용): {a,b,c,d,e,f} → x'=a*x+c*y+e, y'=b*x+d*y+f
+// 2D 아핀 변환(블록 인스턴스용): {a,b,c,d,e,f} → x'=a*x+c*y+e, y'=b*x+d*y+f. Z 는 그대로 전달.
 const ID = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
 const apply = (m, x, y) => [m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f];
 function compose(m, n) { // m∘n (먼저 n, 다음 m)
@@ -109,54 +118,89 @@ function insertMatrix(ins) {
   return { a: cos * sx, b: sin * sx, c: -sin * sy, d: cos * sy, e: px, f: py };
 }
 
-function arcSegs(cx, cy, r, a0, a1, m, color) {
-  if (!Number.isFinite(r) || r <= 0 || r > 100000) return; // 100km 초과 반경 = 불량/폭주 → 제외
-  // a0,a1 도(degree). 반시계로 a0→a1. 반경 인지 테셀레이션: 현(chord) 오차를 반경의 ~1%로
-  // 제한 → 작은 원(점마커 등)은 몇 분할만. (고정 3°/최대 256분할은 원 하나에 120분할 →
-  // 수천 개면 정점 폭증·심한 렉.)
-  let span = a1 - a0; while (span <= 0) span += 360;
-  const spanRad = span * Math.PI / 180;
-  const tol = Math.max(r * 0.01, 1e-4);
+// 반경 인지 테셀레이션 분할 수(현 오차 0.4% → 곡선 매끄럽게, 작은 원도 자연스럽게).
+function segN(r, spanRad) {
+  const tol = Math.max(r * 0.004, 1e-4);
   const stepRad = 2 * Math.acos(Math.max(0, 1 - Math.min(1, tol / r)));
-  const n = Math.max(2, Math.min(128, stepRad > 1e-6 ? Math.ceil(spanRad / stepRad) : 2));
+  return Math.max(6, Math.min(200, stepRad > 1e-6 ? Math.ceil(spanRad / stepRad) : 6));
+}
+function arcSegs(cx, cy, z, r, a0, a1, m, color) {
+  if (!Number.isFinite(r) || r <= 0 || r > 100000) return; // 100km 초과 반경 = 불량/폭주 → 제외
+  let span = a1 - a0; while (span <= 0) span += 360; // 도(degree), 반시계로 a0→a1
+  const n = segN(r, span * Math.PI / 180);
   let prev = null;
   for (let i = 0; i <= n; i++) {
     const ang = (a0 + span * i / n) * Math.PI / 180;
     const [x, y] = apply(m, cx + r * Math.cos(ang), cy + r * Math.sin(ang));
-    if (prev) seg(prev[0], prev[1], x, y, color);
+    if (prev) seg(prev[0], prev[1], z, x, y, z, color);
     prev = [x, y];
   }
 }
+// 타원/타원호(ELLIPSE): 파라메트릭 t 로 매끈하게. major/minor·회전·시작·끝각 반영.
+function ellipseSegs(ent, m, color) {
+  const c = ent.center; if (!c) return;
+  const ax = ent.majorAxisEndPoint?.x ?? 0, ay = ent.majorAxisEndPoint?.y ?? 0;
+  const majLen = Math.hypot(ax, ay); if (majLen < 1e-9) return;
+  const rot = Math.atan2(ay, ax), cr = Math.cos(rot), sr = Math.sin(rot);
+  const minLen = majLen * (ent.axisRatio ?? 1);
+  const a0 = ent.startAngle ?? 0, a1 = ent.endAngle ?? Math.PI * 2;
+  let span = a1 - a0; if (span <= 1e-9) span += Math.PI * 2;
+  const n = segN(Math.max(majLen, minLen), span), z = c.z ?? 0;
+  let prev = null;
+  for (let i = 0; i <= n; i++) {
+    const t = a0 + span * i / n;
+    const ex = majLen * Math.cos(t), ey = minLen * Math.sin(t);
+    const [x, y] = apply(m, c.x + ex * cr - ey * sr, c.y + ex * sr + ey * cr);
+    if (prev) seg(prev[0], prev[1], z, x, y, z, color);
+    prev = [x, y];
+  }
+}
+// 스플라인(SPLINE): fit point(곡선 위 점)로 연결, 없으면 control point(근사).
+function splineSegs(ent, m, color) {
+  const pts = (ent.fitPoints && ent.fitPoints.length >= 2) ? ent.fitPoints
+    : (ent.controlPoints && ent.controlPoints.length >= 2) ? ent.controlPoints : null;
+  if (!pts) return;
+  let prev = null;
+  for (const p of pts) {
+    const [x, y] = apply(m, p.x, p.y); const z = p.z ?? 0;
+    if (prev) seg(prev[0], prev[1], prev[2], x, y, z, color);
+    prev = [x, y, z];
+  }
+  if (ent.closed && pts.length > 2 && prev) { const p = pts[0]; const [x, y] = apply(m, p.x, p.y); seg(prev[0], prev[1], prev[2], x, y, p.z ?? 0, color); }
+}
 
 let counts = {};
-const circLayers = {}; // 진단: CIRCLE/ARC 가 어느 레이어에 몰려있나(잔여 원 잡음 추적용)
+const circLayers = {}; // 진단: CIRCLE/ARC 가 어느 레이어에 몰려있나
 function emit(ent, m, depth = 0) {
   if (!ent || depth > 8) return;
   counts[ent.type] = (counts[ent.type] || 0) + 1;
   if (ent.type === 'CIRCLE' || ent.type === 'ARC') circLayers[ent.layer] = (circLayers[ent.layer] || 0) + 1;
   const color = colorOf(ent);
+  curType = ent.type; curLayer = ent.layer || '';
+  const elev = ent.elevation ?? 0;
   switch (ent.type) {
     case 'LINE': {
       const s = ent.vertices?.[0] ?? ent.start, e = ent.vertices?.[1] ?? ent.end;
       if (!s || !e) break;
       const [x1, y1] = apply(m, s.x, s.y), [x2, y2] = apply(m, e.x, e.y);
-      seg(x1, y1, x2, y2, color); break;
+      seg(x1, y1, s.z ?? 0, x2, y2, e.z ?? 0, color); break;
     }
     case 'LWPOLYLINE':
     case 'POLYLINE': {
       const vs = ent.vertices || [];
-      for (let i = 0; i < vs.length - 1; i++) polySeg(vs[i], vs[i + 1], m, color);
-      if (ent.shape || ent.closed) if (vs.length > 2) polySeg(vs[vs.length - 1], vs[0], m, color);
+      const zf = (v) => (Number.isFinite(v.z) ? v.z : elev); // 3D폴리선=정점 z, 2D=elevation
+      for (let i = 0; i < vs.length - 1; i++) polySeg(vs[i], vs[i + 1], m, color, zf(vs[i]), zf(vs[i + 1]));
+      if (ent.shape || ent.closed) if (vs.length > 2) polySeg(vs[vs.length - 1], vs[0], m, color, zf(vs[vs.length - 1]), zf(vs[0]));
       break;
     }
-    case 'ARC': {
-      arcSegs(ent.center.x, ent.center.y, ent.radius, ent.startAngle * 180 / Math.PI, ent.endAngle * 180 / Math.PI, m, color);
+    case 'ARC':
+      arcSegs(ent.center.x, ent.center.y, ent.center.z ?? elev, ent.radius, ent.startAngle * 180 / Math.PI, ent.endAngle * 180 / Math.PI, m, color);
       break;
-    }
-    case 'CIRCLE': {
-      arcSegs(ent.center.x, ent.center.y, ent.radius, 0, 360, m, color);
+    case 'CIRCLE':
+      arcSegs(ent.center.x, ent.center.y, ent.center.z ?? elev, ent.radius, 0, 360, m, color);
       break;
-    }
+    case 'ELLIPSE': ellipseSegs(ent, m, color); break;
+    case 'SPLINE': splineSegs(ent, m, color); break;
     case 'INSERT': {
       const blk = dxf.blocks?.[ent.name];
       if (!blk?.entities) break;
@@ -166,31 +210,29 @@ function emit(ent, m, depth = 0) {
       for (const be of blk.entities) emit(be, bm2, depth + 1);
       break;
     }
-    // TEXT/MTEXT/HATCH: v2 에서(문자 스트로크·해치 채움).
+    // TEXT/MTEXT/HATCH: 다음 단계(문자 스트로크·해치 채움).
     default: break;
   }
 }
-// 폴리선 세그먼트(bulge=호 지원): startAngle/endAngle 대신 bulge 로 원호 근사.
-// bulge = tan(θ/4), θ=포함각(부호: +반시계/−시계), 호는 v1→v2.
-function polySeg(v1, v2, m, color) {
+// 폴리선 세그먼트(bulge=호). bulge=tan(θ/4), θ=포함각(부호:+반시계/−시계), 호는 v1→v2. z=세그 평면 표고.
+function polySeg(v1, v2, m, color, z1, z2) {
   const b = v1.bulge || 0;
   const dx = v2.x - v1.x, dy = v2.y - v1.y;
   const chord = Math.hypot(dx, dy); if (chord < 1e-9) return;
-  const straight = () => { const [x1, y1] = apply(m, v1.x, v1.y), [x2, y2] = apply(m, v2.x, v2.y); seg(x1, y1, x2, y2, color); };
-  // 아주 작은 bulge = 사실상 직선. 그 이하를 원호로 풀면 반경이 폭주(거대 원)한다.
-  if (Math.abs(b) < 0.02) { straight(); return; }
+  const straight = () => { const [x1, y1] = apply(m, v1.x, v1.y), [x2, y2] = apply(m, v2.x, v2.y); seg(x1, y1, z1, x2, y2, z2, color); };
+  // 아주 작은 bulge=직선. z 가 다르면(3D 폴리선) bulge 무시 직선. 그 외엔 호.
+  if (Math.abs(b) < 0.02 || z1 !== z2) { straight(); return; }
   const r = Math.abs(chord / (2 * Math.sin(2 * Math.atan(b)))); // |반경|
   if (!Number.isFinite(r) || r > chord * 400) { straight(); return; }
   const mx = (v1.x + v2.x) / 2, my = (v1.y + v2.y) / 2;
-  // 중심 = 중점 + (부호있는 apothem)·(왼쪽 수직단위). apothem=(현/2)·cot(θ/2)=(현/2)·(1−b²)/(2b).
-  // b 부호가 apothem 부호로 자동 반영돼 호가 올바른 쪽으로 그려진다(기존엔 반대편→여각 원호).
+  // 중심 = 중점 + (부호있는 apothem)·(왼쪽 수직단위). apothem=(현/2)·(1−b²)/(2b).
   const apothem = (chord / 2) * (1 - b * b) / (2 * b);
   const nx = -dy / chord, ny = dx / chord;
   const cx = mx + apothem * nx, cy = my + apothem * ny;
   let a0 = Math.atan2(v1.y - cy, v1.x - cx) * 180 / Math.PI;
   let a1 = Math.atan2(v2.y - cy, v2.x - cx) * 180 / Math.PI;
   if (b < 0) [a0, a1] = [a1, a0]; // 시계방향 호 → arcSegs(반시계) 로 뒤집어 그림
-  arcSegs(cx, cy, r, a0, a1, m, color);
+  arcSegs(cx, cy, z1, r, a0, a1, m, color);
 }
 
 let bad = 0;
@@ -199,6 +241,8 @@ if (segCount >= MAX_SEG) log('⚠ 선분 캡 도달 — 일부 생략');
 log('선분', segCount.toLocaleString(), '· 그룹', allGroups.length, '· 오류엔티티', bad, '· 종류', JSON.stringify(counts));
 const topCirc = Object.entries(circLayers).sort((a, b) => b[1] - a[1]).slice(0, 10);
 if (topCirc.length) log('원/호 상위 레이어:', topCirc.map(([n, c]) => `${n}=${c}`).join(', '));
+const topWhite = Object.entries(whiteSeg).sort((a, b) => b[1] - a[1]).slice(0, 12);
+if (topWhite.length) log('흰색 세그먼트 상위(엔티티|레이어=수):', topWhite.map(([k, c]) => `${k}=${c}`).join(', '));
 
 // ---- GLB 작성(mode:1 라인, 색상별 재질) ----
 const bufferViews = [], accessors = [], meshes = [], materials = [], nodes = [], pieces = [];
@@ -242,8 +286,8 @@ fs.mkdirSync('out', { recursive: true });
 fs.writeFileSync(outGlb, out);
 log('GLB 완료', outGlb, (out.length / 1e6).toFixed(1), 'MB · 노드', nodes.length);
 
-// focus(밀집영역): 간단히 bbox 중심/반. ORIGIN 상대. (SVF 경로와 동일 포맷)
-const cx = (gmin[0] + gmax[0]) / 2, cy = (gmin[1] + gmax[1]) / 2, cz = 0;
-const hx = (gmax[0] - gmin[0]) / 2, hy = (gmax[1] - gmin[1]) / 2;
-fs.writeFileSync('out/focus.json', JSON.stringify({ center: [cx, cy, cz], half: [hx, hy, Math.max(1, Math.min(hx, hy) * 0.1)] }));
+// focus(밀집영역): bbox 중심/반. ORIGIN 상대. Z(표고) 실제 범위 반영. (SVF 경로와 동일 포맷)
+const cx = (gmin[0] + gmax[0]) / 2, cy = (gmin[1] + gmax[1]) / 2, cz = (gmin[2] + gmax[2]) / 2;
+const hx = (gmax[0] - gmin[0]) / 2, hy = (gmax[1] - gmin[1]) / 2, hz = Math.max(1, (gmax[2] - gmin[2]) / 2);
+fs.writeFileSync('out/focus.json', JSON.stringify({ center: [cx, cy, cz], half: [hx, hy, hz] }));
 log('focus.json 완료 · bbox(상대) min', gmin.map((v) => v.toFixed(0)), 'max', gmax.map((v) => v.toFixed(0)));
