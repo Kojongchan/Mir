@@ -58,6 +58,9 @@ function seg(x1, y1, x2, y2, color) {
   if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) return;
   if (x1 === x2 && y1 === y2) return;
   if (!ORIGIN) ORIGIN = [Math.round(x1), Math.round(y1)];
+  // 원점에서 500km 넘게 튀는 선분은 폭주/불량 데이터 → 제외(도면은 보통 수 km).
+  if (Math.abs(x1 - ORIGIN[0]) > 500000 || Math.abs(y1 - ORIGIN[1]) > 500000 ||
+      Math.abs(x2 - ORIGIN[0]) > 500000 || Math.abs(y2 - ORIGIN[1]) > 500000) return;
   const key = color.map((c) => Math.round(Math.min(1, Math.max(0, c)) * 8)).join('_');
   let g = bucketOf.get(key);
   if (!g || g.pos.length / 3 + 2 > BUCKET) { g = { color, pos: [] }; bucketOf.set(key, g); allGroups.push(g); }
@@ -85,6 +88,7 @@ function insertMatrix(ins) {
 }
 
 function arcSegs(cx, cy, r, a0, a1, m, color) {
+  if (!Number.isFinite(r) || r <= 0 || r > 100000) return; // 100km 초과 반경 = 불량/폭주 → 제외
   // a0,a1 도(degree). 반시계로 a0→a1. 매끈하게: 최대 3° 또는 반경비례.
   let span = a1 - a0; while (span <= 0) span += 360;
   const n = Math.max(2, Math.min(256, Math.ceil(span / 3)));
@@ -140,15 +144,15 @@ function emit(ent, m, depth = 0) {
 // 폴리선 세그먼트(bulge=호 지원): startAngle/endAngle 대신 bulge 로 원호 근사.
 function polySeg(v1, v2, m, color) {
   const b = v1.bulge || 0;
-  if (Math.abs(b) < 1e-6) {
-    const [x1, y1] = apply(m, v1.x, v1.y), [x2, y2] = apply(m, v2.x, v2.y);
-    seg(x1, y1, x2, y2, color); return;
-  }
-  // bulge = tan(Δ/4). 현의 양끝 v1,v2 로 원호 중심·반경 계산 후 arcSegs.
   const dx = v2.x - v1.x, dy = v2.y - v1.y;
   const chord = Math.hypot(dx, dy); if (chord < 1e-9) return;
+  const straight = () => { const [x1, y1] = apply(m, v1.x, v1.y), [x2, y2] = apply(m, v2.x, v2.y); seg(x1, y1, x2, y2, color); };
+  // 아주 작은 bulge = 사실상 직선(→ 직선). 그 이하를 원호로 풀면 반경이 폭주(거대 원)한다.
+  if (Math.abs(b) < 0.02) { straight(); return; }
   const inc = 4 * Math.atan(b);        // 포함각(라디안, 부호=방향)
   const r = chord / (2 * Math.sin(Math.abs(inc) / 2));
+  // 반경이 현 대비 비정상적으로 크면(거의 직선) 직선 처리 — 거대 원 아티팩트 방지.
+  if (!Number.isFinite(r) || r > chord * 400) { straight(); return; }
   const mx = (v1.x + v2.x) / 2, my = (v1.y + v2.y) / 2;
   const h = r * Math.cos(inc / 2);      // 중심까지 거리(부호)
   const nx = -dy / chord, ny = dx / chord;
