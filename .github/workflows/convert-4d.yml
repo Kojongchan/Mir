@@ -96,6 +96,17 @@ jobs:
           npm install --no-save dxf-parser
           node scripts/dxfInspect.mjs out/original.dxf || echo "진단 실패"
 
+      - name: (DXF) DXF → GLB + 헤드리스 렌더 확인
+        if: github.event.inputs.dxf_test == '1'
+        continue-on-error: true
+        env:
+          NODE_OPTIONS: '--max-old-space-size=6144'
+        run: |
+          node scripts/dxfToGlb.mjs out/original.dxf out/model.glb
+          npm install --no-save @xeokit/xeokit-sdk@2 playwright-core pngjs
+          npx playwright install --with-deps chromium
+          node scripts/renderDiag.mjs out/model.glb
+
       - name: (DXF) DXF 아티팩트 업로드
         if: github.event.inputs.dxf_test == '1'
         continue-on-error: true
