@@ -47,16 +47,20 @@ function colorOf(ent) {
 }
 
 // ---- 색상별 선분 누적(로컬 원점 상대좌표) ----
+// xeokit 는 line(mode:1) 을 정점 65,535개까지만 렌더 → 60k 버킷으로 쪼갠다. 폭주 방지 캡.
 let ORIGIN = null;
-const groups = new Map(); // key -> { color:[r,g,b], pos:number[] }
+const MAX_SEG = 15_000_000, BUCKET = 60000;
+const bucketOf = new Map(); // colorKey -> 현재(안 찬) 버킷
+const allGroups = [];        // [{ color, pos:number[] }]
 let segCount = 0;
 function seg(x1, y1, x2, y2, color) {
+  if (segCount >= MAX_SEG) return;
   if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) return;
   if (x1 === x2 && y1 === y2) return;
   if (!ORIGIN) ORIGIN = [Math.round(x1), Math.round(y1)];
   const key = color.map((c) => Math.round(Math.min(1, Math.max(0, c)) * 8)).join('_');
-  let g = groups.get(key);
-  if (!g) { g = { color, pos: [] }; groups.set(key, g); }
+  let g = bucketOf.get(key);
+  if (!g || g.pos.length / 3 + 2 > BUCKET) { g = { color, pos: [] }; bucketOf.set(key, g); allGroups.push(g); }
   g.pos.push(x1 - ORIGIN[0], y1 - ORIGIN[1], 0, x2 - ORIGIN[0], y2 - ORIGIN[1], 0);
   segCount++;
 }
@@ -156,8 +160,10 @@ function polySeg(v1, v2, m, color) {
   arcSegs(cx, cy, r, a0, a1, m, color);
 }
 
-for (const ent of dxf.entities || []) emit(ent, ID);
-log('선분', segCount.toLocaleString(), '· 색상그룹', groups.size, '· 엔티티종류', JSON.stringify(counts));
+let bad = 0;
+for (const ent of dxf.entities || []) { try { emit(ent, ID); } catch { bad++; } }
+if (segCount >= MAX_SEG) log('⚠ 선분 캡 도달 — 일부 생략');
+log('선분', segCount.toLocaleString(), '· 그룹', allGroups.length, '· 오류엔티티', bad, '· 종류', JSON.stringify(counts));
 
 // ---- GLB 작성(mode:1 라인, 색상별 재질) ----
 const bufferViews = [], accessors = [], meshes = [], materials = [], nodes = [], pieces = [];
@@ -168,7 +174,7 @@ const addView = (typed, target) => {
   pieces.push(buf); byteOffset += buf.length; return bufferViews.length - 1;
 };
 const gmin = [Infinity, Infinity, Infinity], gmax = [-Infinity, -Infinity, -Infinity];
-for (const g of groups.values()) {
+for (const g of allGroups) {
   const cnt = g.pos.length / 3; if (cnt === 0) continue;
   const pos = Float32Array.from(g.pos);
   const idx = new Uint32Array(cnt); for (let i = 0; i < cnt; i++) idx[i] = i;
