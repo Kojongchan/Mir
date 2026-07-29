@@ -169,14 +169,23 @@ function splineSegs(ent, m, color) {
   if (ent.closed && pts.length > 2 && prev) { const p = pts[0]; const [x, y] = apply(m, p.x, p.y); seg(prev[0], prev[1], prev[2], x, y, p.z ?? 0, color); }
 }
 
+// Civil3D 지표면(surface)은 스타일 등고선(초록)을 별도로 표시하면서, 원본 표면 폴리선을
+// '지표면' 레이어에 흰색으로 중복 출력한다(LibreDWG explode). → 초록 등고선 옆 흰선(원본
+// 스타일 뷰엔 없음)·전체 선분의 절반·거대 용량·렉의 주범. 흰색+지표면 레이어면 숨긴다.
+// (진짜 표면을 다시 보고 싶으면 DXF_KEEP_SURFACE=1 로 유지 가능.)
+const KEEP_SURFACE = process.env.DXF_KEEP_SURFACE === '1';
+const isWhiteish = (c) => c[0] >= 0.75 && c[1] >= 0.75 && c[2] >= 0.75;
+const surfaceLayerRe = /지표면|surface|tin/i;
 let counts = {};
+let hiddenSurf = 0;
 const circLayers = {}; // 진단: CIRCLE/ARC 가 어느 레이어에 몰려있나
 function emit(ent, m, depth = 0) {
   if (!ent || depth > 8) return;
-  counts[ent.type] = (counts[ent.type] || 0) + 1;
-  if (ent.type === 'CIRCLE' || ent.type === 'ARC') circLayers[ent.layer] = (circLayers[ent.layer] || 0) + 1;
   const color = colorOf(ent);
   curType = ent.type; curLayer = ent.layer || '';
+  if (!KEEP_SURFACE && isWhiteish(color) && surfaceLayerRe.test(curLayer)) { hiddenSurf++; return; }
+  counts[ent.type] = (counts[ent.type] || 0) + 1;
+  if (ent.type === 'CIRCLE' || ent.type === 'ARC') circLayers[ent.layer] = (circLayers[ent.layer] || 0) + 1;
   const elev = ent.elevation ?? 0;
   switch (ent.type) {
     case 'LINE': {
@@ -238,7 +247,7 @@ function polySeg(v1, v2, m, color, z1, z2) {
 let bad = 0;
 for (const ent of dxf.entities || []) { try { emit(ent, ID); } catch { bad++; } }
 if (segCount >= MAX_SEG) log('⚠ 선분 캡 도달 — 일부 생략');
-log('선분', segCount.toLocaleString(), '· 그룹', allGroups.length, '· 오류엔티티', bad, '· 종류', JSON.stringify(counts));
+log('선분', segCount.toLocaleString(), '· 그룹', allGroups.length, '· 오류엔티티', bad, '· 지표면흰선숨김', hiddenSurf, '· 종류', JSON.stringify(counts));
 const topCirc = Object.entries(circLayers).sort((a, b) => b[1] - a[1]).slice(0, 10);
 if (topCirc.length) log('원/호 상위 레이어:', topCirc.map(([n, c]) => `${n}=${c}`).join(', '));
 const topWhite = Object.entries(whiteSeg).sort((a, b) => b[1] - a[1]).slice(0, 12);
