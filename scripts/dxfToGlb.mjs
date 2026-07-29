@@ -53,6 +53,13 @@ const dxf = new DxfParser().parseSync(fs.readFileSync(dxfPath, 'utf8'));
 log('파싱 완료', ((Date.now() - t0) / 1000).toFixed(1), 's · 엔티티', dxf.entities?.length ?? 0, '· 블록', Object.keys(dxf.blocks || {}).length);
 
 const layers = dxf.tables?.layer?.layers || {};
+// CAD 재현: 동결(frozen)·끄기(off, color 음수→visible:false) 레이어는 Civil3D 도 숨긴다.
+// 이런 숨은 레이어를 그리면 화면에 없는 흰 원·점마커 잡음이 잔뜩 생기고 렉이 심해진다.
+function layerHidden(name) {
+  const l = layers[name];
+  if (!l) return false;
+  return l.frozen === true || l.visible === false;
+}
 function rgb01(rgb) { return [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255]; }
 function colorOf(ent) {
   // 엔티티 색 우선(트루컬러 ent.color = 0xRRGGBB), 없으면 레이어색, 그것도 없으면 흰.
@@ -111,9 +118,14 @@ function insertMatrix(ins) {
 
 function arcSegs(cx, cy, r, a0, a1, m, color) {
   if (!Number.isFinite(r) || r <= 0 || r > 100000) return; // 100km 초과 반경 = 불량/폭주 → 제외
-  // a0,a1 도(degree). 반시계로 a0→a1. 매끈하게: 최대 3° 또는 반경비례.
+  // a0,a1 도(degree). 반시계로 a0→a1. 반경 인지 테셀레이션: 현(chord) 오차를 반경의 ~1%로
+  // 제한 → 작은 원(점마커 등)은 몇 분할만. (고정 3°/최대 256분할은 원 하나에 120분할 →
+  // 수천 개면 정점 폭증·심한 렉.)
   let span = a1 - a0; while (span <= 0) span += 360;
-  const n = Math.max(2, Math.min(256, Math.ceil(span / 3)));
+  const spanRad = span * Math.PI / 180;
+  const tol = Math.max(r * 0.01, 1e-4);
+  const stepRad = 2 * Math.acos(Math.max(0, 1 - Math.min(1, tol / r)));
+  const n = Math.max(2, Math.min(128, stepRad > 1e-6 ? Math.ceil(spanRad / stepRad) : 2));
   let prev = null;
   for (let i = 0; i <= n; i++) {
     const ang = (a0 + span * i / n) * Math.PI / 180;
@@ -124,9 +136,15 @@ function arcSegs(cx, cy, r, a0, a1, m, color) {
 }
 
 let counts = {};
+let skippedHidden = 0;
+const circLayers = {}; // 흰 원 잡음 원인 추적: CIRCLE/ARC 가 어느 레이어에 몰려있나
 function emit(ent, m, depth = 0) {
   if (!ent || depth > 8) return;
+  // CAD 재현: 개별 숨김 엔티티(code 60=1)·동결/끄기 레이어는 그리지 않는다.
+  if (ent.visible === false) { skippedHidden++; return; }
+  if (layerHidden(ent.layer)) { skippedHidden++; return; }
   counts[ent.type] = (counts[ent.type] || 0) + 1;
+  if (ent.type === 'CIRCLE' || ent.type === 'ARC') circLayers[ent.layer] = (circLayers[ent.layer] || 0) + 1;
   const color = colorOf(ent);
   switch (ent.type) {
     case 'LINE': {
@@ -189,7 +207,9 @@ function polySeg(v1, v2, m, color) {
 let bad = 0;
 for (const ent of dxf.entities || []) { try { emit(ent, ID); } catch { bad++; } }
 if (segCount >= MAX_SEG) log('⚠ 선분 캡 도달 — 일부 생략');
-log('선분', segCount.toLocaleString(), '· 그룹', allGroups.length, '· 오류엔티티', bad, '· 종류', JSON.stringify(counts));
+log('선분', segCount.toLocaleString(), '· 그룹', allGroups.length, '· 오류엔티티', bad, '· 숨김레이어스킵', skippedHidden, '· 종류', JSON.stringify(counts));
+const topCirc = Object.entries(circLayers).sort((a, b) => b[1] - a[1]).slice(0, 10);
+if (topCirc.length) log('원/호 상위 레이어:', topCirc.map(([n, c]) => `${n}=${c}`).join(', '));
 
 // ---- GLB 작성(mode:1 라인, 색상별 재질) ----
 const bufferViews = [], accessors = [], meshes = [], materials = [], nodes = [], pieces = [];
