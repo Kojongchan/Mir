@@ -347,6 +347,8 @@ export function ThreeDTest() {
         return;
       }
       setLastFile(f);
+      // (임시) 자체 DWG 파이프라인 검증용 — 이 파일의 ACC 식별자를 화면에 표시해 복사.
+      setDbg(`ACC project=${f.accProjectId} · item=${f.accItemId}`);
       const { data } = await supabase.auth.getSession();
       const authz: Record<string, string> = data.session
         ? { authorization: `Bearer ${data.session.access_token}` }
