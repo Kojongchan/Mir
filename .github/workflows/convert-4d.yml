@@ -78,11 +78,15 @@ jobs:
             sudo apt-get install -y git build-essential libtool automake autoconf pkg-config texinfo || true
             git clone --depth 1 https://github.com/LibreDWG/libredwg.git /tmp/libredwg
             cd /tmp/libredwg && sh autogen.sh && ./configure --disable-bindings --disable-docs && make -j"$(nproc)"
-            sudo cp programs/dwg2dxf /usr/local/bin/ && cd "$GITHUB_WORKSPACE"
+            cd "$GITHUB_WORKSPACE"
           fi
-          DWG2DXF=$(command -v dwg2dxf || echo /usr/local/bin/dwg2dxf)
-          "$DWG2DXF" --version || true
-          "$DWG2DXF" -o out/original.dxf out/original.dwg || "$DWG2DXF" out/original.dwg out/original.dxf || echo "변환 실패"
+          # dwg2dxf 는 libtool 래퍼 → 빌드 폴더 내(.libs 옆)에서 실행해야 동작.
+          DWG2DXF=$(command -v dwg2dxf || echo /tmp/libredwg/programs/dwg2dxf)
+          echo "using $DWG2DXF"
+          "$DWG2DXF" --version 2>&1 | head -3 || true
+          # 174MB AutoCAD2018 파일 — 변환 로그를 남긴다(마지막 40줄).
+          "$DWG2DXF" -y -o out/original.dxf out/original.dwg 2>dxf_err.log || "$DWG2DXF" out/original.dwg out/original.dxf 2>dxf_err.log || echo "변환 실패"
+          echo "--- dwg2dxf stderr(마지막 40줄) ---"; tail -40 dxf_err.log || true
           ls -la out/ || true
 
       - name: (DXF) 내용 진단
