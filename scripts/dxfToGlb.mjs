@@ -53,6 +53,8 @@ const dxf = new DxfParser().parseSync(fs.readFileSync(dxfPath, 'utf8'));
 log('파싱 완료', ((Date.now() - t0) / 1000).toFixed(1), 's · 엔티티', dxf.entities?.length ?? 0, '· 블록', Object.keys(dxf.blocks || {}).length);
 
 const layers = dxf.tables?.layer?.layers || {};
+const lineTypes = dxf.tables?.lineType?.lineTypes || {};
+const globalLtScale = Number(dxf.header?.$LTSCALE) || 1;
 function rgb01(rgb) { return [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255]; }
 function colorOf(ent) {
   // 엔티티 색 우선(트루컬러 ent.color = 0xRRGGBB), 없으면 레이어색, 그것도 없으면 흰.
@@ -103,6 +105,59 @@ function seg(x1, y1, z1, x2, y2, z2, color) {
   }
 }
 
+// ---- 선종류(linetype) 대시 표현 ----
+// LTYPE 정의(pattern: +길이=펜다운/−길이=펜업/0=점)를 실제 파선으로 방출한다. 엔티티→레이어
+// 순으로 선종류를 해석하고, LTSCALE·엔티티 스케일을 곱해 곡선/직선 모두 호길이 따라 끊는다.
+let curPattern = null; // [부호있는 길이…] 또는 null(실선)
+let curPatLen = 0;     // 패턴 총길이(펜다운+펜업)
+let dashPhase = 0;     // 경로 누적거리(패턴 위상)
+let dashedEnts = 0;    // 진단: 대시로 그린 엔티티 수
+const resetDash = () => { dashPhase = 0; };
+function resolvePattern(ent) {
+  let name = ent.lineType || ent.linetype;
+  const lay = layers[ent.layer];
+  if (!name || /byLayer/i.test(name)) name = lay?.lineType;
+  if (!name || /byBlock/i.test(name) || /^continuous$/i.test(name)) return null;
+  const def = lineTypes[name] || lineTypes[String(name).toUpperCase()];
+  if (!def || !Array.isArray(def.pattern) || def.pattern.length < 2) return null;
+  const pat = def.pattern.map(Number).filter((n) => Number.isFinite(n));
+  if (pat.length < 2) return null;
+  const scale = globalLtScale * (ent.lineTypeScale || 1);
+  let scaled = pat.map((n) => n * scale);
+  let tot = scaled.reduce((s, n) => s + Math.abs(n), 0);
+  if (tot < 0.2) return null; // 너무 촘촘 → 실선 취급(세그 폭주 방지)
+  // 점(0)·초미세 요소는 최소길이(패턴의 2%)로 바닥 처리 → 무한루프·세그 폭주 방지.
+  // (0 = 펜다운 점으로 취급: 부호 없으면 +.)
+  const minEl = Math.max(tot * 0.02, 1e-3);
+  scaled = scaled.map((n) => (Math.abs(n) >= minEl ? n : (n < 0 ? -minEl : minEl)));
+  tot = scaled.reduce((s, n) => s + Math.abs(n), 0);
+  return { pat: scaled, len: tot };
+}
+// 한 직선구간을 현재 패턴대로 끊어 방출(위상 유지 → 곡선도 연속 파선). 실선이면 그대로 1개.
+function stroke(x1, y1, z1, x2, y2, z2, color) {
+  if (!curPattern) { seg(x1, y1, z1, x2, y2, z2, color); return; }
+  const dx = x2 - x1, dy = y2 - y1, dz = z2 - z1;
+  const L = Math.hypot(dx, dy);
+  if (L < 1e-12) return;
+  if (L / curPatLen > 5000) { seg(x1, y1, z1, x2, y2, z2, color); return; } // 폭주 가드
+  const ux = dx / L, uy = dy / L, uz = dz / L;
+  const pat = curPattern;
+  let s = 0, guard = 0;
+  while (s < L - 1e-9) {
+    if (++guard > 100000) { seg(x1 + ux * s, y1 + uy * s, z1 + uz * s, x2, y2, z2, color); break; }
+    let ph = dashPhase % curPatLen; if (ph < 0) ph += curPatLen;
+    let idx = 0, acc = 0;
+    while (idx < pat.length) { const el = Math.max(Math.abs(pat[idx]), 1e-6); if (ph < acc + el) break; acc += el; idx++; }
+    if (idx >= pat.length) idx = pat.length - 1;
+    const remain = Math.max(Math.abs(pat[idx]), 1e-6) - (ph - acc);
+    const step = Math.min(remain, L - s);
+    if (pat[idx] >= 0) { // 펜다운(대시·점)
+      seg(x1 + ux * s, y1 + uy * s, z1 + uz * s, x1 + ux * (s + step), y1 + uy * (s + step), z1 + uz * (s + step), color);
+    }
+    s += step; dashPhase += step;
+  }
+}
+
 // 2D 아핀 변환(블록 인스턴스용): {a,b,c,d,e,f} → x'=a*x+c*y+e, y'=b*x+d*y+f. Z 는 그대로 전달.
 const ID = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
 const apply = (m, x, y) => [m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f];
@@ -136,7 +191,7 @@ function arcSegs(cx, cy, z, r, a0, a1, m, color) {
   for (let i = 0; i <= n; i++) {
     const ang = (a0 + span * i / n) * Math.PI / 180;
     const [x, y] = apply(m, cx + r * Math.cos(ang), cy + r * Math.sin(ang));
-    if (prev) seg(prev[0], prev[1], z, x, y, z, color);
+    if (prev) stroke(prev[0], prev[1], z, x, y, z, color);
     prev = [x, y];
   }
 }
@@ -155,7 +210,7 @@ function ellipseSegs(ent, m, color) {
     const t = a0 + span * i / n;
     const ex = majLen * Math.cos(t), ey = minLen * Math.sin(t);
     const [x, y] = apply(m, c.x + ex * cr - ey * sr, c.y + ex * sr + ey * cr);
-    if (prev) seg(prev[0], prev[1], z, x, y, z, color);
+    if (prev) stroke(prev[0], prev[1], z, x, y, z, color);
     prev = [x, y];
   }
 }
@@ -188,7 +243,7 @@ function splineSegs(ent, m, color) {
         const u = Math.min(u0 + (u1 - u0) * i / steps, u1 - 1e-9);
         const pt = bsplineEval(ctrl, knots, p, u);
         const [x, y] = apply(m, pt[0], pt[1]);
-        if (prev) seg(prev[0], prev[1], prev[2], x, y, pt[2], color);
+        if (prev) stroke(prev[0], prev[1], prev[2], x, y, pt[2], color);
         prev = [x, y, pt[2]];
       }
       return;
@@ -200,8 +255,103 @@ function splineSegs(ent, m, color) {
   let prev = null;
   for (const q of pts) {
     const [x, y] = apply(m, q.x, q.y); const z = q.z ?? 0;
-    if (prev) seg(prev[0], prev[1], prev[2], x, y, z, color);
+    if (prev) stroke(prev[0], prev[1], prev[2], x, y, z, color);
     prev = [x, y, z];
+  }
+}
+
+// ---- 문자(TEXT/MTEXT): 단선(single-stroke) 벡터 폰트로 실제 글자를 그린다 ----
+// 표고·측점·치수 등 숫자/라틴 라벨을 렌더. 글리프는 x0..4·y0..6(베이스라인 0·캡 6) 좌표의
+// 폴리라인 묶음. 한글 등 미지원 문자는 건너뛴다(다음 단계에서 확장). 대소문자 공용.
+const FONT = {
+  '0': [[0,1,0,5,1,6,3,6,4,5,4,1,3,0,1,0,0,1]],
+  '1': [[1,5,2,6,2,0],[0,0,4,0]],
+  '2': [[0,5,1,6,3,6,4,5,4,4,0,0,4,0]],
+  '3': [[0,5,1,6,3,6,4,5,3,3,2,3],[3,3,4,2,4,1,3,0,1,0,0,1]],
+  '4': [[3,0,3,6,0,2,4,2]],
+  '5': [[4,6,0,6,0,3,3,3,4,2,4,1,3,0,1,0,0,1]],
+  '6': [[4,5,3,6,1,6,0,5,0,1,1,0,3,0,4,1,4,2,3,3,0,3]],
+  '7': [[0,6,4,6,1,0]],
+  '8': [[1,3,0,4,0,5,1,6,3,6,4,5,4,4,3,3,1,3,0,2,0,1,1,0,3,0,4,1,4,2,3,3]],
+  '9': [[0,1,1,0,3,0,4,1,4,5,3,6,1,6,0,5,0,4,1,3,4,3]],
+  'A': [[0,0,2,6,4,0],[1,2,3,2]],
+  'B': [[0,0,0,6,3,6,4,5,4,4,3,3,0,3],[3,3,4,2,4,1,3,0,0,0]],
+  'C': [[4,5,3,6,1,6,0,5,0,1,1,0,3,0,4,1]],
+  'D': [[0,0,0,6,2,6,4,4,4,2,2,0,0,0]],
+  'E': [[4,6,0,6,0,0,4,0],[0,3,3,3]],
+  'F': [[4,6,0,6,0,0],[0,3,3,3]],
+  'G': [[4,5,3,6,1,6,0,5,0,1,1,0,3,0,4,1,4,3,2,3]],
+  'H': [[0,0,0,6],[4,0,4,6],[0,3,4,3]],
+  'I': [[2,0,2,6],[1,0,3,0],[1,6,3,6]],
+  'J': [[3,6,3,1,2,0,1,0,0,1]],
+  'K': [[0,0,0,6],[4,6,0,3,4,0]],
+  'L': [[0,6,0,0,4,0]],
+  'M': [[0,0,0,6,2,3,4,6,4,0]],
+  'N': [[0,0,0,6,4,0,4,6]],
+  'O': [[1,0,0,1,0,5,1,6,3,6,4,5,4,1,3,0,1,0]],
+  'P': [[0,0,0,6,3,6,4,5,4,4,3,3,0,3]],
+  'Q': [[1,0,0,1,0,5,1,6,3,6,4,5,4,1,3,0,1,0],[2,2,4,0]],
+  'R': [[0,0,0,6,3,6,4,5,4,4,3,3,0,3],[2,3,4,0]],
+  'S': [[4,5,3,6,1,6,0,5,1,3,3,3,4,2,3,0,1,0,0,1]],
+  'T': [[0,6,4,6],[2,6,2,0]],
+  'U': [[0,6,0,1,1,0,3,0,4,1,4,6]],
+  'V': [[0,6,2,0,4,6]],
+  'W': [[0,6,1,0,2,3,3,0,4,6]],
+  'X': [[0,0,4,6],[0,6,4,0]],
+  'Y': [[0,6,2,3,4,6],[2,3,2,0]],
+  'Z': [[0,6,4,6,0,0,4,0]],
+  '.': [[1,0,2,0,2,1,1,1,1,0]],
+  ',': [[2,1,2,0,1,-1]],
+  '-': [[1,3,3,3]],
+  '_': [[0,0,4,0]],
+  '+': [[2,1,2,5],[0,3,4,3]],
+  '=': [[0,2,4,2],[0,4,4,4]],
+  '/': [[0,0,4,6]],
+  '\\': [[0,6,4,0]],
+  ':': [[2,1,2,2],[2,4,2,5]],
+  '°': [[1,5,2,5,2,6,1,6,1,5]],
+  '±': [[2,1,2,4],[0,2,4,2],[0,0,4,0]],
+  'Ø': [[1,0,0,1,0,5,1,6,3,6,4,5,4,1,3,0,1,0],[0,0,4,6]],
+  '%': [[0,0,4,6],[0,5,1,5,1,6,0,6,0,5],[3,0,4,0,4,1,3,1,3,0]],
+  '(': [[3,6,1,4,1,2,3,0]],
+  ')': [[1,6,3,4,3,2,1,0]],
+  '#': [[1,0,1,6],[3,0,3,6],[0,2,4,2],[0,4,4,4]],
+};
+const FONT_H = 6, FONT_ADV = 5;
+let textGlyphs = 0;
+function mtextClean(s) {
+  return String(s ?? '')
+    .replace(/\\[A-Za-z][^;]*;/g, '').replace(/[{}]/g, '')
+    .replace(/\\P/gi, '\n').replace(/\\~/g, ' ')
+    .replace(/%%[dD]/g, '°').replace(/%%[pP]/g, '±').replace(/%%[cC]/g, 'Ø').replace(/%%%/g, '%');
+}
+function drawText(ent, m, color, elev) {
+  const raw = mtextClean(ent.text);
+  if (!raw) return;
+  const h = ent.textHeight ?? ent.height ?? ent.nominalTextHeight;
+  if (!(h > 0) || h > 1e6) return;
+  const base = ent.startPoint || ent.position || ent.insertionPoint || { x: 0, y: 0 };
+  const bz = Number.isFinite(base.z) ? base.z : elev;
+  const rot = (ent.rotation || 0) * Math.PI / 180, cr = Math.cos(rot), sr = Math.sin(rot);
+  const f = h / FONT_H, xs = (ent.xScale && ent.xScale > 0) ? ent.xScale : 1;
+  let cursor = 0, lineY = 0;
+  for (const ch of raw) {
+    if (ch === '\n') { cursor = 0; lineY -= FONT_H + 2; continue; }
+    const g = FONT[ch] || FONT[ch.toUpperCase()];
+    if (g) {
+      for (const poly of g) {
+        let prev = null;
+        for (let i = 0; i < poly.length; i += 2) {
+          const gx = (cursor + poly[i]) * f * xs, gy = (lineY + poly[i + 1]) * f;
+          const rx = gx * cr - gy * sr, ry = gx * sr + gy * cr;
+          const [X, Y] = apply(m, base.x + rx, base.y + ry);
+          if (prev) seg(prev[0], prev[1], bz, X, Y, bz, color);
+          prev = [X, Y];
+        }
+      }
+      textGlyphs++;
+    }
+    cursor += FONT_ADV;
   }
 }
 
@@ -210,8 +360,13 @@ function splineSegs(ent, m, color) {
 // 스타일 뷰엔 없음)·전체 선분의 절반·거대 용량·렉의 주범. 흰색+지표면 레이어면 숨긴다.
 // (진짜 표면을 다시 보고 싶으면 DXF_KEEP_SURFACE=1 로 유지 가능.)
 const KEEP_SURFACE = process.env.DXF_KEEP_SURFACE === '1';
+// '흰선' 정체: 초록 등고선(F0017111/#009800) 위에 겹쳐 보이던 선의 정체는 순백(≥0.75)이 아니라
+// 중간 회색(#808080·#848484)의 표고/지반 레이어(ELEV-6·EZ-BASE)였다 — 어두운 뷰에선 흰선처럼
+// 보인다. 순백 기준만으론 안 걸려서, '무채색(회색~흰)' + '표면/표고/지반' 이름을 함께 숨긴다.
+// (진짜 지형은 초록 F0017xxx 로 남는다. 되살리려면 DXF_KEEP_SURFACE=1.)
 const isWhiteish = (c) => c[0] >= 0.75 && c[1] >= 0.75 && c[2] >= 0.75;
-const surfaceLayerRe = /지표면|surface|tin/i;
+const isGrayish = (c) => (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]) < 0.10) && Math.max(c[0], c[1], c[2]) >= 0.45;
+const surfaceLayerRe = /지표면|surface|tin|contour|등고|(^|[-_ ])elev|ez[-_ ]?base/i;
 let counts = {};
 let hiddenSurf = 0;
 const circLayers = {}; // 진단: CIRCLE/ARC 가 어느 레이어에 몰려있나
@@ -219,7 +374,11 @@ function emit(ent, m, depth = 0) {
   if (!ent || depth > 8) return;
   const color = colorOf(ent);
   curType = ent.type; curLayer = ent.layer || '';
-  if (!KEEP_SURFACE && isWhiteish(color) && surfaceLayerRe.test(curLayer)) { hiddenSurf++; return; }
+  if (!KEEP_SURFACE && isGrayish(color) && surfaceLayerRe.test(curLayer)) { hiddenSurf++; return; }
+  // 이 엔티티의 선종류 해석(대시). 경로 시작마다 위상 리셋 → 파선이 자연스럽게 이어진다.
+  const pat = resolvePattern(ent);
+  curPattern = pat ? pat.pat : null; curPatLen = pat ? pat.len : 0; resetDash();
+  if (pat) dashedEnts++;
   counts[ent.type] = (counts[ent.type] || 0) + 1;
   if (ent.type === 'CIRCLE' || ent.type === 'ARC') circLayers[ent.layer] = (circLayers[ent.layer] || 0) + 1;
   const elev = ent.elevation ?? 0;
@@ -228,7 +387,7 @@ function emit(ent, m, depth = 0) {
       const s = ent.vertices?.[0] ?? ent.start, e = ent.vertices?.[1] ?? ent.end;
       if (!s || !e) break;
       const [x1, y1] = apply(m, s.x, s.y), [x2, y2] = apply(m, e.x, e.y);
-      seg(x1, y1, s.z ?? 0, x2, y2, e.z ?? 0, color); break;
+      stroke(x1, y1, s.z ?? 0, x2, y2, e.z ?? 0, color); break;
     }
     case 'LWPOLYLINE':
     case 'POLYLINE': {
@@ -246,6 +405,8 @@ function emit(ent, m, depth = 0) {
       break;
     case 'ELLIPSE': ellipseSegs(ent, m, color); break;
     case 'SPLINE': splineSegs(ent, m, color); break;
+    case 'TEXT':
+    case 'MTEXT': try { drawText(ent, m, color, elev); } catch { /* 폰트 미지원 문자 등 무시 */ } break;
     case 'INSERT': {
       const blk = dxf.blocks?.[ent.name];
       if (!blk?.entities) break;
@@ -255,7 +416,7 @@ function emit(ent, m, depth = 0) {
       for (const be of blk.entities) emit(be, bm2, depth + 1);
       break;
     }
-    // TEXT/MTEXT/HATCH: 다음 단계(문자 스트로크·해치 채움).
+    // HATCH/SOLID 채움: 다음 단계.
     default: break;
   }
 }
@@ -264,7 +425,7 @@ function polySeg(v1, v2, m, color, z1, z2) {
   const b = v1.bulge || 0;
   const dx = v2.x - v1.x, dy = v2.y - v1.y;
   const chord = Math.hypot(dx, dy); if (chord < 1e-9) return;
-  const straight = () => { const [x1, y1] = apply(m, v1.x, v1.y), [x2, y2] = apply(m, v2.x, v2.y); seg(x1, y1, z1, x2, y2, z2, color); };
+  const straight = () => { const [x1, y1] = apply(m, v1.x, v1.y), [x2, y2] = apply(m, v2.x, v2.y); stroke(x1, y1, z1, x2, y2, z2, color); };
   // 아주 작은 bulge=직선. z 가 다르면(3D 폴리선) bulge 무시 직선. 그 외엔 호.
   if (Math.abs(b) < 0.02 || z1 !== z2) { straight(); return; }
   const r = Math.abs(chord / (2 * Math.sin(2 * Math.atan(b)))); // |반경|
@@ -283,7 +444,7 @@ function polySeg(v1, v2, m, color, z1, z2) {
 let bad = 0;
 for (const ent of dxf.entities || []) { try { emit(ent, ID); } catch { bad++; } }
 if (segCount >= MAX_SEG) log('⚠ 선분 캡 도달 — 일부 생략');
-log('선분', segCount.toLocaleString(), '· 그룹', allGroups.length, '· 오류엔티티', bad, '· 지표면흰선숨김', hiddenSurf, '· 종류', JSON.stringify(counts));
+log('선분', segCount.toLocaleString(), '· 그룹', allGroups.length, '· 오류엔티티', bad, '· 표면회색선숨김', hiddenSurf, '· 대시엔티티', dashedEnts, '· 문자글리프', textGlyphs, '· 종류', JSON.stringify(counts));
 const topCirc = Object.entries(circLayers).sort((a, b) => b[1] - a[1]).slice(0, 10);
 if (topCirc.length) log('원/호 상위 레이어:', topCirc.map(([n, c]) => `${n}=${c}`).join(', '));
 const topWhite = Object.entries(whiteSeg).sort((a, b) => b[1] - a[1]).slice(0, 12);
