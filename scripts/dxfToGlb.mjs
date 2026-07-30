@@ -75,9 +75,11 @@ const MAX_SEG = 15_000_000, BUCKET = 60000;
 const bucketOf = new Map();
 const allGroups = [];
 let segCount = 0;
-// 진단: '흰색'(원본에 없다고 지적된 중첩선) 세그먼트가 어느 엔티티/레이어에서 나오나 추적.
+// 진단: '흰색' 세그먼트 추적 + 그려진 레이어별 세그먼트수/색(도면 구조 파악용).
 let curType = '', curLayer = '';
 const whiteSeg = {};
+const perLayer = {};       // layer -> 그려진 세그먼트 수
+const layerColor = {};     // layer -> 대표색(처음 본 색) hex
 function seg(x1, y1, z1, x2, y2, z2, color) {
   if (segCount >= MAX_SEG) return;
   if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) return;
@@ -94,6 +96,8 @@ function seg(x1, y1, z1, x2, y2, z2, color) {
   if (!g || g.pos.length / 3 + 2 > BUCKET) { g = { color, pos: [] }; bucketOf.set(key, g); allGroups.push(g); }
   g.pos.push(x1 - ORIGIN[0], y1 - ORIGIN[1], z1 - ORIGIN[2], x2 - ORIGIN[0], y2 - ORIGIN[1], z2 - ORIGIN[2]);
   segCount++;
+  perLayer[curLayer] = (perLayer[curLayer] || 0) + 1;
+  if (!layerColor[curLayer]) layerColor[curLayer] = '#' + color.map((c) => Math.round(Math.min(1, Math.max(0, c)) * 255).toString(16).padStart(2, '0')).join('');
   if (color[0] >= 0.75 && color[1] >= 0.75 && color[2] >= 0.75) {
     const k = `${curType}|${curLayer}`; whiteSeg[k] = (whiteSeg[k] || 0) + 1;
   }
@@ -155,18 +159,50 @@ function ellipseSegs(ent, m, color) {
     prev = [x, y];
   }
 }
-// 스플라인(SPLINE): fit point(곡선 위 점)로 연결, 없으면 control point(근사).
+// B-스플라인 한 점 계산(de Boor). ctrl=제어점, knots=노트벡터, p=차수, u=파라미터.
+function bsplineEval(ctrl, knots, p, u) {
+  const n = ctrl.length - 1;
+  let k = p; while (k < n && knots[k + 1] <= u) k++;
+  const d = [];
+  for (let j = 0; j <= p; j++) { const c = ctrl[k - p + j]; d[j] = [c.x, c.y, c.z ?? 0]; }
+  for (let r = 1; r <= p; r++) {
+    for (let j = p; j >= r; j--) {
+      const i = k - p + j;
+      const den = knots[i + p - r + 1] - knots[i];
+      const a = den === 0 ? 0 : (u - knots[i]) / den;
+      d[j] = [(1 - a) * d[j - 1][0] + a * d[j][0], (1 - a) * d[j - 1][1] + a * d[j][1], (1 - a) * d[j - 1][2] + a * d[j][2]];
+    }
+  }
+  return d[p];
+}
+// 스플라인(SPLINE): 제어점·노트가 있으면 정식 B-스플라인으로 매끈하게(각짐 없음),
+// 없으면 fit point(곡선 위 점) 연결로 폴백.
 function splineSegs(ent, m, color) {
+  const ctrl = ent.controlPoints, knots = ent.knotValues, p = ent.degreeOfSplineCurve || 3;
+  if (ctrl && ctrl.length > p && knots && knots.length >= ctrl.length + p + 1) {
+    const n = ctrl.length - 1, u0 = knots[p], u1 = knots[n + 1];
+    if (Number.isFinite(u0) && Number.isFinite(u1) && u1 > u0) {
+      const steps = Math.max(24, Math.min(600, ctrl.length * 12));
+      let prev = null;
+      for (let i = 0; i <= steps; i++) {
+        const u = Math.min(u0 + (u1 - u0) * i / steps, u1 - 1e-9);
+        const pt = bsplineEval(ctrl, knots, p, u);
+        const [x, y] = apply(m, pt[0], pt[1]);
+        if (prev) seg(prev[0], prev[1], prev[2], x, y, pt[2], color);
+        prev = [x, y, pt[2]];
+      }
+      return;
+    }
+  }
   const pts = (ent.fitPoints && ent.fitPoints.length >= 2) ? ent.fitPoints
-    : (ent.controlPoints && ent.controlPoints.length >= 2) ? ent.controlPoints : null;
+    : (ctrl && ctrl.length >= 2) ? ctrl : null;
   if (!pts) return;
   let prev = null;
-  for (const p of pts) {
-    const [x, y] = apply(m, p.x, p.y); const z = p.z ?? 0;
+  for (const q of pts) {
+    const [x, y] = apply(m, q.x, q.y); const z = q.z ?? 0;
     if (prev) seg(prev[0], prev[1], prev[2], x, y, z, color);
     prev = [x, y, z];
   }
-  if (ent.closed && pts.length > 2 && prev) { const p = pts[0]; const [x, y] = apply(m, p.x, p.y); seg(prev[0], prev[1], prev[2], x, y, p.z ?? 0, color); }
 }
 
 // Civil3D 지표면(surface)은 스타일 등고선(초록)을 별도로 표시하면서, 원본 표면 폴리선을
@@ -252,6 +288,31 @@ const topCirc = Object.entries(circLayers).sort((a, b) => b[1] - a[1]).slice(0, 
 if (topCirc.length) log('원/호 상위 레이어:', topCirc.map(([n, c]) => `${n}=${c}`).join(', '));
 const topWhite = Object.entries(whiteSeg).sort((a, b) => b[1] - a[1]).slice(0, 12);
 if (topWhite.length) log('흰색 세그먼트 상위(엔티티|레이어=수):', topWhite.map(([k, c]) => `${k}=${c}`).join(', '));
+const topLayers = Object.entries(perLayer).sort((a, b) => b[1] - a[1]).slice(0, 25);
+log('그려진 레이어 상위(레이어=세그먼트수·색):');
+for (const [n, c] of topLayers) log(`   ${n} = ${c.toLocaleString()} · ${layerColor[n]}`);
+
+// ---- Z 이상치 정리: 표고 히스토그램으로 1~99% 밴드를 구해 소수 이상치가 3D 를 세로로
+//      늘리지 않게 클램프(실제 지형 표고는 보존). ----
+let zLo = -Infinity, zHi = Infinity;
+{
+  let zmin = Infinity, zmax = -Infinity;
+  for (const g of allGroups) for (let i = 2; i < g.pos.length; i += 3) { const z = g.pos[i]; if (z < zmin) zmin = z; if (z > zmax) zmax = z; }
+  if (Number.isFinite(zmin) && zmax > zmin) {
+    const BINS = 1024, hist = new Int32Array(BINS), sc = (BINS - 1) / (zmax - zmin);
+    let total = 0;
+    for (const g of allGroups) for (let i = 2; i < g.pos.length; i += 3) { hist[Math.floor((g.pos[i] - zmin) * sc)]++; total++; }
+    const pct = (frac) => { let acc = 0; const t = total * frac; for (let b = 0; b < BINS; b++) { acc += hist[b]; if (acc >= t) return zmin + b / sc; } return zmax; };
+    const lo = pct(0.01), hi = pct(0.99);
+    if ((hi - lo) < (zmax - zmin) * 0.7) { // 이상치가 실제로 있을 때만 클램프
+      zLo = lo; zHi = hi;
+      log(`Z 이상치 클램프: 전체 [${zmin.toFixed(1)}, ${zmax.toFixed(1)}] → 유효 [${zLo.toFixed(1)}, ${zHi.toFixed(1)}]`);
+    } else {
+      log(`Z 범위 [${zmin.toFixed(1)}, ${zmax.toFixed(1)}] (이상치 없음)`);
+    }
+  }
+}
+const clampZ = (z) => (z < zLo ? zLo : z > zHi ? zHi : z);
 
 // ---- GLB 작성(mode:1 라인, 색상별 재질) ----
 const bufferViews = [], accessors = [], meshes = [], materials = [], nodes = [], pieces = [];
@@ -265,6 +326,7 @@ const gmin = [Infinity, Infinity, Infinity], gmax = [-Infinity, -Infinity, -Infi
 for (const g of allGroups) {
   const cnt = g.pos.length / 3; if (cnt === 0) continue;
   const pos = Float32Array.from(g.pos);
+  if (zLo !== -Infinity) for (let i = 2; i < pos.length; i += 3) pos[i] = clampZ(pos[i]);
   const idx = new Uint32Array(cnt); for (let i = 0; i < cnt; i++) idx[i] = i;
   const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < cnt; i++) for (let k = 0; k < 3; k++) { const v = pos[i * 3 + k]; if (v < mn[k]) mn[k] = v; if (v > mx[k]) mx[k] = v; if (v < gmin[k]) gmin[k] = v; if (v > gmax[k]) gmax[k] = v; }
