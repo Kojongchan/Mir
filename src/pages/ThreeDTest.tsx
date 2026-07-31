@@ -103,6 +103,7 @@ export function ThreeDTest() {
   const viewerRef = useRef<Viewer | null>(null);
   const loaderRef = useRef<GLTFLoaderPlugin | null>(null);
   const pickedRef = useRef<{ id?: string | number; worldPos?: number[] } | null>(null);
+  const highlightedRef = useRef<string | null>(null); // 현재 하이라이트된 엔티티 id
   const [status, setStatus] = useState('');
   const [dbg, setDbg] = useState('');
   const [busy, setBusy] = useState(false);
@@ -157,6 +158,12 @@ export function ThreeDTest() {
     viewer.camera.eye = [15, 15, 15];
     viewer.camera.look = [0, 0, 0];
     viewer.camera.up = [0, 1, 0];
+    // 선택 하이라이트 — 클릭한 객체를 눈에 띄게(형광 노랑 채움 + 글로우). '뭐가 선택됐는지'
+    // 바로 보이게. glowThrough=true 로 가려진 선/면도 강조. 선(line) 프리미티브도 색이 바뀐다.
+    const hm = viewer.scene.highlightMaterial;
+    hm.fill = true; hm.fillColor = [1.0, 0.9, 0.0]; hm.fillAlpha = 0.5;
+    hm.edges = true; hm.edgeColor = [1.0, 0.85, 0.0]; hm.edgeAlpha = 1.0;
+    (hm as unknown as { glowThrough?: boolean }).glowThrough = true;
     viewerRef.current = viewer;
 
     // 방향 큐브(ACC 뷰큐브 유사) — 코너 캔버스에 렌더. 면/모서리 클릭으로 정면·평면뷰 스냅.
@@ -201,11 +208,19 @@ export function ThreeDTest() {
         | { entity?: { id?: string | number; isObject?: boolean }; worldPos?: number[] }
         | undefined;
       const entity = hit?.entity;
+      // 이전 하이라이트 해제(항상 — 빈 곳 클릭·다른 객체 선택 모두).
+      const objs = viewer.scene.objects as Record<string, { highlighted?: boolean }>;
+      if (highlightedRef.current && objs[highlightedRef.current]) objs[highlightedRef.current].highlighted = false;
+      highlightedRef.current = null;
       if (entity?.isObject && entity.id != null) {
         const id = String(entity.id);
         pickedRef.current = { id: entity.id, worldPos: hit?.worldPos };
+        // 선택 객체 강조.
+        if (objs[id]) { objs[id].highlighted = true; highlightedRef.current = id; }
         const meta = viewer.metaScene?.metaObjects?.[id];
-        setPick({ id, name: meta?.name, type: meta?.type });
+        // 메타 이름 없으면 glTF 노드 id(=지표면(TIN) 등)를 이름으로 표시. 숫자 id 는 숨김.
+        const fallback = /^\d+$/.test(id) ? undefined : id;
+        setPick({ id, name: meta?.name ?? fallback, type: meta?.type });
       } else {
         pickedRef.current = hit?.worldPos ? { worldPos: hit.worldPos } : null;
         setPick(null);
@@ -280,6 +295,7 @@ export function ThreeDTest() {
     const loader = loaderRef.current;
     if (!viewer || !loader) return;
     setPick(null);
+    highlightedRef.current = null;
     const prev = viewer.scene.models['test'];
     if (prev) prev.destroy();
 
