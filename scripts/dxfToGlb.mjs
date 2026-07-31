@@ -11,6 +11,25 @@ const dxfPath = process.argv[2] || 'out/original.dxf';
 const outGlb = process.argv[3] || 'out/model.glb';
 const log = (...a) => console.log('[dxf2glb]', ...a);
 
+// ---- 문자 렌더용 아웃라인 폰트(한글 포함 전 유니코드) ----
+// opentype.js 로 실제 폰트 글리프 외곽선을 뽑아 선분으로 굽는다 → TEXT/MTEXT 를 한글까지
+// 렌더. 폰트는 DXF_FONT 또는 러너에 설치된 나눔/노토 TTF 에서 찾는다. 없으면 라틴 내장폰트.
+let OTF = null;
+try {
+  const opentype = (await import('opentype.js')).default;
+  // loadSync 는 폐기(undefined 반환) → parse(buffer). .ttc(컬렉션)는 미지원이라 .ttf/.otf 만.
+  const loadFont = (p) => { const b = fs.readFileSync(p); return opentype.parse(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength)); };
+  const cands = [process.env.DXF_FONT,
+    '/usr/share/fonts/truetype/nanum/NanumGothic.ttf',
+    '/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf',
+    '/usr/share/fonts/opentype/noto/NotoSansCJKkr-Regular.otf',
+    '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'].filter(Boolean);
+  for (const p of cands) {
+    if (fs.existsSync(p)) { try { OTF = loadFont(p); log('문자 폰트 로드:', p, '· unitsPerEm', OTF.unitsPerEm); break; } catch (e) { /* 다음 후보(ttc 등 미지원) */ } }
+  }
+  if (!OTF) log('문자 폰트 파일 없음 → 내장 라틴 폰트 폴백(한글 미표시)');
+} catch (e) { log('opentype.js 미설치 → 내장 라틴 폰트 폴백(한글 미표시)'); }
+
 // ---- AutoCAD ACI(색인) → RGB : 표준 256색 팔레트 전체(index 0~255) ----
 // Civil3D 도면은 레이어색이 팔레트 전 구간(10~249: 24색상×명도)에 흩어져 있어, 일부만
 // 있으면 대부분 회색으로 뭉개진다. 전체 표준 팔레트를 넣어 각 레이어 고유색을 살린다.
@@ -82,6 +101,7 @@ let curType = '', curLayer = '';
 const whiteSeg = {};
 const perLayer = {};       // layer -> 그려진 세그먼트 수
 const layerColor = {};     // layer -> 대표색(처음 본 색) hex
+const perLayerZ = {};      // layer -> [zmin, zmax] (표고 진단: 등고선이 평탄한가?)
 function seg(x1, y1, z1, x2, y2, z2, color) {
   if (segCount >= MAX_SEG) return;
   if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) return;
@@ -99,6 +119,9 @@ function seg(x1, y1, z1, x2, y2, z2, color) {
   g.pos.push(x1 - ORIGIN[0], y1 - ORIGIN[1], z1 - ORIGIN[2], x2 - ORIGIN[0], y2 - ORIGIN[1], z2 - ORIGIN[2]);
   segCount++;
   perLayer[curLayer] = (perLayer[curLayer] || 0) + 1;
+  const zl = perLayerZ[curLayer] || (perLayerZ[curLayer] = [Infinity, -Infinity]);
+  if (z1 < zl[0]) zl[0] = z1; if (z1 > zl[1]) zl[1] = z1;
+  if (z2 < zl[0]) zl[0] = z2; if (z2 > zl[1]) zl[1] = z2;
   if (!layerColor[curLayer]) layerColor[curLayer] = '#' + color.map((c) => Math.round(Math.min(1, Math.max(0, c)) * 255).toString(16).padStart(2, '0')).join('');
   if (color[0] >= 0.75 && color[1] >= 0.75 && color[2] >= 0.75) {
     const k = `${curType}|${curLayer}`; whiteSeg[k] = (whiteSeg[k] || 0) + 1;
@@ -325,7 +348,49 @@ function mtextClean(s) {
     .replace(/\\P/gi, '\n').replace(/\\~/g, ' ')
     .replace(/%%[dD]/g, '°').replace(/%%[pP]/g, '±').replace(/%%[cC]/g, 'Ø').replace(/%%%/g, '%');
 }
+// opentype 아웃라인 → 선분. 베지어는 잘게 쪼갠다. 한글 등 전 유니코드 렌더.
+function drawTextOT(ent, m, color, elev) {
+  const raw = mtextClean(ent.text);
+  if (!raw) return;
+  const h = ent.textHeight ?? ent.height ?? ent.nominalTextHeight;
+  if (!(h > 0) || h > 1e6) return;
+  const base = ent.startPoint || ent.position || ent.insertionPoint || { x: 0, y: 0 };
+  const bz = Number.isFinite(base.z) ? base.z : elev;
+  const rot = (ent.rotation || 0) * Math.PI / 180, cr = Math.cos(rot), sr = Math.sin(rot);
+  const fontSize = h / 0.7;         // DXF 문자높이=대문자높이 → em 보정
+  const lineH = h * 1.6, upm = OTF.unitsPerEm || 1000;
+  const lines = String(raw).split('\n');
+  for (let li = 0; li < lines.length; li++) {
+    const line = lines[li]; if (!line) continue;
+    const oy = -li * lineH;
+    // put: 폰트 로컬(px,py; y-down) → CAD(y-up) → 회전 → 블록행렬.
+    const put = (px, py) => {
+      const gx = px, gy = -py + oy;
+      const rx = gx * cr - gy * sr, ry = gx * sr + gy * cr;
+      return apply(m, base.x + rx, base.y + ry);
+    };
+    // 글자별 charToGlyph(cmap) 배치 → GSUB(합자·shaping) 경로를 피해 크래시 없이 한글까지.
+    let penX = 0;
+    for (const ch of line) {
+      let glyph, gp;
+      try { glyph = OTF.charToGlyph(ch); gp = glyph.getPath(penX, 0, fontSize); }
+      catch { penX += fontSize * 0.6; continue; }
+      let cx = 0, cy = 0, sx0 = 0, sy0 = 0, prevW = null;
+      const lineTo = (x, y) => { const p = put(x, y); if (prevW) seg(prevW[0], prevW[1], bz, p[0], p[1], bz, color); prevW = p; cx = x; cy = y; };
+      for (const c of gp.commands) {
+        if (c.type === 'M') { const p = put(c.x, c.y); prevW = p; cx = sx0 = c.x; cy = sy0 = c.y; }
+        else if (c.type === 'L') lineTo(c.x, c.y);
+        else if (c.type === 'Q') { const n = 4, x0 = cx, y0 = cy; for (let i = 1; i <= n; i++) { const t = i / n, u = 1 - t; lineTo(u * u * x0 + 2 * u * t * c.x1 + t * t * c.x, u * u * y0 + 2 * u * t * c.y1 + t * t * c.y); } }
+        else if (c.type === 'C') { const n = 6, x0 = cx, y0 = cy; for (let i = 1; i <= n; i++) { const t = i / n, u = 1 - t; lineTo(u*u*u*x0 + 3*u*u*t*c.x1 + 3*u*t*t*c.x2 + t*t*t*c.x, u*u*u*y0 + 3*u*u*t*c.y1 + 3*u*t*t*c.y2 + t*t*t*c.y); } }
+        else if (c.type === 'Z') lineTo(sx0, sy0);
+      }
+      penX += (glyph.advanceWidth / upm) * fontSize;
+      textGlyphs++;
+    }
+  }
+}
 function drawText(ent, m, color, elev) {
+  if (OTF) return drawTextOT(ent, m, color, elev);
   const raw = mtextClean(ent.text);
   if (!raw) return;
   const h = ent.textHeight ?? ent.height ?? ent.nominalTextHeight;
@@ -450,8 +515,13 @@ if (topCirc.length) log('원/호 상위 레이어:', topCirc.map(([n, c]) => `${
 const topWhite = Object.entries(whiteSeg).sort((a, b) => b[1] - a[1]).slice(0, 12);
 if (topWhite.length) log('흰색 세그먼트 상위(엔티티|레이어=수):', topWhite.map(([k, c]) => `${k}=${c}`).join(', '));
 const topLayers = Object.entries(perLayer).sort((a, b) => b[1] - a[1]).slice(0, 25);
-log('그려진 레이어 상위(레이어=세그먼트수·색):');
-for (const [n, c] of topLayers) log(`   ${n} = ${c.toLocaleString()} · ${layerColor[n]}`);
+log('그려진 레이어 상위(레이어=세그먼트수·색·표고범위):');
+for (const [n, c] of topLayers) {
+  const z = perLayerZ[n] || [0, 0];
+  const zr = (Number.isFinite(z[0]) ? z[0] : 0).toFixed(1) + '~' + (Number.isFinite(z[1]) ? z[1] : 0).toFixed(1);
+  const flat = (z[1] - z[0]) < 0.05 ? ' [평탄]' : '';
+  log(`   ${n} = ${c.toLocaleString()} · ${layerColor[n]} · Z[${zr}]${flat}`);
+}
 
 // ---- Z 이상치 정리: 표고 히스토그램으로 1~99% 밴드를 구해 소수 이상치가 3D 를 세로로
 //      늘리지 않게 클램프(실제 지형 표고는 보존). ----
