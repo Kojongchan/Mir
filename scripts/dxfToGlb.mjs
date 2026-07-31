@@ -547,6 +547,70 @@ let zLo = -Infinity, zHi = Infinity;
 }
 const clampZ = (z) => (z < zLo ? zLo : z > zHi ? zHi : z);
 
+// ---- 진짜 지표면(Civil3D LandXML TIN) 읽기 ----
+// LibreDWG DXF 는 Civil3D 표면(TIN)을 못 내보낸다(3DFACE=0). 대신 Civil3D 가 내보낸 LandXML 의
+// 실제 삼각망(점 Pnts + 면 Faces)을 '그대로' 읽어 회색 음영면으로 굽는다(날조 아님). 좌표계가
+// DWG 와 동일(측량좌표)이라 등고선과 정확히 정합한다. DXF_LANDXML=경로 로 지정.
+//  · LandXML 점 순서는 기본 '북(y) 동(x) 표고(z)'. 뒤바뀐 파일은 DXF_LANDXML_XY=1 로 교정.
+function parseLandXmlSurfaces(xml) {
+  const swapXY = process.env.DXF_LANDXML_XY === '1';
+  const out = [];
+  const surfRe = /<Surface\b([^>]*)>([\s\S]*?)<\/Surface>/g;
+  let sm;
+  while ((sm = surfRe.exec(xml))) {
+    const name = (sm[1].match(/name="([^"]*)"/) || [])[1] || 'Surface';
+    const body = sm[2];
+    const idOf = new Map(); const px = [], py = [], pz = []; let seq = 0, n = 0;
+    const pRe = /<P\b([^>]*)>([^<]*)<\/P>/g; let pm;
+    while ((pm = pRe.exec(body))) {
+      seq++;
+      const idm = pm[1].match(/\bid="([^"]*)"/);
+      const id = idm ? idm[1] : String(seq);
+      const t = pm[2].trim().split(/\s+/).map(Number);
+      if (t.length < 3 || !t.every(Number.isFinite)) continue;
+      const X = swapXY ? t[0] : t[1], Y = swapXY ? t[1] : t[0], Z = t[2]; // 기본: [북(y) 동(x) 표고]
+      idOf.set(id, n); px.push(X); py.push(Y); pz.push(Z); n++;
+    }
+    const faces = [];
+    const fRe = /<F\b([^>]*)>([^<]*)<\/F>/g; let fm;
+    while ((fm = fRe.exec(body))) {
+      const t = fm[2].trim().split(/\s+/);
+      if (t.length < 3) continue;
+      const a = idOf.get(t[0]), b = idOf.get(t[1]), c = idOf.get(t[2]);
+      if (a == null || b == null || c == null) continue; // 숨은/무효 면 제외
+      faces.push(a, b, c);
+    }
+    if (px.length >= 3 && faces.length >= 3) out.push({ name, px, py, pz, faces });
+  }
+  return out;
+}
+const surfMeshes = [];
+const landxmlPath = process.env.DXF_LANDXML;
+if (landxmlPath && fs.existsSync(landxmlPath)) {
+  try {
+    const surfs = parseLandXmlSurfaces(fs.readFileSync(landxmlPath, 'utf8'));
+    for (const s of surfs) {
+      if (!ORIGIN) ORIGIN = [Math.round(s.px[0]), Math.round(s.py[0]), Math.round(s.pz[0])];
+      const N = s.px.length, pos = new Float32Array(N * 3), nrm = new Float32Array(N * 3);
+      for (let i = 0; i < N; i++) { pos[3 * i] = s.px[i] - ORIGIN[0]; pos[3 * i + 1] = s.py[i] - ORIGIN[1]; pos[3 * i + 2] = clampZ(s.pz[i] - ORIGIN[2]); }
+      const idx = s.faces;
+      for (let t = 0; t < idx.length; t += 3) {
+        const a = idx[t], b = idx[t + 1], c = idx[t + 2];
+        const ax = pos[3 * a], ay = pos[3 * a + 1], az = pos[3 * a + 2];
+        const ux = pos[3 * b] - ax, uy = pos[3 * b + 1] - ay, uz = pos[3 * b + 2] - az;
+        const vx = pos[3 * c] - ax, vy = pos[3 * c + 1] - ay, vz = pos[3 * c + 2] - az;
+        const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        nrm[3 * a] += nx; nrm[3 * a + 1] += ny; nrm[3 * a + 2] += nz;
+        nrm[3 * b] += nx; nrm[3 * b + 1] += ny; nrm[3 * b + 2] += nz;
+        nrm[3 * c] += nx; nrm[3 * c + 1] += ny; nrm[3 * c + 2] += nz;
+      }
+      for (let i = 0; i < N; i++) { const l = Math.hypot(nrm[3 * i], nrm[3 * i + 1], nrm[3 * i + 2]); if (l > 0) { nrm[3 * i] /= l; nrm[3 * i + 1] /= l; nrm[3 * i + 2] /= l; } else nrm[3 * i + 2] = 1; }
+      surfMeshes.push({ name: s.name, pos, nrm, idx: Uint32Array.from(idx), color: [0.55, 0.56, 0.58] });
+      log(`지표면(LandXML): "${s.name}" 점 ${N.toLocaleString()} · 삼각형 ${(idx.length / 3).toLocaleString()}`);
+    }
+  } catch (e) { log('LandXML 읽기 실패:', e?.message || e); }
+}
+
 // ---- GLB 작성(mode:1 라인, 색상별 재질) ----
 const bufferViews = [], accessors = [], meshes = [], materials = [], nodes = [], pieces = [];
 let byteOffset = 0;
@@ -568,6 +632,18 @@ for (const g of allGroups) {
   materials.push({ pbrMetallicRoughness: { baseColorFactor: [g.color[0], g.color[1], g.color[2], 1], metallicFactor: 0, roughnessFactor: 1 } });
   meshes.push({ primitives: [{ mode: 1, attributes: { POSITION: posAcc }, indices: idxAcc, material: materials.length - 1 }] });
   nodes.push({ mesh: meshes.length - 1 });
+}
+// 진짜 지표면(LandXML TIN) 삼각망 노드(mode:4, 법선, 회색 음영). 이름을 줘 뷰어 선택에 표시.
+for (const s of surfMeshes) {
+  const { pos, nrm, idx } = s;
+  const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < pos.length; i += 3) for (let k = 0; k < 3; k++) { const v = pos[i + k]; if (v < mn[k]) mn[k] = v; if (v > mx[k]) mx[k] = v; if (v < gmin[k]) gmin[k] = v; if (v > gmax[k]) gmax[k] = v; }
+  const posAcc = accessors.push({ bufferView: addView(pos, 34962), componentType: 5126, count: pos.length / 3, type: 'VEC3', min: mn, max: mx }) - 1;
+  const nrmAcc = accessors.push({ bufferView: addView(nrm, 34962), componentType: 5126, count: nrm.length / 3, type: 'VEC3' }) - 1;
+  const idxAcc = accessors.push({ bufferView: addView(idx, 34963), componentType: 5125, count: idx.length, type: 'SCALAR' }) - 1;
+  materials.push({ name: s.name, pbrMetallicRoughness: { baseColorFactor: [...s.color, 1], metallicFactor: 0, roughnessFactor: 0.95 }, doubleSided: true });
+  meshes.push({ primitives: [{ mode: 4, attributes: { POSITION: posAcc, NORMAL: nrmAcc }, indices: idxAcc, material: materials.length - 1 }] });
+  nodes.push({ name: `지표면:${s.name}`, mesh: meshes.length - 1 });
 }
 while (byteOffset % 4 !== 0) { pieces.push(Buffer.from([0])); byteOffset++; }
 const bin = Buffer.concat(pieces);

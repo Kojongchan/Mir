@@ -41,6 +41,14 @@ on:
         description: 'DXF검증용 ACC 아이템 ID (urn:adsk.wipprod:dm.lineage:…)'
         required: false
         default: ''
+      landxml_project:
+        description: '(선택) 지표면 LandXML ACC 프로젝트 ID (b.xxxx) — 진짜 Civil3D TIN 병합용'
+        required: false
+        default: ''
+      landxml_item:
+        description: '(선택) 지표면 LandXML ACC 아이템 ID (urn:adsk.wipprod:dm.lineage:…)'
+        required: false
+        default: ''
 
 jobs:
   convert:
@@ -96,11 +104,24 @@ jobs:
           npm install --no-save dxf-parser
           node scripts/dxfInspect.mjs out/original.dxf || echo "진단 실패"
 
+      # (선택) 진짜 Civil3D 지표면 — LandXML 을 ACC 에서 받아 dxfToGlb 가 병합(DXF_LANDXML).
+      - name: (DXF) 지표면 LandXML 다운로드(선택)
+        if: github.event.inputs.dxf_test == '1' && github.event.inputs.landxml_item != ''
+        continue-on-error: true
+        env:
+          APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
+          APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
+          LANDXML_PROJECT: ${{ github.event.inputs.landxml_project }}
+          LANDXML_ITEM: ${{ github.event.inputs.landxml_item }}
+        run: node scripts/fetchLandxml.mjs
+
       - name: (DXF) DXF → GLB
         if: github.event.inputs.dxf_test == '1'
         continue-on-error: true
         env:
           NODE_OPTIONS: '--max-old-space-size=6144'
+          # 있으면 진짜 Civil3D 지표면(TIN)을 병합. 없으면 조용히 선형만.
+          DXF_LANDXML: out/surface.xml
         run: |
           # 문자(TEXT/MTEXT) 한글 렌더용 아웃라인 폰트 + opentype.js.
           sudo apt-get install -y fonts-nanum fonts-noto-cjk >/dev/null 2>&1 || true

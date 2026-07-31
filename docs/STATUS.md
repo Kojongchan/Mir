@@ -26,9 +26,19 @@
 - **뷰어 선택 하이라이트**: 클릭 객체 형광 강조(highlightMaterial glowThrough)+이전 해제, 노드명 표시.
 - (유지) 문자 한글(opentype)·선종류 대시·레이어별 Z 진단 — DXF 옵트인 경로에서 유효.
 
-### ⚠️ SVF 경로 재변환 검증 필요 (다음 세션 즉시)
-- 재변환(이제 SVF) 후 `convert4d.mjs` **manifest 로그**로 3D 뷰/지표면·코리더 뷰어블 유무 확인.
-  3D 뷰 있으면 표면·코리더가 메시로 온다. 2D 만 있으면 APS 3D 뷰 옵션/파일 확인 필요.
+### 🔑 SVF 미사용 확정 + 진짜 지표면은 LandXML 로 (2026-07-31 재결정)
+- 사용자: **SVF 안 씀**. LibreDWG DXF 는 Civil3D 표면·코리더를 **아예 못 내보냄**(로그 확증:
+  `3DFACE=0·SOLID=0·프록시 없음·Civil3D 추정 없음`). → DXF 에서 표면 추출은 **물리적으로 불가**.
+- **해법(구현): LandXML**. Civil3D 가 내보낸 지표면 TIN(점 Pnts + 면 Faces)을 `dxfToGlb` 가 그대로
+  읽어 회색 음영면으로 병합(`DXF_LANDXML`, `parseLandXmlSurfaces`, 노드명 `지표면:<이름>`). 좌표계
+  동일 → 등고선과 정합. 날조 아님(Civil3D 실제 삼각망). `scripts/fetchLandxml.mjs` + 워크플로 입력
+  `landxml_project/landxml_item` 추가. 합성 LandXML 로 검증 완료.
+- **남은 배선**: 앱(`AccFilePicker`/`ThreeDTest`/`aps-convert`)에서 LandXML 2차 파일 선택→전달. 현재는
+  **수동 workflow_dispatch**(dxf_test=1 + landxml_project/item)로 즉시 사용 가능.
+- **코리더 3D**: LandXML 에 솔리드 메시 없음(정렬·프로파일뿐) → 코리더는 현재 DXF 선형으로만.
+  진짜 코리더 솔리드는 SVF/Civil3D 필요(사용자 SVF 거부 → 선형 유지 또는 별도 협의).
+- **문자**: 렌더 정상(로그 `문자 폰트 로드 NanumGothic`·`문자글리프 1203`). 다만 도면 주석높이(수 m)라
+  전경(7.8km)에선 안 보임 — 줌인 시 표시. 화면고정 라벨(스크린스페이스)은 후속.
 
 ### ⛔ 미해결 — 최우선 (다음 세션 즉시)
 - **평탄 Z**: 뷰어 상태바 `AABB span(7855,0,6914)` 의 **가운데=표고=0** → 3D가 완전 평탄(스샷2 FRONT
