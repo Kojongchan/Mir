@@ -202,11 +202,11 @@ export default async function handler(req: Request): Promise<Response> {
   const urn = body.urn ?? '';
   if (!urn) return json({ error: 'urn 필요' }, 400);
   const isDwg = (body.name ?? '').split('.').pop()?.toLowerCase() === 'dwg';
-  // DWG 3D: 기본 SVF(convert4d) — Civil3D 지표면(TIN)·코리더는 오토데스크 변환(=ACC 뷰어가
-  // 쓰는 그 데이터)만 3D 메시로 준다. LibreDWG DXF 는 못 내보냄(3DFACE=0). SVF 파생물이 없으면
-  // (SVF2만 있으면) convert4d 가 SVF 변환을 요청해 받아온다(추가 업로드 불필요, URN 만으로).
-  // 정밀 선형·문자만 필요할 때는 body.dxf===true 로 자체 DXF 경로(project·item 필요).
-  const useDxf = body.dxf === true && isDwg && !!body.project && !!body.item;
+  // DWG 3D: 자체 DXF 경로(깔끔한 벡터 선형·문자)를 기본으로 쓴다. 이 DWG 의 지표면은 계산식
+  // Civil3D 객체라 오토데스크 3D 변환(SVF)에도 음영면으로 안 나온다(ACC 3D 뷰에서도 동일 확인).
+  // SVF 는 지표면 이득 없이 무지개색 선·평면 시트만 더해 더 지저분해져서 DWG 엔 안 쓴다.
+  // 진짜 음영 지표면은 NWD(Navisworks — 지표면이 메시로 구워짐) → 자동 SVF 경로로 얻는다.
+  const useDxf = isDwg && !!body.project && !!body.item;
   const includeLines = includeLinesFor(body.name ?? '');
 
   if (body.force) {
