@@ -193,7 +193,7 @@ export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
 
   // ── POST: 캐시 확인 후 없으면 변환 워크플로 dispatch ───────────────
-  let body: { urn?: string; name?: string; project?: string; item?: string; force?: boolean; ackOverage?: boolean };
+  let body: { urn?: string; name?: string; project?: string; item?: string; force?: boolean; ackOverage?: boolean; dxf?: boolean };
   try {
     body = (await req.json()) as typeof body;
   } catch {
@@ -202,9 +202,12 @@ export default async function handler(req: Request): Promise<Response> {
   const urn = body.urn ?? '';
   if (!urn) return json({ error: 'urn 필요' }, 400);
   const isDwg = (body.name ?? '').split('.').pop()?.toLowerCase() === 'dwg';
-  // DWG 는 SVF(테셀레이션·손실) 대신 자체 파이프라인(원본 DWG→DXF→GLB)으로 변환한다.
-  // 원본 DWG 를 ACC 에서 받으려면 project(b.xxx)·item(lineage urn) 이 필요.
-  const useDxf = isDwg && !!body.project && !!body.item;
+  // DWG 3D 소스 선택:
+  //  · 기본 = SVF(Autodesk Model Derivative). Civil3D '지표면(TIN)'·'코리더' 같은 AEC
+  //    객체는 오토데스크 변환만 3D 메시로 테셀레이션한다. 자체 DWG→DXF(LibreDWG)는 이
+  //    객체들을 못 내보내(표면·코리더 유실 + 폭발 잔재 선) → 진짜 데이터를 못 읽는다.
+  //  · body.dxf === true 일 때만 자체 DXF 경로(정밀 선형·문자용). project·item 필요.
+  const useDxf = body.dxf === true && isDwg && !!body.project && !!body.item;
   const includeLines = includeLinesFor(body.name ?? '');
 
   if (body.force) {

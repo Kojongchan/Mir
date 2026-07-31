@@ -102,19 +102,6 @@ const whiteSeg = {};
 const perLayer = {};       // layer -> 그려진 세그먼트 수
 const layerColor = {};     // layer -> 대표색(처음 본 색) hex
 const perLayerZ = {};      // layer -> [zmin, zmax] (표고 진단: 등고선이 평탄한가?)
-
-// ---- 지표면(TIN) 재구성 ----
-// LibreDWG 는 Civil3D 표면(TIN)을 면으로 내보내지 않아(3DFACE=0) 등고선·브레이크라인 '선'만
-// 온다. 그래서 선의 3D 정점(x,y,z)을 격자로 모아 Delaunay 삼각망 → '회색 음영 지형면'을 복원한다
-// (솔리드 불필요, 원본 셰이드 뷰처럼). 표고가 평탄하면 생략. DXF_NO_TIN=1 로 끌 수 있다.
-const TIN_ON = process.env.DXF_NO_TIN !== '1';
-const TIN_CELL = Number(process.env.DXF_TIN_CELL) || 15; // m 격자(다운샘플=면 정점수 상한)
-const tinGrid = new Map();  // "gx_gy" -> [zsum, n]
-function addTinPt(x, y, z) {
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
-  const k = Math.round(x / TIN_CELL) + '_' + Math.round(y / TIN_CELL);
-  const a = tinGrid.get(k); if (a) { a[0] += z; a[1]++; } else tinGrid.set(k, [z, 1]);
-}
 function seg(x1, y1, z1, x2, y2, z2, color) {
   if (segCount >= MAX_SEG) return;
   if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) return;
@@ -131,8 +118,6 @@ function seg(x1, y1, z1, x2, y2, z2, color) {
   if (!g || g.pos.length / 3 + 2 > BUCKET) { g = { color, pos: [] }; bucketOf.set(key, g); allGroups.push(g); }
   g.pos.push(x1 - ORIGIN[0], y1 - ORIGIN[1], z1 - ORIGIN[2], x2 - ORIGIN[0], y2 - ORIGIN[1], z2 - ORIGIN[2]);
   segCount++;
-  // 지표면(TIN) 격자: 지형 선(등고선·브레이크라인·LINE)의 정점만 모은다(문자·심볼 제외).
-  if (TIN_ON && (curType === 'LWPOLYLINE' || curType === 'POLYLINE' || curType === 'LINE')) { addTinPt(x1, y1, z1); addTinPt(x2, y2, z2); }
   perLayer[curLayer] = (perLayer[curLayer] || 0) + 1;
   const zl = perLayerZ[curLayer] || (perLayerZ[curLayer] = [Infinity, -Infinity]);
   if (z1 < zl[0]) zl[0] = z1; if (z1 > zl[1]) zl[1] = z1;
@@ -562,54 +547,6 @@ let zLo = -Infinity, zHi = Infinity;
 }
 const clampZ = (z) => (z < zLo ? zLo : z > zHi ? zHi : z);
 
-// ---- 지표면(TIN) 삼각망 생성(Delaunay) ----
-let tinMesh = null;
-if (TIN_ON && ORIGIN) {
-  try {
-    const Delaunator = (await import('delaunator')).default;
-    const keys = [...tinGrid.keys()];
-    if (keys.length >= 3) {
-      const N = keys.length;
-      const px = new Float64Array(N), py = new Float64Array(N), pz = new Float32Array(N);
-      let zmin = Infinity, zmax = -Infinity;
-      for (let i = 0; i < N; i++) {
-        const us = keys[i].indexOf('_');
-        const gx = +keys[i].slice(0, us), gy = +keys[i].slice(us + 1), a = tinGrid.get(keys[i]);
-        px[i] = gx * TIN_CELL - ORIGIN[0]; py[i] = gy * TIN_CELL - ORIGIN[1];
-        const z = clampZ(a[0] / a[1] - ORIGIN[2]); pz[i] = z;
-        if (z < zmin) zmin = z; if (z > zmax) zmax = z;
-      }
-      if ((zmax - zmin) < 3) {
-        log(`지표면(TIN): 지형 표고 평탄(Δ${(zmax - zmin).toFixed(1)}m) → 생략(원본 등고선 Z 부재 → SVF 3D 필요)`);
-      } else {
-        const coords = new Float64Array(N * 2);
-        for (let i = 0; i < N; i++) { coords[2 * i] = px[i]; coords[2 * i + 1] = py[i]; }
-        const tri = new Delaunator(coords).triangles;
-        const MAXE = TIN_CELL * 4;              // 큰 삼각형(공백/도로 건너뜀) 제외
-        const pos = new Float32Array(N * 3), nrm = new Float32Array(N * 3);
-        for (let i = 0; i < N; i++) { pos[3 * i] = px[i]; pos[3 * i + 1] = py[i]; pos[3 * i + 2] = pz[i] - 0.2; } // 등고선 z-fighting 회피로 살짝 아래
-        const idx = [];
-        for (let t = 0; t < tri.length; t += 3) {
-          const a = tri[t], b = tri[t + 1], c = tri[t + 2];
-          const ax = px[a], ay = py[a], bx = px[b], by = py[b], cx = px[c], cy = py[c];
-          if (Math.hypot(ax - bx, ay - by) > MAXE || Math.hypot(bx - cx, by - cy) > MAXE || Math.hypot(cx - ax, cy - ay) > MAXE) continue;
-          idx.push(a, b, c);
-          const ux = bx - ax, uy = by - ay, uz = pz[b] - pz[a], vx = cx - ax, vy = cy - ay, vz = pz[c] - pz[a];
-          const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
-          nrm[3 * a] += nx; nrm[3 * a + 1] += ny; nrm[3 * a + 2] += nz;
-          nrm[3 * b] += nx; nrm[3 * b + 1] += ny; nrm[3 * b + 2] += nz;
-          nrm[3 * c] += nx; nrm[3 * c + 1] += ny; nrm[3 * c + 2] += nz;
-        }
-        for (let i = 0; i < N; i++) { const l = Math.hypot(nrm[3 * i], nrm[3 * i + 1], nrm[3 * i + 2]); if (l > 0) { nrm[3 * i] /= l; nrm[3 * i + 1] /= l; nrm[3 * i + 2] /= l; } else nrm[3 * i + 2] = 1; }
-        if (idx.length >= 3) {
-          tinMesh = { pos, nrm, idx: Uint32Array.from(idx), color: [0.55, 0.56, 0.58] };
-          log(`지표면(TIN): 격자점 ${N.toLocaleString()} · 삼각형 ${(idx.length / 3).toLocaleString()} · 표고 [${zmin.toFixed(1)}~${zmax.toFixed(1)}]`);
-        }
-      }
-    }
-  } catch (e) { log('지표면(TIN) 생성 건너뜀:', e?.message || e); }
-}
-
 // ---- GLB 작성(mode:1 라인, 색상별 재질) ----
 const bufferViews = [], accessors = [], meshes = [], materials = [], nodes = [], pieces = [];
 let byteOffset = 0;
@@ -631,18 +568,6 @@ for (const g of allGroups) {
   materials.push({ pbrMetallicRoughness: { baseColorFactor: [g.color[0], g.color[1], g.color[2], 1], metallicFactor: 0, roughnessFactor: 1 } });
   meshes.push({ primitives: [{ mode: 1, attributes: { POSITION: posAcc }, indices: idxAcc, material: materials.length - 1 }] });
   nodes.push({ mesh: meshes.length - 1 });
-}
-// 지표면(TIN) 삼각망 노드(mode:4, 법선 포함, 회색 음영). 이름을 줘 뷰어 선택에 표시.
-if (tinMesh) {
-  const { pos, nrm, idx } = tinMesh;
-  const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < pos.length; i += 3) for (let k = 0; k < 3; k++) { const v = pos[i + k]; if (v < mn[k]) mn[k] = v; if (v > mx[k]) mx[k] = v; if (v < gmin[k]) gmin[k] = v; if (v > gmax[k]) gmax[k] = v; }
-  const posAcc = accessors.push({ bufferView: addView(pos, 34962), componentType: 5126, count: pos.length / 3, type: 'VEC3', min: mn, max: mx }) - 1;
-  const nrmAcc = accessors.push({ bufferView: addView(nrm, 34962), componentType: 5126, count: nrm.length / 3, type: 'VEC3' }) - 1;
-  const idxAcc = accessors.push({ bufferView: addView(idx, 34963), componentType: 5125, count: idx.length, type: 'SCALAR' }) - 1;
-  materials.push({ name: '지표면', pbrMetallicRoughness: { baseColorFactor: [...tinMesh.color, 1], metallicFactor: 0, roughnessFactor: 0.95 }, doubleSided: true });
-  meshes.push({ primitives: [{ mode: 4, attributes: { POSITION: posAcc, NORMAL: nrmAcc }, indices: idxAcc, material: materials.length - 1 }] });
-  nodes.push({ name: '지표면(TIN)', mesh: meshes.length - 1 });
 }
 while (byteOffset % 4 !== 0) { pieces.push(Buffer.from([0])); byteOffset++; }
 const bin = Buffer.concat(pieces);
