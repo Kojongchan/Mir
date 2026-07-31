@@ -26,7 +26,18 @@
 - **뷰어 선택 하이라이트**: 클릭 객체 형광 강조(highlightMaterial glowThrough)+이전 해제, 노드명 표시.
 - (유지) 문자 한글(opentype)·선종류 대시·레이어별 Z 진단 — DXF 옵트인 경로에서 유효.
 
-### 🔑 SVF 미사용 확정 + 진짜 지표면은 LandXML 로 (2026-07-31 재결정)
+### 🚀 SVF 경로 실가동 (2026-07-31 최종 — 사용자 "진행해봐")
+- 오해 정리: **ACC 뷰어가 보여주는 3D = APS 가 만든 SVF**. Civil3D 지표면·코리더는 오토데스크만
+  해독 → 원본 DWG 업로드만으로 ACC 가 보여주는 그 데이터가 곧 SVF. "SVF 안 씀"과 "ACC 것 씀"은 동일.
+- **DWG 기본 경로를 SVF(convert4d)로** (`aps-convert`: `useDxf`=body.dxf 옵트인). 재변환 시 SVF 실행.
+- **convert4d 강화**: `ensureSvf()` — SVF 파생물이 없으면(=SVF2 만 있으면) Model Derivative 에 **SVF
+  변환 작업 요청+폴링**(추가 업로드 없이 URN 만으로 진짜 3D 확보). `scanManifest` 로 svf/svf2/3D뷰 로그.
+  URN 직접 받으면 Supabase 불필요(스푸리어스 실패 제거).
+- **이 SVF 경로는 지금까지 한 번도 안 돌아봤음** → 첫 재변환이 실증. manifest 로그로 3D뷰·지표면 확인.
+  느릴 수 있음(변환 최대 40분+다운로드) — 앱 30분 폴링 초과 시 재로드. 실패는 error.json 으로 표시.
+- 코리더 솔리드도 SVF 3D뷰에 포함(오토데스크 테셀레이션). 선/문자 정밀도가 아쉬우면 이후 DXF 병합.
+
+### 🔑 (이전) SVF 미사용 시도 + LandXML (보류 — 사용자가 SVF 로 진행 결정)
 - 사용자: **SVF 안 씀**. LibreDWG DXF 는 Civil3D 표면·코리더를 **아예 못 내보냄**(로그 확증:
   `3DFACE=0·SOLID=0·프록시 없음·Civil3D 추정 없음`). → DXF 에서 표면 추출은 **물리적으로 불가**.
 - **해법(구현): LandXML**. Civil3D 가 내보낸 지표면 TIN(점 Pnts + 면 Faces)을 `dxfToGlb` 가 그대로

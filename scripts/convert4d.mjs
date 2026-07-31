@@ -112,6 +112,63 @@ async function getSvfDerivatives(urn) {
   return out;
 }
 
+// ACC 최신 파일은 뷰어용으로 SVF2 만 있을 때가 많다(svf-utils 는 SVF 만 읽음). SVF 파생물이
+// 없으면 Model Derivative 에 **SVF(2d+3d) 변환 작업**을 요청하고 준비될 때까지 폴링한다.
+// 이렇게 해야 원본 DWG 업로드만으로(추가 파일 없이) 진짜 지표면·코리더(3D 뷰)를 얻는다.
+async function apsToken(scope) {
+  const basic = Buffer.from(`${APS_CLIENT_ID}:${APS_CLIENT_SECRET}`).toString('base64');
+  const res = await fetch(`${APS_BASE}/authentication/v2/token`, {
+    method: 'POST',
+    headers: { authorization: `Basic ${basic}`, 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'client_credentials', scope }),
+  });
+  const d = await res.json();
+  if (!res.ok || !d.access_token) throw new Error('APS 토큰 실패: ' + JSON.stringify(d).slice(0, 160));
+  return d.access_token;
+}
+function scanManifest(mani) {
+  let svf = false, svf2 = false, views3d = 0, views2d = 0;
+  const walk = (d) => {
+    if (d.role === 'graphics' && d.mime === 'application/autodesk-svf') svf = true;
+    if (d.mime === 'application/autodesk-svf2') svf2 = true;
+    if (d.role === '3d') views3d++;
+    if (d.role === '2d') views2d++;
+    d.children?.forEach(walk);
+  };
+  mani.derivatives?.forEach((dd) => dd.children?.forEach(walk));
+  return { svf, svf2, views3d, views2d, status: mani.status, progress: mani.progress };
+}
+async function ensureSvf(urn) {
+  const md = new ModelDerivativeClient();
+  const readTok = async () =>
+    (await new AuthenticationClient().getTwoLeggedToken(APS_CLIENT_ID, APS_CLIENT_SECRET, [Scopes.ViewablesRead])).access_token;
+  let s = scanManifest(await md.getManifest(urn, { accessToken: await readTok(), region: APS_REGION }));
+  console.log(`[convert4d] 기존 파생물: svf=${s.svf} svf2=${s.svf2} 3D뷰=${s.views3d} 2D뷰=${s.views2d} status=${s.status}`);
+  if (s.svf) return;
+  // SVF 없음 → 변환 작업 요청.
+  const tok = await apsToken('data:read data:write data:create viewables:read');
+  const jobRes = await fetch(`${APS_BASE}/modelderivative/v2/designdata/job`, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${tok}`, 'content-type': 'application/json',
+      ...(APS_REGION && APS_REGION !== 'US' ? { 'x-ads-region': APS_REGION } : {}),
+    },
+    body: JSON.stringify({ input: { urn }, output: { formats: [{ type: 'svf', views: ['2d', '3d'] }] } }),
+  });
+  const jt = await jobRes.text();
+  if (!jobRes.ok) throw new Error(`SVF 변환 작업 요청 실패(${jobRes.status}): ${jt.slice(0, 200)}`);
+  console.log('[convert4d] SVF 변환 작업 접수 — 완료까지 폴링(최대 40분)…');
+  const t0 = Date.now();
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 12000));
+    s = scanManifest(await md.getManifest(urn, { accessToken: await readTok(), region: APS_REGION }));
+    if (s.svf) { console.log('[convert4d] SVF 파생물 준비됨'); return; }
+    if (s.status === 'failed') throw new Error('APS SVF 변환 실패(manifest status=failed)');
+    if (Date.now() - t0 > 40 * 60 * 1000) throw new Error('SVF 변환 시간 초과(40분)');
+    console.log(`[convert4d]   변환중… status=${s.status} progress=${s.progress}`);
+  }
+}
+
 // --- 직접 다운로더(레거시 derivativeservice) ---
 // svf-utils 내장 다운로더는 getDerivativeUrl(signedcookies, SDK 15초 타임아웃)에서
 // CI 환경에서 자주 끊긴다. 우리 인앱 뷰어가 쓰는 레거시 엔드포인트로 타임아웃 없이
@@ -230,36 +287,40 @@ let errCtx = null;
 async function main() {
   need('APS_CLIENT_ID', APS_CLIENT_ID);
   need('APS_CLIENT_SECRET', APS_CLIENT_SECRET);
-  need('SUPABASE_URL', SUPABASE_URL);
-  need('SUPABASE_SERVICE_ROLE_KEY', SUPABASE_SERVICE_ROLE_KEY);
   need('R2_ACCOUNT_ID', R2_ACCOUNT_ID);
   need('R2_ACCESS_KEY_ID', R2_ACCESS_KEY_ID);
   need('R2_SECRET_ACCESS_KEY', R2_SECRET_ACCESS_KEY);
   need('R2_BUCKET', R2_BUCKET);
-  let host = '';
-  try {
-    host = new URL(SUPABASE_URL).host;
-  } catch {
-    throw new Error(`SUPABASE_URL 형식 오류. "https://<프로젝트>.supabase.co" 형태여야 합니다.`);
+  // URN 을 직접 받으면 Supabase 불필요(앱은 URN 을 넘긴다). PROJECT_ID 로 조회할 때만 필요.
+  let urn;
+  if (URN_ENV) {
+    urn = URN_ENV;
+  } else {
+    need('SUPABASE_URL', SUPABASE_URL);
+    need('SUPABASE_SERVICE_ROLE_KEY', SUPABASE_SERVICE_ROLE_KEY);
+    let host = '';
+    try { host = new URL(SUPABASE_URL).host; } catch {
+      throw new Error(`SUPABASE_URL 형식 오류. "https://<프로젝트>.supabase.co" 형태여야 합니다.`);
+    }
+    console.log(`[convert4d] Supabase host: ${host}`);
+    if (!/supabase\.(co|in|net)$/.test(host)) {
+      throw new Error(
+        `SUPABASE_URL 시크릿에 프로젝트 URL이 아니라 다른 값(키 등)이 들어간 것 같습니다. ` +
+          `Supabase 대시보드 → Project Settings → API → "Project URL"(https://xxxx.supabase.co)을 넣으세요. 현재 host=${host}`,
+      );
+    }
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+    urn = await resolveUrn(supabase);
   }
-  console.log(`[convert4d] Supabase host: ${host}`);
-  if (!/supabase\.(co|in|net)$/.test(host)) {
-    throw new Error(
-      `SUPABASE_URL 시크릿에 프로젝트 URL이 아니라 다른 값(키 등)이 들어간 것 같습니다. ` +
-        `Supabase 대시보드 → Project Settings → API → "Project URL"(https://xxxx.supabase.co)을 넣으세요. 현재 host=${host}`,
-    );
-  }
-
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-  const urn = await resolveUrn(supabase);
   const keyBase = PROJECT_ID || urn.replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
   console.log(`[convert4d] URN=${urn.slice(0, 24)}… region=${APS_REGION} bucket=${STORAGE_BUCKET} key=${keyBase}`);
   errCtx = { keyBase };
   // 이전 실패 마커 제거 — 재시도 중엔 '처리중'으로 보이게(실패로 오인 방지).
   await r2Delete(`${keyBase}/error.json`);
 
+  await ensureSvf(urn); // SVF 없으면(SVF2만 있으면) SVF 변환 요청+대기
   const derivatives = await getSvfDerivatives(urn);
-  if (derivatives.length === 0) throw new Error('SVF 파생물을 찾지 못했습니다.');
+  if (derivatives.length === 0) throw new Error('SVF 파생물을 찾지 못했습니다(변환 후에도 없음).');
   console.log(`[convert4d] SVF 파생물 ${derivatives.length}개`);
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'svf2gltf-'));

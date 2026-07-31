@@ -202,11 +202,11 @@ export default async function handler(req: Request): Promise<Response> {
   const urn = body.urn ?? '';
   if (!urn) return json({ error: 'urn 필요' }, 400);
   const isDwg = (body.name ?? '').split('.').pop()?.toLowerCase() === 'dwg';
-  // DWG 는 자체 파이프라인(원본 DWG→DXF→GLB)으로 변환한다(SVF 미사용 — 사용자 결정).
-  // 원본 DWG 를 ACC 에서 받으려면 project(b.xxx)·item(lineage urn) 이 필요.
-  // 주의: LibreDWG DXF 는 Civil3D 표면(TIN)·코리더 객체를 못 내보낸다(3DFACE=0). 그 3D
-  // 데이터는 LandXML 등 별도 소스로 읽어야 한다(landxml→GLB 병합, 진행 중).
-  const useDxf = isDwg && !!body.project && !!body.item;
+  // DWG 3D: 기본 SVF(convert4d) — Civil3D 지표면(TIN)·코리더는 오토데스크 변환(=ACC 뷰어가
+  // 쓰는 그 데이터)만 3D 메시로 준다. LibreDWG DXF 는 못 내보냄(3DFACE=0). SVF 파생물이 없으면
+  // (SVF2만 있으면) convert4d 가 SVF 변환을 요청해 받아온다(추가 업로드 불필요, URN 만으로).
+  // 정밀 선형·문자만 필요할 때는 body.dxf===true 로 자체 DXF 경로(project·item 필요).
+  const useDxf = body.dxf === true && isDwg && !!body.project && !!body.item;
   const includeLines = includeLinesFor(body.name ?? '');
 
   if (body.force) {
