@@ -379,11 +379,18 @@ export async function buildMergedGlb(imf, opts) {
 
     let idx32 = idx instanceof Uint32Array ? idx : Uint32Array.from(idx);
 
-    // 큰 메시만 단순화(전역 예산 감량비 적용 — 통합 NWD 는 effRatio 가 매우 작다).
+    // 큰 메시만 단순화(전역 예산 감량비 적용). 대용량 모드(통합 NWD)는 SVF 프래그먼트가 대개
+    // '삼각형 수프'(정점 비공유)라 일반 simplify(엣지 붕괴)로는 거의 안 줄어든다(→ 1.3GB 잔존).
+    // 그래서 위상 무시하고 공간적으로 뭉개는 simplifySloppy 로 예산까지 확실히 감량한다.
     if (decimate && idx32.length / 3 > effMinTris) {
       const target = Math.max(3, Math.floor((idx32.length * effRatio) / 3) * 3);
       try {
-        const [simpIdx] = MeshoptSimplifier.simplify(idx32, verts, 3, target, targetError, simplifyFlags);
+        let simpIdx;
+        if (globalRatio < 1 && typeof MeshoptSimplifier.simplifySloppy === 'function') {
+          [simpIdx] = MeshoptSimplifier.simplifySloppy(idx32, verts, 3, target, targetError);
+        } else {
+          [simpIdx] = MeshoptSimplifier.simplify(idx32, verts, 3, target, targetError, simplifyFlags);
+        }
         if (simpIdx && simpIdx.length >= 3 && simpIdx.length < idx32.length) {
           const c = compact(simpIdx, verts, normals);
           verts = c.verts; normals = c.normals; idx32 = c.idx;
