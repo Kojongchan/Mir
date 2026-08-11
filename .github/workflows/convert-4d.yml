@@ -165,7 +165,9 @@ jobs:
       - name: Convert SVF → GLB → upload
         if: github.event.inputs.dxf_test != '1'
         env:
-          NODE_OPTIONS: '--max-old-space-size=6144'
+          # 통합 NWD(2억+ 삼각형)까지 견디게 힙 상향(러너 RAM 16GB). 전역 삼각형 예산
+          # (mergeGlb MERGE_TRI_BUDGET, 기본 1천만)이 실제 메모리를 눌러주는 주 장치.
+          NODE_OPTIONS: '--max-old-space-size=12288'
           APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
           APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

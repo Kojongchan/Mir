@@ -110,6 +110,7 @@ export async function buildMergedGlb(imf, opts) {
   const ratio = Number(process.env.DECIMATE_RATIO || 0.2); // 큰 메시를 이 비율로 축소
   const minTris = Number(process.env.DECIMATE_MIN_TRIS || 1000); // 이 삼각형 수 초과만 단순화
   const targetError = Number(process.env.DECIMATE_ERROR || 1e3);
+  const triBudget = Number(process.env.MERGE_TRI_BUDGET || 10_000_000); // 전역 삼각형 예산
   if (decimate) await MeshoptSimplifier.ready;
 
   const nodeCount = imf.getNodeCount();
@@ -326,6 +327,26 @@ export async function buildMergedGlb(imf, opts) {
   };
 
   // 진단: SVF 가 실제로 무엇을 담고 있는지 파악(지형 TIN 누락 여부 확정용).
+  // 1패스: 전체 메시 삼각형 수를 세어 '전역 삼각형 예산'에 맞춘 균등 감량비를 정한다. 통합
+  // NWD(2억+ 삼각형)는 그대로 조립하면 메모리 초과로 죽으므로(exit143), 예산(기본 1천만)에
+  // 맞게 전 프래그먼트를 같은 비율로 줄인다. 지표면 형상(고저)은 유지되고 로드 가능해진다.
+  // 예산 이하 모델은 globalRatio=1 → 기존 동작(재질 원본) 그대로.
+  let totalMeshTris = 0;
+  if (decimate) {
+    for (let i = 0; i < nodeCount; i++) {
+      const node = imf.getNode(i);
+      if (node.kind !== NODE_OBJECT) continue;
+      const g = imf.getGeometry(node.geometry);
+      if (!g || g.kind !== GEOM_MESH) continue;
+      const gi = g.getIndices?.();
+      if (gi && gi.length) totalMeshTris += gi.length / 3;
+    }
+  }
+  const globalRatio = decimate && totalMeshTris > triBudget ? triBudget / totalMeshTris : 1;
+  const effRatio = Math.min(ratio, globalRatio);
+  const effMinTris = globalRatio < 1 ? Math.max(50, Math.floor(minTris * globalRatio)) : minTris;
+  log(`[merge] 총메시삼각형 ${Math.round(totalMeshTris).toLocaleString()} · 예산 ${triBudget.toLocaleString()} · 전역감량비 ${globalRatio.toFixed(4)} → 적용비 ${effRatio.toFixed(4)} · minTris ${effMinTris}`);
+
   const diag = { objNodes: 0, groupNodes: 0, otherNodes: 0, noGeom: 0, kMesh: 0, kLines: 0, kPoints: 0, kEmpty: 0, kOther: 0, emptyMesh: 0 };
   let processed = 0, decimated = 0, fragCount = 0;
   for (let i = 0; i < nodeCount; i++) {
@@ -353,9 +374,9 @@ export async function buildMergedGlb(imf, opts) {
 
     let idx32 = idx instanceof Uint32Array ? idx : Uint32Array.from(idx);
 
-    // 큰 메시만 단순화.
-    if (decimate && idx32.length / 3 > minTris) {
-      const target = Math.max(3, Math.floor((idx32.length * ratio) / 3) * 3);
+    // 큰 메시만 단순화(전역 예산 감량비 적용 — 통합 NWD 는 effRatio 가 매우 작다).
+    if (decimate && idx32.length / 3 > effMinTris) {
+      const target = Math.max(3, Math.floor((idx32.length * effRatio) / 3) * 3);
       try {
         const [simpIdx] = MeshoptSimplifier.simplify(idx32, verts, 3, target, targetError, ['LockBorder']);
         if (simpIdx && simpIdx.length >= 3 && simpIdx.length < idx32.length) {
