@@ -86,6 +86,35 @@ function weld(verts, idx, normals, q = 1000) {
   }
   return { verts: nv, idx: nidx, normals: nn };
 }
+// weldGroup: 병합된 그룹(pos/nrm/dbid/idx) 전체에서 '위치+dbid 동일' 정점을 접는다. subsample
+// 로 흩어진 중복 정점(삼각형당 ~3개, 공유 없음)을 공유 정점으로 되돌려 정점 수를 급감시킨다
+// (버퍼↓ → Draco 압축 성공 → 로드 가능). dbid 를 키에 포함해 객체 경계의 픽킹은 보존.
+function weldGroup(pos, nrm, dbid, idx, q = 1000) {
+  const nv = pos.length / 3;
+  const map = new Map();
+  const remap = new Uint32Array(nv);
+  const px = [], py = [], pz = [], nx = [], ny = [], nz = [], db = [];
+  let n = 0;
+  for (let v = 0; v < nv; v++) {
+    const key = `${Math.round(pos[v * 3] * q)}_${Math.round(pos[v * 3 + 1] * q)}_${Math.round(pos[v * 3 + 2] * q)}_${dbid[v]}`;
+    let ni = map.get(key);
+    if (ni === undefined) {
+      ni = n++; map.set(key, ni);
+      px.push(pos[v * 3]); py.push(pos[v * 3 + 1]); pz.push(pos[v * 3 + 2]);
+      nx.push(nrm[v * 3]); ny.push(nrm[v * 3 + 1]); nz.push(nrm[v * 3 + 2]);
+      db.push(dbid[v]);
+    }
+    remap[v] = ni;
+  }
+  const nidx = new Uint32Array(idx.length);
+  for (let k = 0; k < idx.length; k++) nidx[k] = remap[idx[k]];
+  const P = new Float32Array(n * 3), N = new Float32Array(n * 3), D = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    P[i * 3] = px[i]; P[i * 3 + 1] = py[i]; P[i * 3 + 2] = pz[i];
+    N[i * 3] = nx[i]; N[i * 3 + 1] = ny[i]; N[i * 3 + 2] = nz[i]; D[i] = db[i];
+  }
+  return { pos: P, nrm: N, dbid: D, idx: nidx, nv: n };
+}
 // subsample: 목표 삼각형 수까지 균등 간격으로 삼각형만 남긴다(항상 예산 보장 — simplify 가
 // 목표에 못 미쳐도 여기서 강제해 OOM·4GB 초과를 원천 차단). 미사용 정점은 compact 가 정리.
 function subsampleTris(idx, targetTris) {
@@ -576,25 +605,32 @@ export async function buildMergedGlb(imf, opts) {
       g.posCh.length = 0; g.nrmCh.length = 0; g.dbCh.length = 0; g.idxCh.length = 0;
       continue;
     }
-    const pos = concatF(g.posCh, g.vtx * 3); g.posCh.length = 0;
-    const nrm = concatF(g.nrmCh, g.vtx * 3); g.nrmCh.length = 0;
-    const dbid = concatF(g.dbCh, g.vtx); g.dbCh.length = 0;
-    const idxA = concatU(g.idxCh, g.idxN); g.idxCh.length = 0;
-    totalV += g.vtx;
+    let pos = concatF(g.posCh, g.vtx * 3); g.posCh.length = 0;
+    let nrm = concatF(g.nrmCh, g.vtx * 3); g.nrmCh.length = 0;
+    let dbid = concatF(g.dbCh, g.vtx); g.dbCh.length = 0;
+    let idxA = concatU(g.idxCh, g.idxN); g.idxCh.length = 0;
+    let vtxN = g.vtx;
+    // 대용량 모드: 그룹 전체를 weld(위치+dbid 동일 정점 병합) — subsample 로 흩어진 중복 정점을
+    // 접어 정점 급감(예 27M→수M). 버퍼↓ → Draco 압축 성공 → 로드 가능.
+    if (globalRatio < 1) {
+      const w = weldGroup(pos, nrm, dbid, idxA);
+      pos = w.pos; nrm = w.nrm; dbid = w.dbid; idxA = w.idx; vtxN = w.nv;
+    }
+    totalV += vtxN;
 
     // #4: DWG '전역폭 폴리선'은 SVF 가 Z 로 살짝 압출(높이 ~0.3m)해 솔리드 상자로 만든다.
     // 원본은 평면 폴리선(폭만 있음)이므로, Z 스팬이 작은 DWG 메시는 한 평면으로 눕혀
     // '평평한 폭선(리본)'으로 만든다(3D 상자 형상 제거). 진짜 3D 솔리드(Z 큰)는 유지.
     if (isDwg && (g.max[2] - g.min[2]) < 1.0) {
       const zf = (g.min[2] + g.max[2]) / 2;
-      for (let v = 0; v < g.vtx; v++) { pos[v * 3 + 2] = zf; nrm[v * 3] = 0; nrm[v * 3 + 1] = 0; nrm[v * 3 + 2] = 1; }
+      for (let v = 0; v < vtxN; v++) { pos[v * 3 + 2] = zf; nrm[v * 3] = 0; nrm[v * 3 + 1] = 0; nrm[v * 3 + 2] = 1; }
       g.min[2] = zf; g.max[2] = zf;
     }
 
     const posView = addView(pos, 34962);
-    const posAcc = accessors.push({ bufferView: posView, componentType: 5126, count: g.vtx, type: 'VEC3', min: g.min, max: g.max }) - 1;
-    const nrmAcc = accessors.push({ bufferView: addView(nrm, 34962), componentType: 5126, count: g.vtx, type: 'VEC3' }) - 1;
-    const dbAcc = accessors.push({ bufferView: addView(dbid, 34962), componentType: 5126, count: g.vtx, type: 'SCALAR' }) - 1;
+    const posAcc = accessors.push({ bufferView: posView, componentType: 5126, count: vtxN, type: 'VEC3', min: g.min, max: g.max }) - 1;
+    const nrmAcc = accessors.push({ bufferView: addView(nrm, 34962), componentType: 5126, count: vtxN, type: 'VEC3' }) - 1;
+    const dbAcc = accessors.push({ bufferView: addView(dbid, 34962), componentType: 5126, count: vtxN, type: 'SCALAR' }) - 1;
     const idxAcc = accessors.push({ bufferView: addView(idxA, 34963), componentType: 5125, count: idxA.length, type: 'SCALAR' }) - 1;
     // 솔리드가 순수 검정(CAD '색상7 자동'·ByLayer 미해결이 SVF 에서 흔히 검정으로 옴)이면
     // 조명을 받아도 검정이라 코리더 등이 형체 없는 검은 덩어리로 보인다 → 음영이 드러나는
