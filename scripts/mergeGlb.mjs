@@ -59,6 +59,48 @@ function compact(indices, verts, normals) {
   return { idx: newIdx, verts: pos, normals: nrm, nv: n };
 }
 
+// weld: 좌표 양자화(기본 1mm)로 coincident 정점을 병합해 '삼각형 수프'(정점 비공유)를 공유
+// 토폴로지 메시로 만든다. SVF 프래그먼트는 수프라 이걸 안 하면 simplify 가 거의 안 먹고, 정점도
+// 3배로 부풀어(버퍼 폭증) 있다. 병합만으로도 정점·버퍼가 크게 준다.
+function weld(verts, idx, normals, q = 1000) {
+  const map = new Map();
+  const remap = new Uint32Array(verts.length / 3);
+  const ux = [], uy = [], uz = [], nx = [], ny = [], nz = [];
+  let n = 0;
+  for (let v = 0; v < verts.length / 3; v++) {
+    const key = `${Math.round(verts[v * 3] * q)}_${Math.round(verts[v * 3 + 1] * q)}_${Math.round(verts[v * 3 + 2] * q)}`;
+    let ni = map.get(key);
+    if (ni === undefined) {
+      ni = n++; map.set(key, ni);
+      ux.push(verts[v * 3]); uy.push(verts[v * 3 + 1]); uz.push(verts[v * 3 + 2]);
+      if (normals) { nx.push(normals[v * 3]); ny.push(normals[v * 3 + 1]); nz.push(normals[v * 3 + 2]); }
+    }
+    remap[v] = ni;
+  }
+  const nidx = new Uint32Array(idx.length);
+  for (let k = 0; k < idx.length; k++) nidx[k] = remap[idx[k]];
+  const nv = new Float32Array(n * 3), nn = normals ? new Float32Array(n * 3) : null;
+  for (let i = 0; i < n; i++) {
+    nv[i * 3] = ux[i]; nv[i * 3 + 1] = uy[i]; nv[i * 3 + 2] = uz[i];
+    if (nn) { nn[i * 3] = nx[i]; nn[i * 3 + 1] = ny[i]; nn[i * 3 + 2] = nz[i]; }
+  }
+  return { verts: nv, idx: nidx, normals: nn };
+}
+// subsample: 목표 삼각형 수까지 균등 간격으로 삼각형만 남긴다(항상 예산 보장 — simplify 가
+// 목표에 못 미쳐도 여기서 강제해 OOM·4GB 초과를 원천 차단). 미사용 정점은 compact 가 정리.
+function subsampleTris(idx, targetTris) {
+  const tris = idx.length / 3;
+  if (tris <= targetTris || targetTris < 1) return idx;
+  const step = tris / targetTris;
+  const out = new Uint32Array(targetTris * 3);
+  let o = 0;
+  for (let t = 0; t < targetTris; t++) {
+    const s = Math.floor(t * step) * 3;
+    out[o++] = idx[s]; out[o++] = idx[s + 1]; out[o++] = idx[s + 2];
+  }
+  return out;
+}
+
 // 프래그먼트의 대표 정점색(0~1 RGBA). 프래그먼트는 대개 단색(엔티티 1개 = ACI 색 1개)
 // 이므로 평균으로 충분. 색이 없으면 null. channels=3(선/점) 또는 4(메시).
 function fragColor(raw, nv, channels) {
@@ -379,25 +421,25 @@ export async function buildMergedGlb(imf, opts) {
 
     let idx32 = idx instanceof Uint32Array ? idx : Uint32Array.from(idx);
 
-    // 큰 메시만 단순화(전역 예산 감량비 적용). 대용량 모드(통합 NWD)는 SVF 프래그먼트가 대개
-    // '삼각형 수프'(정점 비공유)라 일반 simplify(엣지 붕괴)로는 거의 안 줄어든다(→ 1.3GB 잔존).
-    // 그래서 위상 무시하고 공간적으로 뭉개는 simplifySloppy 로 예산까지 확실히 감량한다.
+    // 감량. 대용량 모드(통합 NWD, globalRatio<1)는 SVF 프래그먼트가 '삼각형 수프'라 그대로는
+    // simplify 가 안 먹고(→1.3GB) 정점도 3배로 부푼다. → (1) weld 로 공유 토폴로지+정점 축소,
+    // (2) simplify 로 품질 감량, (3) 그래도 목표 초과면 subsample 로 강제(예산 반드시 충족).
     if (decimate && idx32.length / 3 > effMinTris) {
       const target = Math.max(3, Math.floor((idx32.length * effRatio) / 3) * 3);
+      const targetTris = Math.max(1, Math.floor(target / 3));
       try {
-        let simpIdx;
-        if (globalRatio < 1 && typeof MeshoptSimplifier.simplifySloppy === 'function') {
-          [simpIdx] = MeshoptSimplifier.simplifySloppy(idx32, verts, 3, target, targetError);
-        } else {
-          [simpIdx] = MeshoptSimplifier.simplify(idx32, verts, 3, target, targetError, simplifyFlags);
+        if (globalRatio < 1) {
+          const w = weld(verts, idx32, normals);
+          verts = w.verts; normals = w.normals; idx32 = w.idx;
         }
-        if (simpIdx && simpIdx.length >= 3 && simpIdx.length < idx32.length) {
-          const c = compact(simpIdx, verts, normals);
-          verts = c.verts; normals = c.normals; idx32 = c.idx;
-          decimated++;
-        }
+        const [simpIdx] = MeshoptSimplifier.simplify(idx32, verts, 3, target, targetError, simplifyFlags);
+        if (simpIdx && simpIdx.length >= 3 && simpIdx.length < idx32.length) { idx32 = simpIdx; decimated++; }
+        // 예산 보장: simplify 가 목표(수프 등)에 못 미치면 삼각형 서브샘플로 강제(OOM/4GB 차단).
+        if (globalRatio < 1 && idx32.length / 3 > targetTris * 1.2) { idx32 = subsampleTris(idx32, targetTris); decimated++; }
+        const c = compact(idx32, verts, normals); // 미사용 정점 제거(버퍼 축소)
+        verts = c.verts; normals = c.normals; idx32 = c.idx;
       } catch {
-        /* 단순화 실패 시 원본 사용 */
+        /* 실패 시 원본 사용 */
       }
     }
 
