@@ -152,7 +152,7 @@ export async function buildMergedGlb(imf, opts) {
   const ratio = Number(process.env.DECIMATE_RATIO || 0.2); // 큰 메시를 이 비율로 축소
   const minTris = Number(process.env.DECIMATE_MIN_TRIS || 1000); // 이 삼각형 수 초과만 단순화
   const targetError = Number(process.env.DECIMATE_ERROR || 1e3);
-  const triBudget = Number(process.env.MERGE_TRI_BUDGET || 8_000_000); // 전역 삼각형 예산
+  const triBudget = Number(process.env.MERGE_TRI_BUDGET || 12_000_000); // 전역 삼각형 예산
   if (decimate) await MeshoptSimplifier.ready;
 
   const nodeCount = imf.getNodeCount();
@@ -387,11 +387,10 @@ export async function buildMergedGlb(imf, opts) {
   const globalRatio = decimate && totalMeshTris > triBudget ? triBudget / totalMeshTris : 1;
   const effRatio = Math.min(ratio, globalRatio);
   const effMinTris = globalRatio < 1 ? Math.max(50, Math.floor(minTris * globalRatio)) : minTris;
-  // 대용량 모드(통합 NWD 등 49만 프래그먼트)는 프래그먼트가 대개 수백 삼각형이라 'LockBorder'
-  // 로 경계를 잠그면 거의 안 줄어든다(정점 대부분이 경계). 그래서 경계 잠금을 풀어 예산까지
-  // 실제로 감량한다(프래그먼트 이음매에 미세 틈이 생길 수 있으나 로드 가능성이 우선). 일반
-  // 모델(globalRatio=1)은 품질 위해 LockBorder 유지.
-  const simplifyFlags = globalRatio < 1 ? [] : ['LockBorder'];
+  // 경계 잠금은 '항상' 유지한다. 풀면(대용량 모드) simplify 가 경계 정점을 원거리로 붕괴시켜
+  // 모델 전체를 가로지르는 거대 shard(뾰족 삼각형)가 생겨 모델이 깨진다. 대용량 감량은 대신
+  // weld(정점 병합)로 토폴로지를 복원해 simplify 가 먹게 하고, 부족분은 subsample 로 채운다.
+  const simplifyFlags = ['LockBorder'];
   log(`[merge] 총메시삼각형 ${Math.round(totalMeshTris).toLocaleString()} · 예산 ${triBudget.toLocaleString()} · 전역감량비 ${globalRatio.toFixed(4)} → 적용비 ${effRatio.toFixed(4)} · minTris ${effMinTris} · 경계잠금 ${simplifyFlags.length > 0}`);
 
   const diag = { objNodes: 0, groupNodes: 0, otherNodes: 0, noGeom: 0, kMesh: 0, kLines: 0, kPoints: 0, kEmpty: 0, kOther: 0, emptyMesh: 0 };
