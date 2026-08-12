@@ -597,7 +597,7 @@ export async function buildMergedGlb(imf, opts) {
   // 메모리 상한이 한 청크(~150MB)로 고정돼 OOM 이 원천 불가. 각 프래그먼트=자기 색·dbid 를 가진
   // 독립 메시(감량 없음, 원본 정밀도). 4억 삼각형도 조각조각 흘려보내 처리. ===
   const xktStream = !!opts.xktStreamDir;
-  const CHUNK_CAP = Number(process.env.XKT_CHUNK_TRIS || 3_000_000);
+  const CHUNK_CAP = Number(process.env.XKT_CHUNK_TRIS || 5_000_000);
   const fragBaseColor = (col, matId) => {
     if (col) return [col[0], col[1], col[2], col[3] ?? 1];
     const mat = imf.getMaterial(matId);
