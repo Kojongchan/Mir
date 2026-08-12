@@ -41,12 +41,34 @@
      정적이라 dbid 병합 무해(4D 통제는 구조물). 목표: 정점 ~4-5M → Draco 디코드 OK → 로드 성공.
 - 최종 GLB 버퍼는 그룹 simplify 후라 ~300MB(4GB uint32 한계 무관).
 
-### 검증(다음 세션 즉시)
-- **앱에서 통합모델 열고 "재변환"**(force). Actions 로그 확인: `그룹감량: … 그룹비 …` + `GLB 완료 … 정점
-  <600만` + `압축 완료`. 로드 성공·지표면 연속면(홀 없음)·구조물 형상 눈확인.
-- OOM(exit143) 시: per-fragment 누적이 큰 것 → `MERGE_LOAD_BUDGET` 낮추거나 per-fragment 봉합 강화.
-- 품질 미흡(구조물 거침) 시: `MERGE_LOAD_BUDGET` 상향(정점 여유 내에서).
-- ⚠ 현재 R2 캐시엔 222MB(로드 Aborted) model.glb 有 — 재변환으로 교체됨.
+### 2차 결과(run 31560178754 후 재변환) — 로드 성공 but **완전 shard**
+- weldPos→group simplify: **로드는 성공**(엔티티 106, AABB span 7615×251×6600, 정점 목표까지 감량됨).
+- 그러나 **화면 전체가 산산조각(shard)** — 긴 삼각형 슬리버 난무(사용자 스샷). meshopt simplify 가
+  그룹 단위(연결면)에서도 이 데이터를 부순다는 것이 **재확인**됨.
+
+### ⛔⛔ 확정된 막다른 길 (반복 금지 — 다시 시도하지 말 것)
+| 방법 | 결과 | 왜 안 되나 |
+|---|---|---|
+| 통짜 단일 GLB 무감량 | 1GB·Draco Abort·로드 불가 | 412M 삼각형(정점 34M) 너무 큼 |
+| per-fragment simplify(LockBorder off) | **shard** | 경계정점 원거리 붕괴(STATUS 08-11) |
+| per-fragment weld+simplify(LockBorder)+subsample | Draco OK(222MB) but 정점 23.8M·로드 Abort | 패치경계 잠겨 simplify 못 줄임→subsample→정점공유 파괴·홀 |
+| **group weldPos+simplify(LockBorder)** | **로드 OK but 완전 shard** | **meshopt simplify 가 이 SVF 테셀레이션을 부순다(연결면에서도)** |
+| subsample 단독 | shard 없음 but 정점폭발→로드 불가 | 흩어진 삼각형=정점 비공유 |
+
+**결론: meshopt simplify 계열은 이 통합모델에 부적합(어느 레벨이든 shard). subsample 은 정점폭발.
+단일 GLB 감량으로는 "로드 가능 + 깨끗" 을 동시 달성 못 함.**
+
+### 🧭 다음 방향(사용자 결정 대기 — 헛짓 방지 위해 코드 손대기 전 합의)
+근본원인 재규명: 우리는 SVF **프래그먼트 인스턴싱을 통짜로 구워(explode)** 412M 삼각형을 만든다
+(`mergeGlb` 가 각 노드를 월드좌표로 베이크). 그래서 감량이 강제되고, 감량이 다 실패.
+- **방향①: 지표면/구조물 분리** — 지표면(열린 TIN, 소수 대형)은 **독립 표면으로만** 감량(다른 표면과
+  섞지 않으면 simplify 가 깨끗할 가능성 — 이번 shard 는 weldPos 가 여러 표면을 엉키게 한 탓 의심),
+  구조물은 인스턴싱 보존해 원형 유지.
+- **방향②: XKT(convert2xkt) 로 전환** — SVF 인스턴싱을 네이티브로 보존(중복 지오메트리 재사용) →
+  통짜 폭발 없이 원본 정밀도로 작게. T1(초기 계획)에서 CI 다운로드 타임아웃으로 접었으나, convert4d
+  가 이미 다운로드를 해결했으므로 그 SVF 를 convert2xkt 에 먹이면 됨. 뷰어는 XKTLoaderPlugin.
+- **방향③: 타일링/스트리밍** — 공간 분할 LOD(ACC 방식). 정공법이나 큰 작업.
+- ⚠ 현재 R2 캐시 model.glb = shard 버전. 방향 확정 후 교체.
 
 ---
 ## 🧭 T-DXF — 자체 DWG→DXF→GLB 파이프라인 고도화 (2026-07-31)
