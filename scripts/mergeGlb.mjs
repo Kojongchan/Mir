@@ -11,7 +11,36 @@
 // 런타임(자체 뷰어)은 _DBID 로 객체별 시공/철거/미시공을 셰이더로 표현.
 // =====================================================================
 import fs from 'node:fs';
+import path from 'node:path';
 import { MeshoptSimplifier } from 'meshoptimizer';
+
+// finalizeGlb: 조립된 glTF 배열(nodes/meshes/materials/accessors/bufferViews/pieces)을 단일
+// GLB 파일로 쓴다. 그룹별 GLB 분할(XKT 파이프라인)과 단일 GLB 양쪽에서 재사용.
+function finalizeGlb(outPath, A) {
+  const gltf = {
+    asset: { version: '2.0', generator: 'mir-merge-glb' },
+    scene: 0, scenes: [{ nodes: A.nodes.map((_, i) => i) }],
+    nodes: A.nodes, meshes: A.meshes, materials: A.materials,
+    accessors: A.accessors, bufferViews: A.bufferViews, buffers: [{ byteLength: A.byteOffset }],
+  };
+  const jsonBuf = Buffer.from(JSON.stringify(gltf), 'utf8');
+  const jsonPad = (4 - (jsonBuf.length % 4)) % 4;
+  const jsonChunkLen = jsonBuf.length + jsonPad;
+  const total = 12 + 8 + jsonChunkLen + 8 + A.byteOffset;
+  const fd = fs.openSync(outPath, 'w');
+  const head = Buffer.alloc(20);
+  head.write('glTF', 0); head.writeUInt32LE(2, 4); head.writeUInt32LE(total, 8);
+  head.writeUInt32LE(jsonChunkLen, 12); head.writeUInt32LE(0x4e4f534a, 16);
+  fs.writeSync(fd, head);
+  fs.writeSync(fd, jsonBuf);
+  if (jsonPad) fs.writeSync(fd, Buffer.alloc(jsonPad, 0x20));
+  const binHead = Buffer.alloc(8);
+  binHead.writeUInt32LE(A.byteOffset, 0); binHead.writeUInt32LE(0x004e4942, 4);
+  fs.writeSync(fd, binHead);
+  for (const piece of A.pieces) fs.writeSync(fd, piece);
+  fs.closeSync(fd);
+  return total;
+}
 
 const NODE_OBJECT = 1; // IMF.NodeKind.Object
 const GEOM_MESH = 0; // IMF.GeometryKind.Mesh
@@ -594,6 +623,17 @@ export async function buildMergedGlb(imf, opts) {
     // shard 가 수학적으로 불가능하고 홀도 없다(연결면 유지). 여기(프래그먼트)선 자기 크기 비례
     // 셀로 1차 감량(구조 형상 보존 + 메모리 보호), 최종 예산 감량은 그룹 단위(clusterVND)에서.
     // 예산 이하 소형 모델(globalRatio=1)은 기존 meshopt 경로 그대로(shard 무관, 잘 동작).
+    // XKT 경로(감량 없음): 프래그먼트 '삼각형 수프'를 미세 격자(기본 2cm)로 무손실 병합해
+    // 좌표 중복 정점·면적0 슬리버를 제거 → 누적 메모리를 묶는다(7km 부지에서 2cm 이동은
+    // 시각 차이 0 = 감량 아님, 형상 보존). 대용량 원본을 통째로 안 쌓게 하는 게 목적.
+    if (opts.perGroupDir && idx32.length >= 3) {
+      const q = Number(process.env.XKT_WELD_Q || 50); // 1/0.02m = 2cm 격자점
+      try {
+        const w = weld(verts, idx32, normals, q);
+        const c = compact(dropDegen(w.idx), w.verts, w.normals);
+        verts = c.verts; normals = c.normals; idx32 = c.idx;
+      } catch { /* 실패 시 원본 유지 */ }
+    }
     if (decimate && idx32.length / 3 > effMinTris) {
       const target = Math.max(3, Math.floor((idx32.length * effRatio) / 3) * 3);
       const targetTris = Math.max(1, Math.floor(target / 3));
@@ -751,6 +791,56 @@ export async function buildMergedGlb(imf, opts) {
   if (globalRatio < 1) {
     log(`[merge] 그룹감량(클러스터): 누적정점 ${Math.round(totalVtx).toLocaleString()} · 정점예산 ${vtxBudget.toLocaleString()} · 그룹비 ${groupVtxRatio.toFixed(4)}`);
   }
+  // === XKT 파이프라인: 재질그룹별 GLB 파일로 내보낸다(감량 없음·통짜 4GB 회피). convert4d 가
+  // 각 GLB → convert2xkt → XKT, 뷰어(XKTLoaderPlugin)가 여러 XKT 를 한 씬에 스트리밍 로드.
+  // 감량이 없으니 shard/과감량이 원천적으로 불가능. 대용량은 분할 XKT 로 감당. ===
+  if (opts.perGroupDir) {
+    fs.mkdirSync(opts.perGroupDir, { recursive: true });
+    const files = [];
+    let gi = 0, pgV = 0;
+    for (const g of groups.values()) {
+      if (g.vtx === 0) continue;
+      const rawColor = baseColorOf(g, [0.72, 0.74, 0.77, 1]);
+      if (isDwg && rawColor[0] > 0.95 && rawColor[1] > 0.95 && rawColor[2] > 0.95) {
+        g.posCh.length = 0; g.nrmCh.length = 0; g.dbCh.length = 0; g.idxCh.length = 0; continue;
+      }
+      const pos = concatF(g.posCh, g.vtx * 3); g.posCh.length = 0;
+      const nrm = concatF(g.nrmCh, g.vtx * 3); g.nrmCh.length = 0;
+      const dbid = concatF(g.dbCh, g.vtx); g.dbCh.length = 0;
+      const idxA = concatU(g.idxCh, g.idxN); g.idxCh.length = 0;
+      pgV += g.vtx;
+      const bv = [], acc = [], pieces = []; let bo = 0;
+      const addV = (typed, target) => {
+        const buf = Buffer.from(typed.buffer, typed.byteOffset, typed.byteLength);
+        bv.push({ buffer: 0, byteOffset: bo, byteLength: buf.length, target });
+        pieces.push(buf); bo += buf.length; return bv.length - 1;
+      };
+      const pA = acc.push({ bufferView: addV(pos, 34962), componentType: 5126, count: g.vtx, type: 'VEC3', min: g.min, max: g.max }) - 1;
+      const nA = acc.push({ bufferView: addV(nrm, 34962), componentType: 5126, count: g.vtx, type: 'VEC3' }) - 1;
+      const dA = acc.push({ bufferView: addV(dbid, 34962), componentType: 5126, count: g.vtx, type: 'SCALAR' }) - 1;
+      const iA = acc.push({ bufferView: addV(idxA, 34963), componentType: 5125, count: idxA.length, type: 'SCALAR' }) - 1;
+      const nearBlack = rawColor[0] < 0.06 && rawColor[1] < 0.06 && rawColor[2] < 0.06;
+      const baseColor = nearBlack ? [0.55, 0.55, 0.55, rawColor[3]] : rawColor;
+      const m0 = imf.getMaterial(g.matId);
+      const materials = [{
+        pbrMetallicRoughness: {
+          baseColorFactor: baseColor,
+          metallicFactor: g.color ? 0 : Math.min(1, Math.max(0, m0?.metallic ?? 0)),
+          roughnessFactor: g.color ? 0.9 : Math.min(1, Math.max(0, m0?.roughness ?? 0.9)),
+        },
+        doubleSided: true,
+        ...(baseColor[3] < 1 ? { alphaMode: 'BLEND' } : {}),
+      }];
+      const meshes = [{ primitives: [{ mode: 4, attributes: { POSITION: pA, NORMAL: nA, _DBID: dA }, indices: iA, material: 0 }] }];
+      const nodes = [{ mesh: 0 }];
+      const file = path.join(opts.perGroupDir, `g${gi}.glb`);
+      finalizeGlb(file, { nodes, meshes, materials, accessors: acc, bufferViews: bv, pieces, byteOffset: bo });
+      files.push(file); gi++;
+    }
+    log(`[merge] 그룹별 GLB ${files.length}개 · 정점 ${pgV.toLocaleString()} (감량 없음 · XKT용)`);
+    return { perGroup: true, files, groups: files.length, vertices: pgV, decimated: 0, focus };
+  }
+
   let skippedWhite = 0;
   for (const g of groups.values()) {
     if (g.vtx === 0) continue;

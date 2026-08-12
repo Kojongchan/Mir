@@ -160,7 +160,7 @@ jobs:
       # ===== 기존 SVF→GLB 경로(dxf_test 아닐 때만) =====
       - name: Install converter deps
         if: github.event.inputs.dxf_test != '1'
-        run: npm install --no-save svf-utils@8 @supabase/supabase-js@2 @aps_sdk/authentication @aps_sdk/model-derivative adm-zip meshoptimizer gltf-pipeline@4 @aws-sdk/client-s3@3
+        run: npm install --no-save svf-utils@8 @supabase/supabase-js@2 @aps_sdk/authentication @aps_sdk/model-derivative adm-zip meshoptimizer gltf-pipeline@4 @aws-sdk/client-s3@3 @xeokit/xeokit-convert@1
 
       - name: Convert SVF → GLB → upload
         if: github.event.inputs.dxf_test != '1'

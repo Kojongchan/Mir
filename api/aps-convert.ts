@@ -103,13 +103,41 @@ async function r2TotalSize(): Promise<number> {
 
 type Focus = { center: [number, number, number]; half: [number, number, number] };
 type CacheState =
+  | { ready: true; xkt: true; urls: string[]; focus?: Focus }
   | { ready: true; url: string; focus?: Focus }
   | { failed: true; error: string }
   | { ready: false };
 
-/** R2 캐시 상태: model.glb 있으면 ready(presigned + focus), error.json 있으면 failed, 없으면 처리중. */
+async function readFocus(dir: string): Promise<Focus | undefined> {
+  const focusText = await r2GetText(`${dir}/focus.json`);
+  if (!focusText) return undefined;
+  try {
+    return JSON.parse(focusText) as Focus;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * R2 캐시 상태 조회. 우선순위:
+ *  1) xkt/manifest.json → XKT 파이프라인(분할 XKT). 각 파일 presigned URL 배열 반환.
+ *  2) model.glb → 구 단일 GLB 경로(DWG 등).
+ *  3) error.json → 실패. 없으면 처리중.
+ */
 async function cacheState(urn: string): Promise<CacheState> {
   const dir = glbKey(urn);
+  const manifestText = await r2GetText(`${dir}/xkt/manifest.json`);
+  if (manifestText) {
+    try {
+      const { xktFiles } = JSON.parse(manifestText) as { xktFiles: string[] };
+      if (Array.isArray(xktFiles) && xktFiles.length > 0) {
+        const urls = await Promise.all(xktFiles.map((f) => r2PresignGet(`${dir}/xkt/${f}`)));
+        return { ready: true, xkt: true, urls, focus: await readFocus(dir) };
+      }
+    } catch {
+      /* 매니페스트 파손 — GLB/실패 경로로 폴백 */
+    }
+  }
   if (await r2Head(`${dir}/model.glb`)) {
     const url = await r2PresignGet(`${dir}/model.glb`);
     let focus: Focus | undefined;
@@ -139,6 +167,23 @@ async function cacheState(urn: string): Promise<CacheState> {
 async function clearCache(urn: string): Promise<void> {
   const dir = glbKey(urn);
   await Promise.all([r2Delete(`${dir}/model.glb`), r2Delete(`${dir}/error.json`)]);
+  // XKT 분할 파일 전체 삭제(list → delete) — 재변환 시 이전 잔재(파일 수 변동)가 남지 않게.
+  const client = r2();
+  let token = '';
+  for (let i = 0; i < 50; i++) {
+    const u =
+      `${R2_ENDPOINT}/${R2_BUCKET}?list-type=2&prefix=${encodeURIComponent(`${dir}/xkt/`)}&max-keys=1000` +
+      (token ? `&continuation-token=${encodeURIComponent(token)}` : '');
+    const res = await client.fetch(u);
+    if (!res.ok) break;
+    const xml = await res.text();
+    const keys = [...xml.matchAll(/<Key>([^<]+)<\/Key>/g)].map((m) => m[1]);
+    await Promise.all(keys.map((k) => r2Delete(k)));
+    if (!/<IsTruncated>true<\/IsTruncated>/.test(xml)) break;
+    const nt = xml.match(/<NextContinuationToken>([^<]+)<\/NextContinuationToken>/);
+    if (!nt) break;
+    token = nt[1];
+  }
 }
 
 // DWG 는 솔리드 + 선/점을 모두 보여줘야 하므로 선 유지('1'), 그 외(IFC/RVT/NWD)는
@@ -213,7 +258,7 @@ export default async function handler(req: Request): Promise<Response> {
     await clearCache(urn);
   } else {
     const st = await cacheState(urn);
-    if ('ready' in st && st.ready) return json({ ready: true, url: st.url, focus: st.focus });
+    if ('ready' in st && st.ready) return json(st);
     if ('failed' in st) await clearCache(urn);
   }
 

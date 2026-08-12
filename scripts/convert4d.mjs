@@ -336,6 +336,50 @@ async function main() {
   const scene = await reader.read({ skipPropertyDb: true, log: () => process.stdout.write('.') });
   process.stdout.write('\n');
 
+  // === XKT 파이프라인(비-DWG 메시 모델): 감량 없이 재질그룹별 GLB → convert2xkt → 분할 XKT →
+  // 매니페스트. 뷰어(XKTLoaderPlugin)가 여러 XKT 를 한 씬에 스트리밍 로드(xeokit-bim-viewer 방식).
+  // 통짜 GLB(4GB 한계)·감량(shard/과감량)을 모두 회피. DWG(선형)는 기존 GLB 경로 유지. ===
+  const useXkt = process.env.XKT !== '0' && process.env.INCLUDE_LINES !== '1';
+  if (useXkt) {
+    process.env.DECIMATE = '0'; // XKT 는 원본 정밀도 보존(감량 없음)
+    fs.mkdirSync('out/xkt', { recursive: true });
+    console.log('[convert4d] 그룹별 GLB 생성 중(감량 없음)…');
+    const res = await buildMergedGlb(scene, { perGroupDir: 'out/xkt', log: console.log });
+    if (!res.files || res.files.length === 0) throw new Error('그룹 GLB 0개 — 변환할 지오메트리 없음');
+    const mod = await import('@xeokit/xeokit-convert');
+    const convert2xkt = mod.convert2xkt || mod.default?.convert2xkt || mod.default;
+    if (typeof convert2xkt !== 'function') throw new Error('convert2xkt 로드 실패(@xeokit/xeokit-convert)');
+    console.log(`[convert4d] GLB ${res.files.length}개 → XKT 변환 (정점 ${res.vertices.toLocaleString()})…`);
+    const xktFiles = [];
+    for (let i = 0; i < res.files.length; i++) {
+      const glb = res.files[i];
+      const xkt = glb.replace(/\.glb$/, '.xkt');
+      try {
+        await convert2xkt({ source: glb, output: xkt, log: () => {} });
+        xktFiles.push(path.basename(xkt));
+      } catch (e) {
+        console.warn(`[convert4d]   XKT 변환 실패 ${path.basename(glb)}: ${e?.message || e} — 건너뜀`);
+      }
+      fs.rmSync(glb, { force: true }); // GLB 즉시 삭제(디스크 절약)
+      if ((i + 1) % 10 === 0 || i + 1 === res.files.length) console.log(`[convert4d]   XKT ${i + 1}/${res.files.length}`);
+    }
+    if (xktFiles.length === 0) throw new Error('XKT 변환 결과 0개');
+    const manifest = { xktFiles };
+    // R2 업로드: 각 XKT + 매니페스트(+focus). 캐시 키: <keyBase>/xkt/
+    for (const f of xktFiles) {
+      await r2Put(`${keyBase}/xkt/${f}`, fs.readFileSync(path.join('out/xkt', f)), 'application/octet-stream');
+    }
+    await r2Put(`${keyBase}/xkt/manifest.json`, Buffer.from(JSON.stringify(manifest)), 'application/json');
+    if (res.focus) await r2Put(`${keyBase}/focus.json`, Buffer.from(JSON.stringify(res.focus)), 'application/json');
+    else await r2Delete(`${keyBase}/focus.json`);
+    // 구 GLB 캐시 제거(있으면) — 프런트가 XKT 매니페스트를 우선하도록.
+    await r2Delete(`${keyBase}/model.glb`);
+    await r2Delete(`${keyBase}/error.json`);
+    console.log(`[convert4d] XKT 업로드 완료: ${xktFiles.length}개 (${R2_BUCKET}/${keyBase}/xkt/) (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+    console.log('[convert4d] DONE');
+    return;
+  }
+
   // 재질별 병합 + 정점당 dbId → 단일 GLB(거대 모델의 glTF JSON 한계 회피).
   fs.mkdirSync('out', { recursive: true });
   const outPath = path.join('out', 'model.glb');

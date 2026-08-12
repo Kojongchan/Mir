@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Viewer, GLTFLoaderPlugin, NavCubePlugin } from '@xeokit/xeokit-sdk';
+import { Viewer, GLTFLoaderPlugin, XKTLoaderPlugin, NavCubePlugin } from '@xeokit/xeokit-sdk';
 import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
 import { useProjectRole } from '../auth/useProjectRole';
 import { supabase } from '../lib/supabase';
@@ -102,6 +102,7 @@ export function ThreeDTest() {
   const navCubeRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
   const loaderRef = useRef<GLTFLoaderPlugin | null>(null);
+  const xktLoaderRef = useRef<XKTLoaderPlugin | null>(null);
   const pickedRef = useRef<{ id?: string | number; worldPos?: number[] } | null>(null);
   const highlightedRef = useRef<string | null>(null); // 현재 하이라이트된 엔티티 id
   const [status, setStatus] = useState('');
@@ -192,6 +193,9 @@ export function ThreeDTest() {
           .catch((e) => err(String(e))),
       getGLTF: (src: string, ok: (b: ArrayBuffer) => void, err: (e: string) => void) =>
         fetchBuf(src, ok, err),
+      // XKTLoaderPlugin 은 getXKT 로 .xkt 바이너리를 받는다(R2 presigned URL → fetch 그대로).
+      getXKT: (src: string, ok: (b: ArrayBuffer) => void, err: (e: string) => void) =>
+        fetchBuf(src, ok, err),
       getArrayBuffer: (src: string, binSrc: string, ok: (b: ArrayBuffer) => void, err: (e: string) => void) => {
         const u = /^(https?:|blob:|data:)/.test(binSrc) ? binSrc : new URL(binSrc, src).href;
         fetchBuf(u, ok, err);
@@ -200,6 +204,9 @@ export function ThreeDTest() {
     loaderRef.current = new GLTFLoaderPlugin(viewer, {
       dataSource,
     } as unknown as ConstructorParameters<typeof GLTFLoaderPlugin>[1]);
+    xktLoaderRef.current = new XKTLoaderPlugin(viewer, {
+      dataSource,
+    } as unknown as ConstructorParameters<typeof XKTLoaderPlugin>[1]);
 
     // 클릭 픽 → 엔티티 ID(+메타) → MIR_SMART DB 조인 지점. 표면 지점(worldPos)도 보관해
     // '선택 확대'·더블클릭 줌이 그 지점으로 당기게 한다(pickSurface:true).
@@ -350,7 +357,56 @@ export function ThreeDTest() {
     });
   }, []);
 
-  /** ACC 모델 선택 → (캐시/실패 조회 → 없으면 변환 dispatch → 폴링) → GLB 로드.
+  /**
+   * 분할 XKT(여러 개)를 한 씬에 스트리밍 로드(xeokit-bim-viewer 방식). 감량 없는 원본 정밀도.
+   * 각 파일은 재질그룹 1개 = 모델 하나. 전부 로드되면 focus/전체 AABB 로 flyTo.
+   */
+  const mountXkt = useCallback((urls: string[], label: string, focus?: Focus) => {
+    const viewer = viewerRef.current;
+    const loader = xktLoaderRef.current;
+    if (!viewer || !loader || urls.length === 0) return;
+    setPick(null);
+    highlightedRef.current = null;
+    for (const id of Object.keys(viewer.scene.models)) viewer.scene.models[id].destroy();
+    const total = urls.length;
+    let done = 0, failed = 0;
+    const finish = () => {
+      const box = focusToAabb(focus) ?? (viewer.scene.aabb as number[] | undefined);
+      if (box) flyToFramed(viewer, box);
+      setModelName(label);
+      setStatus('');
+      setBusy(false);
+      try {
+        const ids = Object.keys(viewer.scene.objects || {});
+        const a = (viewer.scene.aabb as number[]) || [0, 0, 0, 0, 0, 0];
+        const span = [a[3] - a[0], a[4] - a[1], a[5] - a[2]].map((x) => Math.round(x));
+        const cam = viewer.camera;
+        const r1 = (v: number[]) => v.map((x) => Math.round(x)).join(',');
+        setDbg(
+          `XKT ${total - failed}/${total} 로드 · 엔티티 ${ids.length}개 · 모델AABB span(${span.join(',')}) · ` +
+            `cam eye(${r1(cam.eye as number[])}) look(${r1(cam.look as number[])})`,
+        );
+      } catch {
+        setDbg('진단 수집 실패');
+      }
+    };
+    urls.forEach((src, i) => {
+      const model = loader.load({
+        id: `xkt${i}`,
+        src,
+        edges: false,
+        rotation: [-90, 0, 0], // SVF Z-up → xeokit Y-up (GLB 경로와 동일)
+      } as unknown as Parameters<typeof loader.load>[0]);
+      model.on('loaded', () => { done++; if (done + failed >= total) finish(); });
+      model.on('error', (e: unknown) => {
+        failed++;
+        if (failed === total) setStatus(`불러오기 실패: ${errMessage(e)}`);
+        if (done + failed >= total) finish();
+      });
+    });
+  }, []);
+
+  /** ACC 모델 선택 → (캐시/실패 조회 → 없으면 변환 dispatch → 폴링) → GLB/XKT 로드.
    *  force=true 면 캐시/실패 마커를 지우고 재변환(빈 캐시 갱신·재시도). */
   const openFromAcc = useCallback(
     async (f: PickedAccFile, force = false, ackOverage = false) => {
@@ -372,6 +428,8 @@ export function ThreeDTest() {
       type State = {
         ready?: boolean;
         url?: string;
+        xkt?: boolean;
+        urls?: string[];
         focus?: Focus;
         failed?: boolean;
         error?: string;
@@ -390,6 +448,12 @@ export function ThreeDTest() {
         }
       };
       const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
+      // XKT(분할) 우선, 없으면 단일 GLB(DWG 등).
+      const doMount = (s: State) => {
+        if (s.xkt && s.urls && s.urls.length) mountXkt(s.urls, f.name, s.focus);
+        else if (s.url) mountGlb(s.url, f.name, s.focus);
+      };
+      const isReady = (s: State) => !!s.ready && (!!s.url || !!(s.urls && s.urls.length));
 
       setBusy(true);
       setPick(null);
@@ -398,9 +462,9 @@ export function ThreeDTest() {
         // 1) 캐시/실패 조회(강제 재변환이면 건너뜀).
         if (!force) {
           const st = await getState();
-          if (st.ready && st.url) {
+          if (isReady(st)) {
             setStatus(`불러오는 중… ${f.name}`);
-            mountGlb(st.url, f.name, st.focus);
+            doMount(st);
             return;
           }
           if (st.failed) {
@@ -429,9 +493,9 @@ export function ThreeDTest() {
           setBusy(false);
           return;
         }
-        if (rj.ready && rj.url) {
+        if (isReady(rj)) {
           setStatus(`불러오는 중… ${f.name}`);
-          mountGlb(rj.url, f.name, rj.focus);
+          doMount(rj);
           return;
         }
         if (!res.ok) {
@@ -458,9 +522,9 @@ export function ThreeDTest() {
           } catch {
             st = { ready: false };
           }
-          if (st.ready && st.url) {
+          if (isReady(st)) {
             setStatus(`불러오는 중… ${f.name}`);
-            mountGlb(st.url, f.name, st.focus);
+            doMount(st);
             return;
           }
           if (st.failed) {
@@ -474,7 +538,7 @@ export function ThreeDTest() {
         setBusy(false);
       }
     },
-    [mountGlb],
+    [mountGlb, mountXkt],
   );
 
   /** 로컬 .glb 드롭/선택(이미 변환된 산출물 눈확인용). */

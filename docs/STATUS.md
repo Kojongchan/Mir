@@ -71,6 +71,27 @@
 - **shard 원천 차단**이 이 방법의 확정적 장점. 최악은 과감량 시 구조물이 '각지게' 보이는 것(shard 아님)
   → `MERGE_VTX_BUDGET`·`MERGE_FRAG_DIV` 로 조절.
 
+### 6차(구현·방향 전환) — 감량 폐기, xeokit-bim-viewer 식 **분할 XKT 스트리밍**
+- **감량 계열 전면 폐기 확정**. 로그 실측으로 근거 확보(run 31574636011): 원본 삼각형 4억1209만,
+  지형 TIN 단일그룹 정점 925만·삼각형 3580만, 인스턴싱 거의 없음(노드 490,148 ≈ 프래그 490,143).
+  내 clusterVND 가 예산 400만인데 **최종 정점 5.9만**으로 400배 과감량(격자셀 ≫ 삼각형 → 대량 퇴화)
+  → 찢어진 흰 종이의 정체. 즉 **통짜 GLB+감량은 이 모델에 원리적으로 부적합**.
+- 사용자 지시로 **xeokit-bim-viewer 방식** 채택: `소스 → 재질그룹별 GLB(감량 없음) → convert2xkt →
+  분할 XKT → XKTLoaderPlugin 이 여러 XKT 를 한 씬에 스트리밍`. 감량이 없으니 shard/과감량 원천 불가.
+- 구현:
+  - `mergeGlb.mjs`: `opts.perGroupDir` 모드 — 재질그룹별 GLB 파일로 내보냄(`finalizeGlb` 추출).
+    XKT 경로엔 무손실 2cm weld(수프·슬리버 제거로 메모리 보호, 형상 보존).
+  - `convert4d.mjs`: 비-DWG 는 XKT 경로(`DECIMATE=0` → perGroupDir → convert2xkt 로 각 GLB→XKT →
+    `manifest.json` + 각 xkt 를 R2 `<keyBase>/xkt/` 업로드). DWG(선형)는 기존 GLB 유지.
+  - `convert-4d.yml`: `@xeokit/xeokit-convert@1` 추가.
+  - `api/aps-convert.ts`: `xkt/manifest.json` 우선 감지 → 각 xkt presigned URL 배열 반환. clearCache 가
+    xkt prefix 전체 삭제.
+  - `ThreeDTest.tsx`: `XKTLoaderPlugin` 추가(dataSource.getXKT), `mountXkt` 로 여러 XKT 로드(rotation
+    -90 동일), 캐시 상태가 xkt 면 mountXkt 아니면 mountGlb.
+- **⚠ 미검증 리스크(첫 CI 실행이 판단)**: 원본 4억 삼각형을 프래그먼트 루프가 통째로 쌓으면 CI OOM 가능.
+  2cm weld 로 최대한 묶었으나 부족하면 **다음 단계=공간 타일링(그룹을 디스크로 스트리밍 후 타일별 변환)**.
+  정상 크기 IFC/RVT 는 이 파이프라인으로 바로 동작 예상.
+
 ### 4차(구현) — 로드 성공 후 품질: 홀 제거 + 음영 복원
 - **로드 성공·shard 없음 확정**(엔티티 101, span 7613×251×6571). 남은 문제 2개:
   - 지형 가장자리 너덜/검은 삼각형 홀 → **원인**: 클러스터 대표점이 '첫 정점'이라 인접 패치가
