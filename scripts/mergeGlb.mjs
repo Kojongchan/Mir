@@ -748,6 +748,9 @@ export async function buildMergedGlb(imf, opts) {
       const c = clusterVND(pos, nrm, dbid, idxA, targetV);
       pos = c.pos; nrm = c.nrm; dbid = c.dbid; idxA = c.idx; vtxN = c.nv;
     }
+    // 클러스터링이 작은/납작한 그룹을 삼각형 0개로 붕괴시키면 빈 accessor(count 0)가 GLB 에
+    // 들어가 로더가 'offset is out of bounds' 로 죽는다 → 빈 프리미티브는 통째로 건너뛴다.
+    if (vtxN < 3 || idxA.length < 3) continue;
     totalV += vtxN;
 
     // #4: DWG '전역폭 폴리선'은 SVF 가 Z 로 살짝 압출(높이 ~0.3m)해 솔리드 상자로 만든다.
