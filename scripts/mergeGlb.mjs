@@ -68,11 +68,14 @@ function weld(verts, idx, normals, q = 1000) {
   const ux = [], uy = [], uz = [], nx = [], ny = [], nz = [];
   let n = 0;
   for (let v = 0; v < verts.length / 3; v++) {
-    const key = `${Math.round(verts[v * 3] * q)}_${Math.round(verts[v * 3 + 1] * q)}_${Math.round(verts[v * 3 + 2] * q)}`;
+    const qx = Math.round(verts[v * 3] * q), qy = Math.round(verts[v * 3 + 1] * q), qz = Math.round(verts[v * 3 + 2] * q);
+    const key = `${qx}_${qy}_${qz}`;
     let ni = map.get(key);
     if (ni === undefined) {
       ni = n++; map.set(key, ni);
-      ux.push(verts[v * 3]); uy.push(verts[v * 3 + 1]); uz.push(verts[v * 3 + 2]);
+      // 대표점 = 월드 격자점(첫 정점 아님). 같은 q 를 쓰는 인접 패치가 동일 격자점으로 병합돼
+      // 이음새(크랙/홀)가 안 생긴다. 이동거리 ≤ 셀(=1/q)이라 shard 도 불가.
+      ux.push(qx / q); uy.push(qy / q); uz.push(qz / q);
       if (normals) { nx.push(normals[v * 3]); ny.push(normals[v * 3 + 1]); nz.push(normals[v * 3 + 2]); }
     }
     remap[v] = ni;
@@ -127,11 +130,13 @@ function weldPos(pos, nrm, dbid, idx, q = 1000) {
   const px = [], py = [], pz = [], nx = [], ny = [], nz = [], db = [];
   let n = 0;
   for (let v = 0; v < nv; v++) {
-    const key = `${Math.round(pos[v * 3] * q)}_${Math.round(pos[v * 3 + 1] * q)}_${Math.round(pos[v * 3 + 2] * q)}`;
+    const qx = Math.round(pos[v * 3] * q), qy = Math.round(pos[v * 3 + 1] * q), qz = Math.round(pos[v * 3 + 2] * q);
+    const key = `${qx}_${qy}_${qz}`;
     let ni = map.get(key);
     if (ni === undefined) {
       ni = n++; map.set(key, ni);
-      px.push(pos[v * 3]); py.push(pos[v * 3 + 1]); pz.push(pos[v * 3 + 2]);
+      // 대표점 = 월드 격자점 → 인접 패치가 동일 격자점으로 병합돼 이음새(홀) 제거. shard 불가.
+      px.push(qx / q); py.push(qy / q); pz.push(qz / q);
       nx.push(nrm[v * 3]); ny.push(nrm[v * 3 + 1]); nz.push(nrm[v * 3 + 2]);
       db.push(dbid[v]);
     }
@@ -209,23 +214,45 @@ function clusterVN(verts, idx, normals) {
 }
 // clusterVND: 그룹(정점/법선/dbid/인덱스)을 격자 클러스터링으로 목표 정점까지 감량. weldPos 로
 // 패치들을 연결면으로 봉합하며 셀을 키워 정점을 목표 이하로. shard 불가(정점 이동 ≤ 셀크기).
+// recomputeNormals: 클러스터 후 '실제 지오메트리'로 면적가중 스무스 노멀을 다시 만든다. 클러스터
+// 전 노멀(첫 정점값)을 그대로 두면 격자로 옮겨진 면과 어긋나 음영이 죽어(전체가 납작한 흰색) 보인다.
+function recomputeNormals(pos, idx) {
+  const nrm = new Float32Array(pos.length);
+  for (let k = 0; k + 2 < idx.length; k += 3) {
+    const a = idx[k] * 3, b = idx[k + 1] * 3, c = idx[k + 2] * 3;
+    const ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+    const vx = pos[c] - pos[a], vy = pos[c + 1] - pos[a + 1], vz = pos[c + 2] - pos[a + 2];
+    const fx = uy * vz - uz * vy, fy = uz * vx - ux * vz, fz = ux * vy - uy * vx; // 면적가중(비정규화)
+    nrm[a] += fx; nrm[a + 1] += fy; nrm[a + 2] += fz;
+    nrm[b] += fx; nrm[b + 1] += fy; nrm[b + 2] += fz;
+    nrm[c] += fx; nrm[c + 1] += fy; nrm[c + 2] += fz;
+  }
+  for (let v = 0; v < nrm.length; v += 3) {
+    const x = nrm[v], y = nrm[v + 1], z = nrm[v + 2], l = Math.hypot(x, y, z) || 1;
+    nrm[v] = x / l; nrm[v + 1] = y / l; nrm[v + 2] = z / l;
+  }
+  return nrm;
+}
 function clusterVND(pos, nrm, dbid, idx, targetV) {
   const curV = pos.length / 3;
-  if (curV <= targetV) {
-    // 이미 예산 이하(대개 구조물 소형 그룹) — 정밀(1mm) 병합만 하고 형상 그대로 보존.
-    const w = weldPos(pos, nrm, dbid, idx, 1000);
-    return compactTri(w.pos, w.nrm, w.dbid, dropDegen(w.idx));
-  }
-  // 대용량 그룹(지표면): 1mm 정밀패스는 출력이 커 메모리 폭발 → 생략. 목표 정점에 맞춘 셀로 바로
-  // 클러스터(출력이 작아 메모리 가벼움), 부족하면 셀을 키운다.
   const span = bboxSpan(pos);
-  const maxCell = Math.max(span[0], span[1], span[2], 0.1);
-  let cell = Math.max(0.02, Math.sqrt((span[0] * span[1] + 1) / Math.max(1, targetV)));
-  let w = weldPos(pos, nrm, dbid, idx, 1 / cell);
-  for (let it = 0; it < 16 && w.nv > targetV && cell < maxCell; it++) {
-    cell *= 1.6; w = weldPos(pos, nrm, dbid, idx, 1 / cell);
+  let w;
+  if (curV <= targetV) {
+    // 이미 예산 이하 — 1mm 격자로만 봉합(격자점 대표라 이음새 없음), 형상 거의 그대로.
+    w = weldPos(pos, nrm, dbid, idx, 1000);
+  } else {
+    // 대용량 그룹(지표면): 목표 정점에 맞춘 셀로 클러스터, 부족하면 셀을 키운다. 격자점 대표라
+    // 인접 패치가 동일 격자로 병합돼 봉합면에 홀이 없다.
+    const maxCell = Math.max(span[0], span[1], span[2], 0.1);
+    let cell = Math.max(0.02, Math.sqrt((span[0] * span[1] + 1) / Math.max(1, targetV)));
+    w = weldPos(pos, nrm, dbid, idx, 1 / cell);
+    for (let it = 0; it < 16 && w.nv > targetV && cell < maxCell; it++) {
+      cell *= 1.6; w = weldPos(pos, nrm, dbid, idx, 1 / cell);
+    }
   }
-  return compactTri(w.pos, w.nrm, w.dbid, dropDegen(w.idx));
+  const idxND = dropDegen(w.idx);
+  const nn = recomputeNormals(w.pos, idxND); // 클러스터된 실제 면으로 노멀 재계산 → 음영 복원
+  return compactTri(w.pos, nn, w.dbid, idxND);
 }
 // subsample: 목표 삼각형 수까지 균등 간격으로 삼각형만 남긴다(항상 예산 보장 — simplify 가
 // 목표에 못 미쳐도 여기서 강제해 OOM·4GB 초과를 원천 차단). 미사용 정점은 compact 가 정리.
