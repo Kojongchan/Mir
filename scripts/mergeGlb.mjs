@@ -166,6 +166,67 @@ function compactTri(pos, nrm, dbid, idx) {
   }
   return { pos: P, nrm: N, dbid: D, idx: nidx, nv: n };
 }
+// bboxSpan: 정점 배열의 축별 크기(클러스터 셀 초기값 산정용).
+function bboxSpan(pos) {
+  let mnx = Infinity, mny = Infinity, mnz = Infinity, mxx = -Infinity, mxy = -Infinity, mxz = -Infinity;
+  for (let v = 0; v < pos.length; v += 3) {
+    const x = pos[v], y = pos[v + 1], z = pos[v + 2];
+    if (x < mnx) mnx = x; if (y < mny) mny = y; if (z < mnz) mnz = z;
+    if (x > mxx) mxx = x; if (y > mxy) mxy = y; if (z > mxz) mxz = z;
+  }
+  return [mxx - mnx, mxy - mny, mxz - mnz];
+}
+// countNonDegen: 클러스터 병합 후 '면적 0(정점 중복)' 아닌 실제 삼각형 수. 클러스터링의 실감량은
+// 정점 병합으로 퇴화한 삼각형이 빠지는 데서 나오므로, 목표 도달 여부는 이 값으로 판단한다.
+function countNonDegen(idx) {
+  let c = 0;
+  for (let k = 0; k + 2 < idx.length; k += 3) {
+    const a = idx[k], b = idx[k + 1], d = idx[k + 2];
+    if (a !== b && b !== d && a !== d) c++;
+  }
+  return c;
+}
+// dropDegen: 퇴화(정점 2개 이상 동일) 삼각형 제거. 미사용 정점은 compact/compactTri 가 정리.
+function dropDegen(idx) {
+  const out = new Uint32Array(idx.length);
+  let o = 0;
+  for (let k = 0; k + 2 < idx.length; k += 3) {
+    const a = idx[k], b = idx[k + 1], d = idx[k + 2];
+    if (a !== b && b !== d && a !== d) { out[o++] = a; out[o++] = b; out[o++] = d; }
+  }
+  return out.subarray(0, o);
+}
+// clusterVN: 프래그먼트를 '자기 크기의 1/K 격자'로 클러스터(dbid 균일). 전역 비율로 감량하면
+// 거대 지표면이 만든 평균(0.03)이 작은 부재(보·기둥)까지 뭉개므로, 크기 비례 셀을 쓴다 —
+// 작은 부재는 셀도 작아 형상 보존, 큰 지표면 패치는 많이 준다. 정점 이동 ≤ 셀크기라 shard 불가.
+// 최종 예산 감량은 그룹 단계(clusterVND)에서. 여기선 메모리 보호 + 구조 보존이 목적.
+function clusterVN(verts, idx, normals) {
+  const K = Number(process.env.MERGE_FRAG_DIV || 12);
+  const span = bboxSpan(verts);
+  const cell = Math.max(span[0], span[1], span[2], 0.001) / K;
+  const w = weld(verts, idx, normals, 1 / cell);
+  return { verts: w.verts, normals: w.normals, idx: dropDegen(w.idx) };
+}
+// clusterVND: 그룹(정점/법선/dbid/인덱스)을 격자 클러스터링으로 목표 정점까지 감량. weldPos 로
+// 패치들을 연결면으로 봉합하며 셀을 키워 정점을 목표 이하로. shard 불가(정점 이동 ≤ 셀크기).
+function clusterVND(pos, nrm, dbid, idx, targetV) {
+  const curV = pos.length / 3;
+  if (curV <= targetV) {
+    // 이미 예산 이하(대개 구조물 소형 그룹) — 정밀(1mm) 병합만 하고 형상 그대로 보존.
+    const w = weldPos(pos, nrm, dbid, idx, 1000);
+    return compactTri(w.pos, w.nrm, w.dbid, dropDegen(w.idx));
+  }
+  // 대용량 그룹(지표면): 1mm 정밀패스는 출력이 커 메모리 폭발 → 생략. 목표 정점에 맞춘 셀로 바로
+  // 클러스터(출력이 작아 메모리 가벼움), 부족하면 셀을 키운다.
+  const span = bboxSpan(pos);
+  const maxCell = Math.max(span[0], span[1], span[2], 0.1);
+  let cell = Math.max(0.02, Math.sqrt((span[0] * span[1] + 1) / Math.max(1, targetV)));
+  let w = weldPos(pos, nrm, dbid, idx, 1 / cell);
+  for (let it = 0; it < 16 && w.nv > targetV && cell < maxCell; it++) {
+    cell *= 1.6; w = weldPos(pos, nrm, dbid, idx, 1 / cell);
+  }
+  return compactTri(w.pos, w.nrm, w.dbid, dropDegen(w.idx));
+}
 // subsample: 목표 삼각형 수까지 균등 간격으로 삼각형만 남긴다(항상 예산 보장 — simplify 가
 // 목표에 못 미쳐도 여기서 강제해 OOM·4GB 초과를 원천 차단). 미사용 정점은 compact 가 정리.
 function subsampleTris(idx, targetTris) {
@@ -500,41 +561,31 @@ export async function buildMergedGlb(imf, opts) {
 
     let idx32 = idx instanceof Uint32Array ? idx : Uint32Array.from(idx);
 
-    // 감량. 대용량 모드(통합 NWD, globalRatio<1)는 SVF 프래그먼트가 '삼각형 수프'(정점 비공유)라
-    // 그대로는 simplify 가 안 먹고 정점도 3배로 부푼다. 핵심 순서:
-    //   (1) weld — 좌표 양자화로 coincident 정점을 병합해 '수프'를 공유 토폴로지 메시로 복원.
-    //       이걸 해야 LockBorder 가 '진짜 외곽'만 잠근다(수프 상태에선 모든 변이 경계로 보여 전부
-    //       잠겨 감량이 0). welding 후엔 닫힌 솔리드(구조물·보·기둥)는 경계가 사라져 자유롭게 줄고,
-    //       열린 면(지표면 TIN)은 외곽만 보존한 채 내부가 준다.
-    //   (2) simplify(LockBorder 유지) — 형상보존 감량. 정점을 국소적으로만 접으므로(경계 잠금 +
-    //       welded 토폴로지) 모델을 가로지르는 거대 shard 가 생기지 않는다. 예전 shard 는 이 경계
-    //       잠금을 '해제'했을 때 경계 정점이 원거리로 붕괴해 생긴 것(STATUS 08-11) — 이제 항상 잠근다.
-    //       또한 정점 공유가 유지돼 12M 삼각형이 34M 이 아닌 ~6-7M 정점 → Draco 압축 성공 → 로드 가능.
-    //   (3) 그래도 예산 초과면 subsample 로 최종 보정(온전한 삼각형만 솎기 — 예산 반드시 충족).
-    //       subsample 단독은 정점 공유를 깨 34M 정점(→1GB·Draco Aborted)으로 부풀던 원인이라 최후수단.
+    // 감량. 대용량 모드(globalRatio<1)는 격자 클러스터링만 쓴다. meshopt simplify 는 이 SVF
+    // 테셀레이션을 부숴 shard(긴 삼각형 슬리버)를 만든다(per-fragment·group 모두 실측 확인,
+    // STATUS 참고). 클러스터링은 정점을 격자 셀 대표점으로 병합하므로 이동거리 ≤ 셀크기 —
+    // shard 가 수학적으로 불가능하고 홀도 없다(연결면 유지). 여기(프래그먼트)선 자기 크기 비례
+    // 셀로 1차 감량(구조 형상 보존 + 메모리 보호), 최종 예산 감량은 그룹 단위(clusterVND)에서.
+    // 예산 이하 소형 모델(globalRatio=1)은 기존 meshopt 경로 그대로(shard 무관, 잘 동작).
     if (decimate && idx32.length / 3 > effMinTris) {
       const target = Math.max(3, Math.floor((idx32.length * effRatio) / 3) * 3);
       const targetTris = Math.max(1, Math.floor(target / 3));
       try {
         if (globalRatio < 1) {
-          // 프래그먼트 단위는 '봉합용 1차 감량'만 한다. 작은 패치는 LockBorder 때문에 목표까지
-          // 못 줄지만(경계가 대부분) 여기서 subsample 로 강제하면 삼각형이 흩어져 정점 공유가
-          // 깨지고(→정점폭발) 홀이 생긴다. 진짜 감량은 아래 그룹 단위(weldPos→simplify)에서
-          // 연결면으로 봉합한 뒤 한다. 여기선 weld + simplify(형상보존, 홀 없음)만.
-          const w = weld(verts, idx32, normals);
-          verts = w.verts; normals = w.normals; idx32 = w.idx;
-          if (idx32.length / 3 > targetTris) {
-            const [simpIdx] = MeshoptSimplifier.simplify(idx32, verts, 3, target, targetError, simplifyFlags);
-            if (simpIdx && simpIdx.length >= 3 && simpIdx.length < idx32.length) { idx32 = simpIdx; decimated++; }
-          }
-          // 안전장치: 병적으로 큰 단일 프래그먼트만 메모리 보호를 위해 솎는다(정상 패치엔 미발동).
-          if (idx32.length / 3 > 150000) idx32 = subsampleTris(idx32, 150000);
+          // 대용량 경로는 격자 클러스터링만 쓴다(meshopt simplify 는 이 SVF 테셀레이션을 부숴
+          // shard 를 만든다 — per-fragment·group 모두 확인). 클러스터링은 정점을 셀 대표점으로
+          // 병합해 이동거리 ≤ 셀크기라 shard 가 수학적으로 불가능. 프래그먼트를 1차로 목표까지
+          // 감량(메모리 보호), 진짜 봉합·감량은 그룹 단위(clusterVND)에서.
+          const cl = clusterVN(verts, idx32, normals);
+          decimated++;
+          const c = compact(cl.idx, cl.verts, cl.normals); // 미사용 정점 제거
+          verts = c.verts; normals = c.normals; idx32 = c.idx;
         } else {
           const [simpIdx] = MeshoptSimplifier.simplify(idx32, verts, 3, target, targetError, simplifyFlags);
           if (simpIdx && simpIdx.length >= 3 && simpIdx.length < idx32.length) { idx32 = simpIdx; decimated++; }
+          const c = compact(idx32, verts, normals); // 미사용 정점 제거(버퍼 축소)
+          verts = c.verts; normals = c.normals; idx32 = c.idx;
         }
-        const c = compact(idx32, verts, normals); // 미사용 정점 제거(버퍼 축소)
-        verts = c.verts; normals = c.normals; idx32 = c.idx;
       } catch {
         /* 실패 시 원본 사용 */
       }
@@ -664,15 +715,14 @@ export async function buildMergedGlb(imf, opts) {
   // 보이면서 뒤의 선형(지형 삼각망 등)을 불투명하게 가린다 → 렌더에서 제외(와이어프레임으로
   // 표현). BIM(IFC/RVT)의 흰 벽 등은 보존해야 하므로 DWG 일 때만 적용.
   const isDwg = process.env.INCLUDE_LINES === '1';
-  // 그룹(연결면) 단위 최종 감량 예산. 프래그먼트 단위론 패치 경계가 많아 감량이 막혀 정점이
-  // 폭발(→브라우저 Draco 디코드 Aborted)했다. 여기서 weldPos 로 봉합한 뒤 이 예산까지 simplify
-  // 하면 지표면·구조물이 하나의 연결면으로 접혀 정점이 급감한다(공유 유지). 로드 목표: 정점 ~4-5M.
-  const loadBudget = Number(process.env.MERGE_LOAD_BUDGET || 8_000_000);
-  let accumTris = 0;
-  for (const g of groups.values()) accumTris += g.idxN / 3;
-  const groupBudgetRatio = globalRatio < 1 && accumTris > loadBudget ? loadBudget / accumTris : 1;
+  // 그룹(연결면) 단위 최종 감량 — 정점 예산(브라우저 Draco 디코드 한계 회피). weldPos 로 패치들을
+  // 봉합하며 격자 클러스터링으로 정점을 예산 이하로 줄인다(shard 불가). 목표 정점 ~4M.
+  const vtxBudget = Number(process.env.MERGE_VTX_BUDGET || 4_000_000);
+  let totalVtx = 0;
+  for (const g of groups.values()) totalVtx += g.vtx;
+  const groupVtxRatio = globalRatio < 1 && totalVtx > vtxBudget ? vtxBudget / totalVtx : 1;
   if (globalRatio < 1) {
-    log(`[merge] 그룹감량: 누적삼각형 ${Math.round(accumTris).toLocaleString()} · 로드예산 ${loadBudget.toLocaleString()} · 그룹비 ${groupBudgetRatio.toFixed(4)}`);
+    log(`[merge] 그룹감량(클러스터): 누적정점 ${Math.round(totalVtx).toLocaleString()} · 정점예산 ${vtxBudget.toLocaleString()} · 그룹비 ${groupVtxRatio.toFixed(4)}`);
   }
   let skippedWhite = 0;
   for (const g of groups.values()) {
@@ -694,18 +744,9 @@ export async function buildMergedGlb(imf, opts) {
     // — 이제 진짜 외곽만 잠기므로 내부 수백만 정점이 목표까지 형상보존 감량된다(공유 유지·홀 없음·
     // shard 없음: 정점을 옮기지 않고 부분집합만 남김). 지표면 8M정점 → 수십만으로 급감 → 로드 가능.
     if (globalRatio < 1) {
-      const w = weldPos(pos, nrm, dbid, idxA);
-      pos = w.pos; nrm = w.nrm; dbid = w.dbid; idxA = w.idx; vtxN = w.nv;
-      if (groupBudgetRatio < 1 && idxA.length / 3 > 100) {
-        const tgt = Math.max(3, Math.floor((idxA.length * groupBudgetRatio) / 3) * 3);
-        try {
-          const [si] = MeshoptSimplifier.simplify(idxA, pos, 3, tgt, targetError, simplifyFlags);
-          if (si && si.length >= 3 && si.length < idxA.length) {
-            const c = compactTri(pos, nrm, dbid, si);
-            pos = c.pos; nrm = c.nrm; dbid = c.dbid; idxA = c.idx; vtxN = c.nv;
-          }
-        } catch { /* 실패 시 봉합본 유지 */ }
-      }
+      const targetV = Math.max(100, Math.floor(g.vtx * groupVtxRatio));
+      const c = clusterVND(pos, nrm, dbid, idxA, targetV);
+      pos = c.pos; nrm = c.nrm; dbid = c.dbid; idxA = c.idx; vtxN = c.nv;
     }
     totalV += vtxN;
 

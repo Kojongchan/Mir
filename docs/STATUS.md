@@ -58,7 +58,24 @@
 **결론: meshopt simplify 계열은 이 통합모델에 부적합(어느 레벨이든 shard). subsample 은 정점폭발.
 단일 GLB 감량으로는 "로드 가능 + 깨끗" 을 동시 달성 못 함.**
 
-### 🧭 다음 방향(사용자 결정 대기 — 헛짓 방지 위해 코드 손대기 전 합의)
+### 3차 수정(구현) — 격자 클러스터링(vertex clustering), simplify 완전 배제
+- **원리**: 정점을 격자 셀 대표점으로 병합 → 정점 이동거리 ≤ 셀크기 → **shard 가 수학적으로 불가능**
+  (simplify 처럼 정점이 원거리 붕괴 못 함). 홀도 없음(연결면 유지). subsample 처럼 정점공유도 안 깨짐.
+- `mergeGlb.mjs` 대용량 경로(globalRatio<1)에서 meshopt simplify 완전 제거, 클러스터링만:
+  - **per-fragment**: `clusterVN` — 프래그먼트 자기크기 1/K(기본 12) 셀로 클러스터. **작은 부재(보·기둥)는
+    셀도 작아 형상 보존**, 큰 지표면 패치는 많이 감량(전역 평균비로 다 뭉개던 문제 해결). 메모리 보호.
+  - **group**: `clusterVND` — weldPos 로 패치들을 연결면으로 봉합하며 정점예산(`MERGE_VTX_BUDGET` 기본
+    4M)까지 셀 확대. 소형 구조물 그룹(예산 이하)은 1mm 정밀 병합만 → 형상 그대로.
+  - 헬퍼: `bboxSpan`/`countNonDegen`/`dropDegen`/`clusterVN`/`clusterVND`. 소형 모델(globalRatio=1)은
+    기존 meshopt 경로 유지(shard 무관).
+- **shard 원천 차단**이 이 방법의 확정적 장점. 최악은 과감량 시 구조물이 '각지게' 보이는 것(shard 아님)
+  → `MERGE_VTX_BUDGET`·`MERGE_FRAG_DIV` 로 조절.
+
+### 검증(재변환)
+- 앱 "재변환" → 로그 `그룹감량(클러스터): … 그룹비` + `GLB 완료 … 정점 <500만`. **shard 없이** 지표면
+  연속면 + 구조물 형체 눈확인. 각지면 `MERGE_VTX_BUDGET` 상향, 안 뜨면(OOM) `MERGE_FRAG_DIV` 상향.
+
+### 🧭 대안 방향(3차도 부족 시 — 코드 손대기 전 합의)
 근본원인 재규명: 우리는 SVF **프래그먼트 인스턴싱을 통짜로 구워(explode)** 412M 삼각형을 만든다
 (`mergeGlb` 가 각 노드를 월드좌표로 베이크). 그래서 감량이 강제되고, 감량이 다 실패.
 - **방향①: 지표면/구조물 분리** — 지표면(열린 TIN, 소수 대형)은 **독립 표면으로만** 감량(다른 표면과
