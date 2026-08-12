@@ -24,11 +24,29 @@
   3) **subsample**: simplify 가 예산에 못 미친 잔여분만 최종 보정(정점공유 파괴 최소화).
 - 결과: **구조물+지표면 모두 표시**되며 shard·홀 없이 작아짐(예상 ~150-250MB, Draco OK).
 
+### 1차 결과(run 31560178754, 커밋 635b1fc) — 절반 성공
+- Draco **성공**(772.5MB→222.3MB, 이전 Aborted 해결). 하지만 로드 시 `Aborted()` — **정점 23.8M 과다**.
+- 진단: 원본 **412M 삼각형**, 예산 12M 은 지켜짐(결과 11.8M 삼각형)이나 **정점 23.8M**(삼각형당 2.0 =
+  공유 거의 없음). 상위 2개가 **지표면 TIN**(8.9M+8.0M 정점). 원인 = 지표면이 49만 패치로 쪼개져
+  프래그먼트별 LockBorder 가 패치 경계를 다 잠가 simplify 가 목표에 못 미침 → subsample 로 떨어져
+  정점 공유 파괴 → 브라우저 Draco 디코더 힙 초과.
+
+### 2차 수정(구현) — 감량을 그룹(연결면) 단위로
+- `mergeGlb.mjs`:
+  1) **프래그먼트 subsample 제거**(홀·정점폭발 원인) → per-fragment 는 weld+simplify(봉합용 1차)만.
+     병적 대형 프래그먼트(>150k 삼각형)만 안전 subsample.
+  2) **그룹 단위 weldPos(위치만 병합, dbid 대표값) → simplify(LockBorder) to 로드예산(MERGE_LOAD_BUDGET
+     기본 8M)** 추가(`weldPos`/`compactTri` 헬퍼). 패치들을 하나의 연결면으로 봉합 후 감량하니 진짜
+     외곽만 잠기고 내부 수백만 정점이 목표까지 형상보존 감량(공유 유지·홀 없음·shard 없음). 지표면은
+     정적이라 dbid 병합 무해(4D 통제는 구조물). 목표: 정점 ~4-5M → Draco 디코드 OK → 로드 성공.
+- 최종 GLB 버퍼는 그룹 simplify 후라 ~300MB(4GB uint32 한계 무관).
+
 ### 검증(다음 세션 즉시)
-- **앱에서 통합모델 열고 "재변환" 버튼 클릭**(force:true → 캐시삭제 후 GH_REF=이 브랜치로 dispatch →
-  고친 코드 실행). Actions 로그에서 확인: `GLB 완료 … 정점 <1000만` + `압축 완료: …MB`(Aborted 아님).
-- 눈확인: 구조물 형상 유지·지표면 음영·shard 없음. 미흡하면 `MERGE_TRI_BUDGET`(현 12M) 상향 검토.
-- ⚠ 현재 R2 캐시엔 1GB 깨진 model.glb 有 — **재변환 전엔 로드 금지**(느림/멈춤).
+- **앱에서 통합모델 열고 "재변환"**(force). Actions 로그 확인: `그룹감량: … 그룹비 …` + `GLB 완료 … 정점
+  <600만` + `압축 완료`. 로드 성공·지표면 연속면(홀 없음)·구조물 형상 눈확인.
+- OOM(exit143) 시: per-fragment 누적이 큰 것 → `MERGE_LOAD_BUDGET` 낮추거나 per-fragment 봉합 강화.
+- 품질 미흡(구조물 거침) 시: `MERGE_LOAD_BUDGET` 상향(정점 여유 내에서).
+- ⚠ 현재 R2 캐시엔 222MB(로드 Aborted) model.glb 有 — 재변환으로 교체됨.
 
 ---
 ## 🧭 T-DXF — 자체 DWG→DXF→GLB 파이프라인 고도화 (2026-07-31)

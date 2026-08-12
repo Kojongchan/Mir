@@ -115,6 +115,57 @@ function weldGroup(pos, nrm, dbid, idx, q = 1000) {
   }
   return { pos: P, nrm: N, dbid: D, idx: nidx, nv: n };
 }
+// weldPos: '위치만'으로 정점 병합(dbid 는 대표값 유지). 통합모델 지표면은 49만 개 작은 패치로
+// 쪼개져 각 패치가 경계를 갖는다 → 프래그먼트별 simplify 는 LockBorder 가 그 경계를 다 잠가
+// 목표까지 못 줄인다(→subsample→정점폭발→로드 Aborted). weldPos 로 패치들을 '하나의 연결면'
+// 으로 봉합하면 진짜 외곽만 경계가 되어, 뒤이은 그룹단위 simplify 가 내부 수백만 정점을 목표까지
+// 깨끗이 접는다(공유 유지·홀 없음). 지표면은 정적이라 dbid 병합 무해(4D 통제는 구조물에 필요).
+function weldPos(pos, nrm, dbid, idx, q = 1000) {
+  const nv = pos.length / 3;
+  const map = new Map();
+  const remap = new Uint32Array(nv);
+  const px = [], py = [], pz = [], nx = [], ny = [], nz = [], db = [];
+  let n = 0;
+  for (let v = 0; v < nv; v++) {
+    const key = `${Math.round(pos[v * 3] * q)}_${Math.round(pos[v * 3 + 1] * q)}_${Math.round(pos[v * 3 + 2] * q)}`;
+    let ni = map.get(key);
+    if (ni === undefined) {
+      ni = n++; map.set(key, ni);
+      px.push(pos[v * 3]); py.push(pos[v * 3 + 1]); pz.push(pos[v * 3 + 2]);
+      nx.push(nrm[v * 3]); ny.push(nrm[v * 3 + 1]); nz.push(nrm[v * 3 + 2]);
+      db.push(dbid[v]);
+    }
+    remap[v] = ni;
+  }
+  const nidx = new Uint32Array(idx.length);
+  for (let k = 0; k < idx.length; k++) nidx[k] = remap[idx[k]];
+  const P = new Float32Array(n * 3), N = new Float32Array(n * 3), D = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    P[i * 3] = px[i]; P[i * 3 + 1] = py[i]; P[i * 3 + 2] = pz[i];
+    N[i * 3] = nx[i]; N[i * 3 + 1] = ny[i]; N[i * 3 + 2] = nz[i]; D[i] = db[i];
+  }
+  return { pos: P, nrm: N, dbid: D, idx: nidx, nv: n };
+}
+// compactTri: simplify 후 미사용 정점 제거 + 재색인(pos/nrm/dbid 동반). meshopt simplify 는 정점을
+// 옮기지 않고 부분집합만 남기므로(원좌표 유지) min/max·법선 그대로 유효.
+function compactTri(pos, nrm, dbid, idx) {
+  const map = new Map();
+  const nidx = new Uint32Array(idx.length);
+  let n = 0;
+  for (let k = 0; k < idx.length; k++) {
+    const oi = idx[k];
+    let ni = map.get(oi);
+    if (ni === undefined) { ni = n++; map.set(oi, ni); }
+    nidx[k] = ni;
+  }
+  const P = new Float32Array(n * 3), N = new Float32Array(n * 3), D = new Float32Array(n);
+  for (const [oi, ni] of map) {
+    P[ni * 3] = pos[oi * 3]; P[ni * 3 + 1] = pos[oi * 3 + 1]; P[ni * 3 + 2] = pos[oi * 3 + 2];
+    N[ni * 3] = nrm[oi * 3]; N[ni * 3 + 1] = nrm[oi * 3 + 1]; N[ni * 3 + 2] = nrm[oi * 3 + 2];
+    D[ni] = dbid[oi];
+  }
+  return { pos: P, nrm: N, dbid: D, idx: nidx, nv: n };
+}
 // subsample: 목표 삼각형 수까지 균등 간격으로 삼각형만 남긴다(항상 예산 보장 — simplify 가
 // 목표에 못 미쳐도 여기서 강제해 OOM·4GB 초과를 원천 차단). 미사용 정점은 compact 가 정리.
 function subsampleTris(idx, targetTris) {
@@ -466,14 +517,18 @@ export async function buildMergedGlb(imf, opts) {
       const targetTris = Math.max(1, Math.floor(target / 3));
       try {
         if (globalRatio < 1) {
+          // 프래그먼트 단위는 '봉합용 1차 감량'만 한다. 작은 패치는 LockBorder 때문에 목표까지
+          // 못 줄지만(경계가 대부분) 여기서 subsample 로 강제하면 삼각형이 흩어져 정점 공유가
+          // 깨지고(→정점폭발) 홀이 생긴다. 진짜 감량은 아래 그룹 단위(weldPos→simplify)에서
+          // 연결면으로 봉합한 뒤 한다. 여기선 weld + simplify(형상보존, 홀 없음)만.
           const w = weld(verts, idx32, normals);
           verts = w.verts; normals = w.normals; idx32 = w.idx;
           if (idx32.length / 3 > targetTris) {
             const [simpIdx] = MeshoptSimplifier.simplify(idx32, verts, 3, target, targetError, simplifyFlags);
             if (simpIdx && simpIdx.length >= 3 && simpIdx.length < idx32.length) { idx32 = simpIdx; decimated++; }
           }
-          // simplify 가 예산에 못 미친 잔여분만 강제로 솎는다(대개 소량 — 정점 공유 파괴 최소화).
-          if (idx32.length / 3 > targetTris) idx32 = subsampleTris(idx32, targetTris);
+          // 안전장치: 병적으로 큰 단일 프래그먼트만 메모리 보호를 위해 솎는다(정상 패치엔 미발동).
+          if (idx32.length / 3 > 150000) idx32 = subsampleTris(idx32, 150000);
         } else {
           const [simpIdx] = MeshoptSimplifier.simplify(idx32, verts, 3, target, targetError, simplifyFlags);
           if (simpIdx && simpIdx.length >= 3 && simpIdx.length < idx32.length) { idx32 = simpIdx; decimated++; }
@@ -609,6 +664,16 @@ export async function buildMergedGlb(imf, opts) {
   // 보이면서 뒤의 선형(지형 삼각망 등)을 불투명하게 가린다 → 렌더에서 제외(와이어프레임으로
   // 표현). BIM(IFC/RVT)의 흰 벽 등은 보존해야 하므로 DWG 일 때만 적용.
   const isDwg = process.env.INCLUDE_LINES === '1';
+  // 그룹(연결면) 단위 최종 감량 예산. 프래그먼트 단위론 패치 경계가 많아 감량이 막혀 정점이
+  // 폭발(→브라우저 Draco 디코드 Aborted)했다. 여기서 weldPos 로 봉합한 뒤 이 예산까지 simplify
+  // 하면 지표면·구조물이 하나의 연결면으로 접혀 정점이 급감한다(공유 유지). 로드 목표: 정점 ~4-5M.
+  const loadBudget = Number(process.env.MERGE_LOAD_BUDGET || 8_000_000);
+  let accumTris = 0;
+  for (const g of groups.values()) accumTris += g.idxN / 3;
+  const groupBudgetRatio = globalRatio < 1 && accumTris > loadBudget ? loadBudget / accumTris : 1;
+  if (globalRatio < 1) {
+    log(`[merge] 그룹감량: 누적삼각형 ${Math.round(accumTris).toLocaleString()} · 로드예산 ${loadBudget.toLocaleString()} · 그룹비 ${groupBudgetRatio.toFixed(4)}`);
+  }
   let skippedWhite = 0;
   for (const g of groups.values()) {
     if (g.vtx === 0) continue;
@@ -624,11 +689,23 @@ export async function buildMergedGlb(imf, opts) {
     let dbid = concatF(g.dbCh, g.vtx); g.dbCh.length = 0;
     let idxA = concatU(g.idxCh, g.idxN); g.idxCh.length = 0;
     let vtxN = g.vtx;
-    // 대용량 모드: 그룹 전체를 weld(위치+dbid 동일 정점 병합) — subsample 로 흩어진 중복 정점을
-    // 접어 정점 급감(예 27M→수M). 버퍼↓ → Draco 압축 성공 → 로드 가능.
+    // 대용량 모드: (1) weldPos 로 그룹 전체를 '연결면'으로 봉합(위치 병합, dbid 대표값) — 흩어진
+    // 중복 정점을 접고 패치 경계를 없앤다. (2) 봉합된 연결면을 로드예산까지 simplify(LockBorder)
+    // — 이제 진짜 외곽만 잠기므로 내부 수백만 정점이 목표까지 형상보존 감량된다(공유 유지·홀 없음·
+    // shard 없음: 정점을 옮기지 않고 부분집합만 남김). 지표면 8M정점 → 수십만으로 급감 → 로드 가능.
     if (globalRatio < 1) {
-      const w = weldGroup(pos, nrm, dbid, idxA);
+      const w = weldPos(pos, nrm, dbid, idxA);
       pos = w.pos; nrm = w.nrm; dbid = w.dbid; idxA = w.idx; vtxN = w.nv;
+      if (groupBudgetRatio < 1 && idxA.length / 3 > 100) {
+        const tgt = Math.max(3, Math.floor((idxA.length * groupBudgetRatio) / 3) * 3);
+        try {
+          const [si] = MeshoptSimplifier.simplify(idxA, pos, 3, tgt, targetError, simplifyFlags);
+          if (si && si.length >= 3 && si.length < idxA.length) {
+            const c = compactTri(pos, nrm, dbid, si);
+            pos = c.pos; nrm = c.nrm; dbid = c.dbid; idxA = c.idx; vtxN = c.nv;
+          }
+        } catch { /* 실패 시 봉합본 유지 */ }
+      }
     }
     totalV += vtxN;
 
