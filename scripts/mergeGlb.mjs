@@ -449,22 +449,31 @@ export async function buildMergedGlb(imf, opts) {
 
     let idx32 = idx instanceof Uint32Array ? idx : Uint32Array.from(idx);
 
-    // 감량. 대용량 모드(통합 NWD, globalRatio<1)는 SVF 프래그먼트가 '삼각형 수프'라 그대로는
-    // simplify 가 안 먹고(→1.3GB) 정점도 3배로 부푼다. → (1) weld 로 공유 토폴로지+정점 축소,
-    // (2) simplify 로 품질 감량, (3) 그래도 목표 초과면 subsample 로 강제(예산 반드시 충족).
+    // 감량. 대용량 모드(통합 NWD, globalRatio<1)는 SVF 프래그먼트가 '삼각형 수프'(정점 비공유)라
+    // 그대로는 simplify 가 안 먹고 정점도 3배로 부푼다. 핵심 순서:
+    //   (1) weld — 좌표 양자화로 coincident 정점을 병합해 '수프'를 공유 토폴로지 메시로 복원.
+    //       이걸 해야 LockBorder 가 '진짜 외곽'만 잠근다(수프 상태에선 모든 변이 경계로 보여 전부
+    //       잠겨 감량이 0). welding 후엔 닫힌 솔리드(구조물·보·기둥)는 경계가 사라져 자유롭게 줄고,
+    //       열린 면(지표면 TIN)은 외곽만 보존한 채 내부가 준다.
+    //   (2) simplify(LockBorder 유지) — 형상보존 감량. 정점을 국소적으로만 접으므로(경계 잠금 +
+    //       welded 토폴로지) 모델을 가로지르는 거대 shard 가 생기지 않는다. 예전 shard 는 이 경계
+    //       잠금을 '해제'했을 때 경계 정점이 원거리로 붕괴해 생긴 것(STATUS 08-11) — 이제 항상 잠근다.
+    //       또한 정점 공유가 유지돼 12M 삼각형이 34M 이 아닌 ~6-7M 정점 → Draco 압축 성공 → 로드 가능.
+    //   (3) 그래도 예산 초과면 subsample 로 최종 보정(온전한 삼각형만 솎기 — 예산 반드시 충족).
+    //       subsample 단독은 정점 공유를 깨 34M 정점(→1GB·Draco Aborted)으로 부풀던 원인이라 최후수단.
     if (decimate && idx32.length / 3 > effMinTris) {
       const target = Math.max(3, Math.floor((idx32.length * effRatio) / 3) * 3);
       const targetTris = Math.max(1, Math.floor(target / 3));
       try {
         if (globalRatio < 1) {
-          // 대용량 모드: meshopt simplify 는 '닫힌 솔리드'(구조물·보·기둥 등)를 공격적으로 줄이면
-          // 정점을 원거리로 붕괴시켜 모델 전체를 가로지르는 거대 shard 를 만든다(LockBorder 는 열린
-          // 면의 경계만 보호하므로 닫힌 솔리드엔 무력). → simplify 를 아예 쓰지 않고 weld(무손실
-          // 중복정점 병합) + subsample(온전한 삼각형만 솎기)로만 감량한다. 정점을 옮기지 않으므로
-          // shard 가 원천적으로 불가능하다(최악이라도 성글어질 뿐, 깨지지 않음).
           const w = weld(verts, idx32, normals);
           verts = w.verts; normals = w.normals; idx32 = w.idx;
-          if (idx32.length / 3 > targetTris) { idx32 = subsampleTris(idx32, targetTris); decimated++; }
+          if (idx32.length / 3 > targetTris) {
+            const [simpIdx] = MeshoptSimplifier.simplify(idx32, verts, 3, target, targetError, simplifyFlags);
+            if (simpIdx && simpIdx.length >= 3 && simpIdx.length < idx32.length) { idx32 = simpIdx; decimated++; }
+          }
+          // simplify 가 예산에 못 미친 잔여분만 강제로 솎는다(대개 소량 — 정점 공유 파괴 최소화).
+          if (idx32.length / 3 > targetTris) idx32 = subsampleTris(idx32, targetTris);
         } else {
           const [simpIdx] = MeshoptSimplifier.simplify(idx32, verts, 3, target, targetError, simplifyFlags);
           if (simpIdx && simpIdx.length >= 3 && simpIdx.length < idx32.length) { idx32 = simpIdx; decimated++; }
