@@ -3,6 +3,34 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 🔧 통합모델 대용량 감량 근본수정: weld→simplify→subsample (2026-08-12)
+> branch `claude/3d-view-testing-hlrugl`. `scripts/mergeGlb.mjs`.
+
+### 문제(확정)
+- 통합모델(다프래그먼트) 변환 결과가 **두 극단 모두 실패**:
+  - subsample 단독(현행 대용량 경로) → **정점 공유 파괴**로 1200만 삼각형이 **3400만 정점**·GLB
+    **1049MB**·**Draco Aborted**·로드 불가 (run 31552995356, 34.2M정점).
+  - 예전 simplify(LockBorder **해제**) → 경계 정점 원거리 붕괴 → 모델 가로지르는 **거대 shard**.
+- 근본 원인: SVF 프래그먼트는 '삼각형 수프'(정점 비공유)라 **welding 전엔 모든 변이 경계**로 보여
+  LockBorder 가 전부 잠가 simplify 가 0. 그래서 예전엔 감량을 포기하고 subsample 로 도피 → 정점 폭발.
+
+### 해결(구현·커밋 1213286)
+- `mergeGlb.mjs` 대용량 경로(globalRatio<1)를 **weld → simplify(LockBorder 유지) → subsample(잔여만)**
+  순으로 교정:
+  1) **weld**: 좌표 양자화로 coincident 정점 병합 → 삼각형 수프를 공유 토폴로지로 복원. 닫힌 솔리드
+     (구조물·보·기둥)는 경계가 사라져 자유 감량, 열린 지표면 TIN 은 외곽만 보존.
+  2) **simplify(LockBorder)**: 형상보존 감량. welded 토폴로지+경계 잠금이라 국소 붕괴만 → shard 불가.
+     정점 공유 유지 → 12M 삼각형이 ~6-7M 정점 → Draco 성공 → 로드 가능.
+  3) **subsample**: simplify 가 예산에 못 미친 잔여분만 최종 보정(정점공유 파괴 최소화).
+- 결과: **구조물+지표면 모두 표시**되며 shard·홀 없이 작아짐(예상 ~150-250MB, Draco OK).
+
+### 검증(다음 세션 즉시)
+- **앱에서 통합모델 열고 "재변환" 버튼 클릭**(force:true → 캐시삭제 후 GH_REF=이 브랜치로 dispatch →
+  고친 코드 실행). Actions 로그에서 확인: `GLB 완료 … 정점 <1000만` + `압축 완료: …MB`(Aborted 아님).
+- 눈확인: 구조물 형상 유지·지표면 음영·shard 없음. 미흡하면 `MERGE_TRI_BUDGET`(현 12M) 상향 검토.
+- ⚠ 현재 R2 캐시엔 1GB 깨진 model.glb 有 — **재변환 전엔 로드 금지**(느림/멈춤).
+
+---
 ## 🧭 T-DXF — 자체 DWG→DXF→GLB 파이프라인 고도화 (2026-07-31)
 > branch `claude/3d-view-testing-hlrugl`. `scripts/dxfToGlb.mjs`. workflow `convert-4d.yml`(dxf_test=1).
 
