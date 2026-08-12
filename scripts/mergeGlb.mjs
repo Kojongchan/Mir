@@ -457,13 +457,18 @@ export async function buildMergedGlb(imf, opts) {
       const targetTris = Math.max(1, Math.floor(target / 3));
       try {
         if (globalRatio < 1) {
+          // 대용량 모드: meshopt simplify 는 '닫힌 솔리드'(구조물·보·기둥 등)를 공격적으로 줄이면
+          // 정점을 원거리로 붕괴시켜 모델 전체를 가로지르는 거대 shard 를 만든다(LockBorder 는 열린
+          // 면의 경계만 보호하므로 닫힌 솔리드엔 무력). → simplify 를 아예 쓰지 않고 weld(무손실
+          // 중복정점 병합) + subsample(온전한 삼각형만 솎기)로만 감량한다. 정점을 옮기지 않으므로
+          // shard 가 원천적으로 불가능하다(최악이라도 성글어질 뿐, 깨지지 않음).
           const w = weld(verts, idx32, normals);
           verts = w.verts; normals = w.normals; idx32 = w.idx;
+          if (idx32.length / 3 > targetTris) { idx32 = subsampleTris(idx32, targetTris); decimated++; }
+        } else {
+          const [simpIdx] = MeshoptSimplifier.simplify(idx32, verts, 3, target, targetError, simplifyFlags);
+          if (simpIdx && simpIdx.length >= 3 && simpIdx.length < idx32.length) { idx32 = simpIdx; decimated++; }
         }
-        const [simpIdx] = MeshoptSimplifier.simplify(idx32, verts, 3, target, targetError, simplifyFlags);
-        if (simpIdx && simpIdx.length >= 3 && simpIdx.length < idx32.length) { idx32 = simpIdx; decimated++; }
-        // 예산 보장: simplify 가 목표(수프 등)에 못 미치면 삼각형 서브샘플로 강제(OOM/4GB 차단).
-        if (globalRatio < 1 && idx32.length / 3 > targetTris * 1.2) { idx32 = subsampleTris(idx32, targetTris); decimated++; }
         const c = compact(idx32, verts, normals); // 미사용 정점 제거(버퍼 축소)
         verts = c.verts; normals = c.normals; idx32 = c.idx;
       } catch {
