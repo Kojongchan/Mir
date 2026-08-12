@@ -591,6 +591,53 @@ export async function buildMergedGlb(imf, opts) {
   log(`[merge] 총메시삼각형 ${Math.round(totalMeshTris).toLocaleString()} · 예산 ${triBudget.toLocaleString()} · 전역감량비 ${globalRatio.toFixed(4)} → 적용비 ${effRatio.toFixed(4)} · minTris ${effMinTris} · 경계잠금 ${simplifyFlags.length > 0}`);
 
   const diag = { objNodes: 0, groupNodes: 0, otherNodes: 0, noGeom: 0, kMesh: 0, kLines: 0, kPoints: 0, kEmpty: 0, kOther: 0, emptyMesh: 0 };
+
+  // === XKT 스트리밍 모드(대용량): 그룹 Map 에 전부 쌓지 않고, 프래그먼트를 '청크' GLB 에
+  // 흘려담아 CAP(기본 300만 삼각형)마다 파일로 flush → onChunk(convert2xkt→XKT→업로드→삭제).
+  // 메모리 상한이 한 청크(~150MB)로 고정돼 OOM 이 원천 불가. 각 프래그먼트=자기 색·dbid 를 가진
+  // 독립 메시(감량 없음, 원본 정밀도). 4억 삼각형도 조각조각 흘려보내 처리. ===
+  const xktStream = !!opts.xktStreamDir;
+  const CHUNK_CAP = Number(process.env.XKT_CHUNK_TRIS || 3_000_000);
+  const fragBaseColor = (col, matId) => {
+    if (col) return [col[0], col[1], col[2], col[3] ?? 1];
+    const mat = imf.getMaterial(matId);
+    const d = mat?.diffuse;
+    return d ? [d.x, d.y, d.z, mat?.opacity ?? 1] : [0.72, 0.74, 0.77, 1];
+  };
+  let chunk = null, chunkIdx = 0, streamV = 0, streamT = 0;
+  const newChunk = () => ({ acc: [], bv: [], meshes: [], materials: [], nodes: [], pieces: [], bo: 0, tris: 0 });
+  const addToChunk = (pos, nrm, idxF, fmin, fmax, baseColor, metal, rough, name) => {
+    if (!chunk) chunk = newChunk();
+    const c = chunk;
+    const addV = (typed, target) => {
+      const buf = Buffer.from(typed.buffer, typed.byteOffset, typed.byteLength);
+      c.bv.push({ buffer: 0, byteOffset: c.bo, byteLength: buf.length, target });
+      c.pieces.push(buf); c.bo += buf.length; return c.bv.length - 1;
+    };
+    // XKT 경로는 _DBID 커스텀 정점속성을 쓰지 않는다(convert2xkt 미지원 위험 + XKT 피킹은
+    // 엔티티 단위). 대신 프래그먼트=노드 1개로 두고 node.name 에 dbid 를 심어 객체 식별을 남긴다.
+    const pA = c.acc.push({ bufferView: addV(pos, 34962), componentType: 5126, count: pos.length / 3, type: 'VEC3', min: fmin, max: fmax }) - 1;
+    const nA = c.acc.push({ bufferView: addV(nrm, 34962), componentType: 5126, count: nrm.length / 3, type: 'VEC3' }) - 1;
+    const iA = c.acc.push({ bufferView: addV(idxF, 34963), componentType: 5125, count: idxF.length, type: 'SCALAR' }) - 1;
+    const matI = c.materials.push({
+      pbrMetallicRoughness: { baseColorFactor: baseColor, metallicFactor: metal, roughnessFactor: rough },
+      doubleSided: true, ...(baseColor[3] < 1 ? { alphaMode: 'BLEND' } : {}),
+    }) - 1;
+    const meshI = c.meshes.push({ primitives: [{ mode: 4, attributes: { POSITION: pA, NORMAL: nA }, indices: iA, material: matI }] }) - 1;
+    c.nodes.push({ mesh: meshI, name });
+    c.tris += idxF.length / 3;
+  };
+  const flushChunk = async () => {
+    if (!chunk || chunk.meshes.length === 0) return;
+    const p = path.join(opts.xktStreamDir, `c${chunkIdx}.glb`);
+    finalizeGlb(p, { nodes: chunk.nodes, meshes: chunk.meshes, materials: chunk.materials, accessors: chunk.acc, bufferViews: chunk.bv, pieces: chunk.pieces, byteOffset: chunk.bo });
+    const tris = chunk.tris;
+    chunk = null; // flush 전에 참조 해제(메모리 회수)
+    if (opts.onChunk) await opts.onChunk(p, chunkIdx, tris);
+    chunkIdx++;
+  };
+  if (xktStream) fs.mkdirSync(opts.xktStreamDir, { recursive: true });
+
   let processed = 0, decimated = 0, fragCount = 0;
   for (let i = 0; i < nodeCount; i++) {
     const node = imf.getNode(i);
@@ -626,7 +673,7 @@ export async function buildMergedGlb(imf, opts) {
     // XKT 경로(감량 없음): 프래그먼트 '삼각형 수프'를 미세 격자(기본 2cm)로 무손실 병합해
     // 좌표 중복 정점·면적0 슬리버를 제거 → 누적 메모리를 묶는다(7km 부지에서 2cm 이동은
     // 시각 차이 0 = 감량 아님, 형상 보존). 대용량 원본을 통째로 안 쌓게 하는 게 목적.
-    if (opts.perGroupDir && idx32.length >= 3) {
+    if ((opts.perGroupDir || xktStream) && idx32.length >= 3) {
       const q = Number(process.env.XKT_WELD_Q || 50); // 1/0.02m = 2cm 격자점
       try {
         const w = weld(verts, idx32, normals, q);
@@ -663,9 +710,9 @@ export async function buildMergedGlb(imf, opts) {
     const pos = new Float32Array(nv * 3);
     const nrm = new Float32Array(nv * 3);
     const db = new Float32Array(nv);
-    const g = groupOf(node.material ?? -1, color);
 
     let sx = 0, sy = 0, sz = 0;
+    let fnx = Infinity, fny = Infinity, fnz = Infinity, fxx = -Infinity, fxy = -Infinity, fxz = -Infinity;
     for (let v = 0; v < nv; v++) {
       const x = verts[v * 3], y = verts[v * 3 + 1], z = verts[v * 3 + 2];
       let wxx, wyy, wzz;
@@ -677,8 +724,8 @@ export async function buildMergedGlb(imf, opts) {
       setOrigin(wxx, wyy, wzz);
       const ox = wxx - ORIGIN[0], oy = wyy - ORIGIN[1], oz = wzz - ORIGIN[2];
       pos[v * 3] = ox; pos[v * 3 + 1] = oy; pos[v * 3 + 2] = oz;
-      if (ox < g.min[0]) g.min[0] = ox; if (oy < g.min[1]) g.min[1] = oy; if (oz < g.min[2]) g.min[2] = oz;
-      if (ox > g.max[0]) g.max[0] = ox; if (oy > g.max[1]) g.max[1] = oy; if (oz > g.max[2]) g.max[2] = oz;
+      if (ox < fnx) fnx = ox; if (oy < fny) fny = oy; if (oz < fnz) fnz = oz;
+      if (ox > fxx) fxx = ox; if (oy > fxy) fxy = oy; if (oz > fxz) fxz = oz;
       sx += ox; sy += oy; sz += oz;
       let nx = 0, ny = 0, nz = 1;
       if (normals) {
@@ -690,14 +737,37 @@ export async function buildMergedGlb(imf, opts) {
       nrm[v * 3] = nx; nrm[v * 3 + 1] = ny; nrm[v * 3 + 2] = nz;
       db[v] = node.dbid;
     }
-    bump(g.min[0], g.min[1], g.min[2]); bump(g.max[0], g.max[1], g.max[2]);
+    bump(fnx, fny, fnz); bump(fxx, fxy, fxz);
     foci.push({ c: [sx / nv, sy / nv, sz / nv], w: nv });
-    const reidx = new Uint32Array(idx32.length);
-    for (let k = 0; k < idx32.length; k++) reidx[k] = idx32[k] + g.base;
-    g.posCh.push(pos); g.nrmCh.push(nrm); g.dbCh.push(db); g.idxCh.push(reidx);
-    g.base += nv; g.vtx += nv; g.idxN += reidx.length;
 
-    if (++processed % 50000 === 0) log(`[merge]   ${processed} 객체 (단순화 ${decimated})`);
+    if (xktStream) {
+      // 프래그먼트 = 독립 메시(자기 색·dbid). idx32 는 0-기준(자기 정점만) 그대로 사용.
+      const bc = fragBaseColor(color, node.material ?? -1);
+      const nb = bc[0] < 0.06 && bc[1] < 0.06 && bc[2] < 0.06;
+      const baseColor = nb ? [0.55, 0.55, 0.55, bc[3]] : bc;
+      const m0 = imf.getMaterial(node.material ?? -1);
+      const metal = color ? 0 : Math.min(1, Math.max(0, m0?.metallic ?? 0));
+      const rough = color ? 0.9 : Math.min(1, Math.max(0, m0?.roughness ?? 0.9));
+      addToChunk(pos, nrm, idx32, [fnx, fny, fnz], [fxx, fxy, fxz], baseColor, metal, rough, String(node.dbid));
+      streamV += nv; streamT += idx32.length / 3;
+      if (chunk && chunk.tris >= CHUNK_CAP) await flushChunk();
+    } else {
+      const g = groupOf(node.material ?? -1, color);
+      if (fnx < g.min[0]) g.min[0] = fnx; if (fny < g.min[1]) g.min[1] = fny; if (fnz < g.min[2]) g.min[2] = fnz;
+      if (fxx > g.max[0]) g.max[0] = fxx; if (fxy > g.max[1]) g.max[1] = fxy; if (fxz > g.max[2]) g.max[2] = fxz;
+      const reidx = new Uint32Array(idx32.length);
+      for (let k = 0; k < idx32.length; k++) reidx[k] = idx32[k] + g.base;
+      g.posCh.push(pos); g.nrmCh.push(nrm); g.dbCh.push(db); g.idxCh.push(reidx);
+      g.base += nv; g.vtx += nv; g.idxN += reidx.length;
+    }
+
+    if (++processed % 50000 === 0) log(`[merge]   ${processed} 객체 (청크 ${chunkIdx}, 단순화 ${decimated})`);
+  }
+  // XKT 스트리밍: 마지막 청크 flush 후 즉시 반환(그룹 emit 경로 안 탐).
+  if (xktStream) {
+    await flushChunk();
+    log(`[merge] XKT 스트리밍 완료: 청크 ${chunkIdx}개 · 정점 ${streamV.toLocaleString()} · 삼각형 ${Math.round(streamT).toLocaleString()}`);
+    return { xkt: true, chunks: chunkIdx, vertices: streamV, triangles: streamT, decimated: 0, focus: robustFocus(foci) };
   }
   // 솔리드(삼각형) 부재가 하나라도 있으면 선/점은 대개 엣지/주석 클러터(IFC 의 와이어프레임
   // 11만개 등) → 제외. 순수 선형(솔리드 0 = DWG 도면)만 선/점 유지. 정점수 비율은 엣지선이

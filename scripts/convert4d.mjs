@@ -343,39 +343,36 @@ async function main() {
   if (useXkt) {
     process.env.DECIMATE = '0'; // XKT 는 원본 정밀도 보존(감량 없음)
     fs.mkdirSync('out/xkt', { recursive: true });
-    console.log('[convert4d] 그룹별 GLB 생성 중(감량 없음)…');
-    const res = await buildMergedGlb(scene, { perGroupDir: 'out/xkt', log: console.log });
-    if (!res.files || res.files.length === 0) throw new Error('그룹 GLB 0개 — 변환할 지오메트리 없음');
     const mod = await import('@xeokit/xeokit-convert');
     const convert2xkt = mod.convert2xkt || mod.default?.convert2xkt || mod.default;
     if (typeof convert2xkt !== 'function') throw new Error('convert2xkt 로드 실패(@xeokit/xeokit-convert)');
-    console.log(`[convert4d] GLB ${res.files.length}개 → XKT 변환 (정점 ${res.vertices.toLocaleString()})…`);
+    // 스트리밍: mergeGlb 가 청크 GLB 를 하나 만들 때마다 여기서 XKT 로 굽고 R2 업로드 후 즉시 삭제
+    // → 디스크·메모리 모두 한 청크로 상한(대용량 OOM/디스크풀 원천 차단).
     const xktFiles = [];
-    for (let i = 0; i < res.files.length; i++) {
-      const glb = res.files[i];
-      const xkt = glb.replace(/\.glb$/, '.xkt');
+    const onChunk = async (glbPath, idx, tris) => {
+      const xktPath = glbPath.replace(/\.glb$/, '.xkt');
+      const name = path.basename(xktPath);
       try {
-        await convert2xkt({ source: glb, output: xkt, log: () => {} });
-        xktFiles.push(path.basename(xkt));
+        await convert2xkt({ source: glbPath, output: xktPath, log: () => {} });
+        await r2Put(`${keyBase}/xkt/${name}`, fs.readFileSync(xktPath), 'application/octet-stream');
+        xktFiles.push(name);
+        console.log(`[convert4d]   청크 ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형) 업로드`);
       } catch (e) {
-        console.warn(`[convert4d]   XKT 변환 실패 ${path.basename(glb)}: ${e?.message || e} — 건너뜀`);
+        console.warn(`[convert4d]   청크 ${idx} XKT 실패: ${e?.message || e}`);
+      } finally {
+        fs.rmSync(glbPath, { force: true });
+        fs.rmSync(xktPath, { force: true });
       }
-      fs.rmSync(glb, { force: true }); // GLB 즉시 삭제(디스크 절약)
-      if ((i + 1) % 10 === 0 || i + 1 === res.files.length) console.log(`[convert4d]   XKT ${i + 1}/${res.files.length}`);
-    }
-    if (xktFiles.length === 0) throw new Error('XKT 변환 결과 0개');
-    const manifest = { xktFiles };
-    // R2 업로드: 각 XKT + 매니페스트(+focus). 캐시 키: <keyBase>/xkt/
-    for (const f of xktFiles) {
-      await r2Put(`${keyBase}/xkt/${f}`, fs.readFileSync(path.join('out/xkt', f)), 'application/octet-stream');
-    }
-    await r2Put(`${keyBase}/xkt/manifest.json`, Buffer.from(JSON.stringify(manifest)), 'application/json');
+    };
+    console.log('[convert4d] XKT 스트리밍 변환 시작(감량 없음)…');
+    const res = await buildMergedGlb(scene, { xktStreamDir: 'out/xkt', onChunk, log: console.log });
+    if (xktFiles.length === 0) throw new Error('XKT 청크 0개 — 변환할 지오메트리 없음');
+    await r2Put(`${keyBase}/xkt/manifest.json`, Buffer.from(JSON.stringify({ xktFiles })), 'application/json');
     if (res.focus) await r2Put(`${keyBase}/focus.json`, Buffer.from(JSON.stringify(res.focus)), 'application/json');
     else await r2Delete(`${keyBase}/focus.json`);
-    // 구 GLB 캐시 제거(있으면) — 프런트가 XKT 매니페스트를 우선하도록.
-    await r2Delete(`${keyBase}/model.glb`);
+    await r2Delete(`${keyBase}/model.glb`); // 구 GLB 캐시 제거(프런트가 XKT 우선)
     await r2Delete(`${keyBase}/error.json`);
-    console.log(`[convert4d] XKT 업로드 완료: ${xktFiles.length}개 (${R2_BUCKET}/${keyBase}/xkt/) (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+    console.log(`[convert4d] XKT 업로드 완료: ${xktFiles.length} 청크 · 정점 ${res.vertices.toLocaleString()} · 삼각형 ${Math.round(res.triangles).toLocaleString()} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
     console.log('[convert4d] DONE');
     return;
   }
