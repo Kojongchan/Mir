@@ -349,16 +349,17 @@ async function main() {
     // 스트리밍: mergeGlb 가 청크 GLB 를 하나 만들 때마다 여기서 XKT 로 굽고 R2 업로드 후 즉시 삭제
     // → 디스크·메모리 모두 한 청크로 상한(대용량 OOM/디스크풀 원천 차단).
     const xktFiles = [];
-    const onChunk = async (glbPath, idx, tris) => {
+    let lodFile = null;
+    const onChunk = async (glbPath, idx, tris, isLod1 = false) => {
       const xktPath = glbPath.replace(/\.glb$/, '.xkt');
       const name = path.basename(xktPath);
       try {
         await convert2xkt({ source: glbPath, output: xktPath, log: () => {} });
         await r2Put(`${keyBase}/xkt/${name}`, fs.readFileSync(xktPath), 'application/octet-stream');
-        xktFiles.push(name);
-        console.log(`[convert4d]   청크 ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형) 업로드`);
+        if (isLod1) { lodFile = name; console.log(`[convert4d]   LOD1 → ${name} (${(tris / 1e6).toFixed(1)}M삼각형) 업로드`); }
+        else { xktFiles.push(name); console.log(`[convert4d]   청크 ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형) 업로드`); }
       } catch (e) {
-        console.warn(`[convert4d]   청크 ${idx} XKT 실패: ${e?.message || e}`);
+        console.warn(`[convert4d]   ${isLod1 ? 'LOD1' : '청크 ' + idx} XKT 실패: ${e?.message || e}`);
       } finally {
         fs.rmSync(glbPath, { force: true });
         fs.rmSync(xktPath, { force: true });
@@ -367,7 +368,8 @@ async function main() {
     console.log('[convert4d] XKT 스트리밍 변환 시작(감량 없음)…');
     const res = await buildMergedGlb(scene, { xktStreamDir: 'out/xkt', onChunk, log: console.log });
     if (xktFiles.length === 0) throw new Error('XKT 청크 0개 — 변환할 지오메트리 없음');
-    await r2Put(`${keyBase}/xkt/manifest.json`, Buffer.from(JSON.stringify({ xktFiles })), 'application/json');
+    // 매니페스트: 풀디테일 청크(xktFiles) + 개요(lod1). 뷰어가 줌아웃 시 lod1 만, 줌인 시 청크.
+    await r2Put(`${keyBase}/xkt/manifest.json`, Buffer.from(JSON.stringify({ xktFiles, lod1: lodFile })), 'application/json');
     if (res.focus) await r2Put(`${keyBase}/focus.json`, Buffer.from(JSON.stringify(res.focus)), 'application/json');
     else await r2Delete(`${keyBase}/focus.json`);
     await r2Delete(`${keyBase}/model.glb`); // 구 GLB 캐시 제거(프런트가 XKT 우선)

@@ -638,6 +638,29 @@ export async function buildMergedGlb(imf, opts) {
   };
   if (xktStream) fs.mkdirSync(opts.xktStreamDir, { recursive: true });
 
+  // === LOD1(개요 메시): 스트리밍 중 전역 격자(기본 8m)로 모든 정점을 셀 대표점에 병합해
+  // 저해상도 개요를 누적한다(메모리=점유 셀 수로 상한). 뷰어는 줌아웃 시 이 LOD1 만 그려
+  // 3.6억 삼각형 대신 수백만만 그리므로 가볍다. shard 불가(격자 대표점). ===
+  const lodCell = Number(process.env.XKT_LOD_CELL || 8);
+  const lodMap = new Map();
+  const lpx = [], lpy = [], lpz = [];
+  let lodIdx = [];
+  const addToLod = (pos, idxF) => {
+    const nvL = pos.length / 3;
+    const remapL = new Uint32Array(nvL);
+    for (let v = 0; v < nvL; v++) {
+      const qx = Math.round(pos[v * 3] / lodCell), qy = Math.round(pos[v * 3 + 1] / lodCell), qz = Math.round(pos[v * 3 + 2] / lodCell);
+      const key = `${qx}_${qy}_${qz}`;
+      let ri = lodMap.get(key);
+      if (ri === undefined) { ri = lpx.length; lodMap.set(key, ri); lpx.push(qx * lodCell); lpy.push(qy * lodCell); lpz.push(qz * lodCell); }
+      remapL[v] = ri;
+    }
+    for (let k = 0; k + 2 < idxF.length; k += 3) {
+      const a = remapL[idxF[k]], b = remapL[idxF[k + 1]], c = remapL[idxF[k + 2]];
+      if (a !== b && b !== c && a !== c) lodIdx.push(a, b, c);
+    }
+  };
+
   let processed = 0, decimated = 0, fragCount = 0;
   for (let i = 0; i < nodeCount; i++) {
     const node = imf.getNode(i);
@@ -661,6 +684,14 @@ export async function buildMergedGlb(imf, opts) {
     fragCount++;
     // 대표 정점색은 단순화 전 원본에서(메시 색은 RGBA=정점당 4). DWG 등의 실제 색.
     const color = fragColor(geom.getColors?.(), verts.length / 3, 4);
+    // [tex 진단] SVF 에 지형 텍스처가 실제로 있는지 확인 — 재질 구조 + UV 유무를 처음 몇 개만 로그.
+    if (xktStream && fragCount <= 5) {
+      try {
+        const mm = imf.getMaterial(node.material ?? -1);
+        const uv = geom.getUvs?.();
+        log(`[tex] frag#${fragCount} matKeys=[${mm ? Object.keys(mm).join(',') : 'none'}] uvLen=${uv ? uv.length : 0}`);
+      } catch (e) { log(`[tex] probe 실패: ${e?.message || e}`); }
+    }
 
     let idx32 = idx instanceof Uint32Array ? idx : Uint32Array.from(idx);
 
@@ -749,6 +780,7 @@ export async function buildMergedGlb(imf, opts) {
       const metal = color ? 0 : Math.min(1, Math.max(0, m0?.metallic ?? 0));
       const rough = color ? 0.9 : Math.min(1, Math.max(0, m0?.roughness ?? 0.9));
       addToChunk(pos, nrm, idx32, [fnx, fny, fnz], [fxx, fxy, fxz], baseColor, metal, rough, String(node.dbid));
+      addToLod(pos, idx32); // 개요(LOD1) 격자 누적
       streamV += nv; streamT += idx32.length / 3;
       if (chunk && chunk.tris >= CHUNK_CAP) await flushChunk();
     } else {
@@ -763,11 +795,37 @@ export async function buildMergedGlb(imf, opts) {
 
     if (++processed % 50000 === 0) log(`[merge]   ${processed} 객체 (청크 ${chunkIdx}, 단순화 ${decimated})`);
   }
-  // XKT 스트리밍: 마지막 청크 flush 후 즉시 반환(그룹 emit 경로 안 탐).
+  // XKT 스트리밍: 마지막 청크 flush + LOD1(개요) 방출 후 반환(그룹 emit 경로 안 탐).
   if (xktStream) {
     await flushChunk();
-    log(`[merge] XKT 스트리밍 완료: 청크 ${chunkIdx}개 · 정점 ${streamV.toLocaleString()} · 삼각형 ${Math.round(streamT).toLocaleString()}`);
-    return { xkt: true, chunks: chunkIdx, vertices: streamV, triangles: streamT, decimated: 0, focus: robustFocus(foci) };
+    // LOD1 개요 메시 방출(전역 격자 클러스터 결과) → onChunk(isLod1=true)
+    let lodTris = 0;
+    if (lpx.length >= 3 && lodIdx.length >= 3) {
+      const lp = new Float32Array(lpx.length * 3);
+      for (let i = 0; i < lpx.length; i++) { lp[i * 3] = lpx[i]; lp[i * 3 + 1] = lpy[i]; lp[i * 3 + 2] = lpz[i]; }
+      const li = Uint32Array.from(lodIdx);
+      lodIdx = []; lodMap.clear();
+      const ln = recomputeNormals(lp, li);
+      lodTris = li.length / 3;
+      let mnx = Infinity, mny = Infinity, mnz = Infinity, mxx = -Infinity, mxy = -Infinity, mxz = -Infinity;
+      for (let v = 0; v < lp.length; v += 3) {
+        if (lp[v] < mnx) mnx = lp[v]; if (lp[v + 1] < mny) mny = lp[v + 1]; if (lp[v + 2] < mnz) mnz = lp[v + 2];
+        if (lp[v] > mxx) mxx = lp[v]; if (lp[v + 1] > mxy) mxy = lp[v + 1]; if (lp[v + 2] > mxz) mxz = lp[v + 2];
+      }
+      const bv = [], acc = [], pieces = []; let bo = 0;
+      const addV = (typed, target) => { const buf = Buffer.from(typed.buffer, typed.byteOffset, typed.byteLength); bv.push({ buffer: 0, byteOffset: bo, byteLength: buf.length, target }); pieces.push(buf); bo += buf.length; return bv.length - 1; };
+      const pA = acc.push({ bufferView: addV(lp, 34962), componentType: 5126, count: lp.length / 3, type: 'VEC3', min: [mnx, mny, mnz], max: [mxx, mxy, mxz] }) - 1;
+      const nA = acc.push({ bufferView: addV(ln, 34962), componentType: 5126, count: ln.length / 3, type: 'VEC3' }) - 1;
+      const iA = acc.push({ bufferView: addV(li, 34963), componentType: 5125, count: li.length, type: 'SCALAR' }) - 1;
+      const materials = [{ pbrMetallicRoughness: { baseColorFactor: [0.72, 0.74, 0.72, 1], metallicFactor: 0, roughnessFactor: 1 }, doubleSided: true }];
+      const meshes = [{ primitives: [{ mode: 4, attributes: { POSITION: pA, NORMAL: nA }, indices: iA, material: 0 }] }];
+      const lodPath = path.join(opts.xktStreamDir, 'lod1.glb');
+      finalizeGlb(lodPath, { nodes: [{ mesh: 0, name: 'lod1' }], meshes, materials, accessors: acc, bufferViews: bv, pieces, byteOffset: bo });
+      if (opts.onChunk) await opts.onChunk(lodPath, -1, lodTris, true);
+      log(`[merge] LOD1(개요) 방출: 정점 ${(lp.length / 3).toLocaleString()} · 삼각형 ${Math.round(lodTris).toLocaleString()} (셀 ${lodCell}m)`);
+    }
+    log(`[merge] XKT 스트리밍 완료: 청크 ${chunkIdx}개 · 정점 ${streamV.toLocaleString()} · 삼각형 ${Math.round(streamT).toLocaleString()} · LOD1 삼각형 ${Math.round(lodTris).toLocaleString()}`);
+    return { xkt: true, chunks: chunkIdx, vertices: streamV, triangles: streamT, lodTris, decimated: 0, focus: robustFocus(foci) };
   }
   // 솔리드(삼각형) 부재가 하나라도 있으면 선/점은 대개 엣지/주석 클러터(IFC 의 와이어프레임
   // 11만개 등) → 제외. 순수 선형(솔리드 0 = DWG 도면)만 선/점 유지. 정점수 비율은 엣지선이

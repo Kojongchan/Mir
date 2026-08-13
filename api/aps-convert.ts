@@ -103,7 +103,7 @@ async function r2TotalSize(): Promise<number> {
 
 type Focus = { center: [number, number, number]; half: [number, number, number] };
 type CacheState =
-  | { ready: true; xkt: true; urls: string[]; focus?: Focus }
+  | { ready: true; xkt: true; urls: string[]; lod1Url?: string; focus?: Focus }
   | { ready: true; url: string; focus?: Focus }
   | { failed: true; error: string }
   | { ready: false };
@@ -129,10 +129,11 @@ async function cacheState(urn: string): Promise<CacheState> {
   const manifestText = await r2GetText(`${dir}/xkt/manifest.json`);
   if (manifestText) {
     try {
-      const { xktFiles } = JSON.parse(manifestText) as { xktFiles: string[] };
+      const { xktFiles, lod1 } = JSON.parse(manifestText) as { xktFiles: string[]; lod1?: string | null };
       if (Array.isArray(xktFiles) && xktFiles.length > 0) {
         const urls = await Promise.all(xktFiles.map((f) => r2PresignGet(`${dir}/xkt/${f}`)));
-        return { ready: true, xkt: true, urls, focus: await readFocus(dir) };
+        const lod1Url = lod1 ? await r2PresignGet(`${dir}/xkt/${lod1}`) : undefined;
+        return { ready: true, xkt: true, urls, lod1Url, focus: await readFocus(dir) };
       }
     } catch {
       /* 매니페스트 파손 — GLB/실패 경로로 폴백 */

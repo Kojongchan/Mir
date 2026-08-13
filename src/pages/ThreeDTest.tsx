@@ -103,6 +103,7 @@ export function ThreeDTest() {
   const viewerRef = useRef<Viewer | null>(null);
   const loaderRef = useRef<GLTFLoaderPlugin | null>(null);
   const xktLoaderRef = useRef<XKTLoaderPlugin | null>(null);
+  const lodSubRef = useRef<string | null>(null); // 카메라 LOD 전환 리스너 핸들
   const pickedRef = useRef<{ id?: string | number; worldPos?: number[] } | null>(null);
   const highlightedRef = useRef<string | null>(null); // 현재 하이라이트된 엔티티 id
   const [status, setStatus] = useState('');
@@ -377,56 +378,80 @@ export function ThreeDTest() {
   }, []);
 
   /**
-   * 분할 XKT(여러 개)를 한 씬에 스트리밍 로드(xeokit-bim-viewer 방식). 감량 없는 원본 정밀도.
-   * 각 파일은 재질그룹 1개 = 모델 하나. 전부 로드되면 focus/전체 AABB 로 flyTo.
+   * 분할 XKT + LOD 스트리밍(우리 xeokit 확장). 개요(LOD1)를 먼저 띄워 즉시 보이게 하고,
+   * 상세 청크(73개)는 백그라운드로 숨긴 채 순차 로드. 이후 **카메라 거리로 LOD 전환** —
+   * 줌아웃(멀면) 개요만(수백만 삼각형=가벼움), 줌인(가까우면) 상세(프러스텀 컬링으로 보이는
+   * 부분만) → 양 극단 모두 부드럽게. 3.6억 삼각형 렉의 근본 완화.
    */
-  const mountXkt = useCallback((urls: string[], label: string, focus?: Focus) => {
+  const mountXkt = useCallback((urls: string[], lod1Url: string | undefined, label: string, focus?: Focus) => {
     const viewer = viewerRef.current;
     const loader = xktLoaderRef.current;
     if (!viewer || !loader || urls.length === 0) return;
     setPick(null);
     highlightedRef.current = null;
     for (const id of Object.keys(viewer.scene.models)) viewer.scene.models[id].destroy();
+    if (lodSubRef.current) { try { viewer.camera.off(lodSubRef.current); } catch { /* noop */ } lodSubRef.current = null; }
+
     const total = urls.length;
-    let done = 0, failed = 0;
-    const finish = () => {
+    let done = 0, failed = 0, framed = false;
+    const models = viewer.scene.models as Record<string, { visible?: boolean }>;
+    const frameOnce = () => {
+      if (framed) return; framed = true;
       const box = focusToAabb(focus) ?? (viewer.scene.aabb as number[] | undefined);
       if (box) flyToFramed(viewer, box);
+    };
+    // 상세 로드 완료 후: 카메라 거리 기준 LOD 전환 설정.
+    const setupSwap = () => {
+      const box = (focusToAabb(focus) ?? (viewer.scene.aabb as number[])) || [0, 0, 0, 0, 0, 0];
+      const cx = (box[0] + box[3]) / 2, cy = (box[1] + box[4]) / 2, cz = (box[2] + box[5]) / 2;
+      const diag = Math.hypot(box[3] - box[0], box[4] - box[1], box[5] - box[2]) || 1000;
+      const SWAP = diag * 0.4; // 이 거리보다 멀면 개요만
+      const hasLod = !!models['lod1'];
+      const apply = () => {
+        const eye = viewer.camera.eye as number[];
+        const d = Math.hypot(eye[0] - cx, eye[1] - cy, eye[2] - cz);
+        const far = hasLod && d > SWAP;
+        if (models['lod1']) models['lod1'].visible = far;
+        for (let i = 0; i < total; i++) { const m = models[`xkt${i}`]; if (m) m.visible = !far; }
+      };
+      apply();
+      let t = 0;
+      lodSubRef.current = viewer.camera.on('matrix', () => {
+        const now = Date.now(); if (now - t < 150) return; t = now; apply();
+      }) as unknown as string;
+    };
+    const finishDetail = () => {
       setModelName(label);
       setStatus('');
       setBusy(false);
+      setupSwap();
       try {
         const ids = Object.keys(viewer.scene.objects || {});
         const a = (viewer.scene.aabb as number[]) || [0, 0, 0, 0, 0, 0];
         const span = [a[3] - a[0], a[4] - a[1], a[5] - a[2]].map((x) => Math.round(x));
-        const cam = viewer.camera;
-        const r1 = (v: number[]) => v.map((x) => Math.round(x)).join(',');
-        setDbg(
-          `XKT ${done}/${total} 로드 · 엔티티 ${ids.length}개 · 모델AABB span(${span.join(',')}) · ` +
-            `cam eye(${r1(cam.eye as number[])}) look(${r1(cam.look as number[])})`,
-        );
-      } catch {
-        setDbg('진단 수집 실패');
-      }
+        setDbg(`XKT ${done}/${total} + LOD1${lod1Url ? '✓' : '✗'} · 엔티티 ${ids.length}개 · AABB span(${span.join(',')})`);
+      } catch { setDbg('진단 수집 실패'); }
     };
-    // 순차 로드(병렬이면 73개 파싱 동시 발생 → 메모리 스파이크). 하나 로드되면 다음.
-    const loadOne = (i: number) => {
-      if (i >= total) { finish(); return; }
-      setStatus(`로딩 중… ${done + failed}/${total} 청크`);
+    // 상세 청크 순차 로드(숨긴 채) — 병렬이면 메모리 스파이크.
+    const loadDetail = (i: number) => {
+      if (i >= total) { finishDetail(); return; }
+      setStatus(`상세 로딩 중… ${done + failed}/${total} 청크 (개요 표시 중)`);
       const model = loader.load({
-        id: `xkt${i}`,
-        src: urls[i],
-        edges: false,
-        rotation: [-90, 0, 0], // SVF Z-up → xeokit Y-up (GLB 경로와 동일)
+        id: `xkt${i}`, src: urls[i], edges: false, rotation: [-90, 0, 0],
       } as unknown as Parameters<typeof loader.load>[0]);
-      model.on('loaded', () => { done++; loadOne(i + 1); });
-      model.on('error', (e: unknown) => {
-        failed++;
-        if (done === 0 && failed === total) setStatus(`불러오기 실패: ${errMessage(e)}`);
-        loadOne(i + 1);
-      });
+      // 로드 즉시 숨김(로드 중 렌더 부하·깜빡임 방지 — 개요만 보이게).
+      try { (model as unknown as { visible?: boolean }).visible = false; } catch { /* noop */ }
+      model.on('loaded', () => { const m = models[`xkt${i}`]; if (m) m.visible = false; done++; frameOnce(); loadDetail(i + 1); });
+      model.on('error', () => { failed++; loadDetail(i + 1); });
     };
-    loadOne(0);
+    // 1) 개요(LOD1) 먼저 → 빠른 첫 화면, UI 즉시 해제. 없으면 바로 상세.
+    if (lod1Url) {
+      const lm = loader.load({ id: 'lod1', src: lod1Url, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
+      lm.on('loaded', () => { frameOnce(); setBusy(false); setStatus('개요 표시 · 상세 로딩 중…'); loadDetail(0); });
+      lm.on('error', () => { loadDetail(0); });
+    } else {
+      loadDetail(0);
+    }
   }, []);
 
   /** ACC 모델 선택 → (캐시/실패 조회 → 없으면 변환 dispatch → 폴링) → GLB/XKT 로드.
@@ -453,6 +478,7 @@ export function ThreeDTest() {
         url?: string;
         xkt?: boolean;
         urls?: string[];
+        lod1Url?: string;
         focus?: Focus;
         failed?: boolean;
         error?: string;
@@ -473,7 +499,7 @@ export function ThreeDTest() {
       const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
       // XKT(분할) 우선, 없으면 단일 GLB(DWG 등).
       const doMount = (s: State) => {
-        if (s.xkt && s.urls && s.urls.length) mountXkt(s.urls, f.name, s.focus);
+        if (s.xkt && s.urls && s.urls.length) mountXkt(s.urls, s.lod1Url, f.name, s.focus);
         else if (s.url) mountGlb(s.url, f.name, s.focus);
       };
       const isReady = (s: State) => !!s.ready && (!!s.url || !!(s.urls && s.urls.length));
