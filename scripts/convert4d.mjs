@@ -17,6 +17,9 @@
 //   STORAGE_BUCKET(선택, 기본 'models4d')
 // 산출물: Supabase Storage  <bucket>/<projectId-or-urnhash>/model.glb
 // =====================================================================
+// @loaders.gl/polyfills: convert2xkt 가 Node 에서 텍스처 이미지를 파싱하려면 필수(ESM 사이드이펙트).
+// 없으면 [parseGLTFIntoXKTModel] "Install '@loaders.gl/polyfills'" 로 텍스처 프래그가 실패한다.
+import '@loaders.gl/polyfills';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -346,6 +349,18 @@ async function main() {
     const mod = await import('@xeokit/xeokit-convert');
     const convert2xkt = mod.convert2xkt || mod.default?.convert2xkt || mod.default;
     if (typeof convert2xkt !== 'function') throw new Error('convert2xkt 로드 실패(@xeokit/xeokit-convert)');
+    // convert2xkt(XKTModel.finalize)는 텍스처 Basis 인코딩 시 CWD 기준 modules/textures/dist/libs/
+    // basis_encoder.wasm 을 찾는다 → @loaders.gl/textures 의 실제 위치로 심볼릭 링크(없으면 텍스처 드롭).
+    try {
+      const libs = path.resolve('node_modules/@loaders.gl/textures/dist/libs');
+      if (fs.existsSync(libs)) {
+        fs.mkdirSync('modules/textures/dist', { recursive: true });
+        if (!fs.existsSync('modules/textures/dist/libs')) fs.symlinkSync(libs, 'modules/textures/dist/libs');
+        console.log('[convert4d] basis_encoder 경로 연결(modules/textures/dist/libs → loaders.gl)');
+      } else {
+        console.warn('[convert4d] @loaders.gl/textures libs 없음 — 텍스처 Basis 인코딩 불가할 수 있음');
+      }
+    } catch (e) { console.warn('[convert4d] basis 경로 연결 실패:', e?.message || e); }
     // 스트리밍: mergeGlb 가 청크 GLB 를 하나 만들 때마다 여기서 XKT 로 굽고 R2 업로드 후 즉시 삭제
     // → 디스크·메모리 모두 한 청크로 상한(대용량 OOM/디스크풀 원천 차단).
     const xktFiles = [];

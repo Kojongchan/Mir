@@ -22,6 +22,7 @@ function finalizeGlb(outPath, A) {
     scene: 0, scenes: [{ nodes: A.nodes.map((_, i) => i) }],
     nodes: A.nodes, meshes: A.meshes, materials: A.materials,
     accessors: A.accessors, bufferViews: A.bufferViews, buffers: [{ byteLength: A.byteOffset }],
+    ...(A.images && A.images.length ? { images: A.images, textures: A.textures, samplers: A.samplers } : {}),
   };
   const jsonBuf = Buffer.from(JSON.stringify(gltf), 'utf8');
   const jsonPad = (4 - (jsonBuf.length % 4)) % 4;
@@ -604,33 +605,51 @@ export async function buildMergedGlb(imf, opts) {
     const d = mat?.diffuse;
     return d ? [d.x, d.y, d.z, mat?.opacity ?? 1] : [0.72, 0.74, 0.77, 1];
   };
-  let chunk = null, chunkIdx = 0, streamV = 0, streamT = 0;
-  const newChunk = () => ({ acc: [], bv: [], meshes: [], materials: [], nodes: [], pieces: [], bo: 0, tris: 0 });
-  const addToChunk = (pos, nrm, idxF, fmin, fmax, baseColor, metal, rough, name) => {
+  let chunk = null, chunkIdx = 0, streamV = 0, streamT = 0, texFrags = 0;
+  const newChunk = () => ({ acc: [], bv: [], meshes: [], materials: [], nodes: [], pieces: [], bo: 0, tris: 0, images: [], textures: [], samplers: [], texMap: new Map() });
+  // tex(옵션): { uri, buf(Buffer), mime, uvs(Float32Array) } — 있으면 baseColorTexture + TEXCOORD_0.
+  const addToChunk = (pos, nrm, idxF, fmin, fmax, baseColor, metal, rough, name, tex) => {
     if (!chunk) chunk = newChunk();
     const c = chunk;
     const addV = (typed, target) => {
       const buf = Buffer.from(typed.buffer, typed.byteOffset, typed.byteLength);
       c.bv.push({ buffer: 0, byteOffset: c.bo, byteLength: buf.length, target });
-      c.pieces.push(buf); c.bo += buf.length; return c.bv.length - 1;
+      c.pieces.push(buf); c.bo += buf.length;
+      // 4바이트 정렬(다음 bufferView 가 float/uint 접근 시 정렬 필요 — 이미지 바이트는 임의 길이).
+      const pad = (4 - (c.bo % 4)) % 4;
+      if (pad) { c.pieces.push(Buffer.alloc(pad)); c.bo += pad; }
+      return c.bv.length - 1;
     };
-    // XKT 경로는 _DBID 커스텀 정점속성을 쓰지 않는다(convert2xkt 미지원 위험 + XKT 피킹은
-    // 엔티티 단위). 대신 프래그먼트=노드 1개로 두고 node.name 에 dbid 를 심어 객체 식별을 남긴다.
     const pA = c.acc.push({ bufferView: addV(pos, 34962), componentType: 5126, count: pos.length / 3, type: 'VEC3', min: fmin, max: fmax }) - 1;
     const nA = c.acc.push({ bufferView: addV(nrm, 34962), componentType: 5126, count: nrm.length / 3, type: 'VEC3' }) - 1;
     const iA = c.acc.push({ bufferView: addV(idxF, 34963), componentType: 5125, count: idxF.length, type: 'SCALAR' }) - 1;
-    const matI = c.materials.push({
-      pbrMetallicRoughness: { baseColorFactor: baseColor, metallicFactor: metal, roughnessFactor: rough },
-      doubleSided: true, ...(baseColor[3] < 1 ? { alphaMode: 'BLEND' } : {}),
-    }) - 1;
-    const meshI = c.meshes.push({ primitives: [{ mode: 4, attributes: { POSITION: pA, NORMAL: nA }, indices: iA, material: matI }] }) - 1;
+    const attributes = { POSITION: pA, NORMAL: nA };
+    const mat = { pbrMetallicRoughness: { baseColorFactor: baseColor, metallicFactor: metal, roughnessFactor: rough }, doubleSided: true, ...(baseColor[3] < 1 ? { alphaMode: 'BLEND' } : {}) };
+    if (tex && tex.buf && tex.uvs && tex.uvs.length === (pos.length / 3) * 2) {
+      // 이미지(청크 내 URI 로 dedupe) → texture → material.baseColorTexture, + TEXCOORD_0.
+      let ti = c.texMap.get(tex.uri);
+      if (ti === undefined) {
+        if (c.samplers.length === 0) c.samplers.push({ wrapS: 10497, wrapT: 10497 }); // repeat
+        const imgBV = addV(tex.buf, undefined);
+        const imgI = c.images.push({ bufferView: imgBV, mimeType: tex.mime }) - 1;
+        ti = c.textures.push({ source: imgI, sampler: 0 }) - 1;
+        c.texMap.set(tex.uri, ti);
+      }
+      const uvA = c.acc.push({ bufferView: addV(tex.uvs, 34962), componentType: 5126, count: tex.uvs.length / 2, type: 'VEC2' }) - 1;
+      attributes.TEXCOORD_0 = uvA;
+      mat.pbrMetallicRoughness.baseColorTexture = { index: ti, texCoord: 0 };
+      // 텍스처가 있으면 baseColorFactor 는 흰색으로(색이 텍스처를 어둡게 곱하지 않게).
+      mat.pbrMetallicRoughness.baseColorFactor = [1, 1, 1, baseColor[3]];
+    }
+    const matI = c.materials.push(mat) - 1;
+    const meshI = c.meshes.push({ primitives: [{ mode: 4, attributes, indices: iA, material: matI }] }) - 1;
     c.nodes.push({ mesh: meshI, name });
     c.tris += idxF.length / 3;
   };
   const flushChunk = async () => {
     if (!chunk || chunk.meshes.length === 0) return;
     const p = path.join(opts.xktStreamDir, `c${chunkIdx}.glb`);
-    finalizeGlb(p, { nodes: chunk.nodes, meshes: chunk.meshes, materials: chunk.materials, accessors: chunk.acc, bufferViews: chunk.bv, pieces: chunk.pieces, byteOffset: chunk.bo });
+    finalizeGlb(p, { nodes: chunk.nodes, meshes: chunk.meshes, materials: chunk.materials, accessors: chunk.acc, bufferViews: chunk.bv, pieces: chunk.pieces, byteOffset: chunk.bo, images: chunk.images, textures: chunk.textures, samplers: chunk.samplers });
     const tris = chunk.tris;
     chunk = null; // flush 전에 참조 해제(메모리 회수)
     if (opts.onChunk) await opts.onChunk(p, chunkIdx, tris);
@@ -686,13 +705,35 @@ export async function buildMergedGlb(imf, opts) {
     fragCount++;
     // 대표 정점색은 단순화 전 원본에서(메시 색은 RGBA=정점당 4). DWG 등의 실제 색.
     const color = fragColor(geom.getColors?.(), verts.length / 3, 4);
-    // [tex 진단] SVF 에 지형 텍스처가 실제로 있는지 확인 — 재질 구조 + UV 유무를 처음 몇 개만 로그.
-    if (xktStream && fragCount <= 5) {
+    // 텍스처(재질 diffuse 맵 + UV): 지형은 NWD 재질에 항공사진이 실려 온다. 재질 maps.diffuse(URI)
+    // + geom.getUvs(0) + scene.getImage(URI) 로 추출해 baseColorTexture 로 굽는다. 텍스처 프래그먼트는
+    // 아래 weld 를 건너뛴다(UV↔정점 순서 보존 — weld 는 UV 를 안 옮기므로).
+    let tex = null;
+    if (xktStream) {
       try {
-        const mm = imf.getMaterial(node.material ?? -1);
-        const uv = geom.getUvs?.();
-        log(`[tex] frag#${fragCount} matKeys=[${mm ? Object.keys(mm).join(',') : 'none'}] uvLen=${uv ? uv.length : 0}`);
-      } catch (e) { log(`[tex] probe 실패: ${e?.message || e}`); }
+        const mat = imf.getMaterial(node.material ?? -1);
+        const uri = mat?.maps?.diffuse;
+        const nvv = verts.length / 3;
+        if (uri && geom.getUvChannelCount && geom.getUvChannelCount() > 0) {
+          const rawUv = geom.getUvs(0);
+          const buf = imf.getImage ? imf.getImage(uri) : undefined;
+          if (rawUv && rawUv.length === nvv * 2 && buf && buf.length) {
+            const flip = process.env.XKT_UV_FLIP !== '0';
+            const su = mat.scale?.x ?? 1, sv = mat.scale?.y ?? 1;
+            const uvs = new Float32Array(nvv * 2);
+            for (let k = 0; k < nvv; k++) {
+              const u = rawUv[k * 2] * su, v = rawUv[k * 2 + 1] * sv;
+              uvs[k * 2] = u; uvs[k * 2 + 1] = flip ? 1 - v : v;
+            }
+            const mime = /\.png$/i.test(uri) ? 'image/png' : 'image/jpeg';
+            tex = { uri, buf, mime, uvs };
+            texFrags++;
+            if (texFrags <= 3) log(`[tex] frag#${fragCount} 텍스처=${uri} (${buf.length}B ${mime}) uvLen=${rawUv.length} scale=(${su},${sv})`);
+          } else if (fragCount <= 8) {
+            log(`[tex] frag#${fragCount} 맵=${uri} uvCh=${geom.getUvChannelCount()} rawUv=${rawUv ? rawUv.length : 0} nv*2=${nvv * 2} img=${buf ? buf.length : 'none'}`);
+          }
+        }
+      } catch (e) { if (fragCount <= 8) log(`[tex] 감지오류 frag#${fragCount}: ${e?.message || e}`); }
     }
 
     let idx32 = idx instanceof Uint32Array ? idx : Uint32Array.from(idx);
@@ -706,7 +747,7 @@ export async function buildMergedGlb(imf, opts) {
     // XKT 경로(감량 없음): 프래그먼트 '삼각형 수프'를 미세 격자(기본 2cm)로 무손실 병합해
     // 좌표 중복 정점·면적0 슬리버를 제거 → 누적 메모리를 묶는다(7km 부지에서 2cm 이동은
     // 시각 차이 0 = 감량 아님, 형상 보존). 대용량 원본을 통째로 안 쌓게 하는 게 목적.
-    if ((opts.perGroupDir || xktStream) && idx32.length >= 3) {
+    if ((opts.perGroupDir || xktStream) && idx32.length >= 3 && !tex) {
       const q = Number(process.env.XKT_WELD_Q || 50); // 1/0.02m = 2cm 격자점
       try {
         const w = weld(verts, idx32, normals, q);
@@ -781,7 +822,7 @@ export async function buildMergedGlb(imf, opts) {
       const m0 = imf.getMaterial(node.material ?? -1);
       const metal = color ? 0 : Math.min(1, Math.max(0, m0?.metallic ?? 0));
       const rough = color ? 0.9 : Math.min(1, Math.max(0, m0?.roughness ?? 0.9));
-      addToChunk(pos, nrm, idx32, [fnx, fny, fnz], [fxx, fxy, fxz], baseColor, metal, rough, String(node.dbid));
+      addToChunk(pos, nrm, idx32, [fnx, fny, fnz], [fxx, fxy, fxz], baseColor, metal, rough, String(node.dbid), tex);
       addToLod(pos, idx32); // 개요(LOD1) 격자 누적
       streamV += nv; streamT += idx32.length / 3;
       if (chunk && chunk.tris >= CHUNK_CAP) await flushChunk();
@@ -826,7 +867,7 @@ export async function buildMergedGlb(imf, opts) {
       if (opts.onChunk) await opts.onChunk(lodPath, -1, lodTris, true);
       log(`[merge] LOD1(개요) 방출: 정점 ${(lp.length / 3).toLocaleString()} · 삼각형 ${Math.round(lodTris).toLocaleString()} (셀 ${lodCell}m)`);
     }
-    log(`[merge] XKT 스트리밍 완료: 청크 ${chunkIdx}개 · 정점 ${streamV.toLocaleString()} · 삼각형 ${Math.round(streamT).toLocaleString()} · LOD1 삼각형 ${Math.round(lodTris).toLocaleString()}`);
+    log(`[merge] XKT 스트리밍 완료: 청크 ${chunkIdx}개 · 정점 ${streamV.toLocaleString()} · 삼각형 ${Math.round(streamT).toLocaleString()} · LOD1 삼각형 ${Math.round(lodTris).toLocaleString()} · 텍스처 프래그 ${texFrags}`);
     return { xkt: true, chunks: chunkIdx, vertices: streamV, triangles: streamT, lodTris, decimated: 0, focus: robustFocus(foci) };
   }
   // 솔리드(삼각형) 부재가 하나라도 있으면 선/점은 대개 엣지/주석 클러터(IFC 의 와이어프레임

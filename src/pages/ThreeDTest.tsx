@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Viewer, GLTFLoaderPlugin, XKTLoaderPlugin, NavCubePlugin, FastNavPlugin } from '@xeokit/xeokit-sdk';
+import * as XeokitSDK from '@xeokit/xeokit-sdk';
+// KTX2TextureTranscoder 는 런타임엔 export 되지만 .d.ts 에 누락 → 네임스페이스에서 가져온다.
+const KTX2TextureTranscoder = (XeokitSDK as unknown as { KTX2TextureTranscoder: new (viewer: unknown, cfg?: unknown) => unknown }).KTX2TextureTranscoder;
 import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
 import { useProjectRole } from '../auth/useProjectRole';
 import { supabase } from '../lib/supabase';
@@ -224,8 +227,11 @@ export function ThreeDTest() {
     loaderRef.current = new GLTFLoaderPlugin(viewer, {
       dataSource,
     } as unknown as ConstructorParameters<typeof GLTFLoaderPlugin>[1]);
+    // XKT 의 지형 텍스처(KTX2/Basis 압축)를 브라우저에서 디코드하려면 트랜스코더 필요. 기본
+    // transcoderPath(jsdelivr CDN)를 사용 — 인터넷 있으면 동작(사내망 CDN 차단 시 public 호스팅으로 전환).
     xktLoaderRef.current = new XKTLoaderPlugin(viewer, {
       dataSource,
+      textureTranscoder: new KTX2TextureTranscoder(viewer),
     } as unknown as ConstructorParameters<typeof XKTLoaderPlugin>[1]);
 
     // 클릭 픽 → 엔티티 ID(+메타) → MIR_SMART DB 조인 지점. 표면 지점(worldPos)도 보관해

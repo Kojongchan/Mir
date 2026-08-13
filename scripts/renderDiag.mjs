@@ -22,11 +22,13 @@ try {
 const html = `<!doctype html><html><head><meta charset=utf-8><style>html,body{margin:0}#c{width:${W}px;height:${H}px}</style></head><body>
 <canvas id=c width=${W} height=${H}></canvas>
 <script type=module>
-import {Viewer,GLTFLoaderPlugin} from '/xeokit.js';
+import {Viewer,GLTFLoaderPlugin,XKTLoaderPlugin} from '/xeokit.js';
+const IS_XKT=${glbPath.endsWith('.xkt') ? 'true' : 'false'};
 const v=new Viewer({canvasId:'c',transparent:false,backgroundColor:[0.13,0.14,0.16],dtxEnabled:false,saoEnabled:false,logarithmicDepthBufferEnabled:true});
 v.camera.perspective.near=0.5;v.camera.perspective.far=1e7;v.camera.ortho.near=0.5;v.camera.ortho.far=1e7;
-const l=new GLTFLoaderPlugin(v);
-const m=l.load({id:'t',src:'/model.glb',edges:false,rotation:[-90,0,0],dtxEnabled:false});
+const fetchBuf=(url,ok,err)=>fetch(url).then(r=>r.arrayBuffer()).then(ok).catch(e=>err(String(e)));
+const l=IS_XKT ? new XKTLoaderPlugin(v,{dataSource:{getXKT:fetchBuf}}) : new GLTFLoaderPlugin(v);
+const m=l.load({id:'t',src:IS_XKT?'/model.xkt':'/model.glb',edges:false,rotation:[-90,0,0],dtxEnabled:false});
 const FOCUS=${focusAabb ? JSON.stringify(focusAabb) : 'null'};
 const OBLIQUE=${process.env.PW_OBLIQUE === '1' ? 'true' : 'false'};
 m.on('loaded',()=>{const a=m.aabb;console.log('AABB',JSON.stringify(a));
@@ -45,7 +47,7 @@ m.on('error',e=>{document.title='ERR:'+e;window.__done=1;});
 const server = http.createServer((req, res) => {
   if (req.url === '/' || req.url.startsWith('/index')) { res.setHeader('content-type', 'text/html'); res.end(html); }
   else if (req.url === '/xeokit.js') { res.setHeader('content-type', 'text/javascript'); res.end(fs.readFileSync(xeokitDist)); }
-  else if (req.url.startsWith('/model.glb')) { res.setHeader('content-type', 'model/gltf-binary'); res.end(fs.readFileSync(glbPath)); }
+  else if (req.url.startsWith('/model.glb') || req.url.startsWith('/model.xkt')) { res.setHeader('content-type', 'application/octet-stream'); res.end(fs.readFileSync(glbPath)); }
   else { res.statusCode = 404; res.end('x'); }
 });
 await new Promise((r) => server.listen(8123, r));
