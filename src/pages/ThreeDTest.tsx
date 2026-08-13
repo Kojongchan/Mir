@@ -403,21 +403,34 @@ export function ThreeDTest() {
     // 상세 로드 완료 후: 카메라 거리 기준 LOD 전환 설정.
     const setupSwap = () => {
       const box = (focusToAabb(focus) ?? (viewer.scene.aabb as number[])) || [0, 0, 0, 0, 0, 0];
-      const cx = (box[0] + box[3]) / 2, cy = (box[1] + box[4]) / 2, cz = (box[2] + box[5]) / 2;
       const diag = Math.hypot(box[3] - box[0], box[4] - box[1], box[5] - box[2]) || 1000;
-      const SWAP = diag * 0.4; // 이 거리보다 멀면 개요만
+      // 기준 = '시점 거리'(eye→look = 줌 레벨). 넓은 모델(7.6km)에서 한 구석을 가까이 봐도
+      // 중심과는 멀어 '중심거리'는 오판한다. 시점 거리는 어디를 보든 줌 정도를 정확히 반영.
+      // 히스테리시스(NEAR/FAR)로 임계 근처 깜빡임 방지.
+      const NEAR = diag * 0.12; // 이보다 가까이 보면 상세
+      const FAR = diag * 0.22;  // 이보다 멀리 보면 개요
       const hasLod = !!models['lod1'];
+      let showingDetail = true;
       const apply = () => {
         const eye = viewer.camera.eye as number[];
-        const d = Math.hypot(eye[0] - cx, eye[1] - cy, eye[2] - cz);
-        const far = hasLod && d > SWAP;
-        if (models['lod1']) models['lod1'].visible = far;
-        for (let i = 0; i < total; i++) { const m = models[`xkt${i}`]; if (m) m.visible = !far; }
+        const look = viewer.camera.look as number[];
+        const d = Math.hypot(look[0] - eye[0], look[1] - eye[1], look[2] - eye[2]);
+        if (!hasLod) return; // 개요 없으면 상세 유지
+        if (showingDetail && d > FAR) showingDetail = false;
+        else if (!showingDetail && d < NEAR) showingDetail = true;
+        else return; // 변화 없음
+        if (models['lod1']) models['lod1'].visible = !showingDetail;
+        for (let i = 0; i < total; i++) { const m = models[`xkt${i}`]; if (m) m.visible = showingDetail; }
       };
-      apply();
+      // 초기: 현재 시점 거리로 판정(전체맞춤이면 개요, 가까우면 상세).
+      const eye0 = viewer.camera.eye as number[]; const look0 = viewer.camera.look as number[];
+      const d0 = Math.hypot(look0[0] - eye0[0], look0[1] - eye0[1], look0[2] - eye0[2]);
+      showingDetail = !(hasLod && d0 > FAR);
+      if (models['lod1']) models['lod1'].visible = !showingDetail;
+      for (let i = 0; i < total; i++) { const m = models[`xkt${i}`]; if (m) m.visible = showingDetail; }
       let t = 0;
       lodSubRef.current = viewer.camera.on('matrix', () => {
-        const now = Date.now(); if (now - t < 150) return; t = now; apply();
+        const now = Date.now(); if (now - t < 120) return; t = now; apply();
       }) as unknown as string;
     };
     const finishDetail = () => {
