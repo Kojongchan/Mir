@@ -641,7 +641,7 @@ export async function buildMergedGlb(imf, opts) {
   // === LOD1(개요 메시): 스트리밍 중 전역 격자(기본 8m)로 모든 정점을 셀 대표점에 병합해
   // 저해상도 개요를 누적한다(메모리=점유 셀 수로 상한). 뷰어는 줌아웃 시 이 LOD1 만 그려
   // 3.6억 삼각형 대신 수백만만 그리므로 가볍다. shard 불가(격자 대표점). ===
-  const lodCell = Number(process.env.XKT_LOD_CELL || 8);
+  const lodCell = Number(process.env.XKT_LOD_CELL || 4);
   const lodMap = new Map();
   const lpx = [], lpy = [], lpz = [];
   let lodIdx = [];
@@ -652,7 +652,9 @@ export async function buildMergedGlb(imf, opts) {
       const qx = Math.round(pos[v * 3] / lodCell), qy = Math.round(pos[v * 3 + 1] / lodCell), qz = Math.round(pos[v * 3 + 2] / lodCell);
       const key = `${qx}_${qy}_${qz}`;
       let ri = lodMap.get(key);
-      if (ri === undefined) { ri = lpx.length; lodMap.set(key, ri); lpx.push(qx * lodCell); lpy.push(qy * lodCell); lpz.push(qz * lodCell); }
+      // 대표점: XY 는 격자로 스냅하되 Z(높이)는 **실제값** 유지 → 지형이 8m 계단(논밭)으로
+      // 뭉개지던 문제 제거. qz 는 키에만 써서 상하로 겹친 구조물이 안 뭉치게 분리.
+      if (ri === undefined) { ri = lpx.length; lodMap.set(key, ri); lpx.push(qx * lodCell); lpy.push(qy * lodCell); lpz.push(pos[v * 3 + 2]); }
       remapL[v] = ri;
     }
     for (let k = 0; k + 2 < idxF.length; k += 3) {

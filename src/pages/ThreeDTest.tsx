@@ -407,8 +407,10 @@ export function ThreeDTest() {
       // 기준 = '시점 거리'(eye→look = 줌 레벨). 넓은 모델(7.6km)에서 한 구석을 가까이 봐도
       // 중심과는 멀어 '중심거리'는 오판한다. 시점 거리는 어디를 보든 줌 정도를 정확히 반영.
       // 히스테리시스(NEAR/FAR)로 임계 근처 깜빡임 방지.
-      const NEAR = diag * 0.12; // 이보다 가까이 보면 상세
-      const FAR = diag * 0.22;  // 이보다 멀리 보면 개요
+      // 디테일을 강한 기본값으로 — 개요(LOD1)는 '거의 전체맞춤 이상으로 멀 때'만. 웬만한 작업
+      // 줌에선 항상 풀디테일이 보이게(개요가 거칠어 보이는 문제 회피). LOD1 화질 개선 후 재튜닝.
+      const NEAR = diag * 0.6;  // 이보다 가까이 보면 상세
+      const FAR = diag * 0.9;   // 이보다 멀리 보면 개요
       const hasLod = !!models['lod1'];
       let showingDetail = true;
       const apply = () => {
