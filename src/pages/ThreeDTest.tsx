@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Viewer, GLTFLoaderPlugin, XKTLoaderPlugin, NavCubePlugin } from '@xeokit/xeokit-sdk';
+import { Viewer, GLTFLoaderPlugin, XKTLoaderPlugin, NavCubePlugin, FastNavPlugin } from '@xeokit/xeokit-sdk';
 import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
 import { useProjectRole } from '../auth/useProjectRole';
 import { supabase } from '../lib/supabase';
@@ -130,7 +130,9 @@ export function ThreeDTest() {
       // 프리미티브는 안 그리지만, XKT(비-DWG)는 순수 메시라 무관. DWG 선형은 GLB+VBO 경로라
       // 이 설정과 별개 — 필요 시 DWG 전용 뷰어 옵션은 후속.)
       dtxEnabled: true,
-      saoEnabled: true,
+      // SAO(스크린스페이스 앰비언트 오클루전)는 매 프레임 전체화면 연산이라 3.6억 삼각형에선
+      // 정지 상태 렉의 주범 → 끈다(뷰잉 우선). 입체감은 노멀 음영으로도 충분. 필요 시 후속 토글.
+      saoEnabled: false,
       // 로그 깊이버퍼 — 토목 DWG 는 측량좌표(예: X≈230km, 폭 20km)라 near/far 범위가
       // 극단적이다. 이게 없으면 전체를 담으면 near 가 커져 가까이 못 가고(콩알), 가까이
       // 맞추면 far 가 작아 잘린다. 로그버퍼로 km~m 스케일을 한 화면에서 오가게 한다.
@@ -168,6 +170,21 @@ export function ThreeDTest() {
     hm.edges = true; hm.edgeColor = [1.0, 0.85, 0.0]; hm.edgeAlpha = 1.0;
     (hm as unknown as { glowThrough?: boolean }).glowThrough = true;
     viewerRef.current = viewer;
+
+    // FastNav — 통합모델 XKT 는 2억+ 정점이라 정지 상태 풀품질은 무겁다. 카메라를 움직이는
+    // 동안엔 SAO·PBR·텍스처·엣지를 끄고 해상도를 절반으로 낮춰 '부드러운 네비'를 확보하고,
+    // 멈추면 잠깐 뒤 풀품질로 복원한다(대용량 모델 렉의 표준 해법).
+    new FastNavPlugin(viewer, {
+      hideSAO: true,
+      hidePBR: true,
+      hideColorTexture: true,
+      hideEdges: true,
+      hideTransparentObjects: false,
+      scaleCanvasResolution: true,
+      scaleCanvasResolutionFactor: 0.5,
+      delayBeforeRestore: true,
+      delayBeforeRestoreSeconds: 0.4,
+    } as unknown as ConstructorParameters<typeof FastNavPlugin>[1]);
 
     // 방향 큐브(ACC 뷰큐브 유사) — 코너 캔버스에 렌더. 면/모서리 클릭으로 정면·평면뷰 스냅.
     let navCube: NavCubePlugin | null = null;
