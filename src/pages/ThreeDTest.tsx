@@ -125,9 +125,11 @@ export function ThreeDTest() {
       canvasElement: canvasRef.current,
       transparent: false,
       backgroundColor: [1, 1, 1],
-      // DTX(데이터텍스처) 모드는 선(line) 프리미티브를 렌더하지 않는다(DWG 선형이 안 보이는 원인).
-      // VBO 로 그려도 60fps 나오므로 끈다. (더블프리시전은 DTX 와 무관 — RTC 로 자동 처리)
-      dtxEnabled: false,
+      // DTX(데이터텍스처) 모드 — 대용량 메시를 지오메트리 텍스처로 압축 저장해 GPU 메모리를
+      // 급감시킨다. 통합모델 XKT 는 2억+ 정점이라 VBO 로는 GPU 초과 → dtx 필수. (dtx 는 선/점
+      // 프리미티브는 안 그리지만, XKT(비-DWG)는 순수 메시라 무관. DWG 선형은 GLB+VBO 경로라
+      // 이 설정과 별개 — 필요 시 DWG 전용 뷰어 옵션은 후속.)
+      dtxEnabled: true,
       saoEnabled: true,
       // 로그 깊이버퍼 — 토목 DWG 는 측량좌표(예: X≈230km, 폭 20km)라 near/far 범위가
       // 극단적이다. 이게 없으면 전체를 담으면 near 가 커져 가까이 못 가고(콩알), 가까이
@@ -383,27 +385,31 @@ export function ThreeDTest() {
         const cam = viewer.camera;
         const r1 = (v: number[]) => v.map((x) => Math.round(x)).join(',');
         setDbg(
-          `XKT ${total - failed}/${total} 로드 · 엔티티 ${ids.length}개 · 모델AABB span(${span.join(',')}) · ` +
+          `XKT ${done}/${total} 로드 · 엔티티 ${ids.length}개 · 모델AABB span(${span.join(',')}) · ` +
             `cam eye(${r1(cam.eye as number[])}) look(${r1(cam.look as number[])})`,
         );
       } catch {
         setDbg('진단 수집 실패');
       }
     };
-    urls.forEach((src, i) => {
+    // 순차 로드(병렬이면 73개 파싱 동시 발생 → 메모리 스파이크). 하나 로드되면 다음.
+    const loadOne = (i: number) => {
+      if (i >= total) { finish(); return; }
+      setStatus(`로딩 중… ${done + failed}/${total} 청크`);
       const model = loader.load({
         id: `xkt${i}`,
-        src,
+        src: urls[i],
         edges: false,
         rotation: [-90, 0, 0], // SVF Z-up → xeokit Y-up (GLB 경로와 동일)
       } as unknown as Parameters<typeof loader.load>[0]);
-      model.on('loaded', () => { done++; if (done + failed >= total) finish(); });
+      model.on('loaded', () => { done++; loadOne(i + 1); });
       model.on('error', (e: unknown) => {
         failed++;
-        if (failed === total) setStatus(`불러오기 실패: ${errMessage(e)}`);
-        if (done + failed >= total) finish();
+        if (done === 0 && failed === total) setStatus(`불러오기 실패: ${errMessage(e)}`);
+        loadOne(i + 1);
       });
-    });
+    };
+    loadOne(0);
   }, []);
 
   /** ACC 모델 선택 → (캐시/실패 조회 → 없으면 변환 dispatch → 폴링) → GLB/XKT 로드.
