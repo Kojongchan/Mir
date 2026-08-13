@@ -402,6 +402,15 @@ export function ThreeDTest() {
     };
     // 상세 로드 완료 후: 카메라 거리 기준 LOD 전환 설정.
     const setupSwap = () => {
+      // LOD 스왑 잠정 비활성 — '항상 풀디테일'이 우선. 개요(LOD1)가 아직 거칠어(계단/구멍)
+      // 먼 줌에서 뜨면 형상이 깨져 보이므로, LOD1 이 '제대로 보이는' 수준으로 개선(재변환)될
+      // 때까지 상세만 보인다. 개선 후 이 플래그를 켜고 성능용 스왑을 재가동.
+      const LOD_ENABLED = false;
+      if (!LOD_ENABLED) {
+        if (models['lod1']) models['lod1'].visible = false;
+        for (let i = 0; i < total; i++) { const m = models[`xkt${i}`]; if (m) m.visible = true; }
+        return;
+      }
       const box = (focusToAabb(focus) ?? (viewer.scene.aabb as number[])) || [0, 0, 0, 0, 0, 0];
       const diag = Math.hypot(box[3] - box[0], box[4] - box[1], box[5] - box[2]) || 1000;
       // 기준 = '시점 거리'(eye→look = 줌 레벨). 넓은 모델(7.6km)에서 한 구석을 가까이 봐도
@@ -450,23 +459,18 @@ export function ThreeDTest() {
     // 상세 청크 순차 로드(숨긴 채) — 병렬이면 메모리 스파이크.
     const loadDetail = (i: number) => {
       if (i >= total) { finishDetail(); return; }
-      setStatus(`상세 로딩 중… ${done + failed}/${total} 청크 (개요 표시 중)`);
+      setStatus(`상세 로딩 중… ${done + failed}/${total} 청크`);
       const model = loader.load({
         id: `xkt${i}`, src: urls[i], edges: false, rotation: [-90, 0, 0],
       } as unknown as Parameters<typeof loader.load>[0]);
-      // 로드 즉시 숨김(로드 중 렌더 부하·깜빡임 방지 — 개요만 보이게).
-      try { (model as unknown as { visible?: boolean }).visible = false; } catch { /* noop */ }
-      model.on('loaded', () => { const m = models[`xkt${i}`]; if (m) m.visible = false; done++; frameOnce(); loadDetail(i + 1); });
+      // 상세를 '보이게' 로드 → 실제 형상이 점진적으로 채워진다(거친 개요 안 보임). 첫 청크에서 프레이밍.
+      model.on('loaded', () => { done++; frameOnce(); loadDetail(i + 1); });
       model.on('error', () => { failed++; loadDetail(i + 1); });
     };
-    // 1) 개요(LOD1) 먼저 → 빠른 첫 화면, UI 즉시 해제. 없으면 바로 상세.
-    if (lod1Url) {
-      const lm = loader.load({ id: 'lod1', src: lod1Url, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
-      lm.on('loaded', () => { frameOnce(); setBusy(false); setStatus('개요 표시 · 상세 로딩 중…'); loadDetail(0); });
-      lm.on('error', () => { loadDetail(0); });
-    } else {
-      loadDetail(0);
-    }
+    // 개요(LOD1)는 화질 개선 전까지 미사용 — 항상 풀디테일. lod1Url 은 참조만(경고 회피).
+    void lod1Url;
+    setBusy(false);
+    loadDetail(0);
   }, []);
 
   /** ACC 모델 선택 → (캐시/실패 조회 → 없으면 변환 dispatch → 폴링) → GLB/XKT 로드.
