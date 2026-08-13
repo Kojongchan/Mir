@@ -180,15 +180,19 @@ jobs:
           URN: ${{ github.event.inputs.urn }}
           APS_REGION: ${{ github.event.inputs.region }}
           INCLUDE_LINES: ${{ github.event.inputs.include_lines }}
+          RENDER_TEST: ${{ github.event.inputs.render_test }}
         run: node scripts/convert4d.mjs
 
-      - name: Headless xeokit 렌더 진단 (ASCII 로그)
+      - name: Headless xeokit 렌더 진단 (LOD1 오블리크 · base64 PNG 로그)
         if: github.event.inputs.render_test == '1'
         continue-on-error: true
+        env:
+          PW_OBLIQUE: '1'
         run: |
           npm install --no-save @xeokit/xeokit-sdk@2 playwright-core pngjs
           npx playwright install --with-deps chromium
-          node scripts/renderDiag.mjs out/model.glb
+          # XKT 경로는 out/xkt/lod1.glb(개요)를 렌더(RENDER_TEST 시 삭제 안 함). 없으면 model.glb.
+          if [ -f out/xkt/lod1.glb ]; then node scripts/renderDiag.mjs out/xkt/lod1.glb; else node scripts/renderDiag.mjs out/model.glb; fi
 
       - name: Upload glb as workflow artifact (백업)
         if: always()

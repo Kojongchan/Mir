@@ -28,12 +28,16 @@ v.camera.perspective.near=0.5;v.camera.perspective.far=1e7;v.camera.ortho.near=0
 const l=new GLTFLoaderPlugin(v);
 const m=l.load({id:'t',src:'/model.glb',edges:false,rotation:[-90,0,0],dtxEnabled:false});
 const FOCUS=${focusAabb ? JSON.stringify(focusAabb) : 'null'};
+const OBLIQUE=${process.env.PW_OBLIQUE === '1' ? 'true' : 'false'};
 m.on('loaded',()=>{const a=m.aabb;console.log('AABB',JSON.stringify(a));
   const box=FOCUS||a;
   const cx=(box[0]+box[3])/2, cy=(box[1]+box[4])/2, cz=(box[2]+box[5])/2;
   const horiz=Math.max(box[3]-box[0], box[5]-box[2], 100);
-  // 평면 도면 → 위에서 내려다보는 top-down.
-  v.camera.eye=[cx, cy+horiz*0.7, cz]; v.camera.look=[cx,cy,cz]; v.camera.up=[0,0,-1];
+  if(OBLIQUE){ // 비스듬 시점(계단/기복 프로파일 확인용)
+    const d=horiz*0.9; v.camera.eye=[cx+d*0.7, cy+d*0.6, cz+d*0.7]; v.camera.look=[cx,cy,cz]; v.camera.up=[0,1,0];
+  } else { // 평면 → top-down
+    v.camera.eye=[cx, cy+horiz*0.7, cz]; v.camera.look=[cx,cy,cz]; v.camera.up=[0,0,-1];
+  }
   setTimeout(()=>{window.__done=1;document.title='DONE';},1500);});
 m.on('error',e=>{document.title='ERR:'+e;window.__done=1;});
 </script></body></html>`;
@@ -46,13 +50,17 @@ const server = http.createServer((req, res) => {
 });
 await new Promise((r) => server.listen(8123, r));
 
-const b = await chromium.launch({ args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader'] });
+const b = await chromium.launch({
+  ...(process.env.PW_CHROME ? { executablePath: process.env.PW_CHROME } : {}),
+  args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader'],
+});
 const p = await b.newPage({ viewport: { width: W, height: H } });
 p.on('console', (m) => console.log('[browser]', m.text()));
 p.on('pageerror', (e) => console.log('[pageerr]', e.message));
 await p.goto('http://localhost:8123/', { waitUntil: 'load' });
 try { await p.waitForFunction('window.__done===1', { timeout: 60000 }); } catch { console.log('[diag-render] timeout title=', await p.title()); }
 const buf = await p.screenshot();
+if (process.env.PW_SAVE) { fs.writeFileSync(process.env.PW_SAVE, buf); console.log('[diag-render] 스샷 저장', process.env.PW_SAVE); }
 const png = PNG.sync.read(buf);
 
 // 배경(어두운 회색 ~33,36,41)과 다른 픽셀 = 그려진 지오메트리. 밝기 대신 '배경과의 거리'로

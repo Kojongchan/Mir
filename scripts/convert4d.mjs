@@ -361,7 +361,8 @@ async function main() {
       } catch (e) {
         console.warn(`[convert4d]   ${isLod1 ? 'LOD1' : '청크 ' + idx} XKT 실패: ${e?.message || e}`);
       } finally {
-        fs.rmSync(glbPath, { force: true });
+        // RENDER_TEST 시 LOD1 GLB 는 헤드리스 렌더 진단용으로 남긴다(나머지는 항상 삭제).
+        if (!(isLod1 && process.env.RENDER_TEST === '1')) fs.rmSync(glbPath, { force: true });
         fs.rmSync(xktPath, { force: true });
       }
     };
