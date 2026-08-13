@@ -402,24 +402,14 @@ export function ThreeDTest() {
     };
     // 상세 로드 완료 후: 카메라 거리 기준 LOD 전환 설정.
     const setupSwap = () => {
-      // LOD 스왑 잠정 비활성 — '항상 풀디테일'이 우선. 개요(LOD1)가 아직 거칠어(계단/구멍)
-      // 먼 줌에서 뜨면 형상이 깨져 보이므로, LOD1 이 '제대로 보이는' 수준으로 개선(재변환)될
-      // 때까지 상세만 보인다. 개선 후 이 플래그를 켜고 성능용 스왑을 재가동.
-      const LOD_ENABLED = false;
-      if (!LOD_ENABLED) {
-        if (models['lod1']) models['lod1'].visible = false;
-        for (let i = 0; i < total; i++) { const m = models[`xkt${i}`]; if (m) m.visible = true; }
-        return;
-      }
+      // LOD 스왑(성능) — LOD1 계단 원인(Z 격자 스냅) 수정·검증 완료(합성 before/after + 실모델
+      // 헤드리스 렌더로 매끈함 확인)라 재활성. 기준 = '시점 거리'(eye→look = 줌 레벨). 넓은 모델
+      // (7.6km)에서 한 구석을 가까이 봐도 중심과는 멀어 '중심거리'는 오판 → 시점 거리로 판정.
+      // 디테일이 기본, 개요는 '전체맞춤(~diag) 이상 줌아웃'에서만. 히스테리시스로 깜빡임 방지.
       const box = (focusToAabb(focus) ?? (viewer.scene.aabb as number[])) || [0, 0, 0, 0, 0, 0];
       const diag = Math.hypot(box[3] - box[0], box[4] - box[1], box[5] - box[2]) || 1000;
-      // 기준 = '시점 거리'(eye→look = 줌 레벨). 넓은 모델(7.6km)에서 한 구석을 가까이 봐도
-      // 중심과는 멀어 '중심거리'는 오판한다. 시점 거리는 어디를 보든 줌 정도를 정확히 반영.
-      // 히스테리시스(NEAR/FAR)로 임계 근처 깜빡임 방지.
-      // 디테일을 강한 기본값으로 — 개요(LOD1)는 '거의 전체맞춤 이상으로 멀 때'만. 웬만한 작업
-      // 줌에선 항상 풀디테일이 보이게(개요가 거칠어 보이는 문제 회피). LOD1 화질 개선 후 재튜닝.
-      const NEAR = diag * 0.6;  // 이보다 가까이 보면 상세
-      const FAR = diag * 0.9;   // 이보다 멀리 보면 개요
+      const NEAR = diag * 0.45; // 이보다 가까이 보면 상세(풀디테일)
+      const FAR = diag * 0.65;  // 이보다 멀리 보면 개요(스무스 LOD1)
       const hasLod = !!models['lod1'];
       let showingDetail = true;
       const apply = () => {
@@ -467,8 +457,13 @@ export function ThreeDTest() {
       model.on('loaded', () => { done++; frameOnce(); loadDetail(i + 1); });
       model.on('error', () => { failed++; loadDetail(i + 1); });
     };
-    // 개요(LOD1)는 화질 개선 전까지 미사용 — 항상 풀디테일. lod1Url 은 참조만(경고 회피).
-    void lod1Url;
+    // 개요(LOD1)를 숨긴 채 먼저 로드(작음). 상세는 보이게 순차 로드 → 로드 끝나면 setupSwap 이
+    // 카메라 거리로 개요/상세 전환. 줌아웃(전체맞춤 이상)=스무스 개요(가벼움), 줌인=풀디테일.
+    if (lod1Url) {
+      const lm = loader.load({ id: 'lod1', src: lod1Url, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
+      try { (lm as unknown as { visible?: boolean }).visible = false; } catch { /* noop */ }
+      lm.on('loaded', () => { const m = models['lod1']; if (m) m.visible = false; });
+    }
     setBusy(false);
     loadDetail(0);
   }, []);
