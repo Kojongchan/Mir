@@ -227,11 +227,13 @@ export function ThreeDTest() {
     loaderRef.current = new GLTFLoaderPlugin(viewer, {
       dataSource,
     } as unknown as ConstructorParameters<typeof GLTFLoaderPlugin>[1]);
-    // XKT 의 지형 텍스처(KTX2/Basis 압축)를 브라우저에서 디코드하려면 트랜스코더 필요. 기본
-    // transcoderPath(jsdelivr CDN)를 사용 — 인터넷 있으면 동작(사내망 CDN 차단 시 public 호스팅으로 전환).
+    // XKT 의 지형 텍스처(KTX2/Basis 압축)를 브라우저에서 디코드하려면 Basis 트랜스코더 필요.
+    // xeokit 기본 transcoderPath 는 jsdelivr CDN(@xeokit/xeokit-sdk/dist/basis/)인데 해당 버전
+    // npm 패키지에 basis/ 가 없어 CDN 조차 404 + 사내망은 CDN 자체를 막는다. 그래서 basis_transcoder
+    // (js+wasm 쌍)를 public/basis/ 에 직접 호스팅하고 그 경로를 준다(오프라인·사내망에서도 동작).
     xktLoaderRef.current = new XKTLoaderPlugin(viewer, {
       dataSource,
-      textureTranscoder: new KTX2TextureTranscoder(viewer),
+      textureTranscoder: new KTX2TextureTranscoder(viewer, { transcoderPath: '/basis/' }),
     } as unknown as ConstructorParameters<typeof XKTLoaderPlugin>[1]);
 
     // 클릭 픽 → 엔티티 ID(+메타) → MIR_SMART DB 조인 지점. 표면 지점(worldPos)도 보관해

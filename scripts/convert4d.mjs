@@ -376,9 +376,12 @@ async function main() {
       } catch (e) {
         console.warn(`[convert4d]   ${isLod1 ? 'LOD1' : '청크 ' + idx} XKT 실패: ${e?.message || e}`);
       } finally {
-        // RENDER_TEST 시 LOD1 GLB 는 헤드리스 렌더 진단용으로 남긴다(나머지는 항상 삭제).
-        if (!(isLod1 && process.env.RENDER_TEST === '1')) fs.rmSync(glbPath, { force: true });
-        fs.rmSync(xktPath, { force: true });
+        // RENDER_TEST 시 진단용으로 남긴다: LOD1 GLB(개요) + 첫 청크 XKT(c0 = 지형 텍스처 프래그가
+        // 먼저 담김 → 브라우저 KTX2 트랜스코더로 항공사진 실제 렌더 확인). 나머지는 항상 삭제.
+        const keepGlb = isLod1 && process.env.RENDER_TEST === '1';
+        const keepXkt = !isLod1 && idx === 0 && process.env.RENDER_TEST === '1';
+        if (!keepGlb) fs.rmSync(glbPath, { force: true });
+        if (!keepXkt) fs.rmSync(xktPath, { force: true });
       }
     };
     console.log('[convert4d] XKT 스트리밍 변환 시작(감량 없음)…');

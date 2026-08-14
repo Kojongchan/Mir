@@ -11,7 +11,8 @@ const W = 1000, H = 700;
 
 // focus(회전 전 실좌표)를 로드 회전 [-90,0,0] 축변환((x,y,z)→(x,z,-y))으로 world AABB 로.
 let focusAabb = null;
-try {
+if (process.env.PW_NO_FOCUS === '1') { console.log('[diag-render] PW_NO_FOCUS — 청크 자체 AABB 로 fit(전체 focus 무시)'); }
+else try {
   const f = JSON.parse(fs.readFileSync('out/focus.json', 'utf8'));
   const [cx, cy, cz] = f.center, [hx, hy, hz] = f.half;
   const wc = [cx, cz, -cy], wh = [hx, hz, hy];
@@ -22,12 +23,13 @@ try {
 const html = `<!doctype html><html><head><meta charset=utf-8><style>html,body{margin:0}#c{width:${W}px;height:${H}px}</style></head><body>
 <canvas id=c width=${W} height=${H}></canvas>
 <script type=module>
-import {Viewer,GLTFLoaderPlugin,XKTLoaderPlugin} from '/xeokit.js';
+import {Viewer,GLTFLoaderPlugin,XKTLoaderPlugin,KTX2TextureTranscoder} from '/xeokit.js';
 const IS_XKT=${glbPath.endsWith('.xkt') ? 'true' : 'false'};
 const v=new Viewer({canvasId:'c',transparent:false,backgroundColor:[0.13,0.14,0.16],dtxEnabled:false,saoEnabled:false,logarithmicDepthBufferEnabled:true});
 v.camera.perspective.near=0.5;v.camera.perspective.far=1e7;v.camera.ortho.near=0.5;v.camera.ortho.far=1e7;
 const fetchBuf=(url,ok,err)=>fetch(url).then(r=>r.arrayBuffer()).then(ok).catch(e=>err(String(e)));
-const l=IS_XKT ? new XKTLoaderPlugin(v,{dataSource:{getXKT:fetchBuf}}) : new GLTFLoaderPlugin(v);
+// XKT 의 Basis 텍스처 디코드 — 앱과 동일하게 self-host 한 /basis/ 트랜스코더 사용.
+const l=IS_XKT ? new XKTLoaderPlugin(v,{dataSource:{getXKT:fetchBuf},textureTranscoder:new KTX2TextureTranscoder(v,{transcoderPath:'/basis/'})}) : new GLTFLoaderPlugin(v);
 const m=l.load({id:'t',src:IS_XKT?'/model.xkt':'/model.glb',edges:false,rotation:[-90,0,0],dtxEnabled:false});
 const FOCUS=${focusAabb ? JSON.stringify(focusAabb) : 'null'};
 const OBLIQUE=${process.env.PW_OBLIQUE === '1' ? 'true' : 'false'};
@@ -48,6 +50,15 @@ const server = http.createServer((req, res) => {
   if (req.url === '/' || req.url.startsWith('/index')) { res.setHeader('content-type', 'text/html'); res.end(html); }
   else if (req.url === '/xeokit.js') { res.setHeader('content-type', 'text/javascript'); res.end(fs.readFileSync(xeokitDist)); }
   else if (req.url.startsWith('/model.glb') || req.url.startsWith('/model.xkt')) { res.setHeader('content-type', 'application/octet-stream'); res.end(fs.readFileSync(glbPath)); }
+  else if (req.url.startsWith('/basis/')) {
+    // self-host 한 Basis 트랜스코더(public/basis/basis_transcoder.{js,wasm}) 서빙.
+    const name = req.url.slice('/basis/'.length).split('?')[0];
+    const fp = `public/basis/${name}`;
+    if (/^basis_transcoder\.(js|wasm)$/.test(name) && fs.existsSync(fp)) {
+      res.setHeader('content-type', name.endsWith('.wasm') ? 'application/wasm' : 'text/javascript');
+      res.end(fs.readFileSync(fp));
+    } else { res.statusCode = 404; res.end('x'); }
+  }
   else { res.statusCode = 404; res.end('x'); }
 });
 await new Promise((r) => server.listen(8123, r));

@@ -194,6 +194,16 @@ jobs:
           # XKT 경로는 out/xkt/lod1.glb(개요)를 렌더(RENDER_TEST 시 삭제 안 함). 없으면 model.glb.
           if [ -f out/xkt/lod1.glb ]; then node scripts/renderDiag.mjs out/xkt/lod1.glb; else node scripts/renderDiag.mjs out/model.glb; fi
 
+      - name: Headless xeokit 텍스처 렌더 검증 (c0 청크 · 지형 항공사진 · top-down)
+        if: github.event.inputs.render_test == '1'
+        continue-on-error: true
+        env:
+          PW_NO_FOCUS: '1'
+        run: |
+          # 첫 청크 c0.xkt(지형 텍스처 프래그)를 앱과 동일한 KTX2 트랜스코더(self-host /basis/)로
+          # 렌더 → 항공사진이 실제로 디코드/맵핑되면 회색이 아닌 갈색·녹색 등 다채색이 나온다.
+          if [ -f out/xkt/c0.xkt ]; then node scripts/renderDiag.mjs out/xkt/c0.xkt; else echo "c0.xkt 없음 — 텍스처 렌더 검증 건너뜀"; fi
+
       - name: Upload glb as workflow artifact (백업)
         if: always()
         continue-on-error: true

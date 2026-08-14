@@ -19,9 +19,23 @@
   → 베이스네임** 순 폴백. 재질/매니페스트 공백수 차이를 흡수. `imf.getImage` 대체.
 - 진단 로그: 로드된 `svf.images` 키 덤프(지형 관련 키는 항상 노출) + `texMiss`(누락 프래그) 카운터.
 
-### 검증(진행중)
-- run **31769601267**(sha f4fec49, render_test=1) 디스패치 — `[tex] 로드된 이미지` 키 덤프와
-  지형 프래그 `img=<bytes>` 확인 예정. 성공 시 XKT 에 항공사진 임베드 → 브라우저 KTX2 트랜스코더로 표시.
+### 검증(서버측 완료 · run 31772371126, sha ff77bd0)
+- `[tex] frag#1 텍스처=5/navis_1540_  611f99_svf_tex_mod.jpg (2270197B image/jpeg)` — 지형
+  **항공사진 2.27MB** 임베드 확인(이전 img=none). **img=none 0건**. 텍스처 프래그 **4579→15589**
+  (지형 프래그 ~11000개 텍스처 획득). 73청크·3.62억 삼각형 R2 업로드 성공.
+- 원인: SVF 는 재질이 참조하는 수정본(_svf_tex_mod)을 만들지만 매니페스트 Image 에셋으로 로드되는
+  건 원본뿐 → resolveImage 에서 접미사 제거 후 원본과 매칭(원본이 더 고화질).
+
+### Basis 트랜스코더 self-host (필수)
+- XKT 텍스처는 KTX2/Basis 압축 → 브라우저 디코드에 basis_transcoder(js+wasm) 필요. xeokit 기본
+  transcoderPath(jsdelivr `@xeokit/xeokit-sdk/dist/basis/`)는 **해당 npm 버전에 basis/ 자체가 없어
+  CDN 도 404** + 사내망 CDN 차단. → `public/basis/basis_transcoder.{js,wasm}`(three 0.171 배포본) 직접
+  호스팅, ThreeDTest `KTX2TextureTranscoder(viewer,{transcoderPath:'/basis/'})`. 오프라인·사내망 OK.
+
+### 검증(진행중) — 브라우저 텍스처 렌더 end-to-end
+- convert4d: RENDER_TEST 시 첫 청크 c0.xkt(지형 텍스처) 보존. renderDiag: XKT 를 KTX2 트랜스코더
+  (self-host /basis/)로 로드 + PW_NO_FOCUS. 워크플로: c0.xkt top-down 렌더 스텝 추가. 다음 run 에서
+  회색이 아닌 갈색·녹색 다채색(항공사진 디코드 성공)이면 end-to-end 확정.
 
 ---
 ## 🔧 통합모델 대용량 감량 근본수정: weld→simplify→subsample (2026-08-12)
