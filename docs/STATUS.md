@@ -32,10 +32,20 @@
   CDN 도 404** + 사내망 CDN 차단. → `public/basis/basis_transcoder.{js,wasm}`(three 0.171 배포본) 직접
   호스팅, ThreeDTest `KTX2TextureTranscoder(viewer,{transcoderPath:'/basis/'})`. 오프라인·사내망 OK.
 
-### 검증(진행중) — 브라우저 텍스처 렌더 end-to-end
-- convert4d: RENDER_TEST 시 첫 청크 c0.xkt(지형 텍스처) 보존. renderDiag: XKT 를 KTX2 트랜스코더
-  (self-host /basis/)로 로드 + PW_NO_FOCUS. 워크플로: c0.xkt top-down 렌더 스텝 추가. 다음 run 에서
-  회색이 아닌 갈색·녹색 다채색(항공사진 디코드 성공)이면 end-to-end 확정.
+### ★ 결정적 버그: KTX2TextureTranscoder 생성자 시그니처 (수정 완료)
+- c0.xkt 텍스처 렌더 검증(run 31775718438)에서 `Cannot read properties of undefined (reading
+  'capabilities')` → 0픽셀. 원인: `KTX2TextureTranscoder` 생성자는 **단일 옵션객체**
+  `{viewer, transcoderPath, workerLimit}` 를 받는데(위치인자 아님), 코드가 `new KTX2TextureTranscoder(
+  viewer, {..})` 로 호출 → 내부 `viewer.capabilities` 가 undefined 참조. **앱(ThreeDTest)도 동일 버그**
+  라 텍스처가 임베드돼도 렌더 안 됐음. → `new KTX2TextureTranscoder({viewer, transcoderPath:'/basis/'})`.
+- **로컬 end-to-end 검증 완료**: 합성 텍스처(빨강/녹색 체커) GLB→convert2xkt(v12, Basis)→XKT 를
+  headless chromium + self-host /basis/ 트랜스코더로 렌더 → 체커 정확히 디코드/맵핑(히스토그램
+  빨강 2712·녹색 2712). three 0.171 basis_transcoder ↔ xeokit-sdk@2 호환 확인. UV 맵핑 정상.
+
+### 결론
+- 지형 항공사진 파이프라인 **완성**: SVF 재질 _svf_tex_mod → 원본 매칭 → XKT Basis 임베드(서버 검증)
+  → 브라우저 KTX2 트랜스코더(생성자 수정 + self-host basis) 디코드/렌더(로컬 검증). R2 캐시에 텍스처
+  XKT 업로드됨(run 31775718438). 앱에서 통합모델 로드 시 지형에 항공사진 표시.
 
 ---
 ## 🔧 통합모델 대용량 감량 근본수정: weld→simplify→subsample (2026-08-12)

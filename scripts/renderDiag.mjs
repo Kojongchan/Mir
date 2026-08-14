@@ -29,7 +29,7 @@ const v=new Viewer({canvasId:'c',transparent:false,backgroundColor:[0.13,0.14,0.
 v.camera.perspective.near=0.5;v.camera.perspective.far=1e7;v.camera.ortho.near=0.5;v.camera.ortho.far=1e7;
 const fetchBuf=(url,ok,err)=>fetch(url).then(r=>r.arrayBuffer()).then(ok).catch(e=>err(String(e)));
 // XKT 의 Basis 텍스처 디코드 — 앱과 동일하게 self-host 한 /basis/ 트랜스코더 사용.
-const l=IS_XKT ? new XKTLoaderPlugin(v,{dataSource:{getXKT:fetchBuf},textureTranscoder:new KTX2TextureTranscoder(v,{transcoderPath:'/basis/'})}) : new GLTFLoaderPlugin(v);
+const l=IS_XKT ? new XKTLoaderPlugin(v,{dataSource:{getXKT:fetchBuf},textureTranscoder:new KTX2TextureTranscoder({viewer:v,transcoderPath:'/basis/'})}) : new GLTFLoaderPlugin(v);
 const m=l.load({id:'t',src:IS_XKT?'/model.xkt':'/model.glb',edges:false,rotation:[-90,0,0],dtxEnabled:false});
 const FOCUS=${focusAabb ? JSON.stringify(focusAabb) : 'null'};
 const OBLIQUE=${process.env.PW_OBLIQUE === '1' ? 'true' : 'false'};

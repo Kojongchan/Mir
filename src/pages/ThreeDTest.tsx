@@ -3,7 +3,8 @@ import { useParams } from 'react-router-dom';
 import { Viewer, GLTFLoaderPlugin, XKTLoaderPlugin, NavCubePlugin, FastNavPlugin } from '@xeokit/xeokit-sdk';
 import * as XeokitSDK from '@xeokit/xeokit-sdk';
 // KTX2TextureTranscoder 는 런타임엔 export 되지만 .d.ts 에 누락 → 네임스페이스에서 가져온다.
-const KTX2TextureTranscoder = (XeokitSDK as unknown as { KTX2TextureTranscoder: new (viewer: unknown, cfg?: unknown) => unknown }).KTX2TextureTranscoder;
+// 생성자는 단일 옵션객체 { viewer, transcoderPath, workerLimit } 를 받는다(위치인자 아님).
+const KTX2TextureTranscoder = (XeokitSDK as unknown as { KTX2TextureTranscoder: new (cfg: { viewer: unknown; transcoderPath?: string; workerLimit?: number }) => unknown }).KTX2TextureTranscoder;
 import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
 import { useProjectRole } from '../auth/useProjectRole';
 import { supabase } from '../lib/supabase';
@@ -233,7 +234,7 @@ export function ThreeDTest() {
     // (js+wasm 쌍)를 public/basis/ 에 직접 호스팅하고 그 경로를 준다(오프라인·사내망에서도 동작).
     xktLoaderRef.current = new XKTLoaderPlugin(viewer, {
       dataSource,
-      textureTranscoder: new KTX2TextureTranscoder(viewer, { transcoderPath: '/basis/' }),
+      textureTranscoder: new KTX2TextureTranscoder({ viewer, transcoderPath: '/basis/' }),
     } as unknown as ConstructorParameters<typeof XKTLoaderPlugin>[1]);
 
     // 클릭 픽 → 엔티티 ID(+메타) → MIR_SMART DB 조인 지점. 표면 지점(worldPos)도 보관해
