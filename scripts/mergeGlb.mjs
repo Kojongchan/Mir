@@ -605,7 +605,7 @@ export async function buildMergedGlb(imf, opts) {
     const d = mat?.diffuse;
     return d ? [d.x, d.y, d.z, mat?.opacity ?? 1] : [0.72, 0.74, 0.77, 1];
   };
-  let chunk = null, chunkIdx = 0, streamV = 0, streamT = 0, texFrags = 0;
+  let chunk = null, chunkIdx = 0, streamV = 0, streamT = 0, texFrags = 0, texMiss = 0;
   const newChunk = () => ({ acc: [], bv: [], meshes: [], materials: [], nodes: [], pieces: [], bo: 0, tris: 0, images: [], textures: [], samplers: [], texMap: new Map() });
   // tex(옵션): { uri, buf(Buffer), mime, uvs(Float32Array) } — 있으면 baseColorTexture + TEXCOORD_0.
   const addToChunk = (pos, nrm, idxF, fmin, fmax, baseColor, metal, rough, name, tex) => {
@@ -656,6 +656,48 @@ export async function buildMergedGlb(imf, opts) {
     chunkIdx++;
   };
   if (xktStream) fs.mkdirSync(opts.xktStreamDir, { recursive: true });
+
+  // === 이미지 해석기 ===
+  // SVF 재질 맵 URI(mat.maps.diffuse)가 로드된 이미지 키(svf.images, 매니페스트 asset.URI 를
+  // 소문자·정규화한 값)와 정확히 안 맞는 경우가 있다. 특히 지형 항공사진
+  // (5/navis_1540_  611f99_svf_tex_mod.jpg)은 재질에는 **이중공백**, 매니페스트에는 단일공백
+  // 으로 실려 정확일치가 실패했다(→ img=none). 대소문자·연속공백·경로구분자 차이를 흡수하고
+  // 베이스네임까지 폴백해 관대하게 매칭한다.
+  const imgStore = imf.svf && imf.svf.images ? imf.svf.images : null;
+  const normKey = (s) => String(s).toLowerCase().replace(/[\\/]+/g, '/').replace(/\s+/g, ' ').trim();
+  const baseKey = (s) => normKey(s).split('/').pop();
+  let imgIndex = null;
+  const buildImgIndex = () => {
+    imgIndex = { norm: new Map(), base: new Map() };
+    if (!imgStore) return;
+    for (const k of Object.keys(imgStore)) {
+      imgIndex.norm.set(normKey(k), k);
+      const b = baseKey(k);
+      if (!imgIndex.base.has(b)) imgIndex.base.set(b, k);
+    }
+  };
+  const resolveImage = (uri) => {
+    if (!imgStore || !uri) return undefined;
+    let buf = imgStore[uri]; // 1) 정확일치
+    if (buf && buf.length) return buf;
+    if (!imgIndex) buildImgIndex();
+    let k = imgIndex.norm.get(normKey(uri)); // 2) 정규화(소문자·연속공백·구분자)
+    if (k && imgStore[k] && imgStore[k].length) return imgStore[k];
+    k = imgIndex.base.get(baseKey(uri)); // 3) 베이스네임 폴백
+    if (k && imgStore[k] && imgStore[k].length) return imgStore[k];
+    return undefined;
+  };
+  if (xktStream && imgStore) {
+    const keys = Object.keys(imgStore);
+    log(`[tex] 로드된 이미지 ${keys.length}개 (svf.images):`);
+    const shown = new Set();
+    // 지형/항공사진 관련 키는 항상 노출, 그 외는 앞에서 최대 30개.
+    for (const k of keys) {
+      if (/navis|tex_mod|terrain|지형|ortho|aerial/i.test(k)) { log(`[tex]   img* "${k}" (${imgStore[k] ? imgStore[k].length : 0}B)`); shown.add(k); }
+    }
+    let n = 0;
+    for (const k of keys) { if (shown.has(k)) continue; if (n++ >= 30) break; log(`[tex]   img "${k}" (${imgStore[k] ? imgStore[k].length : 0}B)`); }
+  }
 
   // === LOD1(개요 메시): 스트리밍 중 전역 격자(기본 8m)로 모든 정점을 셀 대표점에 병합해
   // 저해상도 개요를 누적한다(메모리=점유 셀 수로 상한). 뷰어는 줌아웃 시 이 LOD1 만 그려
@@ -716,7 +758,7 @@ export async function buildMergedGlb(imf, opts) {
         const nvv = verts.length / 3;
         if (uri && geom.getUvChannelCount && geom.getUvChannelCount() > 0) {
           const rawUv = geom.getUvs(0);
-          const buf = imf.getImage ? imf.getImage(uri) : undefined;
+          const buf = resolveImage(uri);
           if (rawUv && rawUv.length === nvv * 2 && buf && buf.length) {
             const flip = process.env.XKT_UV_FLIP !== '0';
             const su = mat.scale?.x ?? 1, sv = mat.scale?.y ?? 1;
@@ -729,7 +771,8 @@ export async function buildMergedGlb(imf, opts) {
             tex = { uri, buf, mime, uvs };
             texFrags++;
             if (texFrags <= 3) log(`[tex] frag#${fragCount} 텍스처=${uri} (${buf.length}B ${mime}) uvLen=${rawUv.length} scale=(${su},${sv})`);
-          } else if (fragCount <= 8) {
+          } else if (texMiss < 12) {
+            texMiss++;
             log(`[tex] frag#${fragCount} 맵=${uri} uvCh=${geom.getUvChannelCount()} rawUv=${rawUv ? rawUv.length : 0} nv*2=${nvv * 2} img=${buf ? buf.length : 'none'}`);
           }
         }
