@@ -3,6 +3,27 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 🖼️ 지형 텍스처(항공사진) 이미지 키 불일치 수정 (2026-08-14)
+> branch `claude/3d-view-testing-hlrugl`. `scripts/mergeGlb.mjs`.
+
+### 문제(확정)
+- XKT 스트리밍 변환에서 실내 텍스처(예 `3/finishes.gypsum board...jpg`)는 정상 임베드되나
+  **지형 항공사진**(`5/navis_1540_  611f99_svf_tex_mod.jpg`)만 `img=none` 으로 누락(run 31755385185).
+- 원인: 재질 `mat.maps.diffuse` 의 URI 에는 **이중공백**(`navis_1540_  611f99`)이 들어있는데,
+  로드된 이미지(`svf.images`)는 매니페스트 asset.URI 를 정규화(소문자·path.sep)한 **단일공백** 키로
+  저장 → `imf.getImage(uri)` 의 **정확일치 조회 실패**. (svf-utils 공식 gltf writer 도 실패 시 placeholder
+  로 대체하지 실제 매칭 안 함.)
+
+### 해결(커밋 f4fec49)
+- `mergeGlb.mjs` 에 `resolveImage(uri)` 추가: **정확일치 → 정규화(소문자·연속공백 1개·구분자 통일)
+  → 베이스네임** 순 폴백. 재질/매니페스트 공백수 차이를 흡수. `imf.getImage` 대체.
+- 진단 로그: 로드된 `svf.images` 키 덤프(지형 관련 키는 항상 노출) + `texMiss`(누락 프래그) 카운터.
+
+### 검증(진행중)
+- run **31769601267**(sha f4fec49, render_test=1) 디스패치 — `[tex] 로드된 이미지` 키 덤프와
+  지형 프래그 `img=<bytes>` 확인 예정. 성공 시 XKT 에 항공사진 임베드 → 브라우저 KTX2 트랜스코더로 표시.
+
+---
 ## 🔧 통합모델 대용량 감량 근본수정: weld→simplify→subsample (2026-08-12)
 > branch `claude/3d-view-testing-hlrugl`. `scripts/mergeGlb.mjs`.
 
