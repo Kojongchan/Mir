@@ -664,7 +664,11 @@ export async function buildMergedGlb(imf, opts) {
   // 으로 실려 정확일치가 실패했다(→ img=none). 대소문자·연속공백·경로구분자 차이를 흡수하고
   // 베이스네임까지 폴백해 관대하게 매칭한다.
   const imgStore = imf.svf && imf.svf.images ? imf.svf.images : null;
-  const normKey = (s) => String(s).toLowerCase().replace(/[\\/]+/g, '/').replace(/\s+/g, ' ').trim();
+  // SVF 는 재질이 참조하는 '수정본' 텍스처(_svf_tex_mod)를 원본과 별도로 만든다. 하지만 매니페스트
+  // Image 에셋으로 로드되는 건 **원본**(예 navis_1540_611f99.jpg)뿐이고 _svf_tex_mod 변형은
+  // svf.images 에 없다. 재질 URI 에서 이 접미사를 떼면 원본 항공사진과 매칭된다(원본이 더 고화질).
+  const stripMod = (s) => String(s).replace(/_svf_tex_mod(\.[a-z0-9]+)$/i, '$1');
+  const normKey = (s) => stripMod(String(s)).toLowerCase().replace(/[\\/]+/g, '/').replace(/\s+/g, ' ').trim();
   const baseKey = (s) => normKey(s).split('/').pop();
   let imgIndex = null;
   const buildImgIndex = () => {
