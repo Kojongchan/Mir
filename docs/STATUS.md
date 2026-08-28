@@ -42,10 +42,20 @@
   headless chromium + self-host /basis/ 트랜스코더로 렌더 → 체커 정확히 디코드/맵핑(히스토그램
   빨강 2712·녹색 2712). three 0.171 basis_transcoder ↔ xeokit-sdk@2 호환 확인. UV 맵핑 정상.
 
+### ★★ 결정적 버그 2: 텍스처 POT(2의 거듭제곱) 리사이즈 (수정 완료)
+- 실모델 c0.xkt 렌더 검증(run 33155918489)에서 `glTexStorage2D: not multiples of 4`(S3TC/BPTC
+  블록압축은 base·mip 이 4의 배수여야) → 텍스처 미적용 흰색. 지형 항공사진이 임의 해상도라 발생.
+  (합성 16x16 테스트가 통과한 건 16이 4의 배수였기 때문 — 그래서 못 잡았음.)
+- 수정: mergeGlb 가 임베드 전 sharp 로 최근접 2의 거듭제곱(≤2048)으로 리사이즈(모든 mip 레벨 유효,
+  UV 정규화라 드레이프 보존, 알파 PNG 유지, 실패 시 텍스처 드롭→색 폴백). convert-4d.yml 에 sharp.
+- **로컬 end-to-end 재현·검증**: 1001x777 텍스처 → 이전엔 흑/GL오류, 리사이즈 후 1024x1024 임베드
+  → convert2xkt → 헤드리스 렌더 정상(체커 표시). fake SVF scene 으로 mergeGlb 통합까지 확인.
+
 ### 결론
-- 지형 항공사진 파이프라인 **완성**: SVF 재질 _svf_tex_mod → 원본 매칭 → XKT Basis 임베드(서버 검증)
-  → 브라우저 KTX2 트랜스코더(생성자 수정 + self-host basis) 디코드/렌더(로컬 검증). R2 캐시에 텍스처
-  XKT 업로드됨(run 31775718438). 앱에서 통합모델 로드 시 지형에 항공사진 표시.
+- 지형 항공사진 파이프라인 **완성**(3개 버그 모두 수정): ①재질 _svf_tex_mod→원본 매칭, ②트랜스코더
+  생성자 시그니처, ③텍스처 POT 리사이즈. + self-host basis 트랜스코더. 실모델 대상 최종 검증 진행중
+  (run 33160112110, ff0ac64). Vercel 이 브랜치 push 마다 프리뷰 빌드(→ dist/basis 정적 서빙).
+  자가진단 배지(/basis/ 도달성)로 흰색 원인 즉시 식별 가능.
 
 ---
 ## 🔧 통합모델 대용량 감량 근본수정: weld→simplify→subsample (2026-08-12)
