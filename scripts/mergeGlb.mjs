@@ -648,6 +648,11 @@ export async function buildMergedGlb(imf, opts) {
       mat.pbrMetallicRoughness.baseColorTexture = { index: ti, texCoord: 0 };
       // 텍스처가 있으면 baseColorFactor 는 흰색으로(색이 텍스처를 어둡게 곱하지 않게).
       mat.pbrMetallicRoughness.baseColorFactor = [1, 1, 1, baseColor[3]];
+      // 텍스처(항공사진)는 알베도(diffuse)로 보여야 한다. SVF 재질의 metallic 이 크면 PBR 상
+      // 금속면이 되어 환경맵 없는 뷰어에서 **검게** 렌더된다(지형이 흑색으로 보이던 원인).
+      // 텍스처 프래그는 non-metallic·full-rough 로 고정해 사진이 그대로 확산광으로 보이게 한다.
+      mat.pbrMetallicRoughness.metallicFactor = 0;
+      mat.pbrMetallicRoughness.roughnessFactor = 1;
     }
     const matI = c.materials.push(mat) - 1;
     const meshI = c.meshes.push({ primitives: [{ mode: 4, attributes, indices: iA, material: matI }] }) - 1;

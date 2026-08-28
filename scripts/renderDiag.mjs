@@ -26,6 +26,7 @@ const html = `<!doctype html><html><head><meta charset=utf-8><style>html,body{ma
 import {Viewer,GLTFLoaderPlugin,XKTLoaderPlugin,KTX2TextureTranscoder} from '/xeokit.js';
 const IS_XKT=${glbPath.endsWith('.xkt') ? 'true' : 'false'};
 const v=new Viewer({canvasId:'c',transparent:false,backgroundColor:[0.13,0.14,0.16],dtxEnabled:false,saoEnabled:false,logarithmicDepthBufferEnabled:true});
+v.scene.gammaOutput=true; // sRGB 텍스처(항공사진)를 제 밝기로 — 없으면 중간톤이 검게 뭉갬(앱과 동일 설정)
 v.camera.perspective.near=0.5;v.camera.perspective.far=1e7;v.camera.ortho.near=0.5;v.camera.ortho.far=1e7;
 const fetchBuf=(url,ok,err)=>fetch(url).then(r=>r.arrayBuffer()).then(ok).catch(e=>err(String(e)));
 // XKT 의 Basis 텍스처 디코드 — 앱과 동일하게 self-host 한 /basis/ 트랜스코더 사용.

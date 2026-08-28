@@ -144,6 +144,10 @@ export function ThreeDTest() {
       // 맞추면 far 가 작아 잘린다. 로그버퍼로 km~m 스케일을 한 화면에서 오가게 한다.
       logarithmicDepthBufferEnabled: true,
     });
+    // 감마 출력(sRGB) — 지형 항공사진 등 텍스처는 sRGB 인코딩인데, 이 값이 꺼져 있으면 xeokit 가
+    // 선형공간 그대로 표시해 중간톤이 검게 뭉갠다(지형이 검게 보이던 원인). 켜면 사진이 제 밝기로
+    // 보인다. 텍스처 없는 구조물/지오메트리도 sRGB 로 일관 표시(물리적으로 올바른 설정).
+    viewer.scene.gammaOutput = true;
     // 줌이 '커서 아래 지오메트리'로 다가가게(followPointer) — 거대 좌표 모델에서 화면
     // 중앙 빈 공간으로 줌돼 대상에 못 닿던 문제 해결. smartPivot 으로 회전 피벗도 안정화.
     // ACC(Autodesk) 뷰어처럼: 더블클릭한 표면으로 카메라가 날아가고(doublePickFlyTo),
