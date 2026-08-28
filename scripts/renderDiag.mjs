@@ -42,7 +42,8 @@ m.on('loaded',()=>{const a=m.aabb;console.log('AABB',JSON.stringify(a));
   } else { // 평면 → top-down
     v.camera.eye=[cx, cy+horiz*0.7, cz]; v.camera.look=[cx,cy,cz]; v.camera.up=[0,0,-1];
   }
-  setTimeout(()=>{window.__done=1;document.title='DONE';},1500);});
+  // 대용량 텍스처 청크는 Basis 트랜스코딩(소프트웨어 GL)이 느리므로 넉넉히 대기.
+  setTimeout(()=>{window.__done=1;document.title='DONE';},${Number(process.env.PW_SETTLE_MS || 1500)});});
 m.on('error',e=>{document.title='ERR:'+e;window.__done=1;});
 </script></body></html>`;
 
@@ -71,8 +72,14 @@ const p = await b.newPage({ viewport: { width: W, height: H } });
 p.on('console', (m) => console.log('[browser]', m.text()));
 p.on('pageerror', (e) => console.log('[pageerr]', e.message));
 await p.goto('http://localhost:8123/', { waitUntil: 'load' });
-try { await p.waitForFunction('window.__done===1', { timeout: 60000 }); } catch { console.log('[diag-render] timeout title=', await p.title()); }
-const buf = await p.screenshot();
+const WAIT_MS = Number(process.env.PW_WAIT_MS || 60000);
+try { await p.waitForFunction('window.__done===1', { timeout: WAIT_MS }); } catch { console.log('[diag-render] wait timeout title=', await p.title()); }
+// 헤드리스(swiftshader)에서 무거운 텍스처 청크는 화면 안정 대기가 오래 걸린다 → animations
+// 비활성 + 긴 타임아웃 + 실패 시 best-effort 재시도(진단은 스샷 못 찍어도 죽지 않게).
+let buf;
+try { buf = await p.screenshot({ timeout: Number(process.env.PW_SHOT_MS || 120000), animations: 'disabled' }); }
+catch (e) { console.log('[diag-render] 스샷 1차 실패:', e.message, '→ clip 재시도'); try { buf = await p.screenshot({ timeout: 30000, clip: { x: 0, y: 0, width: W, height: H } }); } catch (e2) { console.log('[diag-render] 스샷 재시도 실패:', e2.message); } }
+if (!buf) { console.log('[diag-render] 스샷 실패 — 진단 종료(변환은 정상)'); await b.close(); server.close(); process.exit(0); }
 if (process.env.PW_SAVE) { fs.writeFileSync(process.env.PW_SAVE, buf); console.log('[diag-render] 스샷 저장', process.env.PW_SAVE); }
 const png = PNG.sync.read(buf);
 

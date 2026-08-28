@@ -199,6 +199,10 @@ jobs:
         continue-on-error: true
         env:
           PW_NO_FOCUS: '1'
+          # 대용량 텍스처 청크는 소프트웨어 GL 에서 Basis 트랜스코딩·렌더가 느리다 → 넉넉히 대기.
+          PW_SETTLE_MS: '9000'
+          PW_WAIT_MS: '150000'
+          PW_SHOT_MS: '180000'
         run: |
           # 첫 청크 c0.xkt(지형 텍스처 프래그)를 앱과 동일한 KTX2 트랜스코더(self-host /basis/)로
           # 렌더 → 항공사진이 실제로 디코드/맵핑되면 회색이 아닌 갈색·녹색 등 다채색이 나온다.
