@@ -112,6 +112,7 @@ export function ThreeDTest() {
   const highlightedRef = useRef<string | null>(null); // 현재 하이라이트된 엔티티 id
   const [status, setStatus] = useState('');
   const [dbg, setDbg] = useState('');
+  const [texWarn, setTexWarn] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [modelName, setModelName] = useState<string | null>(null);
   const [pick, setPick] = useState<{ id: string; name?: string; type?: string } | null>(null);
@@ -236,6 +237,15 @@ export function ThreeDTest() {
       dataSource,
       textureTranscoder: new KTX2TextureTranscoder({ viewer, transcoderPath: '/basis/' }),
     } as unknown as ConstructorParameters<typeof XKTLoaderPlugin>[1]);
+    // 자가진단: Basis 트랜스코더 파일(/basis/)이 실제로 서빙되는지 확인. 배포에 public/basis 가
+    // 빠졌거나 캐시로 구버전이 뜨면 지형 항공사진이 디코드 안 돼 흰색으로 보인다 → 콘솔+화면에
+    // 명확히 표기해 '왜 흰색인지' 즉시 알 수 있게 한다.
+    void fetch('/basis/basis_transcoder.wasm', { method: 'HEAD' })
+      .then((r) => {
+        if (r.ok) console.log('[3Dtest] Basis 트랜스코더 OK — 지형 텍스처 디코드 가능');
+        else { console.warn('[3Dtest] /basis/ 응답', r.status, '— 지형 텍스처 디코드 불가(흰색)'); setTexWarn(`지형 텍스처 트랜스코더 로드 실패(/basis/ ${r.status}) — 재배포 필요`); }
+      })
+      .catch((e) => { console.warn('[3Dtest] /basis/ 로드 실패', e); setTexWarn('지형 텍스처 트랜스코더(/basis/) 로드 실패 — 재배포 필요'); });
 
     // 클릭 픽 → 엔티티 ID(+메타) → MIR_SMART DB 조인 지점. 표면 지점(worldPos)도 보관해
     // '선택 확대'·더블클릭 줌이 그 지점으로 당기게 한다(pickSurface:true).
@@ -769,6 +779,26 @@ export function ThreeDTest() {
               }}
             >
               {dbg}
+            </div>
+          )}
+          {texWarn && (
+            <div
+              style={{
+                position: 'absolute',
+                left: 8,
+                bottom: 40,
+                maxWidth: 'calc(100% - 16px)',
+                padding: '6px 10px',
+                background: 'rgba(140,20,20,0.9)',
+                color: '#fff',
+                font: '11px/1.4 monospace',
+                borderRadius: 6,
+                pointerEvents: 'none',
+                whiteSpace: 'pre-wrap',
+                zIndex: 21,
+              }}
+            >
+              ⚠ {texWarn}
             </div>
           )}
           {!modelName && !busy && (
