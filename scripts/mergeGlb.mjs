@@ -14,6 +14,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { MeshoptSimplifier } from 'meshoptimizer';
 
+// sharp 지연 로드(텍스처 POT 리사이즈용). Basis/블록압축 GPU 텍스처는 base·mip 레벨이 모두
+// 4의 배수여야 한다(glTexStorage2D). 지형 항공사진은 임의 해상도(예 1001x777)라 그대로 구우면
+// GL_INVALID_OPERATION 으로 텍스처가 안 입혀지고 흰색이 됐다. 임베드 전 최근접 2의 거듭제곱
+// (≤2048)으로 리사이즈해 모든 mip 레벨을 유효하게 만든다(UV 는 정규화라 드레이프 보존).
+let _sharpP;
+const getSharp = () => (_sharpP ??= import('sharp').then((m) => m.default).catch(() => null));
+const nearestPOT = (n) => Math.max(4, Math.min(2048, Math.pow(2, Math.round(Math.log2(Math.max(1, n))))));
+
 // finalizeGlb: 조립된 glTF 배열(nodes/meshes/materials/accessors/bufferViews/pieces)을 단일
 // GLB 파일로 쓴다. 그룹별 GLB 분할(XKT 파이프라인)과 단일 GLB 양쪽에서 재사용.
 function finalizeGlb(outPath, A) {
@@ -691,6 +699,26 @@ export async function buildMergedGlb(imf, opts) {
     if (k && imgStore[k] && imgStore[k].length) return imgStore[k];
     return undefined;
   };
+  // 텍스처 POT 리사이즈(uri 별 1회, 프라미스 캐시). 실패하면 null → 호출측이 텍스처 드롭(색 폴백).
+  const texResizeCache = new Map();
+  const potResizeTex = (uri, buf) => {
+    if (!texResizeCache.has(uri)) {
+      texResizeCache.set(uri, (async () => {
+        try {
+          const sharp = await getSharp();
+          if (!sharp) return null;
+          const meta = await sharp(buf).metadata();
+          const tw = nearestPOT(meta.width || 0), th = nearestPOT(meta.height || 0);
+          // 알파 있는 텍스처(PNG)는 PNG 유지(투명도 보존), 그 외 항공사진 등은 JPEG(용량↓).
+          const wantPng = /\.png$/i.test(uri) || meta.hasAlpha;
+          const pipe = sharp(buf).resize(tw, th, { fit: 'fill' });
+          const out = wantPng ? await pipe.png().toBuffer() : await pipe.jpeg({ quality: 90 }).toBuffer();
+          return { buf: out, mime: wantPng ? 'image/png' : 'image/jpeg', w: tw, h: th, sw: meta.width, sh: meta.height };
+        } catch { return null; }
+      })());
+    }
+    return texResizeCache.get(uri);
+  };
   if (xktStream && imgStore) {
     const keys = Object.keys(imgStore);
     log(`[tex] 로드된 이미지 ${keys.length}개 (svf.images):`);
@@ -771,10 +799,16 @@ export async function buildMergedGlb(imf, opts) {
               const u = rawUv[k * 2] * su, v = rawUv[k * 2 + 1] * sv;
               uvs[k * 2] = u; uvs[k * 2 + 1] = flip ? 1 - v : v;
             }
-            const mime = /\.png$/i.test(uri) ? 'image/png' : 'image/jpeg';
-            tex = { uri, buf, mime, uvs };
-            texFrags++;
-            if (texFrags <= 3) log(`[tex] frag#${fragCount} 텍스처=${uri} (${buf.length}B ${mime}) uvLen=${rawUv.length} scale=(${su},${sv})`);
+            // POT 리사이즈(블록압축 GPU 텍스처 요건). 실패하면 텍스처 드롭 → 색(diffuse) 폴백.
+            const pot = await potResizeTex(uri, buf);
+            if (pot && pot.buf && pot.buf.length) {
+              tex = { uri, buf: pot.buf, mime: pot.mime, uvs };
+              texFrags++;
+              if (texFrags <= 3) log(`[tex] frag#${fragCount} 텍스처=${uri} ${pot.sw}x${pot.sh}→${pot.w}x${pot.h} (${pot.buf.length}B) uvLen=${rawUv.length} scale=(${su},${sv})`);
+            } else if (texMiss < 12) {
+              texMiss++;
+              log(`[tex] frag#${fragCount} POT 리사이즈 실패(sharp 없음?) uri=${uri} — 텍스처 드롭(색 폴백)`);
+            }
           } else if (texMiss < 12) {
             texMiss++;
             log(`[tex] frag#${fragCount} 맵=${uri} uvCh=${geom.getUvChannelCount()} rawUv=${rawUv ? rawUv.length : 0} nv*2=${nvv * 2} img=${buf ? buf.length : 'none'}`);
