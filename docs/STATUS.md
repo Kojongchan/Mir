@@ -3,6 +3,19 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 🚀 텍스처 내비게이션 LOD — 회전 팝 근본 완화 (2026-08-31)
+> branch `claude/3d-view-testing-hlrugl`. mergeGlb·convert4d·api·ThreeDTest. **재변환 완료(R2 최신)**.
+
+- 사용자 지적: 회전 중 무텍스처 회색 개요(LOD1) 팝이 눈에 거슬림 + 멈춤 인지 어려움.
+  선택: **정교한 내비 LOD(디테일 100% 보존)**.
+- 구현: 각 프래그먼트를 절대 격자(XKT_NAV_CELL=1.5m) shard-불가 클러스터링(clusterUV/clusterAbs)해
+  **항공사진째로** 중간해상도 nav 청크를 상세와 병렬 생성. 회전 중엔 nav 만, 멈추면 풀디테일 복원.
+- **결과(run 33367715998)**: nav = **483만 삼각형**(1청크, 텍스처) vs 상세 3.62억 → **약 75배 경량**.
+  회전 부드럽 + 사진/구조 형상 유지(회색 팝 제거). 상세 c0 렌더 회귀 없음(사진 정상).
+- 부가: '상세 렌더링 중…' 스피너(settle 인지). FastNav hideColorTexture:false. LOD1 은 nav 없을 때만 폴백.
+- 튜닝: nav 가 구조물에 너무 각지면 XKT_NAV_CELL 1.5→1.0m(≈10M, 여전히 가벼움). manifest={xktFiles,navFiles,lod1}.
+
+---
 ## ⚡ 회전 렉 + 흰색 번쩍임 수정: 모션 기반 LOD (2026-08-28)
 > branch `claude/3d-view-testing-hlrugl`. `src/pages/ThreeDTest.tsx` (프런트 전용, 재변환 불필요).
 
