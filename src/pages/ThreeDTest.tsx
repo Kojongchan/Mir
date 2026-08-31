@@ -108,6 +108,7 @@ export function ThreeDTest() {
   const loaderRef = useRef<GLTFLoaderPlugin | null>(null);
   const xktLoaderRef = useRef<XKTLoaderPlugin | null>(null);
   const lodSubRef = useRef<string | null>(null); // 카메라 LOD 전환 리스너 핸들
+  const lodTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // 카메라 정지 감지 디바운스
   const pickedRef = useRef<{ id?: string | number; worldPos?: number[] } | null>(null);
   const highlightedRef = useRef<string | null>(null); // 현재 하이라이트된 엔티티 id
   const [status, setStatus] = useState('');
@@ -184,16 +185,18 @@ export function ThreeDTest() {
     // FastNav — 통합모델 XKT 는 2억+ 정점이라 정지 상태 풀품질은 무겁다. 카메라를 움직이는
     // 동안엔 SAO·PBR·텍스처·엣지를 끄고 해상도를 절반으로 낮춰 '부드러운 네비'를 확보하고,
     // 멈추면 잠깐 뒤 풀품질로 복원한다(대용량 모델 렉의 표준 해법).
+    // hideColorTexture 는 false — 회전 중 지오메트리는 모션 LOD(setupSwap)가 LOD1(단색)로 낮추므로
+    // 텍스처를 끌 필요가 없고, 끄면 상세 복원 순간 지형이 잠깐 흰색으로 번쩍인다(baseColor=흰색).
     new FastNavPlugin(viewer, {
       hideSAO: true,
       hidePBR: true,
-      hideColorTexture: true,
+      hideColorTexture: false,
       hideEdges: true,
       hideTransparentObjects: false,
       scaleCanvasResolution: true,
       scaleCanvasResolutionFactor: 0.5,
       delayBeforeRestore: true,
-      delayBeforeRestoreSeconds: 0.4,
+      delayBeforeRestoreSeconds: 0.3,
     } as unknown as ConstructorParameters<typeof FastNavPlugin>[1]);
 
     // 방향 큐브(ACC 뷰큐브 유사) — 코너 캔버스에 렌더. 면/모서리 클릭으로 정면·평면뷰 스냅.
@@ -302,6 +305,7 @@ export function ThreeDTest() {
       canvasEl.removeEventListener('wheel', onWheel);
       canvasEl.removeEventListener('dblclick', onDblClick);
       viewer.scene.input.off(onClick);
+      if (lodTimerRef.current) { clearTimeout(lodTimerRef.current); lodTimerRef.current = null; }
       navCube?.destroy();
       viewerRef.current = null;
       loaderRef.current = null;
@@ -414,6 +418,7 @@ export function ThreeDTest() {
     highlightedRef.current = null;
     for (const id of Object.keys(viewer.scene.models)) viewer.scene.models[id].destroy();
     if (lodSubRef.current) { try { viewer.camera.off(lodSubRef.current); } catch { /* noop */ } lodSubRef.current = null; }
+    if (lodTimerRef.current) { clearTimeout(lodTimerRef.current); lodTimerRef.current = null; }
 
     const total = urls.length;
     let done = 0, failed = 0, framed = false;
@@ -423,38 +428,30 @@ export function ThreeDTest() {
       const box = focusToAabb(focus) ?? (viewer.scene.aabb as number[] | undefined);
       if (box) flyToFramed(viewer, box);
     };
-    // 상세 로드 완료 후: 카메라 거리 기준 LOD 전환 설정.
+    // 상세 로드 완료 후: **모션 기반 LOD 전환** 설정.
+    // 통합모델은 3.62억 삼각형이라 카메라가 움직이는 매 프레임 전부 그리면 회전이 사실상 정지
+    // (멈췄다 튀는 수준). 해결: **카메라가 움직이는 동안엔 개요(LOD1, ~110만 삼각형)만** 그려
+    // 부드럽게 회전하고, **멈추면(≈220ms) 상세(항공사진 포함)로 복원**한다. FastNav 의 화질 저하
+    // (텍스처/SAO off)만으론 지오메트리 부하가 그대로라 부족 → 지오메트리 자체를 LOD1 로 교체.
+    // 회전 중 흰색(텍스처 off) 문제도 함께 해소(회전 중엔 LOD1=단색 지형만 보임).
     const setupSwap = () => {
-      // LOD 스왑(성능) — LOD1 계단 원인(Z 격자 스냅) 수정·검증 완료(합성 before/after + 실모델
-      // 헤드리스 렌더로 매끈함 확인)라 재활성. 기준 = '시점 거리'(eye→look = 줌 레벨). 넓은 모델
-      // (7.6km)에서 한 구석을 가까이 봐도 중심과는 멀어 '중심거리'는 오판 → 시점 거리로 판정.
-      // 디테일이 기본, 개요는 '전체맞춤(~diag) 이상 줌아웃'에서만. 히스테리시스로 깜빡임 방지.
-      const box = (focusToAabb(focus) ?? (viewer.scene.aabb as number[])) || [0, 0, 0, 0, 0, 0];
-      const diag = Math.hypot(box[3] - box[0], box[4] - box[1], box[5] - box[2]) || 1000;
-      const NEAR = diag * 0.45; // 이보다 가까이 보면 상세(풀디테일)
-      const FAR = diag * 0.65;  // 이보다 멀리 보면 개요(스무스 LOD1)
       const hasLod = !!models['lod1'];
-      let showingDetail = true;
-      const apply = () => {
-        const eye = viewer.camera.eye as number[];
-        const look = viewer.camera.look as number[];
-        const d = Math.hypot(look[0] - eye[0], look[1] - eye[1], look[2] - eye[2]);
-        if (!hasLod) return; // 개요 없으면 상세 유지
-        if (showingDetail && d > FAR) showingDetail = false;
-        else if (!showingDetail && d < NEAR) showingDetail = true;
-        else return; // 변화 없음
-        if (models['lod1']) models['lod1'].visible = !showingDetail;
-        for (let i = 0; i < total; i++) { const m = models[`xkt${i}`]; if (m) m.visible = showingDetail; }
+      if (!hasLod) return; // 개요 없으면 상세 고정(스왑 불가)
+      let mode: 'detail' | 'lod' | null = null;
+      const setMode = (m: 'detail' | 'lod') => {
+        if (m === mode) return; // 상태 동일 → 무동작(회전 중 매 프레임 호출돼도 싸다)
+        mode = m;
+        const showDetail = m === 'detail';
+        if (models['lod1']) models['lod1'].visible = !showDetail;
+        for (let i = 0; i < total; i++) { const mm = models[`xkt${i}`]; if (mm) mm.visible = showDetail; }
       };
-      // 초기: 현재 시점 거리로 판정(전체맞춤이면 개요, 가까우면 상세).
-      const eye0 = viewer.camera.eye as number[]; const look0 = viewer.camera.look as number[];
-      const d0 = Math.hypot(look0[0] - eye0[0], look0[1] - eye0[1], look0[2] - eye0[2]);
-      showingDetail = !(hasLod && d0 > FAR);
-      if (models['lod1']) models['lod1'].visible = !showingDetail;
-      for (let i = 0; i < total; i++) { const m = models[`xkt${i}`]; if (m) m.visible = showingDetail; }
-      let t = 0;
+      // 정지 = 항상 상세(어느 줌이든 항공사진 풀디테일 — 정적 렌더는 3.62억도 표시 가능).
+      // 움직이는 동안만 개요(LOD1)로 낮춰 부드럽게. 멈추면 220ms 뒤 상세 복원.
+      setMode('detail');
       lodSubRef.current = viewer.camera.on('matrix', () => {
-        const now = Date.now(); if (now - t < 120) return; t = now; apply();
+        setMode('lod');
+        if (lodTimerRef.current) clearTimeout(lodTimerRef.current);
+        lodTimerRef.current = setTimeout(() => setMode('detail'), 220);
       }) as unknown as string;
     };
     const finishDetail = () => {
