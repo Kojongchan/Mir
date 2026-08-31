@@ -103,7 +103,7 @@ async function r2TotalSize(): Promise<number> {
 
 type Focus = { center: [number, number, number]; half: [number, number, number] };
 type CacheState =
-  | { ready: true; xkt: true; urls: string[]; lod1Url?: string; focus?: Focus }
+  | { ready: true; xkt: true; urls: string[]; navUrls?: string[]; lod1Url?: string; focus?: Focus }
   | { ready: true; url: string; focus?: Focus }
   | { failed: true; error: string }
   | { ready: false };
@@ -129,11 +129,14 @@ async function cacheState(urn: string): Promise<CacheState> {
   const manifestText = await r2GetText(`${dir}/xkt/manifest.json`);
   if (manifestText) {
     try {
-      const { xktFiles, lod1 } = JSON.parse(manifestText) as { xktFiles: string[]; lod1?: string | null };
+      const { xktFiles, navFiles, lod1 } = JSON.parse(manifestText) as { xktFiles: string[]; navFiles?: string[]; lod1?: string | null };
       if (Array.isArray(xktFiles) && xktFiles.length > 0) {
         const urls = await Promise.all(xktFiles.map((f) => r2PresignGet(`${dir}/xkt/${f}`)));
+        const navUrls = Array.isArray(navFiles) && navFiles.length > 0
+          ? await Promise.all(navFiles.map((f) => r2PresignGet(`${dir}/xkt/${f}`)))
+          : undefined;
         const lod1Url = lod1 ? await r2PresignGet(`${dir}/xkt/${lod1}`) : undefined;
-        return { ready: true, xkt: true, urls, lod1Url, focus: await readFocus(dir) };
+        return { ready: true, xkt: true, urls, navUrls, lod1Url, focus: await readFocus(dir) };
       }
     } catch {
       /* 매니페스트 파손 — GLB/실패 경로로 폴백 */

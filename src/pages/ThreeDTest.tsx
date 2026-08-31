@@ -411,7 +411,7 @@ export function ThreeDTest() {
    * 줌아웃(멀면) 개요만(수백만 삼각형=가벼움), 줌인(가까우면) 상세(프러스텀 컬링으로 보이는
    * 부분만) → 양 극단 모두 부드럽게. 3.6억 삼각형 렉의 근본 완화.
    */
-  const mountXkt = useCallback((urls: string[], lod1Url: string | undefined, label: string, focus?: Focus) => {
+  const mountXkt = useCallback((urls: string[], lod1Url: string | undefined, label: string, focus?: Focus, navUrls?: string[]) => {
     const viewer = viewerRef.current;
     const loader = xktLoaderRef.current;
     if (!viewer || !loader || urls.length === 0) return;
@@ -435,16 +435,25 @@ export function ThreeDTest() {
     // 부드럽게 회전하고, **멈추면(≈220ms) 상세(항공사진 포함)로 복원**한다. FastNav 의 화질 저하
     // (텍스처/SAO off)만으론 지오메트리 부하가 그대로라 부족 → 지오메트리 자체를 LOD1 로 교체.
     // 회전 중 흰색(텍스처 off) 문제도 함께 해소(회전 중엔 LOD1=단색 지형만 보임).
+    const navTotal = navUrls ? navUrls.length : 0;
     const setupSwap = () => {
+      const hasNav = navTotal > 0;
       const hasLod = !!models['lod1'];
-      if (!hasLod) return; // 개요 없으면 상세 고정(스왑 불가)
+      if (!hasNav && !hasLod) return; // 저해상 대체본 없으면 상세 고정(스왑 불가)
       let mode: 'detail' | 'lod' | null = null;
+      // 상세 = 풀디테일(정지). 저해상(motion) = nav(텍스처 입힌 중간해상도)가 있으면 그걸,
+      // 없으면 lod1(단색 개요). nav 가 있으면 lod1 은 항상 숨김.
       const setMode = (m: 'detail' | 'lod') => {
         if (m === mode) return; // 상태 동일 → 무동작(회전 중 매 프레임 호출돼도 싸다)
         mode = m;
         const showDetail = m === 'detail';
-        if (models['lod1']) models['lod1'].visible = !showDetail;
         for (let i = 0; i < total; i++) { const mm = models[`xkt${i}`]; if (mm) mm.visible = showDetail; }
+        if (hasNav) {
+          for (let i = 0; i < navTotal; i++) { const nm = models[`nav${i}`]; if (nm) nm.visible = !showDetail; }
+          if (models['lod1']) models['lod1'].visible = false;
+        } else if (models['lod1']) {
+          models['lod1'].visible = !showDetail;
+        }
       };
       // 상세 복원은 무거운 1회 렌더(수초 멈춤)라, '상세 렌더링 중' 오버레이를 먼저 그린 뒤(rAF)
       // 상세를 켜고, 렌더 완료(scene 'rendered') 시 오버레이를 내려 "아직 다 안 떴구나"를 알린다.
@@ -478,7 +487,7 @@ export function ThreeDTest() {
         const ids = Object.keys(viewer.scene.objects || {});
         const a = (viewer.scene.aabb as number[]) || [0, 0, 0, 0, 0, 0];
         const span = [a[3] - a[0], a[4] - a[1], a[5] - a[2]].map((x) => Math.round(x));
-        setDbg(`XKT ${done}/${total} + LOD1${lod1Url ? '✓' : '✗'} · 엔티티 ${ids.length}개 · AABB span(${span.join(',')})`);
+        setDbg(`XKT ${done}/${total} + nav${navTotal || 0}${lod1Url ? '+LOD1' : ''} · 엔티티 ${ids.length}개 · AABB span(${span.join(',')})`);
       } catch { setDbg('진단 수집 실패'); }
     };
     // 상세 청크 순차 로드(숨긴 채) — 병렬이면 메모리 스파이크.
@@ -492,12 +501,22 @@ export function ThreeDTest() {
       model.on('loaded', () => { done++; frameOnce(); loadDetail(i + 1); });
       model.on('error', () => { failed++; loadDetail(i + 1); });
     };
-    // 개요(LOD1)를 숨긴 채 먼저 로드(작음). 상세는 보이게 순차 로드 → 로드 끝나면 setupSwap 이
-    // 카메라 거리로 개요/상세 전환. 줌아웃(전체맞춤 이상)=스무스 개요(가벼움), 줌인=풀디테일.
+    // 개요(LOD1)를 숨긴 채 로드(작음·nav 없을 때의 최종 대체본). 상세는 보이게 순차 로드.
     if (lod1Url) {
       const lm = loader.load({ id: 'lod1', src: lod1Url, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
       try { (lm as unknown as { visible?: boolean }).visible = false; } catch { /* noop */ }
       lm.on('loaded', () => { const m = models['lod1']; if (m) m.visible = false; });
+    }
+    // 내비 LOD(nav): 텍스처 입힌 중간해상도. 숨긴 채 순차 로드 → 회전 중 이걸 그려 부드럽게.
+    if (navUrls && navUrls.length) {
+      const loadNav = (i: number) => {
+        if (i >= navUrls.length) return;
+        const nm = loader.load({ id: `nav${i}`, src: navUrls[i], edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
+        try { (nm as unknown as { visible?: boolean }).visible = false; } catch { /* noop */ }
+        nm.on('loaded', () => { const m = models[`nav${i}`]; if (m) m.visible = false; loadNav(i + 1); });
+        nm.on('error', () => loadNav(i + 1));
+      };
+      loadNav(0);
     }
     setBusy(false);
     loadDetail(0);
@@ -527,6 +546,7 @@ export function ThreeDTest() {
         url?: string;
         xkt?: boolean;
         urls?: string[];
+        navUrls?: string[];
         lod1Url?: string;
         focus?: Focus;
         failed?: boolean;
@@ -548,7 +568,7 @@ export function ThreeDTest() {
       const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
       // XKT(분할) 우선, 없으면 단일 GLB(DWG 등).
       const doMount = (s: State) => {
-        if (s.xkt && s.urls && s.urls.length) mountXkt(s.urls, s.lod1Url, f.name, s.focus);
+        if (s.xkt && s.urls && s.urls.length) mountXkt(s.urls, s.lod1Url, f.name, s.focus, s.navUrls);
         else if (s.url) mountGlb(s.url, f.name, s.focus);
       };
       const isReady = (s: State) => !!s.ready && (!!s.url || !!(s.urls && s.urls.length));

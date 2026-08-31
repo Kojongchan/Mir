@@ -243,6 +243,38 @@ function dropDegen(idx) {
 // 거대 지표면이 만든 평균(0.03)이 작은 부재(보·기둥)까지 뭉개므로, 크기 비례 셀을 쓴다 —
 // 작은 부재는 셀도 작아 형상 보존, 큰 지표면 패치는 많이 준다. 정점 이동 ≤ 셀크기라 shard 불가.
 // 최종 예산 감량은 그룹 단계(clusterVND)에서. 여기선 메모리 보호 + 구조 보존이 목적.
+// === 내비게이션 LOD(nav) 감량: 절대 격자 클러스터링 ===
+// 회전 중 보여줄 '텍스처 입힌 중간 해상도' 모델용. 절대 셀(예 1.5m)로 정점을 격자점에 병합해
+// 공간 균일 감량(프래그먼트 크기 무관). shard 불가(이동 ≤ 셀). 텍스처면은 UV 를 대표 정점에
+// 실어 항공사진 드레이프를 보존한다(UV 는 국소적으로 매끈해 셀당 첫 UV 로 충분).
+function clusterAbs(verts, idx, normals, cell) {
+  const q = 1 / Math.max(cell, 1e-4);
+  const w = weld(verts, idx, normals, q);
+  const di = dropDegen(w.idx);
+  const nn = recomputeNormals(w.verts, di);
+  return { verts: w.verts, normals: nn, idx: di };
+}
+function clusterUV(verts, idx, uvs, cell) {
+  const q = 1 / Math.max(cell, 1e-4);
+  const map = new Map();
+  const remap = new Uint32Array(verts.length / 3);
+  const ux = [], uy = [], uz = [], tu = [], tv = [];
+  let n = 0;
+  for (let v = 0; v < verts.length / 3; v++) {
+    const qx = Math.round(verts[v * 3] * q), qy = Math.round(verts[v * 3 + 1] * q), qz = Math.round(verts[v * 3 + 2] * q);
+    const key = `${qx}_${qy}_${qz}`;
+    let ni = map.get(key);
+    if (ni === undefined) { ni = n++; map.set(key, ni); ux.push(qx / q); uy.push(qy / q); uz.push(qz / q); tu.push(uvs[v * 2]); tv.push(uvs[v * 2 + 1]); }
+    remap[v] = ni;
+  }
+  const tmp = [];
+  for (let k = 0; k + 2 < idx.length; k += 3) { const a = remap[idx[k]], b = remap[idx[k + 1]], c = remap[idx[k + 2]]; if (a !== b && b !== c && a !== c) tmp.push(a, b, c); }
+  const nv = new Float32Array(n * 3), nu = new Float32Array(n * 2);
+  for (let i = 0; i < n; i++) { nv[i * 3] = ux[i]; nv[i * 3 + 1] = uy[i]; nv[i * 3 + 2] = uz[i]; nu[i * 2] = tu[i]; nu[i * 2 + 1] = tv[i]; }
+  const ni2 = Uint32Array.from(tmp);
+  const nn = recomputeNormals(nv, ni2);
+  return { verts: nv, normals: nn, idx: ni2, uvs: nu };
+}
 function clusterVN(verts, idx, normals) {
   const K = Number(process.env.MERGE_FRAG_DIV || 12);
   const span = bboxSpan(verts);
@@ -613,12 +645,15 @@ export async function buildMergedGlb(imf, opts) {
     const d = mat?.diffuse;
     return d ? [d.x, d.y, d.z, mat?.opacity ?? 1] : [0.72, 0.74, 0.77, 1];
   };
-  let chunk = null, chunkIdx = 0, streamV = 0, streamT = 0, texFrags = 0, texMiss = 0;
+  let streamV = 0, streamT = 0, texFrags = 0, texMiss = 0, navT = 0;
   const newChunk = () => ({ acc: [], bv: [], meshes: [], materials: [], nodes: [], pieces: [], bo: 0, tris: 0, images: [], textures: [], samplers: [], texMap: new Map() });
-  // tex(옵션): { uri, buf(Buffer), mime, uvs(Float32Array) } — 있으면 baseColorTexture + TEXCOORD_0.
-  const addToChunk = (pos, nrm, idxF, fmin, fmax, baseColor, metal, rough, name, tex) => {
-    if (!chunk) chunk = newChunk();
-    const c = chunk;
+  // 청크 스트림 팩토리 — 상세('c', kind detail)와 내비 LOD('nav', kind nav)를 병렬로 굽는다.
+  // add(...)/flush() 는 각자 자기 상태(chunk/idx)를 갖는다. tex(옵션): { uri, buf, mime, uvs }.
+  const makeStream = (prefix, kind) => {
+    const s = { chunk: null, idx: 0 };
+    s.add = (pos, nrm, idxF, fmin, fmax, baseColor, metal, rough, name, tex) => {
+    if (!s.chunk) s.chunk = newChunk();
+    const c = s.chunk;
     const addV = (typed, target) => {
       const buf = Buffer.from(typed.buffer, typed.byteOffset, typed.byteLength);
       c.bv.push({ buffer: 0, byteOffset: c.bo, byteLength: buf.length, target });
@@ -658,16 +693,23 @@ export async function buildMergedGlb(imf, opts) {
     const meshI = c.meshes.push({ primitives: [{ mode: 4, attributes, indices: iA, material: matI }] }) - 1;
     c.nodes.push({ mesh: meshI, name });
     c.tris += idxF.length / 3;
+    };
+    s.flush = async () => {
+      if (!s.chunk || s.chunk.meshes.length === 0) return;
+      const ch = s.chunk;
+      const p = path.join(opts.xktStreamDir, `${prefix}${s.idx}.glb`);
+      finalizeGlb(p, { nodes: ch.nodes, meshes: ch.meshes, materials: ch.materials, accessors: ch.acc, bufferViews: ch.bv, pieces: ch.pieces, byteOffset: ch.bo, images: ch.images, textures: ch.textures, samplers: ch.samplers });
+      const tris = ch.tris;
+      s.chunk = null; // flush 전에 참조 해제(메모리 회수)
+      if (opts.onChunk) await opts.onChunk(p, s.idx, tris, kind);
+      s.idx++;
+    };
+    return s;
   };
-  const flushChunk = async () => {
-    if (!chunk || chunk.meshes.length === 0) return;
-    const p = path.join(opts.xktStreamDir, `c${chunkIdx}.glb`);
-    finalizeGlb(p, { nodes: chunk.nodes, meshes: chunk.meshes, materials: chunk.materials, accessors: chunk.acc, bufferViews: chunk.bv, pieces: chunk.pieces, byteOffset: chunk.bo, images: chunk.images, textures: chunk.textures, samplers: chunk.samplers });
-    const tris = chunk.tris;
-    chunk = null; // flush 전에 참조 해제(메모리 회수)
-    if (opts.onChunk) await opts.onChunk(p, chunkIdx, tris);
-    chunkIdx++;
-  };
+  const detail = makeStream('c', 'detail');
+  const navEnabled = process.env.XKT_NAV !== '0';
+  const nav = navEnabled ? makeStream('nav', 'nav') : null;
+  const navCell = Number(process.env.XKT_NAV_CELL || 1.5); // 내비 LOD 절대 격자(기본 1.5m)
   if (xktStream) fs.mkdirSync(opts.xktStreamDir, { recursive: true });
 
   // === 이미지 해석기 ===
@@ -908,10 +950,34 @@ export async function buildMergedGlb(imf, opts) {
       const m0 = imf.getMaterial(node.material ?? -1);
       const metal = color ? 0 : Math.min(1, Math.max(0, m0?.metallic ?? 0));
       const rough = color ? 0.9 : Math.min(1, Math.max(0, m0?.roughness ?? 0.9));
-      addToChunk(pos, nrm, idx32, [fnx, fny, fnz], [fxx, fxy, fxz], baseColor, metal, rough, String(node.dbid), tex);
+      detail.add(pos, nrm, idx32, [fnx, fny, fnz], [fxx, fxy, fxz], baseColor, metal, rough, String(node.dbid), tex);
       addToLod(pos, idx32); // 개요(LOD1) 격자 누적
+      // 내비 LOD: 같은 프래그먼트를 절대 격자(navCell)로 감량해 텍스처(항공사진)째로 nav 청크에 담는다.
+      // 회전 중엔 이 nav 모델만 그려 부드럽게 + 사진/구조 형상 유지(회색 개요 대신). shard 불가.
+      if (nav) {
+        try {
+          if (tex && tex.uvs) {
+            const cl = clusterUV(pos, idx32, tex.uvs, navCell);
+            if (cl.idx.length >= 3) {
+              let a0 = Infinity, a1 = Infinity, a2 = Infinity, b0 = -Infinity, b1 = -Infinity, b2 = -Infinity;
+              for (let v = 0; v < cl.verts.length; v += 3) { const x = cl.verts[v], y = cl.verts[v + 1], z = cl.verts[v + 2]; if (x < a0) a0 = x; if (y < a1) a1 = y; if (z < a2) a2 = z; if (x > b0) b0 = x; if (y > b1) b1 = y; if (z > b2) b2 = z; }
+              nav.add(cl.verts, cl.normals, cl.idx, [a0, a1, a2], [b0, b1, b2], baseColor, metal, rough, String(node.dbid), { uri: tex.uri, buf: tex.buf, mime: tex.mime, uvs: cl.uvs });
+              navT += cl.idx.length / 3;
+            }
+          } else {
+            const cl = clusterAbs(pos, idx32, nrm, navCell);
+            if (cl.idx.length >= 3) {
+              let a0 = Infinity, a1 = Infinity, a2 = Infinity, b0 = -Infinity, b1 = -Infinity, b2 = -Infinity;
+              for (let v = 0; v < cl.verts.length; v += 3) { const x = cl.verts[v], y = cl.verts[v + 1], z = cl.verts[v + 2]; if (x < a0) a0 = x; if (y < a1) a1 = y; if (z < a2) a2 = z; if (x > b0) b0 = x; if (y > b1) b1 = y; if (z > b2) b2 = z; }
+              nav.add(cl.verts, cl.normals, cl.idx, [a0, a1, a2], [b0, b1, b2], baseColor, metal, rough, String(node.dbid), null);
+              navT += cl.idx.length / 3;
+            }
+          }
+        } catch { /* nav 감량 실패 시 스킵(상세는 정상) */ }
+      }
       streamV += nv; streamT += idx32.length / 3;
-      if (chunk && chunk.tris >= CHUNK_CAP) await flushChunk();
+      if (detail.chunk && detail.chunk.tris >= CHUNK_CAP) await detail.flush();
+      if (nav && nav.chunk && nav.chunk.tris >= CHUNK_CAP) await nav.flush();
     } else {
       const g = groupOf(node.material ?? -1, color);
       if (fnx < g.min[0]) g.min[0] = fnx; if (fny < g.min[1]) g.min[1] = fny; if (fnz < g.min[2]) g.min[2] = fnz;
@@ -922,12 +988,13 @@ export async function buildMergedGlb(imf, opts) {
       g.base += nv; g.vtx += nv; g.idxN += reidx.length;
     }
 
-    if (++processed % 50000 === 0) log(`[merge]   ${processed} 객체 (청크 ${chunkIdx}, 단순화 ${decimated})`);
+    if (++processed % 50000 === 0) log(`[merge]   ${processed} 객체 (청크 ${detail.idx}, 단순화 ${decimated})`);
   }
   // XKT 스트리밍: 마지막 청크 flush + LOD1(개요) 방출 후 반환(그룹 emit 경로 안 탐).
   if (xktStream) {
-    await flushChunk();
-    // LOD1 개요 메시 방출(전역 격자 클러스터 결과) → onChunk(isLod1=true)
+    await detail.flush();
+    if (nav) await nav.flush();
+    // LOD1 개요 메시 방출(전역 격자 클러스터 결과) → onChunk(kind 'lod1')
     let lodTris = 0;
     if (lpx.length >= 3 && lodIdx.length >= 3) {
       const lp = new Float32Array(lpx.length * 3);
@@ -950,11 +1017,11 @@ export async function buildMergedGlb(imf, opts) {
       const meshes = [{ primitives: [{ mode: 4, attributes: { POSITION: pA, NORMAL: nA }, indices: iA, material: 0 }] }];
       const lodPath = path.join(opts.xktStreamDir, 'lod1.glb');
       finalizeGlb(lodPath, { nodes: [{ mesh: 0, name: 'lod1' }], meshes, materials, accessors: acc, bufferViews: bv, pieces, byteOffset: bo });
-      if (opts.onChunk) await opts.onChunk(lodPath, -1, lodTris, true);
+      if (opts.onChunk) await opts.onChunk(lodPath, -1, lodTris, 'lod1');
       log(`[merge] LOD1(개요) 방출: 정점 ${(lp.length / 3).toLocaleString()} · 삼각형 ${Math.round(lodTris).toLocaleString()} (셀 ${lodCell}m)`);
     }
-    log(`[merge] XKT 스트리밍 완료: 청크 ${chunkIdx}개 · 정점 ${streamV.toLocaleString()} · 삼각형 ${Math.round(streamT).toLocaleString()} · LOD1 삼각형 ${Math.round(lodTris).toLocaleString()} · 텍스처 프래그 ${texFrags}`);
-    return { xkt: true, chunks: chunkIdx, vertices: streamV, triangles: streamT, lodTris, decimated: 0, focus: robustFocus(foci) };
+    log(`[merge] XKT 스트리밍 완료: 상세청크 ${detail.idx}개 · nav청크 ${nav ? nav.idx : 0}개(삼각형 ${Math.round(navT).toLocaleString()}) · 정점 ${streamV.toLocaleString()} · 삼각형 ${Math.round(streamT).toLocaleString()} · LOD1 삼각형 ${Math.round(lodTris).toLocaleString()} · 텍스처 프래그 ${texFrags}`);
+    return { xkt: true, chunks: detail.idx, navChunks: nav ? nav.idx : 0, navTris: navT, vertices: streamV, triangles: streamT, lodTris, decimated: 0, focus: robustFocus(foci) };
   }
   // 솔리드(삼각형) 부재가 하나라도 있으면 선/점은 대개 엣지/주석 클러터(IFC 의 와이어프레임
   // 11만개 등) → 제외. 순수 선형(솔리드 0 = DWG 도면)만 선/점 유지. 정점수 비율은 엣지선이
