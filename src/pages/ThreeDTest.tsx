@@ -438,8 +438,9 @@ export function ThreeDTest() {
     const navTotal = navUrls ? navUrls.length : 0;
     const setupSwap = () => {
       const hasNav = navTotal > 0;
-      const hasLod = !!models['lod1'];
-      if (!hasNav && !hasLod) return; // 저해상 대체본 없으면 상세 고정(스왑 불가)
+      // 기본 배포는 **감량 모델 1개**(경량)라 모션 LOD 스왑이 필요 없다(항상 상세 고정 = 부드럽고
+      // 팝 없음). 회전 중 회색 LOD1 로 바꾸면 오히려 팝이 생기므로 nav(풀 빌드)일 때만 스왑한다.
+      if (!hasNav) return;
       let mode: 'detail' | 'lod' | null = null;
       // 상세 = 풀디테일(정지). 저해상(motion) = nav(텍스처 입힌 중간해상도)가 있으면 그걸,
       // 없으면 lod1(단색 개요). nav 가 있으면 lod1 은 항상 숨김.
@@ -501,8 +502,8 @@ export function ThreeDTest() {
       model.on('loaded', () => { done++; frameOnce(); loadDetail(i + 1); });
       model.on('error', () => { failed++; loadDetail(i + 1); });
     };
-    // 개요(LOD1)를 숨긴 채 로드(작음·nav 없을 때의 최종 대체본). 상세는 보이게 순차 로드.
-    if (lod1Url) {
+    // LOD1(개요)은 풀 빌드(nav 있음)의 모션 스왑 폴백일 때만 로드(기본 경량 빌드는 불필요 · 대역폭 절약).
+    if (lod1Url && navUrls && navUrls.length) {
       const lm = loader.load({ id: 'lod1', src: lod1Url, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
       try { (lm as unknown as { visible?: boolean }).visible = false; } catch { /* noop */ }
       lm.on('loaded', () => { const m = models['lod1']; if (m) m.visible = false; });

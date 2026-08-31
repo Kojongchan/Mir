@@ -20,7 +20,9 @@ import { MeshoptSimplifier } from 'meshoptimizer';
 // (≤2048)으로 리사이즈해 모든 mip 레벨을 유효하게 만든다(UV 는 정규화라 드레이프 보존).
 let _sharpP;
 const getSharp = () => (_sharpP ??= import('sharp').then((m) => m.default).catch(() => null));
-const nearestPOT = (n) => Math.max(4, Math.min(2048, Math.pow(2, Math.round(Math.log2(Math.max(1, n))))));
+// 텍스처 상한(POT). 항공사진 타일이 다운로드 트래픽의 대부분 → 기본 1024 로 낮춰 대역폭 급감.
+const TEX_MAX = Number(process.env.XKT_TEX_MAX || 1024);
+const nearestPOT = (n) => Math.max(4, Math.min(TEX_MAX, Math.pow(2, Math.round(Math.log2(Math.max(1, n))))));
 
 // finalizeGlb: 조립된 glTF 배열(nodes/meshes/materials/accessors/bufferViews/pieces)을 단일
 // GLB 파일로 쓴다. 그룹별 GLB 분할(XKT 파이프라인)과 단일 GLB 양쪽에서 재사용.
@@ -706,10 +708,14 @@ export async function buildMergedGlb(imf, opts) {
     };
     return s;
   };
+  // 기본 배포 = **감량 모델 1개**만(사내망 트래픽·GPU 과부하 해결). 3.62억 풀디테일은 모든
+  // 사용자가 GB 단위로 받고 GPU 를 통째로 점유해 느렸다 → 기본은 안 받는다. 감량 모델('c')이
+  // 곧 화면에 뜨는 모델. XKT_FULL=1 일 때만 풀디테일('c')+감량('nav') 2단 LOD(고해상 특수 빌드).
+  const emitFull = process.env.XKT_FULL === '1';
+  const decCell = Number(process.env.XKT_CELL || 1.5); // 기본 배포 감량 격자(≈1.5m). 낮출수록 정밀·무거움
   const detail = makeStream('c', 'detail');
-  const navEnabled = process.env.XKT_NAV !== '0';
-  const nav = navEnabled ? makeStream('nav', 'nav') : null;
-  const navCell = Number(process.env.XKT_NAV_CELL || 1.5); // 내비 LOD 절대 격자(기본 1.5m)
+  const nav = emitFull ? makeStream('nav', 'nav') : null; // 풀 빌드에서만 별도 감량본(모션 LOD)
+  const navCell = Number(process.env.XKT_NAV_CELL || 1.5);
   if (xktStream) fs.mkdirSync(opts.xktStreamDir, { recursive: true });
 
   // === 이미지 해석기 ===
@@ -950,32 +956,29 @@ export async function buildMergedGlb(imf, opts) {
       const m0 = imf.getMaterial(node.material ?? -1);
       const metal = color ? 0 : Math.min(1, Math.max(0, m0?.metallic ?? 0));
       const rough = color ? 0.9 : Math.min(1, Math.max(0, m0?.roughness ?? 0.9));
-      detail.add(pos, nrm, idx32, [fnx, fny, fnz], [fxx, fxy, fxz], baseColor, metal, rough, String(node.dbid), tex);
-      addToLod(pos, idx32); // 개요(LOD1) 격자 누적
-      // 내비 LOD: 같은 프래그먼트를 절대 격자(navCell)로 감량해 텍스처(항공사진)째로 nav 청크에 담는다.
-      // 회전 중엔 이 nav 모델만 그려 부드럽게 + 사진/구조 형상 유지(회색 개요 대신). shard 불가.
-      if (nav) {
+      // 프래그먼트를 절대 격자(cell)로 shard-불가 감량해 스트림에 담는다(텍스처면 UV 보존).
+      const bboxOf = (v) => { let a0 = Infinity, a1 = Infinity, a2 = Infinity, b0 = -Infinity, b1 = -Infinity, b2 = -Infinity; for (let i = 0; i < v.length; i += 3) { const x = v[i], y = v[i + 1], z = v[i + 2]; if (x < a0) a0 = x; if (y < a1) a1 = y; if (z < a2) a2 = z; if (x > b0) b0 = x; if (y > b1) b1 = y; if (z > b2) b2 = z; } return [[a0, a1, a2], [b0, b1, b2]]; };
+      const emitDecimated = (stream, cell) => {
         try {
           if (tex && tex.uvs) {
-            const cl = clusterUV(pos, idx32, tex.uvs, navCell);
-            if (cl.idx.length >= 3) {
-              let a0 = Infinity, a1 = Infinity, a2 = Infinity, b0 = -Infinity, b1 = -Infinity, b2 = -Infinity;
-              for (let v = 0; v < cl.verts.length; v += 3) { const x = cl.verts[v], y = cl.verts[v + 1], z = cl.verts[v + 2]; if (x < a0) a0 = x; if (y < a1) a1 = y; if (z < a2) a2 = z; if (x > b0) b0 = x; if (y > b1) b1 = y; if (z > b2) b2 = z; }
-              nav.add(cl.verts, cl.normals, cl.idx, [a0, a1, a2], [b0, b1, b2], baseColor, metal, rough, String(node.dbid), { uri: tex.uri, buf: tex.buf, mime: tex.mime, uvs: cl.uvs });
-              navT += cl.idx.length / 3;
-            }
+            const cl = clusterUV(pos, idx32, tex.uvs, cell);
+            if (cl.idx.length >= 3) { const [mn, mx] = bboxOf(cl.verts); stream.add(cl.verts, cl.normals, cl.idx, mn, mx, baseColor, metal, rough, String(node.dbid), { uri: tex.uri, buf: tex.buf, mime: tex.mime, uvs: cl.uvs }); return cl.idx.length / 3; }
           } else {
-            const cl = clusterAbs(pos, idx32, nrm, navCell);
-            if (cl.idx.length >= 3) {
-              let a0 = Infinity, a1 = Infinity, a2 = Infinity, b0 = -Infinity, b1 = -Infinity, b2 = -Infinity;
-              for (let v = 0; v < cl.verts.length; v += 3) { const x = cl.verts[v], y = cl.verts[v + 1], z = cl.verts[v + 2]; if (x < a0) a0 = x; if (y < a1) a1 = y; if (z < a2) a2 = z; if (x > b0) b0 = x; if (y > b1) b1 = y; if (z > b2) b2 = z; }
-              nav.add(cl.verts, cl.normals, cl.idx, [a0, a1, a2], [b0, b1, b2], baseColor, metal, rough, String(node.dbid), null);
-              navT += cl.idx.length / 3;
-            }
+            const cl = clusterAbs(pos, idx32, nrm, cell);
+            if (cl.idx.length >= 3) { const [mn, mx] = bboxOf(cl.verts); stream.add(cl.verts, cl.normals, cl.idx, mn, mx, baseColor, metal, rough, String(node.dbid), null); return cl.idx.length / 3; }
           }
-        } catch { /* nav 감량 실패 시 스킵(상세는 정상) */ }
+        } catch { /* 감량 실패 → 스킵 */ }
+        return 0;
+      };
+      if (emitFull) {
+        detail.add(pos, nrm, idx32, [fnx, fny, fnz], [fxx, fxy, fxz], baseColor, metal, rough, String(node.dbid), tex); // 풀디테일
+        if (nav) navT += emitDecimated(nav, navCell); // 모션 LOD
+        streamV += nv; streamT += idx32.length / 3;
+      } else {
+        streamT += emitDecimated(detail, decCell); // 기본: 감량본이 곧 배포 모델(경량)
+        streamV += nv; // 원본 정점(통계용 근사)
       }
-      streamV += nv; streamT += idx32.length / 3;
+      addToLod(pos, idx32); // 개요(LOD1) 격자 누적(극단 줌아웃·폴백)
       if (detail.chunk && detail.chunk.tris >= CHUNK_CAP) await detail.flush();
       if (nav && nav.chunk && nav.chunk.tris >= CHUNK_CAP) await nav.flush();
     } else {
