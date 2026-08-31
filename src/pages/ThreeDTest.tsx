@@ -114,6 +114,7 @@ export function ThreeDTest() {
   const [status, setStatus] = useState('');
   const [dbg, setDbg] = useState('');
   const [texWarn, setTexWarn] = useState<string | null>(null);
+  const [settling, setSettling] = useState(false); // 회전 멈춤 후 상세(풀디테일) 렌더 중 표시
   const [busy, setBusy] = useState(false);
   const [modelName, setModelName] = useState<string | null>(null);
   const [pick, setPick] = useState<{ id: string; name?: string; type?: string } | null>(null);
@@ -445,13 +446,27 @@ export function ThreeDTest() {
         if (models['lod1']) models['lod1'].visible = !showDetail;
         for (let i = 0; i < total; i++) { const mm = models[`xkt${i}`]; if (mm) mm.visible = showDetail; }
       };
+      // 상세 복원은 무거운 1회 렌더(수초 멈춤)라, '상세 렌더링 중' 오버레이를 먼저 그린 뒤(rAF)
+      // 상세를 켜고, 렌더 완료(scene 'rendered') 시 오버레이를 내려 "아직 다 안 떴구나"를 알린다.
+      const toDetailWithSpinner = () => {
+        if (mode === 'detail') return;
+        setSettling(true);
+        requestAnimationFrame(() => {
+          setMode('detail');
+          const sub = viewer.scene.on('rendered', () => {
+            try { viewer.scene.off(sub); } catch { /* noop */ }
+            setSettling(false);
+          });
+        });
+      };
       // 정지 = 항상 상세(어느 줌이든 항공사진 풀디테일 — 정적 렌더는 3.62억도 표시 가능).
       // 움직이는 동안만 개요(LOD1)로 낮춰 부드럽게. 멈추면 220ms 뒤 상세 복원.
       setMode('detail');
       lodSubRef.current = viewer.camera.on('matrix', () => {
+        setSettling(false); // 다시 움직이면 스피너 취소
         setMode('lod');
         if (lodTimerRef.current) clearTimeout(lodTimerRef.current);
-        lodTimerRef.current = setTimeout(() => setMode('detail'), 220);
+        lodTimerRef.current = setTimeout(() => toDetailWithSpinner(), 220);
       }) as unknown as string;
     };
     const finishDetail = () => {
@@ -802,6 +817,40 @@ export function ThreeDTest() {
               ⚠ {texWarn}
             </div>
           )}
+          {settling && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 12,
+                left: '50%',
+                transform: 'translateX(-50%)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '6px 14px',
+                background: 'rgba(0,0,0,0.72)',
+                color: '#fff',
+                font: '12px/1 system-ui, sans-serif',
+                borderRadius: 999,
+                pointerEvents: 'none',
+                zIndex: 22,
+              }}
+            >
+              <span
+                style={{
+                  width: 12,
+                  height: 12,
+                  border: '2px solid rgba(255,255,255,0.35)',
+                  borderTopColor: '#fff',
+                  borderRadius: '50%',
+                  display: 'inline-block',
+                  animation: 'mir-spin 0.7s linear infinite',
+                }}
+              />
+              상세 렌더링 중…
+            </div>
+          )}
+          <style>{'@keyframes mir-spin{to{transform:rotate(360deg)}}'}</style>
           {!modelName && !busy && (
             <div className="threed-test__empty">
               <UiIcon name="cube" size={40} />
