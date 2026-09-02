@@ -674,7 +674,7 @@ export async function buildMergedGlb(imf, opts) {
       // 이미지(청크 내 URI 로 dedupe) → texture → material.baseColorTexture, + TEXCOORD_0.
       let ti = c.texMap.get(tex.uri);
       if (ti === undefined) {
-        if (c.samplers.length === 0) c.samplers.push({ wrapS: 10497, wrapT: 10497 }); // repeat
+        if (c.samplers.length === 0) c.samplers.push({ wrapS: 33071, wrapT: 33071 }); // CLAMP_TO_EDGE — 항공사진 타일은 [0,1] 이라 REPEAT(랩)이 가장자리 경계선(seam)을 만든다
         const imgBV = addV(tex.buf, undefined);
         const imgI = c.images.push({ bufferView: imgBV, mimeType: tex.mime }) - 1;
         ti = c.textures.push({ source: imgI, sampler: 0 }) - 1;
