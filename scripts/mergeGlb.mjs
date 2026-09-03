@@ -857,7 +857,12 @@ export async function buildMergedGlb(imf, opts) {
             if (pot && pot.buf && pot.buf.length) {
               tex = { uri, buf: pot.buf, mime: pot.mime, uvs };
               texFrags++;
-              if (texFrags <= 3) log(`[tex] frag#${fragCount} 텍스처=${uri} ${pot.sw}x${pot.sh}→${pot.w}x${pot.h} (${pot.buf.length}B) uvLen=${rawUv.length} scale=(${su},${sv})`);
+              if (texFrags <= 8) {
+                // 진단: 원본 UV 범위(정렬/오프셋/atlas 여부) + 소스 이미지 크기(비정사각=fit:fill 왜곡).
+                let ru0 = Infinity, ru1 = -Infinity, rv0 = Infinity, rv1 = -Infinity;
+                for (let k = 0; k < nvv; k++) { const u = rawUv[k * 2], v = rawUv[k * 2 + 1]; if (u < ru0) ru0 = u; if (u > ru1) ru1 = u; if (v < rv0) rv0 = v; if (v > rv1) rv1 = v; }
+                log(`[tex] frag#${fragCount} ${uri} src=${pot.sw}x${pot.sh}(${pot.sw === pot.sh ? '정사각' : '비정사각!'}) →${pot.w}x${pot.h} scale=(${su},${sv}) flip=${flip} UV범위 U[${ru0.toFixed(3)}~${ru1.toFixed(3)}] V[${rv0.toFixed(3)}~${rv1.toFixed(3)}]`);
+              }
             } else if (texMiss < 12) {
               texMiss++;
               log(`[tex] frag#${fragCount} POT 리사이즈 실패(sharp 없음?) uri=${uri} — 텍스처 드롭(색 폴백)`);
