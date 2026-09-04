@@ -648,6 +648,7 @@ export async function buildMergedGlb(imf, opts) {
     return d ? [d.x, d.y, d.z, mat?.opacity ?? 1] : [0.72, 0.74, 0.77, 1];
   };
   let streamV = 0, streamT = 0, texFrags = 0, texMiss = 0, navT = 0;
+  const imgUvBounds = new Map(); // 진단: 텍스처 이미지별 raw UV 범위(seam 원인 규명)
   const newChunk = () => ({ acc: [], bv: [], meshes: [], materials: [], nodes: [], pieces: [], bo: 0, tris: 0, images: [], textures: [], samplers: [], texMap: new Map() });
   // 청크 스트림 팩토리 — 상세('c', kind detail)와 내비 LOD('nav', kind nav)를 병렬로 굽는다.
   // add(...)/flush() 는 각자 자기 상태(chunk/idx)를 갖는다. tex(옵션): { uri, buf, mime, uvs }.
@@ -871,7 +872,16 @@ export async function buildMergedGlb(imf, opts) {
                 let nu0 = Infinity, nu1 = -Infinity, nv0 = Infinity, nv1 = -Infinity;
                 for (let k = 0; k < nvv; k++) { const u = uvs[k * 2], v = uvs[k * 2 + 1]; if (u < nu0) nu0 = u; if (u > nu1) nu1 = u; if (v < nv0) nv0 = v; if (v > nv1) nv1 = v; }
                 log(`[tex] frag#${fragCount} ${uri} src=${pot.sw}x${pot.sh} scale=(${su},${sv}) flip=${flip} offset=(${uOff},${vOff}) rawUV U[${ru0.toFixed(2)}~${ru1.toFixed(2)}]V[${rv0.toFixed(2)}~${rv1.toFixed(2)}] →정규화 U[${nu0.toFixed(2)}~${nu1.toFixed(2)}]V[${nv0.toFixed(2)}~${nv1.toFixed(2)}]`);
+                // ★ 진짜 텍스처 변환(offset/rotation) 이 재질 원본에 있는지 확인 — svf-utils 파서가
+                // 버리는 값을 raw 객체에서 직접 찾기 위해 재질 전체를 덤프한다.
+                try { log(`[tex] frag#${fragCount} RAWMAT=${JSON.stringify(mat).slice(0, 600)}`); } catch { /* 순환참조 무시 */ }
               }
+              // 이미지별 raw V/U 범위 누적 — 같은 타일의 프래그가 정수 경계(예 V=1)를 넘나들면
+              // 프래그별 floor 가 서로 달라져 seam 이 생긴다. 끝에서 이를 진단한다.
+              const b = imgUvBounds.get(uri) || { u0: Infinity, u1: -Infinity, v0: Infinity, v1: -Infinity, n: 0 };
+              for (let k = 0; k < nvv; k++) { const u = rawUv[k * 2] * su, v = rawUv[k * 2 + 1] * sv; if (u < b.u0) b.u0 = u; if (u > b.u1) b.u1 = u; if (v < b.v0) b.v0 = v; if (v > b.v1) b.v1 = v; }
+              b.n++;
+              imgUvBounds.set(uri, b);
             } else if (texMiss < 12) {
               texMiss++;
               log(`[tex] frag#${fragCount} POT 리사이즈 실패(sharp 없음?) uri=${uri} — 텍스처 드롭(색 폴백)`);
@@ -1038,6 +1048,15 @@ export async function buildMergedGlb(imf, opts) {
       log(`[merge] LOD1(개요) 방출: 정점 ${(lp.length / 3).toLocaleString()} · 삼각형 ${Math.round(lodTris).toLocaleString()} (셀 ${lodCell}m)`);
     }
     log(`[merge] XKT 스트리밍 완료: 상세청크 ${detail.idx}개 · nav청크 ${nav ? nav.idx : 0}개(삼각형 ${Math.round(navT).toLocaleString()}) · 정점 ${streamV.toLocaleString()} · 삼각형 ${Math.round(streamT).toLocaleString()} · LOD1 삼각형 ${Math.round(lodTris).toLocaleString()} · 텍스처 프래그 ${texFrags}`);
+    // ★ 이미지별 raw UV 범위 진단: 각 타일 이미지가 실제로 차지하는 U/V 구간과, 정수 경계를
+    // 넘나드는지(straddle=프래그별 floor 불일치 → seam 원인)를 출력한다.
+    log(`[tex] 이미지별 raw UV 범위 (${imgUvBounds.size}개 이미지):`);
+    for (const [uri, b] of imgUvBounds) {
+      const straddleV = Math.floor(b.v0) !== Math.floor(b.v1);
+      const straddleU = Math.floor(b.u0) !== Math.floor(b.u1);
+      const span = `U[${b.u0.toFixed(2)}~${b.u1.toFixed(2)}] V[${b.v0.toFixed(2)}~${b.v1.toFixed(2)}] 프래그${b.n}`;
+      log(`[tex]   ${uri.slice(-42)} ${span}${straddleV || straddleU ? ` ⚠STRADDLE(u:${straddleU} v:${straddleV})` : ''}`);
+    }
     return { xkt: true, chunks: detail.idx, navChunks: nav ? nav.idx : 0, navTris: navT, vertices: streamV, triangles: streamT, lodTris, decimated: 0, focus: robustFocus(foci) };
   }
   // 솔리드(삼각형) 부재가 하나라도 있으면 선/점은 대개 엣지/주석 클러터(IFC 의 와이어프레임
