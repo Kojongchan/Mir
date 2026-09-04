@@ -3,7 +3,41 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
-## 🖼️ 지형 항공사진 경계선(seam) 근본 수정 — 텍스처 UV offset 복원 (2026-09-04)
+## ✅ 지형 항공사진 정합 — 근본 원인 확정·수정: Navisworks 원본 그대로 (REPEAT+항등) (2026-09-04)
+> branch `claude/3d-view-testing-hlrugl`. `scripts/mergeGlb.mjs`·`convert4d.mjs`. **재변환 완료(R2 최신, run 33840522951, sha c7e482f)**. 사용자 최종 확인 대기.
+
+### 원인 (원본 재질 덤프로 확정)
+- 사용자 지적: 항공사진이 타일 경계에서 **산/건물이 섞여** 어긋남. 그리고 "이미지를 파악해 배치하지
+  말고 Navisworks 원본 매핑을 그대로 가져와라"(일반화 요구).
+- `convert4d.parseMaterialTransforms` 로 원본 `Materials.json.gz` 를 직접 파싱해 확인:
+  지형 재질은 **texture_UOffset=0, VOffset=0, UScale=VScale=1, WAngle=0 (항등)** +
+  **texture_URepeat/VRepeat=true (REPEAT)**. 원본 지오메트리 UV 가 [1,2] 이고 **REPEAT 이 [0,1]로
+  랩**해 정확히 그려지는 구조. (svf-utils 는 scale 만 읽고 offset/wrap 을 버림 — materials.js TODO.)
+- **범인 = 이번 세션의 내 변경**: 샘플러를 CLAMP(bfbb357)로 바꾸고 offset 을 floor 로 추정한 것이
+  어긋남의 원인. CLAMP 는 [1,2]를 가장자리에 뭉개고, floor 추정은 타일마다 어긋나게 함.
+
+### 수정 (원본 그대로 복원 — 추정 완전 제거)
+- **샘플러 REPEAT(10497) 복원** (원본 URepeat/VRepeat=true 그대로). mergeGlb:678.
+- `convert4d.parseMaterialTransforms`: 원본 Materials.json.gz 에서 재질별 텍스처 변환
+  (scale/offset/rotation/wrap)을 svf-utils 와 동일 인덱스로 복원 → `opts.matXforms`.
+  텍스처 노드는 unifiedbitmap_Bitmap uri 로 직접 탐색(구조 변형에 견고). 106재질 중 83개 복원.
+- mergeGlb: 최종UV = R(wAngle)·(rawUV·scale)+offset → glTF flip. **범위보정/floor 추정 제거**.
+  matXforms 복원 실패 시에만 과거 floor 폴백. → `mode=xf offset=(0,0)` 확인(지형 항등).
+- **일반화**: 이제 어떤 현장 파일이든 그 파일의 Navisworks 매핑을 그대로 재현(추정 없음).
+
+### 검증 (렌더)
+- convert 로그: 지형 프래그 `mode=xf offset=(0,0)` (원본 항등변환 채택). 
+- c0 top-down/oblique 렌더: 항공사진 연속(내 눈엔 이전과 동일하게 자연스러움). 단, 현장 지리
+  정확성은 **현장을 아는 사용자만 최종 판정 가능** → 사용자 하드새로고침 확인 요청함.
+- ⚠ 만약 상하 뒤집힘이면 uv_flip=0 입력으로 재변환(워크플로 입력 추가돼 있음). flip=true 는
+  이번 세션 CLAMP 이전의 원래 동작과 동일하므로 정상일 가능성이 큼.
+
+### 미해결(여전히)
+- 트래픽 353MB/뷰(대부분 항공사진 텍스처) — 감량으론 해결 안 됨. 뷰 종속 스트리밍 별도 과제.
+- 구조물 각짐(감량 아티팩트) — 원본 보존 스트리밍 필요(미착수).
+
+---
+## 🖼️ (과거 시도) 지형 항공사진 경계선(seam) — 텍스처 UV offset 복원 (2026-09-04)
 > branch `claude/3d-view-testing-hlrugl`. `scripts/mergeGlb.mjs`·`convert4d.mjs`. **재변환 완료(R2 최신, run 33821261072, sha fe71e40)**.
 
 ### 문제(사용자 지적 정확)
