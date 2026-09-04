@@ -29,6 +29,10 @@ on:
         description: "'1'이면 변환 후 헤드리스 xeokit 렌더 진단(ASCII 로그) 실행"
         required: false
         default: ''
+      uv_flip:
+        description: "지형 텍스처 V 뒤집기('0'=끔, 그 외=켬/기본). 항공사진 정합 테스트용"
+        required: false
+        default: ''
       dxf_test:
         description: "'1'이면 SVF 대신 원본 DWG→DXF 변환 검증(project/item 필요)"
         required: false
@@ -181,6 +185,7 @@ jobs:
           APS_REGION: ${{ github.event.inputs.region }}
           INCLUDE_LINES: ${{ github.event.inputs.include_lines }}
           RENDER_TEST: ${{ github.event.inputs.render_test }}
+          XKT_UV_FLIP: ${{ github.event.inputs.uv_flip }}
         run: node scripts/convert4d.mjs
 
       - name: Headless xeokit 렌더 진단 (LOD1 오블리크 · base64 PNG 로그)
