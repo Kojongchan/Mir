@@ -675,7 +675,7 @@ export async function buildMergedGlb(imf, opts) {
       // 이미지(청크 내 URI 로 dedupe) → texture → material.baseColorTexture, + TEXCOORD_0.
       let ti = c.texMap.get(tex.uri);
       if (ti === undefined) {
-        if (c.samplers.length === 0) c.samplers.push({ wrapS: 33071, wrapT: 33071 }); // CLAMP_TO_EDGE — 항공사진 타일은 [0,1] 이라 REPEAT(랩)이 가장자리 경계선(seam)을 만든다
+        if (c.samplers.length === 0) c.samplers.push({ wrapS: 10497, wrapT: 10497 }); // REPEAT — Navisworks 원본이 texture_URepeat/VRepeat=true. 지형 UV 가 [1,2] 라 REPEAT 로 [0,1] 로 랩되어야 정합(원본 그대로). CLAMP 는 어긋남 유발했음
         const imgBV = addV(tex.buf, undefined);
         const imgI = c.images.push({ bufferView: imgBV, mimeType: tex.mime }) - 1;
         ti = c.textures.push({ source: imgI, sampler: 0 }) - 1;
@@ -851,36 +851,31 @@ export async function buildMergedGlb(imf, opts) {
             //   최종UV = R(wAngle)·(rawUV · scale) + offset   →  SVF→glTF V 규약 변환(flip: 1-v).
             // svf-utils 는 scale 만 넘겨 offset/rotation 을 버리므로, convert4d 가 원본 Materials.json
             // 에서 복원해 opts.matXforms[재질id] 로 전달한다. 있으면 그대로(추정 없음), 없으면 폴백.
+            // ★ Navisworks 원본 그대로: 최종UV = R(wAngle)·(rawUV·scale) + offset → glTF V 규약(flip).
+            // 샘플러가 REPEAT 라 UV 가 [0,1] 를 벗어나도(예 지형 [1,2]) 원본처럼 정확히 랩된다.
+            // 범위 보정/추정 없음. matXforms 가 없을 때만(복원 실패) 과거 floor 폴백.
             const xf = opts.matXforms ? opts.matXforms[node.material ?? -1] : null;
-            const suX = xf ? xf.uScale : (mat.scale?.x ?? 1);
-            const svX = xf ? xf.vScale : (mat.scale?.y ?? 1);
+            const su = xf ? xf.uScale : (mat.scale?.x ?? 1);
+            const sv = xf ? xf.vScale : (mat.scale?.y ?? 1);
             const uvs = new Float32Array(nvv * 2);
-            let uOff, vOff, mode, su = suX, sv = svX;
-            let used = false;
+            let uOff, vOff, mode;
             if (xf) {
-              // 원본 변환 그대로: offset/rotation 복원(정수 추정 아님).
+              uOff = xf.uOffset; vOff = xf.vOffset; mode = 'xf';
               const ang = xf.wAngle || 0, ca = Math.cos(ang), sa = Math.sin(ang);
-              let vmn = Infinity, vmx = -Infinity, umn = Infinity, umx = -Infinity;
               for (let k = 0; k < nvv; k++) {
-                let u = rawUv[k * 2] * suX, v = rawUv[k * 2 + 1] * svX;
+                let u = rawUv[k * 2] * su, v = rawUv[k * 2 + 1] * sv;
                 if (ang) { const u2 = ca * u - sa * v, v2 = sa * u + ca * v; u = u2; v = v2; }
-                u += xf.uOffset; v += xf.vOffset;
-                const vf = flip ? 1 - v : v;
-                uvs[k * 2] = u; uvs[k * 2 + 1] = vf;
-                if (u < umn) umn = u; if (u > umx) umx = u; if (vf < vmn) vmn = vf; if (vf > vmx) vmx = vf;
+                u += uOff; v += vOff;
+                uvs[k * 2] = u; uvs[k * 2 + 1] = flip ? 1 - v : v;
               }
-              // 안전장치: 복원 변환이 UV 를 대략 [0,1] 로 보내면 채택(정합 정상). 키 이름이 달라
-              // offset 이 0 으로 빠지는 등으로 범위를 크게 벗어나면 폴백(과거 방식)으로 되돌린다.
-              if (umn >= -0.2 && umx <= 1.2 && vmn >= -0.2 && vmx <= 1.2) { used = true; uOff = xf.uOffset; vOff = xf.vOffset; mode = 'xf'; }
-            }
-            if (!used) {
-              // 폴백(변환 복원 실패/범위 이탈): 프래그별 정수 offset 추정(과거 방식).
-              su = mat.scale?.x ?? 1; sv = mat.scale?.y ?? 1;
+            } else {
+              // 폴백(변환 복원 실패): 프래그별 정수 offset 추정(과거 방식).
               let minU = Infinity, minV = Infinity;
-              for (let k = 0; k < nvv; k++) { const u = rawUv[k * 2] * su, v = rawUv[k * 2 + 1] * sv; if (u < minU) minU = u; if (v < minV) minV = v; }
-              uOff = Math.floor(minU); vOff = Math.floor(minV); mode = xf ? 'floor(xf범위이탈)' : 'floor';
+              const su0 = mat.scale?.x ?? 1, sv0 = mat.scale?.y ?? 1;
+              for (let k = 0; k < nvv; k++) { const u = rawUv[k * 2] * su0, v = rawUv[k * 2 + 1] * sv0; if (u < minU) minU = u; if (v < minV) minV = v; }
+              uOff = Math.floor(minU); vOff = Math.floor(minV); mode = 'floor';
               for (let k = 0; k < nvv; k++) {
-                const u = rawUv[k * 2] * su - uOff, v = rawUv[k * 2 + 1] * sv - vOff;
+                const u = rawUv[k * 2] * su0 - uOff, v = rawUv[k * 2 + 1] * sv0 - vOff;
                 uvs[k * 2] = u; uvs[k * 2 + 1] = flip ? 1 - v : v;
               }
             }
