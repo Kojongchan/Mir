@@ -312,33 +312,44 @@ function parseMaterialTransforms(svfDir, log = () => {}) {
   const sc = (m, k) => m?.properties?.scalars?.[k]?.values?.[0];
   const bo = (m, k) => { const v = m?.properties?.booleans?.[k]; return typeof v === 'object' ? v?.values?.[0] : v; };
   const out = [];
-  let dumped = 0;
+  let dumped = 0, rawDump = 0, texDump = 0;
+  log(`[matxf] top keys=${JSON.stringify(Object.keys(json))}`);
   for (const key of Object.keys(json.materials)) {
     const group = json.materials[key];
     const mat = group?.materials?.[group?.userassets?.[0]];
+    // 진단: 실제 그룹 구조를 눈으로 확인(내 파싱 가정이 틀린 원인 규명).
+    if (rawDump < 2) { rawDump++; log(`[matxf] RAWGROUP[${key}]=${JSON.stringify(group).slice(0, 1400)}`); }
+    if (texDump < 3 && mat?.textures) { texDump++; log(`[matxf] TEX keys=${JSON.stringify(Object.keys(mat.textures))} matKeys=${JSON.stringify(Object.keys(mat))} propKeys=${JSON.stringify(Object.keys(mat.properties || {}))}`); }
     let xf = null;
+    // 텍스처 노드 찾기: (1) phong 의 generic_diffuse 연결 우선, (2) 실패 시 그룹 내에서
+    // unifiedbitmap_Bitmap uri 를 가진 노드를 직접 탐색(구조 변형에 견고). offset 스칼라는
+    // 이 텍스처 노드(properties.scalars)에 들어있다.
+    const gmats = group?.materials || {};
+    let tex = null;
     const conn = mat?.textures?.generic_diffuse?.connections?.[0];
-    if (conn != null) {
-      const tex = group.materials[conn];
-      const uri = tex?.properties?.uris?.unifiedbitmap_Bitmap?.values?.[0];
-      if (uri) {
-        xf = {
-          uri,
-          uScale: sc(tex, 'texture_UScale') ?? 1,
-          vScale: sc(tex, 'texture_VScale') ?? 1,
-          uOffset: sc(tex, 'texture_UOffset') ?? 0,
-          vOffset: sc(tex, 'texture_VOffset') ?? 0,
-          wAngle: sc(tex, 'texture_WAngle') ?? 0,
-          // wrap(반복) 여부: Navisworks 항공사진은 보통 clamp. 키 이름이 버전별로 달라 여러 후보 확인.
-          wrapU: bo(tex, 'texture_URepeat') ?? bo(tex, 'unifiedbitmap_URepeat') ?? bo(tex, 'texture_UWrap'),
-          wrapV: bo(tex, 'texture_VRepeat') ?? bo(tex, 'unifiedbitmap_VRepeat') ?? bo(tex, 'texture_VWrap'),
-        };
-        if (dumped < 6 && /navis_1540/i.test(uri)) {
-          dumped++;
-          // 진단: 실제 스칼라/불리언 키 전체 — 정확한 offset/wrap 키를 눈으로 확인.
-          log(`[matxf] #${out.length} ${uri.slice(-30)} U(s=${xf.uScale},o=${xf.uOffset}) V(s=${xf.vScale},o=${xf.vOffset}) W=${xf.wAngle} wrap=(${xf.wrapU},${xf.wrapV})`);
-          log(`[matxf]   scalars=${JSON.stringify(Object.keys(tex?.properties?.scalars || {}))} booleans=${JSON.stringify(tex?.properties?.booleans || {})}`);
-        }
+    if (conn != null && gmats[conn]?.properties?.uris?.unifiedbitmap_Bitmap?.values?.[0]) tex = gmats[conn];
+    if (!tex) {
+      for (const mk of Object.keys(gmats)) {
+        if (gmats[mk]?.properties?.uris?.unifiedbitmap_Bitmap?.values?.[0]) { tex = gmats[mk]; break; }
+      }
+    }
+    const uri = tex?.properties?.uris?.unifiedbitmap_Bitmap?.values?.[0];
+    if (tex && uri) {
+      xf = {
+        uri,
+        uScale: sc(tex, 'texture_UScale') ?? 1,
+        vScale: sc(tex, 'texture_VScale') ?? 1,
+        uOffset: sc(tex, 'texture_UOffset') ?? 0,
+        vOffset: sc(tex, 'texture_VOffset') ?? 0,
+        wAngle: sc(tex, 'texture_WAngle') ?? 0,
+        wrapU: bo(tex, 'texture_URepeat') ?? bo(tex, 'unifiedbitmap_URepeat') ?? bo(tex, 'texture_UWrap'),
+        wrapV: bo(tex, 'texture_VRepeat') ?? bo(tex, 'unifiedbitmap_VRepeat') ?? bo(tex, 'texture_VWrap'),
+      };
+      if (dumped < 8) {
+        dumped++;
+        // 진단: 실제 스칼라/불리언 키 전체 — 정확한 offset/wrap 키를 눈으로 확인.
+        log(`[matxf] #${out.length} ${uri.slice(-30)} U(s=${xf.uScale},o=${xf.uOffset}) V(s=${xf.vScale},o=${xf.vOffset}) W=${xf.wAngle} wrap=(${xf.wrapU},${xf.wrapV})`);
+        log(`[matxf]   scalars=${JSON.stringify(tex?.properties?.scalars || {}).slice(0, 700)}`);
       }
     }
     out.push(xf);
