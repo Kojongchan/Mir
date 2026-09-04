@@ -203,16 +203,15 @@ jobs:
           PW_SETTLE_MS: '9000'
           PW_WAIT_MS: '150000'
           PW_SHOT_MS: '180000'
-          # 지형 항공사진 타일 경계선(seam) 육안 확인용: 중심부로 확대(ZOOM<1) + 고해상 base64 출력.
-          PW_ZOOM: '0.16'
           PW_OW: '820'
         run: |
           # 첫 청크 c0.xkt(지형 텍스처 프래그)를 앱과 동일한 KTX2 트랜스코더(self-host /basis/)로
           # 렌더 → 항공사진이 실제로 디코드/맵핑되면 회색이 아닌 갈색·녹색 등 다채색이 나온다.
-          # 전체 top-down(개요) 1장 + 중심 확대(타일 경계 확인) 1장.
+          # 사용자가 본 것과 같은 '비스듬(oblique)' 시점으로 타일 경계선(seam)을 재현/확인한다.
           if [ -f out/xkt/c0.xkt ]; then \
-            echo '=== c0 전체 top-down ==='; PW_ZOOM=1 PW_OW=520 node scripts/renderDiag.mjs out/xkt/c0.xkt; \
-            echo '=== c0 중심 확대(타일 경계) ==='; node scripts/renderDiag.mjs out/xkt/c0.xkt; \
+            echo '=== c0 oblique 전체(사용자 시점) ==='; PW_OBLIQUE=1 PW_ZOOM=1 node scripts/renderDiag.mjs out/xkt/c0.xkt; \
+            echo '=== c0 oblique 확대(타일 경계) ==='; PW_OBLIQUE=1 PW_ZOOM=0.35 node scripts/renderDiag.mjs out/xkt/c0.xkt; \
+            echo '=== c0 top-down 확대 ==='; PW_ZOOM=0.16 node scripts/renderDiag.mjs out/xkt/c0.xkt; \
           else echo "c0.xkt 없음 — 텍스처 렌더 검증 건너뜀"; fi
 
       - name: Upload glb as workflow artifact (백업)
