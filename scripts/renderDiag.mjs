@@ -34,10 +34,11 @@ const l=IS_XKT ? new XKTLoaderPlugin(v,{dataSource:{getXKT:fetchBuf},textureTran
 const m=l.load({id:'t',src:IS_XKT?'/model.xkt':'/model.glb',edges:false,rotation:[-90,0,0],dtxEnabled:false});
 const FOCUS=${focusAabb ? JSON.stringify(focusAabb) : 'null'};
 const OBLIQUE=${process.env.PW_OBLIQUE === '1' ? 'true' : 'false'};
+const ZOOM=${Number(process.env.PW_ZOOM || 1)}; // <1 이면 중심부로 확대(타일 경계선 육안 확인용)
 m.on('loaded',()=>{const a=m.aabb;console.log('AABB',JSON.stringify(a));
   const box=FOCUS||a;
   const cx=(box[0]+box[3])/2, cy=(box[1]+box[4])/2, cz=(box[2]+box[5])/2;
-  const horiz=Math.max(box[3]-box[0], box[5]-box[2], 100);
+  const horiz=Math.max(box[3]-box[0], box[5]-box[2], 100)*ZOOM;
   if(OBLIQUE){ // 비스듬 시점(계단/기복 프로파일 확인용)
     const d=horiz*0.9; v.camera.eye=[cx+d*0.7, cy+d*0.6, cz+d*0.7]; v.camera.look=[cx,cy,cz]; v.camera.up=[0,1,0];
   } else { // 평면 → top-down
@@ -120,7 +121,7 @@ console.log('[diag-render] ASCII(120x48):\n' + ascii);
 
 // 실제 렌더 이미지를 축소해 base64 PNG 로 로그에 남긴다(아티팩트 다운로드가 막혀 있어
 // 러너 밖에서 '눈으로' 확인할 유일한 방법). 로컬에서 base64 를 디코드해 PNG 로 본다.
-const OW = 360, OH = Math.round(OW * png.height / png.width);
+const OW = Number(process.env.PW_OW || 360), OH = Math.round(OW * png.height / png.width);
 const small = new PNG({ width: OW, height: OH });
 for (let y = 0; y < OH; y++) {
   for (let x = 0; x < OW; x++) {
