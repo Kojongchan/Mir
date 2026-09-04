@@ -366,16 +366,20 @@ async function main() {
     const xktFiles = [];
     const navFiles = [];
     let lodFile = null;
+    // 업로드 바이트 누계 — 앱이 실제로 내려받는 총 트래픽(전산실 모니터링용)을 로그로 남긴다.
+    let detailBytes = 0, navBytes = 0, lodBytes = 0;
+    const MB = (b) => (b / 1048576).toFixed(1);
     // kind: 'detail'(상세 c*.xkt) | 'nav'(내비 LOD nav*.xkt) | 'lod1'(개요)
     const onChunk = async (glbPath, idx, tris, kind = 'detail') => {
       const xktPath = glbPath.replace(/\.glb$/, '.xkt');
       const name = path.basename(xktPath);
       try {
         await convert2xkt({ source: glbPath, output: xktPath, log: () => {} });
-        await r2Put(`${keyBase}/xkt/${name}`, fs.readFileSync(xktPath), 'application/octet-stream');
-        if (kind === 'lod1') { lodFile = name; console.log(`[convert4d]   LOD1 → ${name} (${(tris / 1e6).toFixed(1)}M삼각형) 업로드`); }
-        else if (kind === 'nav') { navFiles.push(name); console.log(`[convert4d]   nav ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형) 업로드`); }
-        else { xktFiles.push(name); console.log(`[convert4d]   청크 ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형) 업로드`); }
+        const buf = fs.readFileSync(xktPath);
+        await r2Put(`${keyBase}/xkt/${name}`, buf, 'application/octet-stream');
+        if (kind === 'lod1') { lodFile = name; lodBytes += buf.length; console.log(`[convert4d]   LOD1 → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
+        else if (kind === 'nav') { navFiles.push(name); navBytes += buf.length; console.log(`[convert4d]   nav ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
+        else { xktFiles.push(name); detailBytes += buf.length; console.log(`[convert4d]   청크 ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
       } catch (e) {
         console.warn(`[convert4d]   ${kind} ${idx} XKT 실패: ${e?.message || e}`);
       } finally {
@@ -397,6 +401,8 @@ async function main() {
     await r2Delete(`${keyBase}/model.glb`); // 구 GLB 캐시 제거(프런트가 XKT 우선)
     await r2Delete(`${keyBase}/error.json`);
     console.log(`[convert4d] XKT 업로드 완료: 상세 ${xktFiles.length}청크 · nav ${navFiles.length}청크(삼각형 ${Math.round(res.navTris || 0).toLocaleString()}) · 정점 ${res.vertices.toLocaleString()} · 삼각형 ${Math.round(res.triangles).toLocaleString()} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+    // 앱 최초 로드 시 실제 다운로드량(= 전산실 트래픽) — 상세+개요가 기본, nav 는 회전시에만.
+    console.log(`[convert4d] 다운로드 용량(트래픽): 상세 ${MB(detailBytes)}MB + 개요 ${MB(lodBytes)}MB = 최초 ${MB(detailBytes + lodBytes)}MB · nav(회전시) ${MB(navBytes)}MB · 합계 ${MB(detailBytes + lodBytes + navBytes)}MB`);
     console.log('[convert4d] DONE');
     return;
   }
