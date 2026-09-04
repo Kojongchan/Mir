@@ -847,9 +847,16 @@ export async function buildMergedGlb(imf, opts) {
           if (rawUv && rawUv.length === nvv * 2 && buf && buf.length) {
             const flip = process.env.XKT_UV_FLIP !== '0';
             const su = mat.scale?.x ?? 1, sv = mat.scale?.y ?? 1;
+            // ★ 텍스처 offset 복원: svf-utils 가 재질 텍스처 변환에서 scale 만 읽고 offset 을 버려서
+            // 지형 UV 가 V∈[1,2] 처럼 정수만큼 밀려 들어온다(진단 확인). 여기에 flip(1-v)을 그대로
+            // 걸면 [-1,0] 으로 튀어 이미지가 접히고 경계선(seam)이 생긴다. 프래그먼트별 정수 offset
+            // (floor(min))을 빼 [0,1] 로 되돌린 뒤 flip 을 건다.
+            let minU = Infinity, minV = Infinity;
+            for (let k = 0; k < nvv; k++) { const u = rawUv[k * 2] * su, v = rawUv[k * 2 + 1] * sv; if (u < minU) minU = u; if (v < minV) minV = v; }
+            const uOff = Math.floor(minU), vOff = Math.floor(minV);
             const uvs = new Float32Array(nvv * 2);
             for (let k = 0; k < nvv; k++) {
-              const u = rawUv[k * 2] * su, v = rawUv[k * 2 + 1] * sv;
+              const u = rawUv[k * 2] * su - uOff, v = rawUv[k * 2 + 1] * sv - vOff;
               uvs[k * 2] = u; uvs[k * 2 + 1] = flip ? 1 - v : v;
             }
             // POT 리사이즈(블록압축 GPU 텍스처 요건). 실패하면 텍스처 드롭 → 색(diffuse) 폴백.
@@ -861,7 +868,9 @@ export async function buildMergedGlb(imf, opts) {
                 // 진단: 원본 UV 범위(정렬/오프셋/atlas 여부) + 소스 이미지 크기(비정사각=fit:fill 왜곡).
                 let ru0 = Infinity, ru1 = -Infinity, rv0 = Infinity, rv1 = -Infinity;
                 for (let k = 0; k < nvv; k++) { const u = rawUv[k * 2], v = rawUv[k * 2 + 1]; if (u < ru0) ru0 = u; if (u > ru1) ru1 = u; if (v < rv0) rv0 = v; if (v > rv1) rv1 = v; }
-                log(`[tex] frag#${fragCount} ${uri} src=${pot.sw}x${pot.sh}(${pot.sw === pot.sh ? '정사각' : '비정사각!'}) →${pot.w}x${pot.h} scale=(${su},${sv}) flip=${flip} UV범위 U[${ru0.toFixed(3)}~${ru1.toFixed(3)}] V[${rv0.toFixed(3)}~${rv1.toFixed(3)}]`);
+                let nu0 = Infinity, nu1 = -Infinity, nv0 = Infinity, nv1 = -Infinity;
+                for (let k = 0; k < nvv; k++) { const u = uvs[k * 2], v = uvs[k * 2 + 1]; if (u < nu0) nu0 = u; if (u > nu1) nu1 = u; if (v < nv0) nv0 = v; if (v > nv1) nv1 = v; }
+                log(`[tex] frag#${fragCount} ${uri} src=${pot.sw}x${pot.sh} scale=(${su},${sv}) flip=${flip} offset=(${uOff},${vOff}) rawUV U[${ru0.toFixed(2)}~${ru1.toFixed(2)}]V[${rv0.toFixed(2)}~${rv1.toFixed(2)}] →정규화 U[${nu0.toFixed(2)}~${nu1.toFixed(2)}]V[${nv0.toFixed(2)}~${nv1.toFixed(2)}]`);
               }
             } else if (texMiss < 12) {
               texMiss++;
