@@ -23,6 +23,7 @@ import '@loaders.gl/polyfills';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import zlib from 'node:zlib';
 import { createClient } from '@supabase/supabase-js';
 import { SVFReader } from 'svf-utils';
 import { AuthenticationClient, Scopes } from '@aps_sdk/authentication';
@@ -284,6 +285,69 @@ async function downloadSvfToDisk(derivative, outDir) {
   return path.join(outDir, svfName);
 }
 
+// === 지형 항공사진 정합의 근본 수정: SVF 재질의 '진짜' 텍스처 변환(offset/scale/rotation/wrap)을
+// 원본 Materials.json.gz 에서 직접 읽는다. svf-utils 의 parseTextureProperty 는 texture_UScale/
+// VScale 만 읽고 texture_UOffset/VOffset/WAngle 를 버려서(materials.js: "TODO: parse texture
+// transforms aside from scale"), 지형 UV 가 어긋난다. 여기서 Navisworks 가 구운 그대로를 복원한다.
+// 반환 배열의 인덱스는 svf-utils 의 material id 와 동일(둘 다 Object.keys(json.materials) 순서).
+function parseMaterialTransforms(svfDir, log = () => {}) {
+  let file = null;
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/Materials\.json(\.gz)?$/i.test(e.name)) file = p;
+    }
+  };
+  try { walk(svfDir); } catch { /* 무시 */ }
+  if (!file) { log('[matxf] Materials.json(.gz) 못 찾음 — 텍스처 변환 복원 생략'); return null; }
+  let buf;
+  try {
+    buf = fs.readFileSync(file);
+    if (buf[0] === 0x1f && buf[1] === 0x8b) buf = zlib.gunzipSync(buf);
+  } catch (e) { log(`[matxf] 읽기 실패: ${e?.message || e}`); return null; }
+  let json;
+  try { json = JSON.parse(buf.toString()); } catch (e) { log(`[matxf] JSON 파싱 실패: ${e?.message || e}`); return null; }
+  if (!json?.materials) { log('[matxf] materials 키 없음'); return null; }
+  const sc = (m, k) => m?.properties?.scalars?.[k]?.values?.[0];
+  const bo = (m, k) => { const v = m?.properties?.booleans?.[k]; return typeof v === 'object' ? v?.values?.[0] : v; };
+  const out = [];
+  let dumped = 0;
+  for (const key of Object.keys(json.materials)) {
+    const group = json.materials[key];
+    const mat = group?.materials?.[group?.userassets?.[0]];
+    let xf = null;
+    const conn = mat?.textures?.generic_diffuse?.connections?.[0];
+    if (conn != null) {
+      const tex = group.materials[conn];
+      const uri = tex?.properties?.uris?.unifiedbitmap_Bitmap?.values?.[0];
+      if (uri) {
+        xf = {
+          uri,
+          uScale: sc(tex, 'texture_UScale') ?? 1,
+          vScale: sc(tex, 'texture_VScale') ?? 1,
+          uOffset: sc(tex, 'texture_UOffset') ?? 0,
+          vOffset: sc(tex, 'texture_VOffset') ?? 0,
+          wAngle: sc(tex, 'texture_WAngle') ?? 0,
+          // wrap(반복) 여부: Navisworks 항공사진은 보통 clamp. 키 이름이 버전별로 달라 여러 후보 확인.
+          wrapU: bo(tex, 'texture_URepeat') ?? bo(tex, 'unifiedbitmap_URepeat') ?? bo(tex, 'texture_UWrap'),
+          wrapV: bo(tex, 'texture_VRepeat') ?? bo(tex, 'unifiedbitmap_VRepeat') ?? bo(tex, 'texture_VWrap'),
+        };
+        if (dumped < 6 && /navis_1540/i.test(uri)) {
+          dumped++;
+          // 진단: 실제 스칼라/불리언 키 전체 — 정확한 offset/wrap 키를 눈으로 확인.
+          log(`[matxf] #${out.length} ${uri.slice(-30)} U(s=${xf.uScale},o=${xf.uOffset}) V(s=${xf.vScale},o=${xf.vOffset}) W=${xf.wAngle} wrap=(${xf.wrapU},${xf.wrapV})`);
+          log(`[matxf]   scalars=${JSON.stringify(Object.keys(tex?.properties?.scalars || {}))} booleans=${JSON.stringify(tex?.properties?.booleans || {})}`);
+        }
+      }
+    }
+    out.push(xf);
+  }
+  const withTex = out.filter(Boolean).length;
+  log(`[matxf] 재질 ${out.length}개 중 텍스처 변환 ${withTex}개 복원`);
+  return out;
+}
+
 // 실패 마커(error.json)를 남길 컨텍스트 — 프런트가 실패를 즉시 감지하도록.
 let errCtx = null;
 
@@ -338,6 +402,8 @@ async function main() {
   // skipPropertyDb: 속성 DB(dbId→속성)는 지오메트리 변환에 불필요 — 안 읽어 404/ENOENT 회피.
   const scene = await reader.read({ skipPropertyDb: true, log: () => process.stdout.write('.') });
   process.stdout.write('\n');
+  // 재질 텍스처 변환(offset/scale/rotation)을 원본 SVF 에서 직접 복원(svf-utils 가 버린 값).
+  const matXforms = parseMaterialTransforms(path.dirname(svfPath), console.log);
 
   // === XKT 파이프라인(비-DWG 메시 모델): 감량 없이 재질그룹별 GLB → convert2xkt → 분할 XKT →
   // 매니페스트. 뷰어(XKTLoaderPlugin)가 여러 XKT 를 한 씬에 스트리밍 로드(xeokit-bim-viewer 방식).
@@ -391,7 +457,7 @@ async function main() {
       }
     };
     console.log('[convert4d] XKT 스트리밍 변환 시작(상세+nav LOD)…');
-    const res = await buildMergedGlb(scene, { xktStreamDir: 'out/xkt', onChunk, log: console.log });
+    const res = await buildMergedGlb(scene, { xktStreamDir: 'out/xkt', onChunk, log: console.log, matXforms });
     if (xktFiles.length === 0) throw new Error('XKT 청크 0개 — 변환할 지오메트리 없음');
     // 매니페스트: 상세청크(xktFiles) + 내비 LOD(navFiles) + 개요(lod1).
     // 뷰어: 정지=상세, 회전중=nav(텍스처 입힌 중간해상도), 극단 줌아웃=lod1.

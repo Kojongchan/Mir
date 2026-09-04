@@ -847,18 +847,42 @@ export async function buildMergedGlb(imf, opts) {
           const buf = resolveImage(uri);
           if (rawUv && rawUv.length === nvv * 2 && buf && buf.length) {
             const flip = process.env.XKT_UV_FLIP !== '0';
-            const su = mat.scale?.x ?? 1, sv = mat.scale?.y ?? 1;
-            // ★ 텍스처 offset 복원: svf-utils 가 재질 텍스처 변환에서 scale 만 읽고 offset 을 버려서
-            // 지형 UV 가 V∈[1,2] 처럼 정수만큼 밀려 들어온다(진단 확인). 여기에 flip(1-v)을 그대로
-            // 걸면 [-1,0] 으로 튀어 이미지가 접히고 경계선(seam)이 생긴다. 프래그먼트별 정수 offset
-            // (floor(min))을 빼 [0,1] 로 되돌린 뒤 flip 을 건다.
-            let minU = Infinity, minV = Infinity;
-            for (let k = 0; k < nvv; k++) { const u = rawUv[k * 2] * su, v = rawUv[k * 2 + 1] * sv; if (u < minU) minU = u; if (v < minV) minV = v; }
-            const uOff = Math.floor(minU), vOff = Math.floor(minV);
+            // ★ 근본 수정: Navisworks(SVF)가 구운 '진짜' 텍스처 변환을 그대로 적용한다.
+            //   최종UV = R(wAngle)·(rawUV · scale) + offset   →  SVF→glTF V 규약 변환(flip: 1-v).
+            // svf-utils 는 scale 만 넘겨 offset/rotation 을 버리므로, convert4d 가 원본 Materials.json
+            // 에서 복원해 opts.matXforms[재질id] 로 전달한다. 있으면 그대로(추정 없음), 없으면 폴백.
+            const xf = opts.matXforms ? opts.matXforms[node.material ?? -1] : null;
+            const suX = xf ? xf.uScale : (mat.scale?.x ?? 1);
+            const svX = xf ? xf.vScale : (mat.scale?.y ?? 1);
             const uvs = new Float32Array(nvv * 2);
-            for (let k = 0; k < nvv; k++) {
-              const u = rawUv[k * 2] * su - uOff, v = rawUv[k * 2 + 1] * sv - vOff;
-              uvs[k * 2] = u; uvs[k * 2 + 1] = flip ? 1 - v : v;
+            let uOff, vOff, mode, su = suX, sv = svX;
+            let used = false;
+            if (xf) {
+              // 원본 변환 그대로: offset/rotation 복원(정수 추정 아님).
+              const ang = xf.wAngle || 0, ca = Math.cos(ang), sa = Math.sin(ang);
+              let vmn = Infinity, vmx = -Infinity, umn = Infinity, umx = -Infinity;
+              for (let k = 0; k < nvv; k++) {
+                let u = rawUv[k * 2] * suX, v = rawUv[k * 2 + 1] * svX;
+                if (ang) { const u2 = ca * u - sa * v, v2 = sa * u + ca * v; u = u2; v = v2; }
+                u += xf.uOffset; v += xf.vOffset;
+                const vf = flip ? 1 - v : v;
+                uvs[k * 2] = u; uvs[k * 2 + 1] = vf;
+                if (u < umn) umn = u; if (u > umx) umx = u; if (vf < vmn) vmn = vf; if (vf > vmx) vmx = vf;
+              }
+              // 안전장치: 복원 변환이 UV 를 대략 [0,1] 로 보내면 채택(정합 정상). 키 이름이 달라
+              // offset 이 0 으로 빠지는 등으로 범위를 크게 벗어나면 폴백(과거 방식)으로 되돌린다.
+              if (umn >= -0.2 && umx <= 1.2 && vmn >= -0.2 && vmx <= 1.2) { used = true; uOff = xf.uOffset; vOff = xf.vOffset; mode = 'xf'; }
+            }
+            if (!used) {
+              // 폴백(변환 복원 실패/범위 이탈): 프래그별 정수 offset 추정(과거 방식).
+              su = mat.scale?.x ?? 1; sv = mat.scale?.y ?? 1;
+              let minU = Infinity, minV = Infinity;
+              for (let k = 0; k < nvv; k++) { const u = rawUv[k * 2] * su, v = rawUv[k * 2 + 1] * sv; if (u < minU) minU = u; if (v < minV) minV = v; }
+              uOff = Math.floor(minU); vOff = Math.floor(minV); mode = xf ? 'floor(xf범위이탈)' : 'floor';
+              for (let k = 0; k < nvv; k++) {
+                const u = rawUv[k * 2] * su - uOff, v = rawUv[k * 2 + 1] * sv - vOff;
+                uvs[k * 2] = u; uvs[k * 2 + 1] = flip ? 1 - v : v;
+              }
             }
             // POT 리사이즈(블록압축 GPU 텍스처 요건). 실패하면 텍스처 드롭 → 색(diffuse) 폴백.
             const pot = await potResizeTex(uri, buf);
@@ -871,10 +895,7 @@ export async function buildMergedGlb(imf, opts) {
                 for (let k = 0; k < nvv; k++) { const u = rawUv[k * 2], v = rawUv[k * 2 + 1]; if (u < ru0) ru0 = u; if (u > ru1) ru1 = u; if (v < rv0) rv0 = v; if (v > rv1) rv1 = v; }
                 let nu0 = Infinity, nu1 = -Infinity, nv0 = Infinity, nv1 = -Infinity;
                 for (let k = 0; k < nvv; k++) { const u = uvs[k * 2], v = uvs[k * 2 + 1]; if (u < nu0) nu0 = u; if (u > nu1) nu1 = u; if (v < nv0) nv0 = v; if (v > nv1) nv1 = v; }
-                log(`[tex] frag#${fragCount} ${uri} src=${pot.sw}x${pot.sh} scale=(${su},${sv}) flip=${flip} offset=(${uOff},${vOff}) rawUV U[${ru0.toFixed(2)}~${ru1.toFixed(2)}]V[${rv0.toFixed(2)}~${rv1.toFixed(2)}] →정규화 U[${nu0.toFixed(2)}~${nu1.toFixed(2)}]V[${nv0.toFixed(2)}~${nv1.toFixed(2)}]`);
-                // ★ 진짜 텍스처 변환(offset/rotation) 이 재질 원본에 있는지 확인 — svf-utils 파서가
-                // 버리는 값을 raw 객체에서 직접 찾기 위해 재질 전체를 덤프한다.
-                try { log(`[tex] frag#${fragCount} RAWMAT=${JSON.stringify(mat).slice(0, 600)}`); } catch { /* 순환참조 무시 */ }
+                log(`[tex] frag#${fragCount} ${uri} src=${pot.sw}x${pot.sh} mode=${mode} scale=(${su},${sv}) flip=${flip} offset=(${uOff},${vOff}) rawUV U[${ru0.toFixed(2)}~${ru1.toFixed(2)}]V[${rv0.toFixed(2)}~${rv1.toFixed(2)}] →최종 U[${nu0.toFixed(2)}~${nu1.toFixed(2)}]V[${nv0.toFixed(2)}~${nv1.toFixed(2)}]`);
               }
               // 이미지별 raw V/U 범위 누적 — 같은 타일의 프래그가 정수 경계(예 V=1)를 넘나들면
               // 프래그별 floor 가 서로 달라져 seam 이 생긴다. 끝에서 이를 진단한다.
