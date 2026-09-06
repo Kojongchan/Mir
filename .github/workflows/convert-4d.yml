@@ -215,6 +215,9 @@ jobs:
           PW_SHOT_MS: '180000'
           PW_OW: '820'
         run: |
+          # 렌더 의존성(LOD 스텝을 건너뛰므로 여기서 설치).
+          npm install --no-save @xeokit/xeokit-sdk@2 playwright-core pngjs
+          npx playwright install --with-deps chromium
           # 첫 청크 c0.xkt(지형 텍스처 프래그)를 앱과 동일한 KTX2 트랜스코더(self-host /basis/)로
           # 렌더 → 항공사진이 실제로 디코드/맵핑되면 회색이 아닌 갈색·녹색 등 다채색이 나온다.
           # 사용자가 본 것과 같은 '비스듬(oblique)' 시점으로 타일 경계선(seam)을 재현/확인한다.
