@@ -846,37 +846,40 @@ export async function buildMergedGlb(imf, opts) {
           const rawUv = geom.getUvs(0);
           const buf = resolveImage(uri);
           if (rawUv && rawUv.length === nvv * 2 && buf && buf.length) {
-            const flip = process.env.XKT_UV_FLIP !== '0';
-            // ★ 근본 수정: Navisworks(SVF)가 구운 '진짜' 텍스처 변환을 그대로 적용한다.
-            //   최종UV = R(wAngle)·(rawUV · scale) + offset   →  SVF→glTF V 규약 변환(flip: 1-v).
-            // svf-utils 는 scale 만 넘겨 offset/rotation 을 버리므로, convert4d 가 원본 Materials.json
-            // 에서 복원해 opts.matXforms[재질id] 로 전달한다. 있으면 그대로(추정 없음), 없으면 폴백.
-            // ★ Navisworks 원본 그대로: 최종UV = R(wAngle)·(rawUV·scale) + offset → glTF V 규약(flip).
-            // 샘플러가 REPEAT 라 UV 가 [0,1] 를 벗어나도(예 지형 [1,2]) 원본처럼 정확히 랩된다.
-            // 범위 보정/추정 없음. matXforms 가 없을 때만(복원 실패) 과거 floor 폴백.
+            // ★ Navisworks(SVF)가 구운 '진짜' 텍스처 변환을 그대로 적용: 최종UV = R(wAngle)·(rawUV·scale)+offset.
+            // svf-utils 가 버린 offset/rotation 을 convert4d 가 원본 Materials.json 에서 복원해 opts.matXforms 로 전달.
+            // 그 위에 UV 방향(SVF/FBX↔glTF 규약) 을 XKT_UV_MODE 로 선택 — 사용자 지적("방향 회전")을 잡기 위한 8방위.
+            //   bit0=U뒤집기, bit1=V뒤집기, bit2=U/V스왑(전치). 회전은 스왑+뒤집기 조합. 기본 2(V뒤집기=과거값).
+            // 샘플러 REPEAT 이라 UV 가 [0,1] 밖(지형 [1,2])이어도 원본처럼 정확히 랩됨.
+            const uvmode = (process.env.XKT_UV_MODE != null && process.env.XKT_UV_MODE !== '')
+              ? Number(process.env.XKT_UV_MODE) : (process.env.XKT_UV_FLIP === '0' ? 0 : 2);
+            const fU = uvmode & 1, fV = uvmode & 2, sw = uvmode & 4;
+            const orient = (uu, vv) => { const a = fU ? 1 - uu : uu, b = fV ? 1 - vv : vv; return sw ? [b, a] : [a, b]; };
             const xf = opts.matXforms ? opts.matXforms[node.material ?? -1] : null;
             const su = xf ? xf.uScale : (mat.scale?.x ?? 1);
             const sv = xf ? xf.vScale : (mat.scale?.y ?? 1);
             const uvs = new Float32Array(nvv * 2);
             let uOff, vOff, mode;
             if (xf) {
-              uOff = xf.uOffset; vOff = xf.vOffset; mode = 'xf';
+              uOff = xf.uOffset; vOff = xf.vOffset; mode = `xf(m${uvmode})`;
               const ang = xf.wAngle || 0, ca = Math.cos(ang), sa = Math.sin(ang);
               for (let k = 0; k < nvv; k++) {
                 let u = rawUv[k * 2] * su, v = rawUv[k * 2 + 1] * sv;
                 if (ang) { const u2 = ca * u - sa * v, v2 = sa * u + ca * v; u = u2; v = v2; }
                 u += uOff; v += vOff;
-                uvs[k * 2] = u; uvs[k * 2 + 1] = flip ? 1 - v : v;
+                const [uo, vo] = orient(u, v);
+                uvs[k * 2] = uo; uvs[k * 2 + 1] = vo;
               }
             } else {
               // 폴백(변환 복원 실패): 프래그별 정수 offset 추정(과거 방식).
               let minU = Infinity, minV = Infinity;
               const su0 = mat.scale?.x ?? 1, sv0 = mat.scale?.y ?? 1;
               for (let k = 0; k < nvv; k++) { const u = rawUv[k * 2] * su0, v = rawUv[k * 2 + 1] * sv0; if (u < minU) minU = u; if (v < minV) minV = v; }
-              uOff = Math.floor(minU); vOff = Math.floor(minV); mode = 'floor';
+              uOff = Math.floor(minU); vOff = Math.floor(minV); mode = `floor(m${uvmode})`;
               for (let k = 0; k < nvv; k++) {
                 const u = rawUv[k * 2] * su0 - uOff, v = rawUv[k * 2 + 1] * sv0 - vOff;
-                uvs[k * 2] = u; uvs[k * 2 + 1] = flip ? 1 - v : v;
+                const [uo, vo] = orient(u, v);
+                uvs[k * 2] = uo; uvs[k * 2 + 1] = vo;
               }
             }
             // POT 리사이즈(블록압축 GPU 텍스처 요건). 실패하면 텍스처 드롭 → 색(diffuse) 폴백.
@@ -890,7 +893,21 @@ export async function buildMergedGlb(imf, opts) {
                 for (let k = 0; k < nvv; k++) { const u = rawUv[k * 2], v = rawUv[k * 2 + 1]; if (u < ru0) ru0 = u; if (u > ru1) ru1 = u; if (v < rv0) rv0 = v; if (v > rv1) rv1 = v; }
                 let nu0 = Infinity, nu1 = -Infinity, nv0 = Infinity, nv1 = -Infinity;
                 for (let k = 0; k < nvv; k++) { const u = uvs[k * 2], v = uvs[k * 2 + 1]; if (u < nu0) nu0 = u; if (u > nu1) nu1 = u; if (v < nv0) nv0 = v; if (v > nv1) nv1 = v; }
-                log(`[tex] frag#${fragCount} ${uri} src=${pot.sw}x${pot.sh} mode=${mode} scale=(${su},${sv}) flip=${flip} offset=(${uOff},${vOff}) rawUV U[${ru0.toFixed(2)}~${ru1.toFixed(2)}]V[${rv0.toFixed(2)}~${rv1.toFixed(2)}] →최종 U[${nu0.toFixed(2)}~${nu1.toFixed(2)}]V[${nv0.toFixed(2)}~${nv1.toFixed(2)}]`);
+                log(`[tex] frag#${fragCount} ${uri} src=${pot.sw}x${pot.sh} mode=${mode} scale=(${su},${sv}) offset=(${uOff},${vOff}) rawUV U[${ru0.toFixed(2)}~${ru1.toFixed(2)}]V[${rv0.toFixed(2)}~${rv1.toFixed(2)}] →최종 U[${nu0.toFixed(2)}~${nu1.toFixed(2)}]V[${nv0.toFixed(2)}~${nv1.toFixed(2)}]`);
+                // ★ UV↔월드축 상관: 지형 드레이프의 올바른 방향(RULE) 도출용. SVF Z-up(X=동,Y=북,Z=고도).
+                // rawU/rawV 가 로컬 X 축과 Y 축 중 어디에 정렬되는지(부호 포함)를 공분산으로 확인.
+                // 정사영상은 북-up: 이미지 오른쪽(U+)=동(X+), 이미지 위=북(Y+). glTF V=0=이미지 top.
+                let mu = 0, mv = 0, mx = 0, my = 0;
+                for (let k = 0; k < nvv; k++) { mu += rawUv[k * 2]; mv += rawUv[k * 2 + 1]; mx += verts[k * 3]; my += verts[k * 3 + 1]; }
+                mu /= nvv; mv /= nvv; mx /= nvv; my /= nvv;
+                let cux = 0, cuy = 0, cvx = 0, cvy = 0, xmn = Infinity, xmx = -Infinity, ymn = Infinity, ymx = -Infinity;
+                for (let k = 0; k < nvv; k++) {
+                  const du = rawUv[k * 2] - mu, dv = rawUv[k * 2 + 1] - mv, dx = verts[k * 3] - mx, dy = verts[k * 3 + 1] - my;
+                  cux += du * dx; cuy += du * dy; cvx += dv * dx; cvy += dv * dy;
+                  if (verts[k * 3] < xmn) xmn = verts[k * 3]; if (verts[k * 3] > xmx) xmx = verts[k * 3];
+                  if (verts[k * 3 + 1] < ymn) ymn = verts[k * 3 + 1]; if (verts[k * 3 + 1] > ymx) ymx = verts[k * 3 + 1];
+                }
+                log(`[tex]   UV축상관 cov(rawU,X)=${cux.toExponential(1)} cov(rawU,Y)=${cuy.toExponential(1)} cov(rawV,X)=${cvx.toExponential(1)} cov(rawV,Y)=${cvy.toExponential(1)} · localX[${xmn.toFixed(0)}~${xmx.toFixed(0)}] localY[${ymn.toFixed(0)}~${ymx.toFixed(0)}]`);
               }
               // 이미지별 raw V/U 범위 누적 — 같은 타일의 프래그가 정수 경계(예 V=1)를 넘나들면
               // 프래그별 floor 가 서로 달라져 seam 이 생긴다. 끝에서 이를 진단한다.
