@@ -851,8 +851,12 @@ export async function buildMergedGlb(imf, opts) {
             // 그 위에 UV 방향(SVF/FBX↔glTF 규약) 을 XKT_UV_MODE 로 선택 — 사용자 지적("방향 회전")을 잡기 위한 8방위.
             //   bit0=U뒤집기, bit1=V뒤집기, bit2=U/V스왑(전치). 회전은 스왑+뒤집기 조합. 기본 2(V뒤집기=과거값).
             // 샘플러 REPEAT 이라 UV 가 [0,1] 밖(지형 [1,2])이어도 원본처럼 정확히 랩됨.
+            // 기본 0(항등) = Navisworks 원본과 일치하는 확정 규칙. 데이터로 도출:
+            //   rawU 는 +X(동), rawV 는 -Y(남)로 증가(전 지형 프래그 공분산 일관). 정사영상 북-up +
+            //   glTF V=0=이미지 top 규약 → glTF U=rawU, V=rawV(항등). 과거 기본 2(V뒤집기)는 남북이
+            //   뒤집혀 '방향 회전'으로 보였음(사용자 지적). XKT_UV_MODE 로 필요시 8방위 재정의 가능.
             const uvmode = (process.env.XKT_UV_MODE != null && process.env.XKT_UV_MODE !== '')
-              ? Number(process.env.XKT_UV_MODE) : (process.env.XKT_UV_FLIP === '0' ? 0 : 2);
+              ? Number(process.env.XKT_UV_MODE) : 0;
             const fU = uvmode & 1, fV = uvmode & 2, sw = uvmode & 4;
             const orient = (uu, vv) => { const a = fU ? 1 - uu : uu, b = fV ? 1 - vv : vv; return sw ? [b, a] : [a, b]; };
             const xf = opts.matXforms ? opts.matXforms[node.material ?? -1] : null;

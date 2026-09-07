@@ -3,6 +3,37 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## ✅✅ 지형 항공사진 '방향' 규칙 확정 — UV 항등(mode 0), 데이터로 도출 (2026-09-07)
+> branch `claude/3d-view-testing-hlrugl`. `scripts/mergeGlb.mjs`. **mode 0 R2 반영(run 34067722786, uv_mode=0)** + 기본값 하드코딩. 사용자 최종 확인 대기(월요일).
+
+### 문제
+- REPEAT+항등변환으로 고쳤는데도 사용자가 Navisworks 원본과 비교: **지형 방향이 회전(뒤집힘)**.
+  "이미지를 파악해 배치하지 말고 Navisworks(InfraWorks FBX+타일 드레이프) 매핑을 그대로, 일반 규칙으로."
+
+### 규칙 도출 (추정 아님 — 데이터+규약)
+- mergeGlb 에 지형 프래그의 **rawU/rawV ↔ 로컬월드축(X=동,Y=북) 공분산** 로그 추가.
+- 결과(8개 지형 프래그 전부 일관): **cov(rawU,X)>0 → rawU 는 +X(동)**, **cov(rawV,Y)<0 → rawV 는 -Y(남)**
+  로 증가. 교차항은 부호 무작위(잡음, 회전성분 없음).
+- 정사영상 **북-up**(이미지 top=북) + glTF **V=0=이미지 top** 규약 →
+  올바른 최종 UV = **glTF U=rawU, V=rawV = 항등(mode 0)**.
+- 산술 재검증(로그 실측): frag#1 rawV∈[1.49,2] 이 남(Y=-256)에서 최대 → mode0 texel v≈1(이미지 하단)
+  = 남쪽이 아래 = 북-up 정상. 과거 기본 mode2(V뒤집기)는 남을 texel0(상단)으로 → 상하반전='회전'.
+
+### 수정
+- `mergeGlb`: UV 방향을 8방위(`XKT_UV_MODE` 0~7: bit0 U뒤집기·bit1 V뒤집기·bit2 스왑)로 선택 가능.
+  **기본값 0(항등)로 하드코딩 = 확정 규칙**. 임의 현장 파일에 일반화.
+- 샘플러 REPEAT + 원본 재질변환(matXforms, 지형은 offset0/scale1/WAngle0 = 항등) 유지.
+- 워크플로 `uv_mode` 입력 + `render_test` 시 LOD 오블리크 렌더 스킵(속도) + c0 렌더 스텝에 playwright 설치.
+
+### 검증
+- convert 로그: 지형 `mode=xf(m0) offset=(0,0)` 최종UV=rawUV(항등). c0 렌더(top-down/oblique) 자연스러운
+  항공사진 연속. **방향(상하) 정합은 데이터+규약으로 확정** — 사용자 육안 최종 확인 요청(월요일).
+- ⚠ 혹시 여전히 상하 뒤집혀 보이면 `uv_mode=2`(과거값)로 즉시 롤백 가능. 하지만 데이터상 0 이 정답.
+
+### 미해결(계속)
+- 트래픽 353MB/뷰(대부분 항공사진 텍스처) · 구조물 각짐(감량) — 뷰 종속 스트리밍 별도 과제.
+
+---
 ## ✅ 지형 항공사진 정합 — 근본 원인 확정·수정: Navisworks 원본 그대로 (REPEAT+항등) (2026-09-04)
 > branch `claude/3d-view-testing-hlrugl`. `scripts/mergeGlb.mjs`·`convert4d.mjs`. **재변환 완료(R2 최신, run 33840522951, sha c7e482f)**. 사용자 최종 확인 대기.
 
