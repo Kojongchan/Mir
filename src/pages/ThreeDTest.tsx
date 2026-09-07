@@ -150,6 +150,20 @@ export function ThreeDTest() {
     // 선형공간 그대로 표시해 중간톤이 검게 뭉갠다(지형이 검게 보이던 원인). 켜면 사진이 제 밝기로
     // 보인다. 텍스처 없는 구조물/지오메트리도 sRGB 로 일관 표시(물리적으로 올바른 설정).
     viewer.scene.gammaOutput = true;
+    // 밝기: 지형 항공사진(정사영상)은 조명·그림자가 이미 이미지에 구워져 있다. 뷰어 기본 조명은
+    // 방향광 위주라 그 위에 또 음영이 져서 Navisworks 대비 어둡게 보인다(사용자 지적). → 기본 조명을
+    // 교체: 전방위 균일광(ambient)을 크게 해 사진이 제 밝기로 나오게 하고, 방향광은 약하게(구조물
+    // 입체 음영만). 실패해도 렌더는 유지. 너무 밝/어두우면 intensity 만 조절.
+    try {
+      const Sdk = XeokitSDK as unknown as {
+        AmbientLight: new (scene: unknown, cfg: Record<string, unknown>) => unknown;
+        DirLight: new (scene: unknown, cfg: Record<string, unknown>) => unknown;
+      };
+      viewer.scene.clearLights();
+      new Sdk.AmbientLight(viewer.scene, { color: [1, 1, 1], intensity: 0.85 });
+      new Sdk.DirLight(viewer.scene, { dir: [0.3, -0.9, -0.4], color: [1, 1, 1], intensity: 0.5, space: 'world' });
+      new Sdk.DirLight(viewer.scene, { dir: [-0.5, -0.7, 0.5], color: [1, 1, 1], intensity: 0.3, space: 'world' });
+    } catch { /* 조명 조정 실패 무시 */ }
     // 줌이 '커서 아래 지오메트리'로 다가가게(followPointer) — 거대 좌표 모델에서 화면
     // 중앙 빈 공간으로 줌돼 대상에 못 닿던 문제 해결. smartPivot 으로 회전 피벗도 안정화.
     // ACC(Autodesk) 뷰어처럼: 더블클릭한 표면으로 카메라가 날아가고(doublePickFlyTo),
