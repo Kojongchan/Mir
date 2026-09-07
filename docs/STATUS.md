@@ -3,6 +3,38 @@
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
 ---
+## 🚀 뷰 종속 공간 타일 스트리밍 착수 (트래픽+구조물 근본해결) (2026-09-07)
+> branch `claude/3d-view-testing-hlrugl`. `mergeGlb`·`convert4d`·`api/aps-convert`·`ThreeDTest`. **1차 타일 변환 성공(run 34086757419, tiles=1, ~47분). 앱 런타임 검증 대기(사용자).**
+
+### 방향 (사용자 승인 "전체 착수")
+- 트래픽 353MB + 구조물 감량 깨짐 = 같은 뿌리. 해결 = 오토데스크 DOCS식 **뷰 종속 스트리밍**:
+  개요 먼저 → 보는 구역 타일만 **원본 형상**으로 다운로드(감량 아님). 기존 실패방식(simplify/
+  subsample/전체감량) 미사용.
+
+### 구현 (완료, XKT_TILES=1 게이트)
+- `mergeGlb`: 프래그를 월드 수평격자(XKT_TILE_M=500m) 셀로 묶어 **원본 형상** 타일 XKT 방출.
+  셀 키 정렬 순회 → 한 번에 한 셀만 열림(메모리 상한). 사전패스는 정점 샘플링(저비용). 타일별
+  월드 AABB 기록(`res.tileAabbs`). 반환에 `tiles:true, tileAabbs`.
+- `convert4d`: `manifest.tiles=[{n,aabb}]`. workflow `tiles`/`tile_m` 입력 + `XKT_TILES/XKT_TILE_M` env.
+- `api/aps-convert`: manifest.tiles → `tiles:[{url,aabb}]` presigned 반환(CacheState 확장).
+- `ThreeDTest.mountTiles`: 개요(lod1) 먼저 표시·프레이밍 → 카메라 look 주변 타일만 로드(거리기반
+  loadR=camDist*1.3, 동시3·최대48), 멀어지면 destroy, want 타일 다 로드되면 개요 숨김(z-fight 방지).
+  줌아웃(camDist>sceneDiag*0.55)이면 개요만. 타일 AABB (x,z,-y) 뷰어변환으로 컬링. doMount 가
+  tiles 있으면 mountTiles 우선(없으면 mountXkt/mountGlb).
+
+### 검증
+- 1차 변환 성공(47분, 타임아웃 이내). **c0 타일 렌더: 원본 미세 지형메시 + 선명 항공사진 확인**(감량
+  깨짐 없음). ⚠ 타일 개수·타일당 MB(=뷰당 트래픽)는 렌더 base64 가 로그 tail 을 덮어 미확보 —
+  다음 변환 시 렌더 경량화로 확보 예정. 앱 화면 dbg 에 "타일 N개" 표시됨.
+- ⚠ **앱 런타임 미검증**(헤드리스로 다중타일 스트리밍 테스트 불가) → 사용자 하드새로고침(최신 배포)
+  후 확인: (1) 개요 빨리 뜸 (2) 이동 시 보는 곳만 원본 로드(status "타일 스트리밍… x/y") (3) 구조물
+  원본 형상 (4) dbg 타일 수. 최신 배포여야 함(api+프런트 둘 다 신규 — 구배포면 xktFiles 폴백=전체받음).
+
+### 다음 (튜닝/2차)
+- 타일 크기(500m)·로드 반경·동시수 튜닝(사용자 피드백). 프러스텀 컬링(현재 거리기반). 타일별 LOD
+  (먼 타일 저해상). 트래픽 실측(렌더 경량화 후). 개요↔타일 전환 매끄럽게.
+
+---
 ## ✅✅ 지형 항공사진 '방향' 규칙 확정 — UV 항등(mode 0), 데이터로 도출 (2026-09-07)
 > branch `claude/3d-view-testing-hlrugl`. `scripts/mergeGlb.mjs`. **mode 0 R2 반영(run 34067722786, uv_mode=0)** + 기본값 하드코딩. 사용자 최종 확인 대기(월요일).
 
