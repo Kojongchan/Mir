@@ -102,8 +102,9 @@ async function r2TotalSize(): Promise<number> {
 }
 
 type Focus = { center: [number, number, number]; half: [number, number, number] };
+type Tile = { url: string; aabb: number[] };
 type CacheState =
-  | { ready: true; xkt: true; urls: string[]; navUrls?: string[]; lod1Url?: string; focus?: Focus }
+  | { ready: true; xkt: true; urls: string[]; navUrls?: string[]; tiles?: Tile[]; lod1Url?: string; focus?: Focus }
   | { ready: true; url: string; focus?: Focus }
   | { failed: true; error: string }
   | { ready: false };
@@ -129,14 +130,18 @@ async function cacheState(urn: string): Promise<CacheState> {
   const manifestText = await r2GetText(`${dir}/xkt/manifest.json`);
   if (manifestText) {
     try {
-      const { xktFiles, navFiles, lod1 } = JSON.parse(manifestText) as { xktFiles: string[]; navFiles?: string[]; lod1?: string | null };
+      const { xktFiles, navFiles, lod1, tiles } = JSON.parse(manifestText) as { xktFiles: string[]; navFiles?: string[]; lod1?: string | null; tiles?: { n: string; aabb: number[] }[] };
       if (Array.isArray(xktFiles) && xktFiles.length > 0) {
         const urls = await Promise.all(xktFiles.map((f) => r2PresignGet(`${dir}/xkt/${f}`)));
         const navUrls = Array.isArray(navFiles) && navFiles.length > 0
           ? await Promise.all(navFiles.map((f) => r2PresignGet(`${dir}/xkt/${f}`)))
           : undefined;
+        // 타일(뷰 종속 스트리밍): 각 타일 presigned URL + AABB(뷰어 컬링용).
+        const tileList = Array.isArray(tiles) && tiles.length > 0
+          ? await Promise.all(tiles.map(async (t) => ({ url: await r2PresignGet(`${dir}/xkt/${t.n}`), aabb: t.aabb })))
+          : undefined;
         const lod1Url = lod1 ? await r2PresignGet(`${dir}/xkt/${lod1}`) : undefined;
-        return { ready: true, xkt: true, urls, navUrls, lod1Url, focus: await readFocus(dir) };
+        return { ready: true, xkt: true, urls, navUrls, tiles: tileList, lod1Url, focus: await readFocus(dir) };
       }
     } catch {
       /* 매니페스트 파손 — GLB/실패 경로로 폴백 */

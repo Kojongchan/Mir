@@ -810,8 +810,56 @@ export async function buildMergedGlb(imf, opts) {
     }
   };
 
+  // === 공간 타일 스트리밍(뷰 종속): 프래그먼트를 월드 수평격자(XKT_TILE_M, 기본 500m) 셀로 묶어
+  // 셀마다 '원본 형상 그대로'의 타일 XKT 를 만든다(감량 아님). 뷰어는 개요(lod1)를 먼저 띄우고
+  // 카메라가 보는 셀의 타일만 원본으로 스트리밍 → 트래픽↓ + 구조물 원본 형상. 프래그를 셀 키로
+  // 정렬해 순회하면 '한 번에 한 셀'만 스트림에 열려 메모리 상한이 기존 스트리밍과 동일하다. ===
+  const tilesMode = xktStream && (opts.tiles || process.env.XKT_TILES === '1');
+  const tileM = Number(process.env.XKT_TILE_M || 500);
+  const tileAabbs = {}; // 'c<idx>' → [minx,miny,minz,maxx,maxy,maxz] (origin-rel 월드 = focus 와 동일 공간)
+  let order = null; // 순회 순서(셀 그룹). null 이면 0..nodeCount.
+  const nodeCellKey = tilesMode ? new Array(nodeCount) : null;
+  if (tilesMode) {
+    log(`[tile] 공간 타일 사전패스(셀 ${tileM}m)…`);
+    const items = [];
+    for (let i = 0; i < nodeCount; i++) {
+      const node = imf.getNode(i);
+      if (node.kind !== NODE_OBJECT) continue;
+      const geom = imf.getGeometry(node.geometry);
+      if (!geom || geom.kind !== GEOM_MESH) continue;
+      const verts = geom.getVertices();
+      if (!verts || verts.length < 3) continue;
+      // 로컬 bbox 중심(정점 샘플링으로 저비용) → 노드 행렬로 월드 변환 → 수평 셀 키.
+      let lx0 = Infinity, ly0 = Infinity, lz0 = Infinity, lx1 = -Infinity, ly1 = -Infinity, lz1 = -Infinity;
+      const step = Math.max(3, Math.floor(verts.length / 3 / 64) * 3);
+      for (let v = 0; v < verts.length; v += step) { const x = verts[v], y = verts[v + 1], z = verts[v + 2]; if (x < lx0) lx0 = x; if (y < ly0) ly0 = y; if (z < lz0) lz0 = z; if (x > lx1) lx1 = x; if (y > ly1) ly1 = y; if (z > lz1) lz1 = z; }
+      const cx = (lx0 + lx1) / 2, cy = (ly0 + ly1) / 2, cz = (lz0 + lz1) / 2;
+      const m = matrixOf(node.transform);
+      const wx = m ? m[0] * cx + m[4] * cy + m[8] * cz + m[12] : cx;
+      const wy = m ? m[1] * cx + m[5] * cy + m[9] * cz + m[13] : cy;
+      nodeCellKey[i] = `${Math.floor(wx / tileM)}_${Math.floor(wy / tileM)}`;
+      items.push(i);
+    }
+    items.sort((a, b) => (nodeCellKey[a] < nodeCellKey[b] ? -1 : nodeCellKey[a] > nodeCellKey[b] ? 1 : a - b));
+    order = items;
+    const nCells = new Set(items.map((i) => nodeCellKey[i])).size;
+    log(`[tile] 사전패스 완료: 대상 프래그 ${items.length} · 점유 셀 ${nCells}`);
+  }
+  let tileAabb = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+  let curCell = null;
+  const flushTile = async () => {
+    if (!detail.chunk || detail.chunk.meshes.length === 0) return;
+    tileAabbs[`c${detail.idx}`] = tileAabb.slice();
+    await detail.flush();
+    tileAabb = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+  };
+
   let processed = 0, decimated = 0, fragCount = 0;
-  for (let i = 0; i < nodeCount; i++) {
+  const iterN = order ? order.length : nodeCount;
+  for (let ii = 0; ii < iterN; ii++) {
+    const i = order ? order[ii] : ii;
+    // 타일 모드: 셀이 바뀌면 현재 타일을 마감(업로드) + AABB 기록 후 새 타일 시작.
+    if (tilesMode) { const ck = nodeCellKey[i]; if (curCell !== null && ck !== curCell) await flushTile(); curCell = ck; }
     const node = imf.getNode(i);
     if (node.kind === NODE_OBJECT) diag.objNodes++;
     else if (node.kind === 0) { diag.groupNodes++; continue; }
@@ -1031,7 +1079,13 @@ export async function buildMergedGlb(imf, opts) {
         } catch { /* 감량 실패 → 스킵 */ }
         return 0;
       };
-      if (emitFull) {
+      if (tilesMode) {
+        // 타일 = 원본 형상 그대로(감량 없음). 셀별로 담고, 셀의 월드 AABB 누적(뷰어 컬링용).
+        detail.add(pos, nrm, idx32, [fnx, fny, fnz], [fxx, fxy, fxz], baseColor, metal, rough, String(node.dbid), tex);
+        if (fnx < tileAabb[0]) tileAabb[0] = fnx; if (fny < tileAabb[1]) tileAabb[1] = fny; if (fnz < tileAabb[2]) tileAabb[2] = fnz;
+        if (fxx > tileAabb[3]) tileAabb[3] = fxx; if (fxy > tileAabb[4]) tileAabb[4] = fxy; if (fxz > tileAabb[5]) tileAabb[5] = fxz;
+        streamV += nv; streamT += idx32.length / 3;
+      } else if (emitFull) {
         detail.add(pos, nrm, idx32, [fnx, fny, fnz], [fxx, fxy, fxz], baseColor, metal, rough, String(node.dbid), tex); // 풀디테일
         if (nav) navT += emitDecimated(nav, navCell); // 모션 LOD
         streamV += nv; streamT += idx32.length / 3;
@@ -1039,8 +1093,9 @@ export async function buildMergedGlb(imf, opts) {
         streamT += emitDecimated(detail, decCell); // 기본: 감량본이 곧 배포 모델(경량)
         streamV += nv; // 원본 정점(통계용 근사)
       }
-      addToLod(pos, idx32); // 개요(LOD1) 격자 누적(극단 줌아웃·폴백)
-      if (detail.chunk && detail.chunk.tris >= CHUNK_CAP) await detail.flush();
+      addToLod(pos, idx32); // 개요(LOD1) 격자 누적(줌아웃·초기표시·타일모드의 기본 개요)
+      // 한 셀이 너무 크면 CHUNK_CAP 에서 분할(각 조각도 자기 AABB 기록). 비-타일은 기존대로.
+      if (detail.chunk && detail.chunk.tris >= CHUNK_CAP) { if (tilesMode) await flushTile(); else await detail.flush(); }
       if (nav && nav.chunk && nav.chunk.tris >= CHUNK_CAP) await nav.flush();
     } else {
       const g = groupOf(node.material ?? -1, color);
@@ -1056,7 +1111,7 @@ export async function buildMergedGlb(imf, opts) {
   }
   // XKT 스트리밍: 마지막 청크 flush + LOD1(개요) 방출 후 반환(그룹 emit 경로 안 탐).
   if (xktStream) {
-    await detail.flush();
+    if (tilesMode) await flushTile(); else await detail.flush();
     if (nav) await nav.flush();
     // LOD1 개요 메시 방출(전역 격자 클러스터 결과) → onChunk(kind 'lod1')
     let lodTris = 0;
@@ -1094,7 +1149,8 @@ export async function buildMergedGlb(imf, opts) {
       const span = `U[${b.u0.toFixed(2)}~${b.u1.toFixed(2)}] V[${b.v0.toFixed(2)}~${b.v1.toFixed(2)}] 프래그${b.n}`;
       log(`[tex]   ${uri.slice(-42)} ${span}${straddleV || straddleU ? ` ⚠STRADDLE(u:${straddleU} v:${straddleV})` : ''}`);
     }
-    return { xkt: true, chunks: detail.idx, navChunks: nav ? nav.idx : 0, navTris: navT, vertices: streamV, triangles: streamT, lodTris, decimated: 0, focus: robustFocus(foci) };
+    if (tilesMode) log(`[tile] 타일 ${Object.keys(tileAabbs).length}개 방출(원본 형상). 셀 ${tileM}m.`);
+    return { xkt: true, tiles: tilesMode, tileAabbs, chunks: detail.idx, navChunks: nav ? nav.idx : 0, navTris: navT, vertices: streamV, triangles: streamT, lodTris, decimated: 0, focus: robustFocus(foci) };
   }
   // 솔리드(삼각형) 부재가 하나라도 있으면 선/점은 대개 엣지/주석 클러터(IFC 의 와이어프레임
   // 11만개 등) → 제외. 순수 선형(솔리드 0 = DWG 도면)만 선/점 유지. 정점수 비율은 엣지선이

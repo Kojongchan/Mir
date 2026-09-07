@@ -472,7 +472,13 @@ async function main() {
     if (xktFiles.length === 0) throw new Error('XKT 청크 0개 — 변환할 지오메트리 없음');
     // 매니페스트: 상세청크(xktFiles) + 내비 LOD(navFiles) + 개요(lod1).
     // 뷰어: 정지=상세, 회전중=nav(텍스처 입힌 중간해상도), 극단 줌아웃=lod1.
-    await r2Put(`${keyBase}/xkt/manifest.json`, Buffer.from(JSON.stringify({ xktFiles, navFiles, lod1: lodFile })), 'application/json');
+    // 타일 모드: xktFiles 각각이 '공간 타일(원본 형상)' + AABB. 뷰어가 개요 먼저→보는 타일만 스트리밍.
+    const manifest = { xktFiles, navFiles, lod1: lodFile };
+    if (res.tiles) {
+      manifest.tiles = xktFiles.map((n) => ({ n, aabb: res.tileAabbs?.[n.replace(/\.xkt$/, '')] || null })).filter((t) => t.aabb);
+      console.log(`[convert4d] 타일 매니페스트: ${manifest.tiles.length}개 타일(공간 AABB 포함) + 개요 lod1`);
+    }
+    await r2Put(`${keyBase}/xkt/manifest.json`, Buffer.from(JSON.stringify(manifest)), 'application/json');
     if (res.focus) await r2Put(`${keyBase}/focus.json`, Buffer.from(JSON.stringify(res.focus)), 'application/json');
     else await r2Delete(`${keyBase}/focus.json`);
     await r2Delete(`${keyBase}/model.glb`); // 구 GLB 캐시 제거(프런트가 XKT 우선)

@@ -537,6 +537,92 @@ export function ThreeDTest() {
     loadDetail(0);
   }, []);
 
+  /**
+   * 뷰 종속 공간 타일 스트리밍(오토데스크 DOCS 방식). 개요(lod1)를 먼저 띄우고, 카메라가
+   * 보는 곳 주변 타일만 '원본 형상'으로 내려받는다(화면 밖·먼 곳은 안 받음, 멀어지면 해제).
+   * → 트래픽은 방문 구역만, 구조물은 감량 없는 원본. tiles[i].aabb 는 focus 와 같은 공간
+   * (회전 전 실좌표) → (x,y,z)→(x,z,-y) 로 뷰어공간 변환해 거리 판정.
+   */
+  const mountTiles = useCallback((tiles: { url: string; aabb: number[] }[], lod1Url: string | undefined, label: string, focus?: Focus) => {
+    const viewer = viewerRef.current;
+    const loader = xktLoaderRef.current;
+    if (!viewer || !loader || !tiles.length) return;
+    setPick(null);
+    highlightedRef.current = null;
+    for (const id of Object.keys(viewer.scene.models)) viewer.scene.models[id].destroy();
+    if (lodSubRef.current) { try { viewer.camera.off(lodSubRef.current); } catch { /* noop */ } lodSubRef.current = null; }
+    if (lodTimerRef.current) { clearTimeout(lodTimerRef.current); lodTimerRef.current = null; }
+
+    type Tile = { id: string; url: string; cx: number; cy: number; cz: number; r: number; state: 'idle' | 'loading' | 'loaded' };
+    const T: Tile[] = tiles.map((t, i) => {
+      const [ax, ay, az, bx, by, bz] = t.aabb; // 회전 전 실좌표 AABB
+      const va = [ax, az, -by, bx, bz, -ay];    // (x,y,z)→(x,z,-y) 뷰어공간 AABB
+      return {
+        id: `tile${i}`, url: t.url,
+        cx: (va[0] + va[3]) / 2, cy: (va[1] + va[4]) / 2, cz: (va[2] + va[5]) / 2,
+        r: Math.hypot(va[3] - va[0], va[4] - va[1], va[5] - va[2]) / 2,
+        state: 'idle',
+      };
+    });
+    const models = viewer.scene.models as Record<string, { visible?: boolean; destroy(): void }>;
+    const fbox = focusToAabb(focus);
+    const sceneDiag = fbox ? Math.hypot(fbox[3] - fbox[0], fbox[4] - fbox[1], fbox[5] - fbox[2]) : 5000;
+
+    let overviewOn = true;
+    if (lod1Url) {
+      const lm = loader.load({ id: 'lod1', src: lod1Url, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
+      lm.on('loaded', () => { const b = focusToAabb(focus) ?? (viewer.scene.aabb as number[]); if (b) flyToFramed(viewer, b); setBusy(false); setStatus(''); setModelName(label); });
+      lm.on('error', () => setBusy(false));
+    } else setBusy(false);
+
+    const MAX_LOADED = 48;   // 동시 로드 타일 상한(메모리)
+    const CONC = 3;          // 동시 다운로드 수
+    let loadingCount = 0;
+    let want: Tile[] = [];
+    const loadTile = (t: Tile) => {
+      if (t.state !== 'idle') return;
+      t.state = 'loading'; loadingCount++;
+      const m = loader.load({ id: t.id, src: t.url, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
+      m.on('loaded', () => { t.state = 'loaded'; loadingCount--; hideOverviewIfReady(); pump(); });
+      m.on('error', () => { t.state = 'idle'; loadingCount--; pump(); });
+    };
+    const pump = () => {
+      for (const t of want) { if (loadingCount >= CONC) break; if (t.state === 'idle') loadTile(t); }
+      const ld = want.filter((t) => t.state === 'loaded').length;
+      setStatus(want.length ? `타일 스트리밍… ${ld}/${want.length}` : '');
+    };
+    const hideOverviewIfReady = () => {
+      const ready = want.length > 0 && want.every((t) => t.state === 'loaded');
+      const show = want.length === 0 || !ready; // 타일 미도착/줌아웃이면 개요 표시(구멍·z-fight 방지)
+      if (show !== overviewOn) { overviewOn = show; if (models['lod1']) models['lod1'].visible = show; }
+    };
+    const recompute = () => {
+      const eye = viewer.camera.eye as number[];
+      const look = viewer.camera.look as number[];
+      const camDist = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
+      const overviewOnly = camDist > sceneDiag * 0.55; // 멀리 = 개요만
+      const loadR = Math.max(camDist * 1.3, 800);      // look 주변 로드 반경
+      const distLook = (t: Tile) => Math.hypot(t.cx - look[0], t.cy - look[1], t.cz - look[2]);
+      want = [];
+      if (!overviewOnly) {
+        for (const t of T) if (distLook(t) - t.r < loadR) want.push(t);
+        want.sort((a, b) => distLook(a) - distLook(b));
+        if (want.length > MAX_LOADED) want = want.slice(0, MAX_LOADED);
+      }
+      const wantSet = new Set(want.map((t) => t.id));
+      for (const t of T) if (!wantSet.has(t.id) && t.state === 'loaded') { if (models[t.id]) models[t.id].destroy(); t.state = 'idle'; }
+      pump();
+      hideOverviewIfReady();
+    };
+    let throttle: number | null = null;
+    lodSubRef.current = viewer.camera.on('matrix', () => {
+      if (throttle) return;
+      throttle = window.setTimeout(() => { throttle = null; recompute(); }, 150);
+    }) as unknown as string;
+    recompute();
+    setDbg(`타일 ${T.length}개 · 뷰 종속 스트리밍`);
+  }, []);
+
   /** ACC 모델 선택 → (캐시/실패 조회 → 없으면 변환 dispatch → 폴링) → GLB/XKT 로드.
    *  force=true 면 캐시/실패 마커를 지우고 재변환(빈 캐시 갱신·재시도). */
   const openFromAcc = useCallback(
@@ -562,6 +648,7 @@ export function ThreeDTest() {
         xkt?: boolean;
         urls?: string[];
         navUrls?: string[];
+        tiles?: { url: string; aabb: number[] }[];
         lod1Url?: string;
         focus?: Focus;
         failed?: boolean;
@@ -583,10 +670,12 @@ export function ThreeDTest() {
       const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
       // XKT(분할) 우선, 없으면 단일 GLB(DWG 등).
       const doMount = (s: State) => {
-        if (s.xkt && s.urls && s.urls.length) mountXkt(s.urls, s.lod1Url, f.name, s.focus, s.navUrls);
+        // 타일(뷰 종속 스트리밍) 우선 → 없으면 분할 XKT → 단일 GLB.
+        if (s.xkt && s.tiles && s.tiles.length) mountTiles(s.tiles, s.lod1Url, f.name, s.focus);
+        else if (s.xkt && s.urls && s.urls.length) mountXkt(s.urls, s.lod1Url, f.name, s.focus, s.navUrls);
         else if (s.url) mountGlb(s.url, f.name, s.focus);
       };
-      const isReady = (s: State) => !!s.ready && (!!s.url || !!(s.urls && s.urls.length));
+      const isReady = (s: State) => !!s.ready && (!!s.url || !!(s.urls && s.urls.length) || !!(s.tiles && s.tiles.length));
 
       setBusy(true);
       setPick(null);
@@ -671,7 +760,7 @@ export function ThreeDTest() {
         setBusy(false);
       }
     },
-    [mountGlb, mountXkt],
+    [mountGlb, mountXkt, mountTiles],
   );
 
   /** 로컬 .glb 드롭/선택(이미 변환된 산출물 눈확인용). */
