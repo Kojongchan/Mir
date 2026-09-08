@@ -575,8 +575,8 @@ export function ThreeDTest() {
       lm.on('error', () => setBusy(false));
     } else setBusy(false);
 
-    const MAX_LOADED = 48;   // 동시 로드 타일 상한(메모리)
-    const CONC = 3;          // 동시 다운로드 수
+    const MAX_LOADED = 32;   // 동시 로드 타일 상한(메모리; 타일이 작아져 개수는 많아도 OK)
+    const CONC = 5;          // 동시 다운로드 수(작은 타일 → 병렬 높여 빨리 채움)
     let loadingCount = 0;
     let want: Tile[] = [];
     const loadTile = (t: Tile) => {
@@ -596,12 +596,15 @@ export function ThreeDTest() {
       const show = want.length === 0 || !ready; // 타일 미도착/줌아웃이면 개요 표시(구멍·z-fight 방지)
       if (show !== overviewOn) { overviewOn = show; if (models['lod1']) models['lod1'].visible = show; }
     };
+    let lastLookX = NaN, lastLookY = NaN, lastLookZ = NaN, lastCamDist = NaN;
     const recompute = () => {
       const eye = viewer.camera.eye as number[];
       const look = viewer.camera.look as number[];
       const camDist = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
-      const overviewOnly = camDist > sceneDiag * 0.55; // 멀리 = 개요만
-      const loadR = Math.max(camDist * 1.3, 800);      // look 주변 로드 반경
+      // 줌아웃(멀리)이면 개요만 — 이 임계 아래(가까이)로 들어와야 원본 타일 스트리밍 시작.
+      const overviewOnly = camDist > sceneDiag * 0.30;
+      // look 주변 로드 반경: 화면에 들어오는 주변만(줌 상관없이 상한). 작을수록 뷰당 로드↓·빠름.
+      const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.2, 350), 1400);
       const distLook = (t: Tile) => Math.hypot(t.cx - look[0], t.cy - look[1], t.cz - look[2]);
       want = [];
       if (!overviewOnly) {
@@ -613,11 +616,23 @@ export function ThreeDTest() {
       for (const t of T) if (!wantSet.has(t.id) && t.state === 'loaded') { if (models[t.id]) models[t.id].destroy(); t.state = 'idle'; }
       pump();
       hideOverviewIfReady();
+      lastLookX = look[0]; lastLookY = look[1]; lastLookZ = look[2]; lastCamDist = camDist;
     };
+    // 회전(look 고정)·미세이동엔 재계산 생략 → 스래싱 방지. look 이 충분히 움직이거나 줌이 크게
+    // 바뀔 때만 재계산(사용자: 회전마다 재로딩 느림 지적 대응).
     let throttle: number | null = null;
     lodSubRef.current = viewer.camera.on('matrix', () => {
       if (throttle) return;
-      throttle = window.setTimeout(() => { throttle = null; recompute(); }, 150);
+      throttle = window.setTimeout(() => {
+        throttle = null;
+        const look = viewer.camera.look as number[];
+        const eye = viewer.camera.eye as number[];
+        const cd = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
+        const moved = Number.isNaN(lastLookX) ? Infinity : Math.hypot(look[0] - lastLookX, look[1] - lastLookY, look[2] - lastLookZ);
+        const zoomChg = Number.isNaN(lastCamDist) ? Infinity : Math.abs(cd - lastCamDist) / Math.max(lastCamDist, 1);
+        if (moved < Math.max(cd * 0.15, 120) && zoomChg < 0.2) return; // 변화 작으면 무시(회전 포함)
+        recompute();
+      }, 200);
     }) as unknown as string;
     recompute();
     setDbg(`타일 ${T.length}개 · 뷰 종속 스트리밍`);

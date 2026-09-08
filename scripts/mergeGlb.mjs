@@ -816,7 +816,9 @@ export async function buildMergedGlb(imf, opts) {
   // 카메라가 보는 셀의 타일만 원본으로 스트리밍 → 트래픽↓ + 구조물 원본 형상. 프래그를 셀 키로
   // 정렬해 순회하면 '한 번에 한 셀'만 스트림에 열려 메모리 상한이 기존 스트리밍과 동일하다. ===
   const tilesMode = xktStream && (opts.tiles || process.env.XKT_TILES === '1');
-  const tileM = Number(process.env.XKT_TILE_M || 500);
+  const tileM = Number(process.env.XKT_TILE_M || 200); // 셀 200m: 뷰당 로드 국소화(작게)
+  // 타일당 삼각형 상한(작을수록 개별 로드 빠름). 3.6억÷1.2M ≈ 수백 타일, 각 ~20-30MB → 몇 초 로드.
+  const tileCap = Number(process.env.XKT_TILE_CAP || 1_200_000);
   const tileAabbs = {}; // 'c<idx>' → [minx,miny,minz,maxx,maxy,maxz] (origin-rel 월드 = focus 와 동일 공간)
   let order = null; // 순회 순서(셀 그룹). null 이면 0..nodeCount.
   const nodeCellKey = tilesMode ? new Array(nodeCount) : null;
@@ -1104,7 +1106,8 @@ export async function buildMergedGlb(imf, opts) {
       }
       addToLod(pos, idx32); // 개요(LOD1) 격자 누적(줌아웃·초기표시·타일모드의 기본 개요)
       // 한 셀이 너무 크면 CHUNK_CAP 에서 분할(각 조각도 자기 AABB 기록). 비-타일은 기존대로.
-      if (detail.chunk && detail.chunk.tris >= CHUNK_CAP) { if (tilesMode) await flushTile(); else await detail.flush(); }
+      if (tilesMode) { if (detail.chunk && detail.chunk.tris >= tileCap) await flushTile(); }
+      else if (detail.chunk && detail.chunk.tris >= CHUNK_CAP) await detail.flush();
       if (nav && nav.chunk && nav.chunk.tris >= CHUNK_CAP) await nav.flush();
     } else {
       const g = groupOf(node.material ?? -1, color);
