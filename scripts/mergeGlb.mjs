@@ -1093,17 +1093,13 @@ export async function buildMergedGlb(imf, opts) {
         if (nav) navT += emitDecimated(nav, navCell); // 모션 LOD
         streamV += nv; streamT += idx32.length / 3;
       } else {
-        // 기본 단일로드 배포. **구조물은 원본 형상 그대로**(감량 깨짐 없음 — 사용자 최우선),
-        // **지형(항공사진 드레이프, 대형 텍스처)만 감량**(항공사진이 덮어 형상 거칠어도 티 안 남).
-        // 지형은 삼각형이 압도적이라 감량으로 무게↓, 구조물은 소수라 원본이라도 감당 가능.
+        // 기본 단일로드 배포. ★실측: 구조물이 3.61억 삼각형(원본=8.7GB, 브라우저 로드 불가) → 원본
+        // 단일로드 불가능. 지형(항공드레이프)은 1.5m, 구조물은 XKT_STRUCT_CELL(기본 1.5m=로드가능
+        // 4.8M 빌드) 로 감량. 구조물 셀을 낮추면 형상 개선·무게↑(튜닝 파라미터). 근본은 스트리밍/LOD.
         const isTerrain = !!(tex && tex.big);
-        if (isTerrain) {
-          const t = emitDecimated(detail, decCell); // 지형: 감량(+ 항공사진 드레이프 유지)
-          streamT += t; terrTris += idx32.length / 3;
-        } else {
-          detail.add(pos, nrm, idx32, [fnx, fny, fnz], [fxx, fxy, fxz], baseColor, metal, rough, String(node.dbid), tex); // 구조물·기타: 원본
-          streamT += idx32.length / 3; structTris += idx32.length / 3;
-        }
+        const cell = isTerrain ? decCell : Number(process.env.XKT_STRUCT_CELL || decCell);
+        streamT += emitDecimated(detail, cell);
+        if (isTerrain) terrTris += idx32.length / 3; else structTris += idx32.length / 3;
         streamV += nv;
       }
       addToLod(pos, idx32); // 개요(LOD1) 격자 누적(줌아웃·초기표시·타일모드의 기본 개요)
