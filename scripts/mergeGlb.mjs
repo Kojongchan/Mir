@@ -648,6 +648,7 @@ export async function buildMergedGlb(imf, opts) {
     return d ? [d.x, d.y, d.z, mat?.opacity ?? 1] : [0.72, 0.74, 0.77, 1];
   };
   let streamV = 0, streamT = 0, texFrags = 0, texMiss = 0, navT = 0;
+  let terrTris = 0, structTris = 0; // 진단: 지형(감량) vs 구조물(원본) 삼각형 분해
   const imgUvBounds = new Map(); // 진단: 텍스처 이미지별 raw UV 범위(seam 원인 규명)
   const newChunk = () => ({ acc: [], bv: [], meshes: [], materials: [], nodes: [], pieces: [], bo: 0, tris: 0, images: [], textures: [], samplers: [], texMap: new Map() });
   // 청크 스트림 팩토리 — 상세('c', kind detail)와 내비 LOD('nav', kind nav)를 병렬로 굽는다.
@@ -937,7 +938,9 @@ export async function buildMergedGlb(imf, opts) {
             // POT 리사이즈(블록압축 GPU 텍스처 요건). 실패하면 텍스처 드롭 → 색(diffuse) 폴백.
             const pot = await potResizeTex(uri, buf);
             if (pot && pot.buf && pot.buf.length) {
-              tex = { uri, buf: pot.buf, mime: pot.mime, uvs };
+              // big = 대형 소스 이미지(≥1MP) = 항공사진 드레이프(지형). 재질 패턴 텍스처(콘크리트 등)는
+              // 작아서 big=false. 지형/구조물 구분에 사용(지형만 감량, 구조물은 원본).
+              tex = { uri, buf: pot.buf, mime: pot.mime, uvs, big: (pot.sw || 0) * (pot.sh || 0) >= 1_000_000 };
               texFrags++;
               if (texFrags <= 8) {
                 // 진단: 원본 UV 범위(정렬/오프셋/atlas 여부) + 소스 이미지 크기(비정사각=fit:fill 왜곡).
@@ -1090,8 +1093,18 @@ export async function buildMergedGlb(imf, opts) {
         if (nav) navT += emitDecimated(nav, navCell); // 모션 LOD
         streamV += nv; streamT += idx32.length / 3;
       } else {
-        streamT += emitDecimated(detail, decCell); // 기본: 감량본이 곧 배포 모델(경량)
-        streamV += nv; // 원본 정점(통계용 근사)
+        // 기본 단일로드 배포. **구조물은 원본 형상 그대로**(감량 깨짐 없음 — 사용자 최우선),
+        // **지형(항공사진 드레이프, 대형 텍스처)만 감량**(항공사진이 덮어 형상 거칠어도 티 안 남).
+        // 지형은 삼각형이 압도적이라 감량으로 무게↓, 구조물은 소수라 원본이라도 감당 가능.
+        const isTerrain = !!(tex && tex.big);
+        if (isTerrain) {
+          const t = emitDecimated(detail, decCell); // 지형: 감량(+ 항공사진 드레이프 유지)
+          streamT += t; terrTris += idx32.length / 3;
+        } else {
+          detail.add(pos, nrm, idx32, [fnx, fny, fnz], [fxx, fxy, fxz], baseColor, metal, rough, String(node.dbid), tex); // 구조물·기타: 원본
+          streamT += idx32.length / 3; structTris += idx32.length / 3;
+        }
+        streamV += nv;
       }
       addToLod(pos, idx32); // 개요(LOD1) 격자 누적(줌아웃·초기표시·타일모드의 기본 개요)
       // 한 셀이 너무 크면 CHUNK_CAP 에서 분할(각 조각도 자기 AABB 기록). 비-타일은 기존대로.
@@ -1140,6 +1153,7 @@ export async function buildMergedGlb(imf, opts) {
       log(`[merge] LOD1(개요) 방출: 정점 ${(lp.length / 3).toLocaleString()} · 삼각형 ${Math.round(lodTris).toLocaleString()} (셀 ${lodCell}m)`);
     }
     log(`[merge] XKT 스트리밍 완료: 상세청크 ${detail.idx}개 · nav청크 ${nav ? nav.idx : 0}개(삼각형 ${Math.round(navT).toLocaleString()}) · 정점 ${streamV.toLocaleString()} · 삼각형 ${Math.round(streamT).toLocaleString()} · LOD1 삼각형 ${Math.round(lodTris).toLocaleString()} · 텍스처 프래그 ${texFrags}`);
+    log(`[merge] 삼각형 분해(원본 기준): 지형(감량대상) ${Math.round(terrTris).toLocaleString()} · 구조물(원본) ${Math.round(structTris).toLocaleString()} → 구조물 원본유지 시 로드 무게 판단용`);
     // ★ 이미지별 raw UV 범위 진단: 각 타일 이미지가 실제로 차지하는 U/V 구간과, 정수 경계를
     // 넘나드는지(straddle=프래그별 floor 불일치 → seam 원인)를 출력한다.
     log(`[tex] 이미지별 raw UV 범위 (${imgUvBounds.size}개 이미지):`);
