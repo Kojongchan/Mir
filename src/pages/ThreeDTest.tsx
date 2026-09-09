@@ -587,8 +587,9 @@ export function ThreeDTest() {
         im.on('error', () => { /* 일부 실패해도 진행 */ });
       });
     }
-    // 개요(lod1) = 구조물 저해상(줌아웃 far 컨텍스트). 줌인하면 숨기고 원본 타일로 대체.
-    let overviewOn = true;
+    // 개요(lod1) = 구조물 저해상. ★항상 표시: 멀리 있어 상세 타일이 아직/안 로드된 구역도 개요가
+    // 늘 깔려 있어 구조물이 '사라지지 않음'(사용자 지적). 또 회전 중엔 상세를 감추고 이 개요만 그려
+    // 부드럽게(모션 LOD). 상세 타일은 그 위에 겹쳐 근거리 정밀도를 준다.
     if (lod1Url) {
       const lm = loader.load({ id: 'lod1', src: lod1Url, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
       lm.on('loaded', () => frameOnce());
@@ -600,13 +601,21 @@ export function ThreeDTest() {
     const CACHE_CAP = 44;    // 상주 타일 상한(LRU). 넘으면 오래 안 본 것부터 해제(재방문 시 재로드)
     const CONC = 8;          // 동시 다운로드 수(작은 타일 → 병렬 높여 빨리 채움)
     let loadingCount = 0, useClock = 0;
-    let moving = false; // 카메라 이동/회전 중 = 새 로딩 보류(트래픽 몰림·끊김 방지)
+    let moving = false; // 카메라 이동/회전 중 = 새 로딩 보류 + 상세 타일 숨김(모션 LOD)
     let want: Tile[] = [];
+    // ★ 모션 LOD: 회전/이동 중엔 무거운 상세 타일(tile*)을 숨겨 GPU 부하를 급감(→ 부드러운 회전).
+    // 지형 베이스·개요(lod1)·인스턴스 레이어(GPU 인스턴싱=저비용)는 계속 그려 형상 컨텍스트 유지.
+    // 멈추면 상세 타일 복원(나비스웍스/Fuzor 식). 3.6억 삼각형을 회전 중 통째로 그리던 게 버벅임 원인.
+    const setDetailVisible = (v: boolean) => {
+      for (const id of Object.keys(models)) {
+        if (id.startsWith('tile')) { const m = models[id]; if (m && m.visible !== v) m.visible = v; }
+      }
+    };
     const loadTile = (t: Tile) => {
       if (t.state !== 'idle') return;
       t.state = 'loading'; loadingCount++;
       const m = loader.load({ id: t.id, src: t.url, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
-      m.on('loaded', () => { t.state = 'loaded'; loadingCount--; pump(); });
+      m.on('loaded', () => { t.state = 'loaded'; loadingCount--; if (moving && models[t.id]) models[t.id].visible = false; pump(); });
       m.on('error', () => { t.state = 'idle'; loadingCount--; pump(); });
     };
     const pump = () => {
@@ -621,9 +630,9 @@ export function ThreeDTest() {
       const eye = viewer.camera.eye as number[];
       const look = viewer.camera.look as number[];
       const camDist = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
-      // 줌아웃(멀리)=개요(구조물 저해상)만, 지형 베이스는 항상. 가까이 들어오면 원본 타일 스트리밍.
-      const overviewOnly = camDist > sceneDiag * 0.30;
-      if (models['lod1'] && overviewOn !== overviewOnly) { overviewOn = overviewOnly; models['lod1'].visible = overviewOnly; }
+      // 줌아웃(아주 멀리)이면 상세 타일 스트리밍을 아예 멈추고 개요만(트래픽 절약). 개요(lod1)는
+      // 항상 표시라 별도 토글 없음. 가까이 오면 보는 곳 타일을 상세로 스트리밍.
+      const overviewOnly = camDist > sceneDiag * 0.55;
       const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.2, 350), 1400);
       // 선택 기준을 look(궤도 중심)→eye(카메라)+시선방향으로 변경. 기울어진 조감뷰에서 화면 아래쪽
       // (카메라 근처·look 에서 먼) 전경 타일이 누락되던 문제 대응. 시선 전방에 있고(뒤 제외) 로드
@@ -654,10 +663,11 @@ export function ThreeDTest() {
     // moving=true + 정지 타이머 리셋 → 약 0.28초 정지하면 moving=false 로 풀고 그때 한 번 재계산.
     let settle: number | null = null;
     lodSubRef.current = viewer.camera.on('matrix', () => {
-      moving = true;
+      if (!moving) { moving = true; setDetailVisible(false); } // 이동 시작 → 상세 타일 숨김(모션 LOD)
       if (settle) clearTimeout(settle);
       settle = window.setTimeout(() => {
         settle = null; moving = false;
+        setDetailVisible(true); // 멈춤 → 상세 타일 복원
         const look = viewer.camera.look as number[];
         const eye = viewer.camera.eye as number[];
         const cd = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
@@ -665,7 +675,7 @@ export function ThreeDTest() {
         const zoomChg = Number.isNaN(lastCamDist) ? Infinity : Math.abs(cd - lastCamDist) / Math.max(lastCamDist, 1);
         if (moved < Math.max(cd * 0.12, 90) && zoomChg < 0.15) { pump(); return; } // 변화 작으면 재선정 없이 로딩만 재개
         recompute();
-      }, 280);
+      }, 260);
     }) as unknown as string;
     recompute();
     setDbg(`타일 ${T.length}개 · 뷰 종속 스트리밍`);
