@@ -589,7 +589,7 @@ export function ThreeDTest() {
 
     const LOAD_BATCH = 28;   // 한 뷰에서 로드 시도할 최근접 타일 수
     const CACHE_CAP = 44;    // 상주 타일 상한(LRU). 넘으면 오래 안 본 것부터 해제(재방문 시 재로드)
-    const CONC = 6;          // 동시 다운로드 수(작은 타일 → 병렬 높여 빨리 채움)
+    const CONC = 8;          // 동시 다운로드 수(작은 타일 → 병렬 높여 빨리 채움)
     let loadingCount = 0, useClock = 0;
     let want: Tile[] = [];
     const loadTile = (t: Tile) => {
@@ -613,11 +613,18 @@ export function ThreeDTest() {
       const overviewOnly = camDist > sceneDiag * 0.30;
       if (models['lod1'] && overviewOn !== overviewOnly) { overviewOn = overviewOnly; models['lod1'].visible = overviewOnly; }
       const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.2, 350), 1400);
-      const distLook = (t: Tile) => Math.hypot(t.cx - look[0], t.cy - look[1], t.cz - look[2]);
+      // 선택 기준을 look(궤도 중심)→eye(카메라)+시선방향으로 변경. 기울어진 조감뷰에서 화면 아래쪽
+      // (카메라 근처·look 에서 먼) 전경 타일이 누락되던 문제 대응. 시선 전방에 있고(뒤 제외) 로드
+      // 깊이 안에 든 타일을 카메라에서 가까운 순으로 채운다 → 전경부터 채워짐.
+      let fx = look[0] - eye[0], fy = look[1] - eye[1], fz = look[2] - eye[2];
+      const fl = Math.hypot(fx, fy, fz) || 1; fx /= fl; fy /= fl; fz /= fl;
+      const distEye = (t: Tile) => Math.hypot(t.cx - eye[0], t.cy - eye[1], t.cz - eye[2]);
+      const forwardOf = (t: Tile) => (t.cx - eye[0]) * fx + (t.cy - eye[1]) * fy + (t.cz - eye[2]) * fz;
+      const loadFwd = loadR + camDist; // 시선 전방 로드 깊이(카메라~look + 여유)
       want = [];
       if (!overviewOnly) {
-        for (const t of T) if (distLook(t) - t.r < loadR) want.push(t);
-        want.sort((a, b) => distLook(a) - distLook(b));
+        for (const t of T) { const fwd = forwardOf(t); if (fwd < -t.r) continue; if (fwd - t.r > loadFwd) continue; want.push(t); }
+        want.sort((a, b) => distEye(a) - distEye(b)); // 카메라 근접(전경) 우선
         if (want.length > LOAD_BATCH) want = want.slice(0, LOAD_BATCH);
         for (const t of want) t.lastUsed = ++useClock; // 최근 사용 표시(LRU)
       }
