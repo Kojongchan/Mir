@@ -603,12 +603,13 @@ export function ThreeDTest() {
     let loadingCount = 0, useClock = 0;
     let moving = false; // 카메라 이동/회전 중 = 새 로딩 보류 + 상세 타일 숨김(모션 LOD)
     let want: Tile[] = [];
-    // ★ 모션 LOD: 회전/이동 중엔 무거운 상세 타일(tile*)을 숨겨 GPU 부하를 급감(→ 부드러운 회전).
-    // 지형 베이스·개요(lod1)·인스턴스 레이어(GPU 인스턴싱=저비용)는 계속 그려 형상 컨텍스트 유지.
-    // 멈추면 상세 타일 복원(나비스웍스/Fuzor 식). 3.6억 삼각형을 회전 중 통째로 그리던 게 버벅임 원인.
-    const setDetailVisible = (v: boolean) => {
+    // ★ 모션 LOD(강): 회전/이동 중엔 '구조물 전부'(상세 타일·인스턴스·개요)를 숨기고 **지형 베이스만**
+    // 그린다 → GPU 부하 최소 = 확실히 부드러운 회전. 7km 철도 전체(개요·인스턴스 포함)를 회전 중에도
+    // 그리던 게 완전 렉의 원인. 멈추면 구조물 복원(나비스웍스/Fuzor 식). 지형(115만)만 남아 가벼움.
+    const setStructVisible = (v: boolean) => {
       for (const id of Object.keys(models)) {
-        if (id.startsWith('tile')) { const m = models[id]; if (m && m.visible !== v) m.visible = v; }
+        if (id.startsWith('base')) continue; // 지형 베이스는 항상 표시(가벼움)
+        const m = models[id]; if (m && m.visible !== v) m.visible = v;
       }
     };
     const loadTile = (t: Tile) => {
@@ -663,11 +664,11 @@ export function ThreeDTest() {
     // moving=true + 정지 타이머 리셋 → 약 0.28초 정지하면 moving=false 로 풀고 그때 한 번 재계산.
     let settle: number | null = null;
     lodSubRef.current = viewer.camera.on('matrix', () => {
-      if (!moving) { moving = true; setDetailVisible(false); } // 이동 시작 → 상세 타일 숨김(모션 LOD)
+      if (!moving) { moving = true; setStructVisible(false); } // 이동 시작 → 구조물 전부 숨김(지형만)
       if (settle) clearTimeout(settle);
       settle = window.setTimeout(() => {
         settle = null; moving = false;
-        setDetailVisible(true); // 멈춤 → 상세 타일 복원
+        setStructVisible(true); // 멈춤 → 구조물 복원
         const look = viewer.camera.look as number[];
         const eye = viewer.camera.eye as number[];
         const cd = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
