@@ -603,13 +603,13 @@ export function ThreeDTest() {
     let loadingCount = 0, useClock = 0;
     let moving = false; // 카메라 이동/회전 중 = 새 로딩 보류 + 상세 타일 숨김(모션 LOD)
     let want: Tile[] = [];
-    // ★ 모션 LOD(강): 회전/이동 중엔 '구조물 전부'(상세 타일·인스턴스·개요)를 숨기고 **지형 베이스만**
-    // 그린다 → GPU 부하 최소 = 확실히 부드러운 회전. 7km 철도 전체(개요·인스턴스 포함)를 회전 중에도
-    // 그리던 게 완전 렉의 원인. 멈추면 구조물 복원(나비스웍스/Fuzor 식). 지형(115만)만 남아 가벼움.
-    const setStructVisible = (v: boolean) => {
+    // ★ 모션 LOD: 회전/이동 중엔 '무거운 상세 타일(tile*)만' 숨긴다. 지형·인스턴스 구조물·개요는
+    // 계속 보인다(인스턴스=GPU 인스턴싱으로 저비용, 개요=9MB 저해상 → 회전 중에도 가벼움). 이렇게
+    // 하면 회전 시 구조물이 '사라지지 않고'(사용자 지적) 부드럽다. 상세 타일은 근접 검사 때만 쓰므로
+    // 회전 중 숨겨도 손실 적다. 멈추면 복원.
+    const setTilesVisible = (v: boolean) => {
       for (const id of Object.keys(models)) {
-        if (id.startsWith('base')) continue; // 지형 베이스는 항상 표시(가벼움)
-        const m = models[id]; if (m && m.visible !== v) m.visible = v;
+        if (id.startsWith('tile')) { const m = models[id]; if (m && m.visible !== v) m.visible = v; }
       }
     };
     const loadTile = (t: Tile) => {
@@ -633,11 +633,10 @@ export function ThreeDTest() {
       const camDist = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
       // 줌아웃(아주 멀리)이면 상세 타일 스트리밍을 아예 멈추고 개요만(트래픽 절약). 개요(lod1)는
       // 항상 표시라 별도 토글 없음. 가까이 오면 보는 곳 타일을 상세로 스트리밍.
-      const overviewOnly = camDist > sceneDiag * 0.55;
-      const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.2, 350), 1400);
-      // 인스턴스 레이어(21.8만 엔티티=무거움)는 '줌인(가까이)일 때만' 표시 → 프러스텀 컬링으로 근처만
-      // 그려 부하 급감. 줌아웃(개요)에선 숨기고 lod1(거친 전체)만 → 정지 프레임도 가벼움.
-      for (const id of Object.keys(models)) if (id.startsWith('inst')) { const m = models[id]; const vis = !overviewOnly; if (m && m.visible !== vis) m.visible = vis; }
+      // ★ 상세 타일은 '가까이 줌인해 검사할 때만' 스트리밍한다(기본 뷰=인스턴스+개요로 충분).
+      // 처음 열 때(전체 맞춤)·둘러볼 때는 타일을 안 받아 최초 로드가 빠르고 이동 시 재로딩 대기가 없다.
+      const overviewOnly = camDist > sceneDiag * 0.16;
+      const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.1, 200), 900);
       // 선택 기준을 look(궤도 중심)→eye(카메라)+시선방향으로 변경. 기울어진 조감뷰에서 화면 아래쪽
       // (카메라 근처·look 에서 먼) 전경 타일이 누락되던 문제 대응. 시선 전방에 있고(뒤 제외) 로드
       // 깊이 안에 든 타일을 카메라에서 가까운 순으로 채운다 → 전경부터 채워짐.
@@ -667,11 +666,11 @@ export function ThreeDTest() {
     // moving=true + 정지 타이머 리셋 → 약 0.28초 정지하면 moving=false 로 풀고 그때 한 번 재계산.
     let settle: number | null = null;
     lodSubRef.current = viewer.camera.on('matrix', () => {
-      if (!moving) { moving = true; setStructVisible(false); } // 이동 시작 → 구조물 전부 숨김(지형만)
+      if (!moving) { moving = true; setTilesVisible(false); } // 이동 시작 → 무거운 상세 타일만 숨김
       if (settle) clearTimeout(settle);
       settle = window.setTimeout(() => {
         settle = null; moving = false;
-        setStructVisible(true); // 멈춤 → 구조물 복원
+        setTilesVisible(true); // 멈춤 → 상세 타일 복원
         const look = viewer.camera.look as number[];
         const eye = viewer.camera.eye as number[];
         const cd = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
