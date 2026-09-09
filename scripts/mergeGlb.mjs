@@ -869,6 +869,19 @@ export async function buildMergedGlb(imf, opts) {
     log(`[inst] flatten 삼각형(현재 방식) ${Math.round(diagFlatTris).toLocaleString()} · 고유 삼각형(인스턴싱 저장분) ${Math.round(uniqueTris).toLocaleString()}`);
     log(`[inst] ⇒ 반복배수 ${ratio.toFixed(2)}배 (이 배수만큼 지오메트리 용량 감소 가능, 원본 형상 유지)`);
     log(`[inst] 반복 geom(refs>1) ${reusedGeoms.toLocaleString()}개 · 이들의 총 참조 ${reusedRefs.toLocaleString()}`);
+    // 레이어 분리 크기(아키텍처 결정용): 임계 refs>=TH 인 geom = 항상로드 인스턴스 레이어(고유 1벌 저장),
+    // 나머지 = 뷰 타일(flatten). 임계별로 (항상로드 삼각형 / 타일 삼각형 / 항상로드 인스턴스 수)를 본다.
+    // XKT 대략 용량 ≈ 삼각형수 × ~17B(정점+인덱스 양자화, 텍스처 없음). 이걸로 초기 고정비용을 가늠.
+    const B_PER_TRI = 17;
+    for (const TH of [2, 4, 8, 16, 32]) {
+      let alwaysTris = 0, alwaysInst = 0, tileTris = 0;
+      for (const d of diagInst.values()) {
+        if (d.refs >= TH) { alwaysTris += d.tris; alwaysInst += d.refs; }
+        else tileTris += d.tris * d.refs;
+      }
+      const mb = (t) => (t * B_PER_TRI / 1e6).toFixed(0);
+      log(`[inst] 임계 refs>=${TH}: 항상로드 ${Math.round(alwaysTris).toLocaleString()}삼각형(~${mb(alwaysTris)}MB, 인스턴스 ${alwaysInst.toLocaleString()}개) · 타일 ${Math.round(tileTris).toLocaleString()}삼각형(~${mb(tileTris)}MB)`);
+    }
     const top = [...diagInst.entries()].map(([g, d]) => ({ g, refs: d.refs, tris: d.tris, saved: (d.refs - 1) * d.tris }))
       .sort((a, b) => b.saved - a.saved).slice(0, 15);
     log(`[inst] 상위 반복 geom(절감 삼각형 순):`);
