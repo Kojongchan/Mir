@@ -543,7 +543,7 @@ export function ThreeDTest() {
    * → 트래픽은 방문 구역만, 구조물은 감량 없는 원본. tiles[i].aabb 는 focus 와 같은 공간
    * (회전 전 실좌표) → (x,y,z)→(x,z,-y) 로 뷰어공간 변환해 거리 판정.
    */
-  const mountTiles = useCallback((tiles: { url: string; aabb: number[] }[], baseUrls: string[] | undefined, lod1Url: string | undefined, label: string, focus?: Focus) => {
+  const mountTiles = useCallback((tiles: { url: string; aabb: number[] }[], baseUrls: string[] | undefined, instUrls: string[] | undefined, lod1Url: string | undefined, label: string, focus?: Focus) => {
     const viewer = viewerRef.current;
     const loader = xktLoaderRef.current;
     if (!viewer || !loader || !tiles.length) return;
@@ -576,6 +576,15 @@ export function ThreeDTest() {
         const bm = loader.load({ id: `base${i}`, src: u, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
         bm.on('loaded', () => frameOnce());
         bm.on('error', () => { /* 베이스 일부 실패해도 진행 */ });
+      });
+    }
+    // 인스턴스 레이어(반복 구조물 뼈대, 항상 로드·항상 표시). 원본 형상 그대로, 어디서나 즉시 보임
+    // → 구조물 절반 이상이 스트리밍 대기 없이 바로 뜬다.
+    if (instUrls && instUrls.length) {
+      instUrls.forEach((u, i) => {
+        const im = loader.load({ id: `inst${i}`, src: u, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
+        im.on('loaded', () => frameOnce());
+        im.on('error', () => { /* 일부 실패해도 진행 */ });
       });
     }
     // 개요(lod1) = 구조물 저해상(줌아웃 far 컨텍스트). 줌인하면 숨기고 원본 타일로 대체.
@@ -689,6 +698,7 @@ export function ThreeDTest() {
         navUrls?: string[];
         tiles?: { url: string; aabb: number[] }[];
         baseUrls?: string[];
+        instUrls?: string[];
         lod1Url?: string;
         focus?: Focus;
         failed?: boolean;
@@ -711,7 +721,7 @@ export function ThreeDTest() {
       // XKT(분할) 우선, 없으면 단일 GLB(DWG 등).
       const doMount = (s: State) => {
         // 타일(뷰 종속 스트리밍) 우선 → 없으면 분할 XKT → 단일 GLB.
-        if (s.xkt && s.tiles && s.tiles.length) mountTiles(s.tiles, s.baseUrls, s.lod1Url, f.name, s.focus);
+        if (s.xkt && s.tiles && s.tiles.length) mountTiles(s.tiles, s.baseUrls, s.instUrls, s.lod1Url, f.name, s.focus);
         else if (s.xkt && s.urls && s.urls.length) mountXkt(s.urls, s.lod1Url, f.name, s.focus, s.navUrls);
         else if (s.url) mountGlb(s.url, f.name, s.focus);
       };

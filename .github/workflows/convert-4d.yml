@@ -49,6 +49,14 @@ on:
         description: "'1'이면 인스턴싱 측정만(변환/업로드 없음). tiles=1 과 함께 사용. 빠른 진단"
         required: false
         default: ''
+      instance:
+        description: "'1'이면 반복 부재를 인스턴싱(항상로드 구조물 뼈대 1벌+행렬). 원본 형상·타일 경량화"
+        required: false
+        default: ''
+      inst_min:
+        description: "인스턴싱 최소 반복수(refs). 기본 16(≈43MB로 반복부재 92% 포섭). 높일수록 항상로드↓"
+        required: false
+        default: ''
       dxf_test:
         description: "'1'이면 SVF 대신 원본 DWG→DXF 변환 검증(project/item 필요)"
         required: false
@@ -206,6 +214,8 @@ jobs:
           XKT_TILES: ${{ github.event.inputs.tiles }}
           XKT_TILE_M: ${{ github.event.inputs.tile_m }}
           XKT_DIAG_ONLY: ${{ github.event.inputs.diag_only }}
+          XKT_INSTANCE: ${{ github.event.inputs.instance }}
+          XKT_INST_MIN: ${{ github.event.inputs.inst_min }}
         run: node scripts/convert4d.mjs
 
       - name: Headless xeokit 렌더 진단 (LOD1 오블리크 · base64 PNG 로그)

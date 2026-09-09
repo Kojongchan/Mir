@@ -698,6 +698,38 @@ export async function buildMergedGlb(imf, opts) {
     c.nodes.push({ mesh: meshI, name });
     c.tris += idxF.length / 3;
     };
+    // ★ 인스턴싱 add: 같은 geomKey 의 accessor(pos/nrm/idx)를 청크 내 1벌만 만들고, 인스턴스마다
+    // 그 accessor 를 참조하는 mesh + (행렬 담은) node 를 추가한다. convert2xkt 가 프리미티브를
+    // accessor ID 해시로 dedupe → XKT 에 지오메트리 1벌 + 인스턴스별 메시(원본 형상 그대로, 용량↓).
+    // 색은 인스턴스별 material 로 유지(해시는 색 무관). geomKey 는 반드시 청크 경계 안에서만 재사용.
+    s.addInstance = (geomKey, pos, nrm, idxF, fmin, fmax, baseColor, metal, rough, matrix, name) => {
+      if (!s.chunk) s.chunk = newChunk();
+      const c = s.chunk;
+      if (!c.instAcc) c.instAcc = new Map();
+      const addV = (typed, target) => {
+        const buf = Buffer.from(typed.buffer, typed.byteOffset, typed.byteLength);
+        c.bv.push({ buffer: 0, byteOffset: c.bo, byteLength: buf.length, target });
+        c.pieces.push(buf); c.bo += buf.length;
+        const pad = (4 - (c.bo % 4)) % 4; if (pad) { c.pieces.push(Buffer.alloc(pad)); c.bo += pad; }
+        return c.bv.length - 1;
+      };
+      let acc = c.instAcc.get(geomKey);
+      if (!acc) {
+        const pA = c.acc.push({ bufferView: addV(pos, 34962), componentType: 5126, count: pos.length / 3, type: 'VEC3', min: fmin, max: fmax }) - 1;
+        const nA = c.acc.push({ bufferView: addV(nrm, 34962), componentType: 5126, count: nrm.length / 3, type: 'VEC3' }) - 1;
+        const iA = c.acc.push({ bufferView: addV(idxF, 34963), componentType: 5125, count: idxF.length, type: 'SCALAR' }) - 1;
+        acc = { pA, nA, iA, tris: idxF.length / 3 };
+        c.instAcc.set(geomKey, acc);
+      }
+      const mat = { pbrMetallicRoughness: { baseColorFactor: baseColor, metallicFactor: metal, roughnessFactor: rough }, doubleSided: true, ...(baseColor[3] < 1 ? { alphaMode: 'BLEND' } : {}) };
+      const matI = c.materials.push(mat) - 1;
+      const meshI = c.meshes.push({ primitives: [{ mode: 4, attributes: { POSITION: acc.pA, NORMAL: acc.nA }, indices: acc.iA, material: matI }] }) - 1;
+      c.nodes.push({ mesh: meshI, matrix: Array.from(matrix), name });
+      c.tris += acc.tris; // 방출(flatten) 삼각형 — 로그용
+    };
+    // 청크에 담긴 '고유 지오메트리' 바이트(accessor 실적재량). 인스턴스 레이어 flush 판단에 사용
+    // (flatten 삼각형이 아니라 실제 저장량 기준으로 나눠야 항상로드 파일이 과도하게 커지지 않음).
+    s.geomBytes = () => (s.chunk ? s.chunk.bo : 0);
     s.flush = async () => {
       if (!s.chunk || s.chunk.meshes.length === 0) return;
       const ch = s.chunk;
@@ -822,6 +854,16 @@ export async function buildMergedGlb(imf, opts) {
   const tileAabbs = {}; // 'c<idx>' → [minx,miny,minz,maxx,maxy,maxz] (origin-rel 월드 = focus 와 동일 공간)
   const base = tilesMode ? makeStream('b', 'base') : null; // 지형 항상로드 베이스(타일모드 전용)
   let baseT = 0;
+  // ★ 인스턴싱 레이어(선택, XKT_INSTANCE=1): 반복 부재(refs>=XKT_INST_MIN)를 '항상 로드되는 구조물
+  // 뼈대'로 분리 — 형상 1벌 + 인스턴스별 행렬(원본 그대로, 감량 아님). 타일에서 이 반복분을 빼
+  // 타일이 2배↑ 가벼워지고, 반복 구조물은 어디서나 즉시 보임. 임계는 실측(refs>=16 ≈ 43MB로 반복
+  // 부재 92% 포섭)으로 정함. instSet 은 사전패스(diagInst) 뒤 채운다.
+  const instMode = tilesMode && process.env.XKT_INSTANCE === '1';
+  const instMin = Number(process.env.XKT_INST_MIN || 16);
+  const instSet = new Set(); // geomId(문자열) — refs>=instMin
+  const inst = instMode ? makeStream('i', 'inst') : null;
+  const instList = []; // 인스턴스 후보 노드 인덱스(2패스에서 방출)
+  const INST_GEOM_BYTES = Number(process.env.XKT_INST_BYTES || 90_000_000); // 인스턴스 청크당 고유 지오메트리 상한(~90MB)
   let order = null; // 순회 순서(셀 그룹). null 이면 0..nodeCount.
   const nodeCellKey = tilesMode ? new Array(nodeCount) : null;
   // 인스턴싱 측정용(진단): geomId → {refs, tris}. 반복 부재(교각·거더·볼트 등)가 매번 통째로
@@ -869,6 +911,8 @@ export async function buildMergedGlb(imf, opts) {
     log(`[inst] flatten 삼각형(현재 방식) ${Math.round(diagFlatTris).toLocaleString()} · 고유 삼각형(인스턴싱 저장분) ${Math.round(uniqueTris).toLocaleString()}`);
     log(`[inst] ⇒ 반복배수 ${ratio.toFixed(2)}배 (이 배수만큼 지오메트리 용량 감소 가능, 원본 형상 유지)`);
     log(`[inst] 반복 geom(refs>1) ${reusedGeoms.toLocaleString()}개 · 이들의 총 참조 ${reusedRefs.toLocaleString()}`);
+    // 인스턴싱 대상 확정(refs>=instMin) — 방출 경로에서 이 집합의 geom 을 항상로드 레이어로 뺀다.
+    if (instMode) { for (const [g, d] of diagInst) if (d.refs >= instMin) instSet.add(g); log(`[inst] 인스턴싱 활성(XKT_INSTANCE=1) · 임계 refs>=${instMin} → 대상 geom ${instSet.size.toLocaleString()}종`); }
     // 레이어 분리 크기(아키텍처 결정용): 임계 refs>=TH 인 geom = 항상로드 인스턴스 레이어(고유 1벌 저장),
     // 나머지 = 뷰 타일(flatten). 임계별로 (항상로드 삼각형 / 타일 삼각형 / 항상로드 인스턴스 수)를 본다.
     // XKT 대략 용량 ≈ 삼각형수 × ~17B(정점+인덱스 양자화, 텍스처 없음). 이걸로 초기 고정비용을 가늠.
@@ -926,6 +970,12 @@ export async function buildMergedGlb(imf, opts) {
     let idx = geom.getIndices();
     let normals = geom.getNormals();
     if (!verts || !idx || verts.length === 0 || idx.length === 0) { diag.emptyMesh++; continue; }
+    // ★ 인스턴싱: 반복 부재(instSet)이면서 텍스처 없는(항공/패턴 아님) 노드는 타일에서 빼고
+    // 인스턴스 레이어(2패스)로 방출한다. 텍스처 있는 것은 UV 보존 위해 기존 타일 경로 유지.
+    if (instMode && instSet.has(String(node.geometry))) {
+      const matDiff = imf.getMaterial(node.material ?? -1)?.maps?.diffuse;
+      if (!matDiff) { instList.push(i); continue; }
+    }
     fragCount++;
     // 대표 정점색은 단순화 전 원본에서(메시 색은 RGBA=정점당 4). DWG 등의 실제 색.
     const color = fragColor(geom.getColors?.(), verts.length / 3, 4);
@@ -1180,6 +1230,61 @@ export async function buildMergedGlb(imf, opts) {
   // XKT 스트리밍: 마지막 청크 flush + LOD1(개요) 방출 후 반환(그룹 emit 경로 안 탐).
   if (xktStream) {
     if (tilesMode) { await flushTile(); if (base) await base.flush(); } else await detail.flush();
+    // ★ 인스턴스 레이어 방출(2패스): instList 를 geomId 로 묶어, 같은 geom 의 모든 인스턴스를 한
+    // 청크에 담는다(→ convert2xkt 가 accessor 해시로 지오메트리 1벌 dedupe). geom 로컬 형상 1벌 +
+    // 인스턴스별 행렬(원본 형상 그대로). 청크는 '고유 지오메트리 바이트'로 나눠 항상로드 파일이
+    // 과대해지지 않게 한다(geom 경계에서만 flush → dedupe 보존).
+    let instMeshesN = 0, instGeomsN = 0, instTrisStored = 0;
+    if (instMode && inst && instList.length) {
+      log(`[inst] 인스턴스 레이어 방출 시작: 후보 노드 ${instList.length.toLocaleString()}`);
+      const byGeom = new Map();
+      for (const ni of instList) { const g = String(imf.getNode(ni).geometry); let a = byGeom.get(g); if (!a) { a = []; byGeom.set(g, a); } a.push(ni); }
+      const q = Number(process.env.XKT_WELD_Q || 50);
+      for (const [g, list] of byGeom) {
+        const geom = imf.getGeometry(imf.getNode(list[0]).geometry);
+        let lverts = geom.getVertices(); const lidx = geom.getIndices(); let lnormals = geom.getNormals();
+        if (!lverts || !lidx || lverts.length === 0 || lidx.length === 0) continue;
+        let idx32 = lidx instanceof Uint32Array ? lidx : Uint32Array.from(lidx);
+        try { const w = weld(lverts, idx32, lnormals, q); const c = compact(dropDegen(w.idx), w.verts, w.normals); lverts = c.verts; lnormals = c.normals; idx32 = c.idx; } catch { /* 원본 유지 */ }
+        if (idx32.length < 3) continue;
+        const lnv = lverts.length / 3;
+        // 로컬 노멀 정규화(월드 변환은 인스턴스 node.matrix 가 담당).
+        const lnrm = new Float32Array(lnv * 3);
+        for (let v = 0; v < lnv; v++) { let nx = 0, ny = 0, nz = 1; if (lnormals) { nx = lnormals[v * 3]; ny = lnormals[v * 3 + 1]; nz = lnormals[v * 3 + 2]; const L = Math.hypot(nx, ny, nz) || 1; nx /= L; ny /= L; nz /= L; } lnrm[v * 3] = nx; lnrm[v * 3 + 1] = ny; lnrm[v * 3 + 2] = nz; }
+        let mnx = Infinity, mny = Infinity, mnz = Infinity, mxx = -Infinity, mxy = -Infinity, mxz = -Infinity;
+        for (let v = 0; v < lnv; v++) { const x = lverts[v * 3], y = lverts[v * 3 + 1], z = lverts[v * 3 + 2]; if (x < mnx) mnx = x; if (y < mny) mny = y; if (z < mnz) mnz = z; if (x > mxx) mxx = x; if (y > mxy) mxy = y; if (z > mxz) mxz = z; }
+        const geomKey = `g${g}`;
+        const color = fragColor(geom.getColors?.(), lnv, 4);
+        for (const ni of list) {
+          const node = imf.getNode(ni);
+          const M = matrixOf(node.transform);
+          // ORIGIN 이 아직 없으면(전부 인스턴스인 극단) 이 인스턴스 위치로 설정.
+          if (!ORIGIN) { const tx = M ? M[12] : 0, ty = M ? M[13] : 0, tz = M ? M[14] : 0; setOrigin(tx, ty, tz); }
+          const mat = M ? M.slice() : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+          mat[12] -= ORIGIN[0]; mat[13] -= ORIGIN[1]; mat[14] -= ORIGIN[2]; // 로컬→(월드-ORIGIN)
+          const bc = fragBaseColor(color, node.material ?? -1);
+          const nb = bc[0] < 0.06 && bc[1] < 0.06 && bc[2] < 0.06;
+          const baseColor = nb ? [0.55, 0.55, 0.55, bc[3]] : bc;
+          const m0 = imf.getMaterial(node.material ?? -1);
+          const metal = color ? 0 : Math.min(1, Math.max(0, m0?.metallic ?? 0));
+          const rough = color ? 0.9 : Math.min(1, Math.max(0, m0?.roughness ?? 0.9));
+          inst.addInstance(geomKey, lverts, lnrm, idx32, [mnx, mny, mnz], [mxx, mxy, mxz], baseColor, metal, rough, mat, String(node.dbid));
+          // 씬 경계/포커스에 인스턴스 월드중심 반영.
+          const cx = (mnx + mxx) / 2, cy = (mny + mxy) / 2, cz = (mnz + mxz) / 2;
+          const wx = M ? M[0] * cx + M[4] * cy + M[8] * cz + M[12] : cx;
+          const wy = M ? M[1] * cx + M[5] * cy + M[9] * cz + M[13] : cy;
+          const wz = M ? M[2] * cx + M[6] * cy + M[10] * cz + M[14] : cz;
+          const ox = wx - ORIGIN[0], oy = wy - ORIGIN[1], oz = wz - ORIGIN[2];
+          bump(ox, oy, oz); foci.push({ c: [ox, oy, oz], w: lnv });
+          instMeshesN++; instTrisStored += idx32.length / 3;
+        }
+        instGeomsN++;
+        // geom 하나 끝 → 고유 지오메트리 바이트가 상한 넘으면 flush(geom 경계라 dedupe 보존).
+        if (inst.geomBytes() >= INST_GEOM_BYTES) await inst.flush();
+      }
+      await inst.flush();
+      log(`[inst] 인스턴스 레이어 완료: 고유 geom ${instGeomsN.toLocaleString()} · 인스턴스(메시) ${instMeshesN.toLocaleString()} · 청크 ${inst.idx} · 저장 지오메트리 삼각형 ${Math.round(instTrisStored).toLocaleString()}`);
+    }
     if (nav) await nav.flush();
     // LOD1 개요 메시 방출(전역 격자 클러스터 결과) → onChunk(kind 'lod1')
     let lodTris = 0;
@@ -1218,8 +1323,8 @@ export async function buildMergedGlb(imf, opts) {
       const span = `U[${b.u0.toFixed(2)}~${b.u1.toFixed(2)}] V[${b.v0.toFixed(2)}~${b.v1.toFixed(2)}] 프래그${b.n}`;
       log(`[tex]   ${uri.slice(-42)} ${span}${straddleV || straddleU ? ` ⚠STRADDLE(u:${straddleU} v:${straddleV})` : ''}`);
     }
-    if (tilesMode) log(`[tile] 타일 ${Object.keys(tileAabbs).length}개(구조물, 원본) · 지형베이스 ${base ? base.idx : 0}청크(삼각형 ${Math.round(baseT).toLocaleString()}) · 셀 ${tileM}m.`);
-    return { xkt: true, tiles: tilesMode, tileAabbs, baseChunks: base ? base.idx : 0, baseTris: baseT, chunks: detail.idx, navChunks: nav ? nav.idx : 0, navTris: navT, vertices: streamV, triangles: streamT, lodTris, decimated: 0, focus: robustFocus(foci) };
+    if (tilesMode) log(`[tile] 타일 ${Object.keys(tileAabbs).length}개(구조물, 원본) · 지형베이스 ${base ? base.idx : 0}청크(삼각형 ${Math.round(baseT).toLocaleString()}) · 인스턴스 ${inst ? inst.idx : 0}청크(메시 ${instMeshesN.toLocaleString()}) · 셀 ${tileM}m.`);
+    return { xkt: true, tiles: tilesMode, tileAabbs, baseChunks: base ? base.idx : 0, baseTris: baseT, instChunks: inst ? inst.idx : 0, instMeshes: instMeshesN, instTris: instTrisStored, chunks: detail.idx, navChunks: nav ? nav.idx : 0, navTris: navT, vertices: streamV, triangles: streamT, lodTris, decimated: 0, focus: robustFocus(foci) };
   }
   // 솔리드(삼각형) 부재가 하나라도 있으면 선/점은 대개 엣지/주석 클러터(IFC 의 와이어프레임
   // 11만개 등) → 제외. 순수 선형(솔리드 0 = DWG 도면)만 선/점 유지. 정점수 비율은 엣지선이
