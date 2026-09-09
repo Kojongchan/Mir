@@ -45,6 +45,10 @@ on:
         description: "공간 타일 셀 크기(m). 기본 500"
         required: false
         default: ''
+      diag_only:
+        description: "'1'이면 인스턴싱 측정만(변환/업로드 없음). tiles=1 과 함께 사용. 빠른 진단"
+        required: false
+        default: ''
       dxf_test:
         description: "'1'이면 SVF 대신 원본 DWG→DXF 변환 검증(project/item 필요)"
         required: false
@@ -201,6 +205,7 @@ jobs:
           XKT_UV_MODE: ${{ github.event.inputs.uv_mode }}
           XKT_TILES: ${{ github.event.inputs.tiles }}
           XKT_TILE_M: ${{ github.event.inputs.tile_m }}
+          XKT_DIAG_ONLY: ${{ github.event.inputs.diag_only }}
         run: node scripts/convert4d.mjs
 
       - name: Headless xeokit 렌더 진단 (LOD1 오블리크 · base64 PNG 로그)

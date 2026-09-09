@@ -824,6 +824,11 @@ export async function buildMergedGlb(imf, opts) {
   let baseT = 0;
   let order = null; // 순회 순서(셀 그룹). null 이면 0..nodeCount.
   const nodeCellKey = tilesMode ? new Array(nodeCount) : null;
+  // 인스턴싱 측정용(진단): geomId → {refs, tris}. 반복 부재(교각·거더·볼트 등)가 매번 통째로
+  // 복제(flatten)되는지 = 인스턴싱 효과 크기를 정량화. convert2xkt 는 동일 프리미티브를 1벌 저장 +
+  // 인스턴스별 행렬로 재사용하므로, refs>1 인 geom 이 많으면 원본 형상 그대로 용량 급감 가능.
+  const diagInst = new Map(); // geomId → { refs, tris }
+  let diagFlatTris = 0;
   if (tilesMode) {
     log(`[tile] 공간 타일 사전패스(셀 ${tileM}m)…`);
     const items = [];
@@ -834,6 +839,11 @@ export async function buildMergedGlb(imf, opts) {
       if (!geom || geom.kind !== GEOM_MESH) continue;
       const verts = geom.getVertices();
       if (!verts || verts.length < 3) continue;
+      // 인스턴싱 tally: geomId 별 참조수·삼각형수.
+      const gid = String(node.geometry);
+      let di = diagInst.get(gid);
+      if (!di) { const gi = geom.getIndices?.(); const tris = gi && gi.length ? gi.length / 3 : verts.length / 9; di = { refs: 0, tris }; diagInst.set(gid, di); }
+      di.refs++; diagFlatTris += di.tris;
       // 로컬 bbox 중심(정점 샘플링으로 저비용) → 노드 행렬로 월드 변환 → 수평 셀 키.
       let lx0 = Infinity, ly0 = Infinity, lz0 = Infinity, lx1 = -Infinity, ly1 = -Infinity, lz1 = -Infinity;
       const step = Math.max(3, Math.floor(verts.length / 3 / 64) * 3);
@@ -849,6 +859,26 @@ export async function buildMergedGlb(imf, opts) {
     order = items;
     const nCells = new Set(items.map((i) => nodeCellKey[i])).size;
     log(`[tile] 사전패스 완료: 대상 프래그 ${items.length} · 점유 셀 ${nCells}`);
+
+    // === 인스턴싱 측정 리포트 ===
+    let uniqueTris = 0, reusedGeoms = 0, reusedRefs = 0;
+    for (const di of diagInst.values()) { uniqueTris += di.tris; if (di.refs > 1) { reusedGeoms++; reusedRefs += di.refs; } }
+    const ratio = uniqueTris > 0 ? diagFlatTris / uniqueTris : 1;
+    log(`[inst] ── 인스턴싱 측정 ──`);
+    log(`[inst] 프래그(노드) ${items.length.toLocaleString()} · 고유 geom ${diagInst.size.toLocaleString()}`);
+    log(`[inst] flatten 삼각형(현재 방식) ${Math.round(diagFlatTris).toLocaleString()} · 고유 삼각형(인스턴싱 저장분) ${Math.round(uniqueTris).toLocaleString()}`);
+    log(`[inst] ⇒ 반복배수 ${ratio.toFixed(2)}배 (이 배수만큼 지오메트리 용량 감소 가능, 원본 형상 유지)`);
+    log(`[inst] 반복 geom(refs>1) ${reusedGeoms.toLocaleString()}개 · 이들의 총 참조 ${reusedRefs.toLocaleString()}`);
+    const top = [...diagInst.entries()].map(([g, d]) => ({ g, refs: d.refs, tris: d.tris, saved: (d.refs - 1) * d.tris }))
+      .sort((a, b) => b.saved - a.saved).slice(0, 15);
+    log(`[inst] 상위 반복 geom(절감 삼각형 순):`);
+    for (const t of top) log(`[inst]   geom#${t.g} refs=${t.refs.toLocaleString()} tris/개=${Math.round(t.tris).toLocaleString()} 절감=${Math.round(t.saved).toLocaleString()}`);
+
+    if (process.env.XKT_DIAG_ONLY === '1') {
+      log(`[inst] XKT_DIAG_ONLY=1 → 측정만 하고 변환 없이 종료.`);
+      await new Promise((r) => setTimeout(r, 300)); // stdout flush 여유
+      process.exit(0);
+    }
   }
   let tileAabb = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
   let curCell = null;
