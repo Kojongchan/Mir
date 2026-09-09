@@ -591,6 +591,7 @@ export function ThreeDTest() {
     const CACHE_CAP = 44;    // 상주 타일 상한(LRU). 넘으면 오래 안 본 것부터 해제(재방문 시 재로드)
     const CONC = 8;          // 동시 다운로드 수(작은 타일 → 병렬 높여 빨리 채움)
     let loadingCount = 0, useClock = 0;
+    let moving = false; // 카메라 이동/회전 중 = 새 로딩 보류(트래픽 몰림·끊김 방지)
     let want: Tile[] = [];
     const loadTile = (t: Tile) => {
       if (t.state !== 'idle') return;
@@ -600,9 +601,11 @@ export function ThreeDTest() {
       m.on('error', () => { t.state = 'idle'; loadingCount--; pump(); });
     };
     const pump = () => {
-      for (const t of want) { if (loadingCount >= CONC) break; if (t.state === 'idle') loadTile(t); }
+      // 카메라 이동/회전 중엔 새 다운로드 시작 안 함(이미 로딩 중인 것만 마무리) → 회전 시 트래픽
+      // 몰림·끊김 방지. 멈추면(settle) recompute 가 다시 pump 를 호출해 그때 필요한 것만 로드.
+      if (!moving) for (const t of want) { if (loadingCount >= CONC) break; if (t.state === 'idle') loadTile(t); }
       const ld = want.filter((t) => t.state === 'loaded').length;
-      setStatus(want.length && ld < want.length ? `구조물 로딩… ${ld}/${want.length}` : '');
+      setStatus(moving ? '' : (want.length && ld < want.length ? `구조물 로딩… ${ld}/${want.length}` : ''));
     };
     let lastLookX = NaN, lastLookY = NaN, lastLookZ = NaN, lastCamDist = NaN;
     const recompute = () => {
@@ -637,21 +640,23 @@ export function ThreeDTest() {
       for (const t of loaded) { if (over <= 0) break; if (wantSet.has(t.id)) continue; if (models[t.id]) models[t.id].destroy(); t.state = 'idle'; over--; }
       lastLookX = look[0]; lastLookY = look[1]; lastLookZ = look[2]; lastCamDist = camDist;
     };
-    // 회전(look 고정)·미세이동엔 재계산 생략 → 스래싱 방지. look 이 충분히 움직이거나 줌이 크게
-    // 바뀔 때만 재계산(사용자: 회전마다 재로딩 느림 지적 대응).
-    let throttle: number | null = null;
+    // ★ 이동/회전 '중'엔 로딩 보류, '멈춘 뒤'에만 로드(settle-gated). 카메라가 움직이는 동안 매
+    // 프레임 새 타일을 큐잉하면 다운로드+파싱이 겹쳐 회전이 끊긴다(사용자 지적). matrix 이벤트마다
+    // moving=true + 정지 타이머 리셋 → 약 0.28초 정지하면 moving=false 로 풀고 그때 한 번 재계산.
+    let settle: number | null = null;
     lodSubRef.current = viewer.camera.on('matrix', () => {
-      if (throttle) return;
-      throttle = window.setTimeout(() => {
-        throttle = null;
+      moving = true;
+      if (settle) clearTimeout(settle);
+      settle = window.setTimeout(() => {
+        settle = null; moving = false;
         const look = viewer.camera.look as number[];
         const eye = viewer.camera.eye as number[];
         const cd = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
         const moved = Number.isNaN(lastLookX) ? Infinity : Math.hypot(look[0] - lastLookX, look[1] - lastLookY, look[2] - lastLookZ);
         const zoomChg = Number.isNaN(lastCamDist) ? Infinity : Math.abs(cd - lastCamDist) / Math.max(lastCamDist, 1);
-        if (moved < Math.max(cd * 0.15, 120) && zoomChg < 0.2) return; // 변화 작으면 무시(회전 포함)
+        if (moved < Math.max(cd * 0.12, 90) && zoomChg < 0.15) { pump(); return; } // 변화 작으면 재선정 없이 로딩만 재개
         recompute();
-      }, 200);
+      }, 280);
     }) as unknown as string;
     recompute();
     setDbg(`타일 ${T.length}개 · 뷰 종속 스트리밍`);
