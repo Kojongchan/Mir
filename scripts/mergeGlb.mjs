@@ -820,6 +820,8 @@ export async function buildMergedGlb(imf, opts) {
   // 타일당 삼각형 상한(작을수록 개별 로드 빠름). 3.6억÷1.2M ≈ 수백 타일, 각 ~20-30MB → 몇 초 로드.
   const tileCap = Number(process.env.XKT_TILE_CAP || 1_200_000);
   const tileAabbs = {}; // 'c<idx>' → [minx,miny,minz,maxx,maxy,maxz] (origin-rel 월드 = focus 와 동일 공간)
+  const base = tilesMode ? makeStream('b', 'base') : null; // 지형 항상로드 베이스(타일모드 전용)
+  let baseT = 0;
   let order = null; // 순회 순서(셀 그룹). null 이면 0..nodeCount.
   const nodeCellKey = tilesMode ? new Array(nodeCount) : null;
   if (tilesMode) {
@@ -1085,11 +1087,21 @@ export async function buildMergedGlb(imf, opts) {
         return 0;
       };
       if (tilesMode) {
-        // 타일 = 원본 형상 그대로(감량 없음). 셀별로 담고, 셀의 월드 AABB 누적(뷰어 컬링용).
-        detail.add(pos, nrm, idx32, [fnx, fny, fnz], [fxx, fxy, fxz], baseColor, metal, rough, String(node.dbid), tex);
-        if (fnx < tileAabb[0]) tileAabb[0] = fnx; if (fny < tileAabb[1]) tileAabb[1] = fny; if (fnz < tileAabb[2]) tileAabb[2] = fnz;
-        if (fxx > tileAabb[3]) tileAabb[3] = fxx; if (fxy > tileAabb[4]) tileAabb[4] = fxy; if (fxz > tileAabb[5]) tileAabb[5] = fxz;
-        streamV += nv; streamT += idx32.length / 3;
+        // ★ 지형(항공드레이프, 115만 삼각형=가벼움)은 '항상 로드 베이스'로 분리 → 바닥이 늘 있어
+        // 빈 구멍 없음 + 재스트리밍 안 함. 구조물(3.6억=무거움)만 공간 타일로 스트리밍(원본).
+        const isTerrain = !!(tex && tex.big);
+        if (isTerrain) {
+          base.add(pos, nrm, idx32, [fnx, fny, fnz], [fxx, fxy, fxz], baseColor, metal, rough, String(node.dbid), tex);
+          baseT += idx32.length / 3; streamV += nv;
+          if (base.chunk && base.chunk.tris >= CHUNK_CAP) await base.flush();
+        } else {
+          detail.add(pos, nrm, idx32, [fnx, fny, fnz], [fxx, fxy, fxz], baseColor, metal, rough, String(node.dbid), tex);
+          if (fnx < tileAabb[0]) tileAabb[0] = fnx; if (fny < tileAabb[1]) tileAabb[1] = fny; if (fnz < tileAabb[2]) tileAabb[2] = fnz;
+          if (fxx > tileAabb[3]) tileAabb[3] = fxx; if (fxy > tileAabb[4]) tileAabb[4] = fxy; if (fxz > tileAabb[5]) tileAabb[5] = fxz;
+          streamV += nv; streamT += idx32.length / 3;
+          addToLod(pos, idx32); // 개요(lod1) = 구조물만(줌아웃 far 컨텍스트). 지형은 베이스가 담당.
+          if (detail.chunk && detail.chunk.tris >= tileCap) await flushTile();
+        }
       } else if (emitFull) {
         detail.add(pos, nrm, idx32, [fnx, fny, fnz], [fxx, fxy, fxz], baseColor, metal, rough, String(node.dbid), tex); // 풀디테일
         if (nav) navT += emitDecimated(nav, navCell); // 모션 LOD
@@ -1104,11 +1116,12 @@ export async function buildMergedGlb(imf, opts) {
         if (isTerrain) terrTris += idx32.length / 3; else structTris += idx32.length / 3;
         streamV += nv;
       }
-      addToLod(pos, idx32); // 개요(LOD1) 격자 누적(줌아웃·초기표시·타일모드의 기본 개요)
-      // 한 셀이 너무 크면 CHUNK_CAP 에서 분할(각 조각도 자기 AABB 기록). 비-타일은 기존대로.
-      if (tilesMode) { if (detail.chunk && detail.chunk.tris >= tileCap) await flushTile(); }
-      else if (detail.chunk && detail.chunk.tris >= CHUNK_CAP) await detail.flush();
-      if (nav && nav.chunk && nav.chunk.tris >= CHUNK_CAP) await nav.flush();
+      // 비-타일 경로만: LOD1 누적 + CHUNK_CAP flush(타일모드는 위 분기에서 처리).
+      if (!tilesMode) {
+        addToLod(pos, idx32);
+        if (detail.chunk && detail.chunk.tris >= CHUNK_CAP) await detail.flush();
+        if (nav && nav.chunk && nav.chunk.tris >= CHUNK_CAP) await nav.flush();
+      }
     } else {
       const g = groupOf(node.material ?? -1, color);
       if (fnx < g.min[0]) g.min[0] = fnx; if (fny < g.min[1]) g.min[1] = fny; if (fnz < g.min[2]) g.min[2] = fnz;
@@ -1123,7 +1136,7 @@ export async function buildMergedGlb(imf, opts) {
   }
   // XKT 스트리밍: 마지막 청크 flush + LOD1(개요) 방출 후 반환(그룹 emit 경로 안 탐).
   if (xktStream) {
-    if (tilesMode) await flushTile(); else await detail.flush();
+    if (tilesMode) { await flushTile(); if (base) await base.flush(); } else await detail.flush();
     if (nav) await nav.flush();
     // LOD1 개요 메시 방출(전역 격자 클러스터 결과) → onChunk(kind 'lod1')
     let lodTris = 0;
@@ -1162,8 +1175,8 @@ export async function buildMergedGlb(imf, opts) {
       const span = `U[${b.u0.toFixed(2)}~${b.u1.toFixed(2)}] V[${b.v0.toFixed(2)}~${b.v1.toFixed(2)}] 프래그${b.n}`;
       log(`[tex]   ${uri.slice(-42)} ${span}${straddleV || straddleU ? ` ⚠STRADDLE(u:${straddleU} v:${straddleV})` : ''}`);
     }
-    if (tilesMode) log(`[tile] 타일 ${Object.keys(tileAabbs).length}개 방출(원본 형상). 셀 ${tileM}m.`);
-    return { xkt: true, tiles: tilesMode, tileAabbs, chunks: detail.idx, navChunks: nav ? nav.idx : 0, navTris: navT, vertices: streamV, triangles: streamT, lodTris, decimated: 0, focus: robustFocus(foci) };
+    if (tilesMode) log(`[tile] 타일 ${Object.keys(tileAabbs).length}개(구조물, 원본) · 지형베이스 ${base ? base.idx : 0}청크(삼각형 ${Math.round(baseT).toLocaleString()}) · 셀 ${tileM}m.`);
+    return { xkt: true, tiles: tilesMode, tileAabbs, baseChunks: base ? base.idx : 0, baseTris: baseT, chunks: detail.idx, navChunks: nav ? nav.idx : 0, navTris: navT, vertices: streamV, triangles: streamT, lodTris, decimated: 0, focus: robustFocus(foci) };
   }
   // 솔리드(삼각형) 부재가 하나라도 있으면 선/점은 대개 엣지/주석 클러터(IFC 의 와이어프레임
   // 11만개 등) → 제외. 순수 선형(솔리드 0 = DWG 도면)만 선/점 유지. 정점수 비율은 엣지선이

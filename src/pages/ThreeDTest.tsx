@@ -543,7 +543,7 @@ export function ThreeDTest() {
    * → 트래픽은 방문 구역만, 구조물은 감량 없는 원본. tiles[i].aabb 는 focus 와 같은 공간
    * (회전 전 실좌표) → (x,y,z)→(x,z,-y) 로 뷰어공간 변환해 거리 판정.
    */
-  const mountTiles = useCallback((tiles: { url: string; aabb: number[] }[], lod1Url: string | undefined, label: string, focus?: Focus) => {
+  const mountTiles = useCallback((tiles: { url: string; aabb: number[] }[], baseUrls: string[] | undefined, lod1Url: string | undefined, label: string, focus?: Focus) => {
     const viewer = viewerRef.current;
     const loader = xktLoaderRef.current;
     if (!viewer || !loader || !tiles.length) return;
@@ -553,7 +553,7 @@ export function ThreeDTest() {
     if (lodSubRef.current) { try { viewer.camera.off(lodSubRef.current); } catch { /* noop */ } lodSubRef.current = null; }
     if (lodTimerRef.current) { clearTimeout(lodTimerRef.current); lodTimerRef.current = null; }
 
-    type Tile = { id: string; url: string; cx: number; cy: number; cz: number; r: number; state: 'idle' | 'loading' | 'loaded' };
+    type Tile = { id: string; url: string; cx: number; cy: number; cz: number; r: number; state: 'idle' | 'loading' | 'loaded'; lastUsed: number };
     const T: Tile[] = tiles.map((t, i) => {
       const [ax, ay, az, bx, by, bz] = t.aabb; // 회전 전 실좌표 AABB
       const va = [ax, az, -by, bx, bz, -ay];    // (x,y,z)→(x,z,-y) 뷰어공간 AABB
@@ -561,61 +561,73 @@ export function ThreeDTest() {
         id: `tile${i}`, url: t.url,
         cx: (va[0] + va[3]) / 2, cy: (va[1] + va[4]) / 2, cz: (va[2] + va[5]) / 2,
         r: Math.hypot(va[3] - va[0], va[4] - va[1], va[5] - va[2]) / 2,
-        state: 'idle',
+        state: 'idle', lastUsed: 0,
       };
     });
     const models = viewer.scene.models as Record<string, { visible?: boolean; destroy(): void }>;
     const fbox = focusToAabb(focus);
     const sceneDiag = fbox ? Math.hypot(fbox[3] - fbox[0], fbox[4] - fbox[1], fbox[5] - fbox[2]) : 5000;
 
+    // 지형 베이스(항상 로드·항상 표시). 가벼움(≈115만 삼각형) → 바닥이 늘 있어 빈 구멍 없음.
+    let framed = false;
+    const frameOnce = () => { if (framed) return; framed = true; const b = focusToAabb(focus) ?? (viewer.scene.aabb as number[]); if (b) flyToFramed(viewer, b); setBusy(false); setStatus(''); setModelName(label); };
+    if (baseUrls && baseUrls.length) {
+      baseUrls.forEach((u, i) => {
+        const bm = loader.load({ id: `base${i}`, src: u, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
+        bm.on('loaded', () => frameOnce());
+        bm.on('error', () => { /* 베이스 일부 실패해도 진행 */ });
+      });
+    }
+    // 개요(lod1) = 구조물 저해상(줌아웃 far 컨텍스트). 줌인하면 숨기고 원본 타일로 대체.
     let overviewOn = true;
     if (lod1Url) {
       const lm = loader.load({ id: 'lod1', src: lod1Url, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
-      lm.on('loaded', () => { const b = focusToAabb(focus) ?? (viewer.scene.aabb as number[]); if (b) flyToFramed(viewer, b); setBusy(false); setStatus(''); setModelName(label); });
-      lm.on('error', () => setBusy(false));
-    } else setBusy(false);
+      lm.on('loaded', () => frameOnce());
+      lm.on('error', () => { /* noop */ });
+    }
+    if (!baseUrls?.length && !lod1Url) setBusy(false);
 
-    const MAX_LOADED = 32;   // 동시 로드 타일 상한(메모리; 타일이 작아져 개수는 많아도 OK)
-    const CONC = 5;          // 동시 다운로드 수(작은 타일 → 병렬 높여 빨리 채움)
-    let loadingCount = 0;
+    const LOAD_BATCH = 28;   // 한 뷰에서 로드 시도할 최근접 타일 수
+    const CACHE_CAP = 44;    // 상주 타일 상한(LRU). 넘으면 오래 안 본 것부터 해제(재방문 시 재로드)
+    const CONC = 6;          // 동시 다운로드 수(작은 타일 → 병렬 높여 빨리 채움)
+    let loadingCount = 0, useClock = 0;
     let want: Tile[] = [];
     const loadTile = (t: Tile) => {
       if (t.state !== 'idle') return;
       t.state = 'loading'; loadingCount++;
       const m = loader.load({ id: t.id, src: t.url, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
-      m.on('loaded', () => { t.state = 'loaded'; loadingCount--; hideOverviewIfReady(); pump(); });
+      m.on('loaded', () => { t.state = 'loaded'; loadingCount--; pump(); });
       m.on('error', () => { t.state = 'idle'; loadingCount--; pump(); });
     };
     const pump = () => {
       for (const t of want) { if (loadingCount >= CONC) break; if (t.state === 'idle') loadTile(t); }
       const ld = want.filter((t) => t.state === 'loaded').length;
-      setStatus(want.length ? `타일 스트리밍… ${ld}/${want.length}` : '');
-    };
-    const hideOverviewIfReady = () => {
-      const ready = want.length > 0 && want.every((t) => t.state === 'loaded');
-      const show = want.length === 0 || !ready; // 타일 미도착/줌아웃이면 개요 표시(구멍·z-fight 방지)
-      if (show !== overviewOn) { overviewOn = show; if (models['lod1']) models['lod1'].visible = show; }
+      setStatus(want.length && ld < want.length ? `구조물 로딩… ${ld}/${want.length}` : '');
     };
     let lastLookX = NaN, lastLookY = NaN, lastLookZ = NaN, lastCamDist = NaN;
     const recompute = () => {
       const eye = viewer.camera.eye as number[];
       const look = viewer.camera.look as number[];
       const camDist = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
-      // 줌아웃(멀리)이면 개요만 — 이 임계 아래(가까이)로 들어와야 원본 타일 스트리밍 시작.
+      // 줌아웃(멀리)=개요(구조물 저해상)만, 지형 베이스는 항상. 가까이 들어오면 원본 타일 스트리밍.
       const overviewOnly = camDist > sceneDiag * 0.30;
-      // look 주변 로드 반경: 화면에 들어오는 주변만(줌 상관없이 상한). 작을수록 뷰당 로드↓·빠름.
+      if (models['lod1'] && overviewOn !== overviewOnly) { overviewOn = overviewOnly; models['lod1'].visible = overviewOnly; }
       const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.2, 350), 1400);
       const distLook = (t: Tile) => Math.hypot(t.cx - look[0], t.cy - look[1], t.cz - look[2]);
       want = [];
       if (!overviewOnly) {
         for (const t of T) if (distLook(t) - t.r < loadR) want.push(t);
         want.sort((a, b) => distLook(a) - distLook(b));
-        if (want.length > MAX_LOADED) want = want.slice(0, MAX_LOADED);
+        if (want.length > LOAD_BATCH) want = want.slice(0, LOAD_BATCH);
+        for (const t of want) t.lastUsed = ++useClock; // 최근 사용 표시(LRU)
       }
-      const wantSet = new Set(want.map((t) => t.id));
-      for (const t of T) if (!wantSet.has(t.id) && t.state === 'loaded') { if (models[t.id]) models[t.id].destroy(); t.state = 'idle'; }
       pump();
-      hideOverviewIfReady();
+      // ★ 타일 지속(persistent): 이동해도 언로드하지 않음 → 재방문 즉시(재스트리밍 없음).
+      // 상주 타일이 CACHE_CAP 초과할 때만, 현재 want 제외하고 '오래 안 본 것'부터 해제.
+      const wantSet = new Set(want.map((t) => t.id));
+      const loaded = T.filter((t) => t.state === 'loaded').sort((a, b) => a.lastUsed - b.lastUsed);
+      let over = loaded.length - CACHE_CAP;
+      for (const t of loaded) { if (over <= 0) break; if (wantSet.has(t.id)) continue; if (models[t.id]) models[t.id].destroy(); t.state = 'idle'; over--; }
       lastLookX = look[0]; lastLookY = look[1]; lastLookZ = look[2]; lastCamDist = camDist;
     };
     // 회전(look 고정)·미세이동엔 재계산 생략 → 스래싱 방지. look 이 충분히 움직이거나 줌이 크게
@@ -664,6 +676,7 @@ export function ThreeDTest() {
         urls?: string[];
         navUrls?: string[];
         tiles?: { url: string; aabb: number[] }[];
+        baseUrls?: string[];
         lod1Url?: string;
         focus?: Focus;
         failed?: boolean;
@@ -686,7 +699,7 @@ export function ThreeDTest() {
       // XKT(분할) 우선, 없으면 단일 GLB(DWG 등).
       const doMount = (s: State) => {
         // 타일(뷰 종속 스트리밍) 우선 → 없으면 분할 XKT → 단일 GLB.
-        if (s.xkt && s.tiles && s.tiles.length) mountTiles(s.tiles, s.lod1Url, f.name, s.focus);
+        if (s.xkt && s.tiles && s.tiles.length) mountTiles(s.tiles, s.baseUrls, s.lod1Url, f.name, s.focus);
         else if (s.xkt && s.urls && s.urls.length) mountXkt(s.urls, s.lod1Url, f.name, s.focus, s.navUrls);
         else if (s.url) mountGlb(s.url, f.name, s.focus);
       };

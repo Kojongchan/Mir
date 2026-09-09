@@ -442,11 +442,12 @@ async function main() {
     // → 디스크·메모리 모두 한 청크로 상한(대용량 OOM/디스크풀 원천 차단).
     const xktFiles = [];
     const navFiles = [];
+    const baseFiles = [];
     let lodFile = null;
     // 업로드 바이트 누계 — 앱이 실제로 내려받는 총 트래픽(전산실 모니터링용)을 로그로 남긴다.
-    let detailBytes = 0, navBytes = 0, lodBytes = 0;
+    let detailBytes = 0, navBytes = 0, lodBytes = 0, baseBytes = 0;
     const MB = (b) => (b / 1048576).toFixed(1);
-    // kind: 'detail'(상세 c*.xkt) | 'nav'(내비 LOD nav*.xkt) | 'lod1'(개요)
+    // kind: 'detail'(상세/타일 c*.xkt) | 'nav' | 'lod1'(개요) | 'base'(지형 항상로드 b*.xkt)
     const onChunk = async (glbPath, idx, tris, kind = 'detail') => {
       const xktPath = glbPath.replace(/\.glb$/, '.xkt');
       const name = path.basename(xktPath);
@@ -456,6 +457,7 @@ async function main() {
         await r2Put(`${keyBase}/xkt/${name}`, buf, 'application/octet-stream');
         if (kind === 'lod1') { lodFile = name; lodBytes += buf.length; console.log(`[convert4d]   LOD1 → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
         else if (kind === 'nav') { navFiles.push(name); navBytes += buf.length; console.log(`[convert4d]   nav ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
+        else if (kind === 'base') { baseFiles.push(name); baseBytes += buf.length; console.log(`[convert4d]   지형베이스 ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
         else { xktFiles.push(name); detailBytes += buf.length; console.log(`[convert4d]   청크 ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
       } catch (e) {
         console.warn(`[convert4d]   ${kind} ${idx} XKT 실패: ${e?.message || e}`);
@@ -476,7 +478,8 @@ async function main() {
     const manifest = { xktFiles, navFiles, lod1: lodFile };
     if (res.tiles) {
       manifest.tiles = xktFiles.map((n) => ({ n, aabb: res.tileAabbs?.[n.replace(/\.xkt$/, '')] || null })).filter((t) => t.aabb);
-      console.log(`[convert4d] 타일 매니페스트: ${manifest.tiles.length}개 타일(공간 AABB 포함) + 개요 lod1`);
+      manifest.base = baseFiles; // 지형 항상로드 베이스(뷰어가 처음에 로드, 절대 언로드 안 함)
+      console.log(`[convert4d] 타일 매니페스트: 구조물 타일 ${manifest.tiles.length}개 + 지형베이스 ${baseFiles.length}청크 + 개요 lod1`);
     }
     await r2Put(`${keyBase}/xkt/manifest.json`, Buffer.from(JSON.stringify(manifest)), 'application/json');
     if (res.focus) await r2Put(`${keyBase}/focus.json`, Buffer.from(JSON.stringify(res.focus)), 'application/json');
@@ -485,7 +488,11 @@ async function main() {
     await r2Delete(`${keyBase}/error.json`);
     console.log(`[convert4d] XKT 업로드 완료: 상세 ${xktFiles.length}청크 · nav ${navFiles.length}청크(삼각형 ${Math.round(res.navTris || 0).toLocaleString()}) · 정점 ${res.vertices.toLocaleString()} · 삼각형 ${Math.round(res.triangles).toLocaleString()} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
     // 앱 최초 로드 시 실제 다운로드량(= 전산실 트래픽) — 상세+개요가 기본, nav 는 회전시에만.
-    console.log(`[convert4d] 다운로드 용량(트래픽): 상세 ${MB(detailBytes)}MB + 개요 ${MB(lodBytes)}MB = 최초 ${MB(detailBytes + lodBytes)}MB · nav(회전시) ${MB(navBytes)}MB · 합계 ${MB(detailBytes + lodBytes + navBytes)}MB`);
+    if (res.tiles) {
+      console.log(`[convert4d] 다운로드 용량: 지형베이스(항상) ${MB(baseBytes)}MB + 개요 ${MB(lodBytes)}MB = 최초 ~${MB(baseBytes + lodBytes)}MB · 구조물타일(보는 곳만) 합계 ${MB(detailBytes)}MB/${xktFiles.length}개 = 타일당 평균 ${xktFiles.length ? MB(detailBytes / xktFiles.length) : 0}MB`);
+    } else {
+      console.log(`[convert4d] 다운로드 용량(트래픽): 상세 ${MB(detailBytes)}MB + 개요 ${MB(lodBytes)}MB = 최초 ${MB(detailBytes + lodBytes)}MB · nav(회전시) ${MB(navBytes)}MB · 합계 ${MB(detailBytes + lodBytes + navBytes)}MB`);
+    }
     console.log('[convert4d] DONE');
     return;
   }
