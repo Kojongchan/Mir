@@ -635,6 +635,9 @@ export function ThreeDTest() {
       // 항상 표시라 별도 토글 없음. 가까이 오면 보는 곳 타일을 상세로 스트리밍.
       const overviewOnly = camDist > sceneDiag * 0.55;
       const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.2, 350), 1400);
+      // 인스턴스 레이어(21.8만 엔티티=무거움)는 '줌인(가까이)일 때만' 표시 → 프러스텀 컬링으로 근처만
+      // 그려 부하 급감. 줌아웃(개요)에선 숨기고 lod1(거친 전체)만 → 정지 프레임도 가벼움.
+      for (const id of Object.keys(models)) if (id.startsWith('inst')) { const m = models[id]; const vis = !overviewOnly; if (m && m.visible !== vis) m.visible = vis; }
       // 선택 기준을 look(궤도 중심)→eye(카메라)+시선방향으로 변경. 기울어진 조감뷰에서 화면 아래쪽
       // (카메라 근처·look 에서 먼) 전경 타일이 누락되던 문제 대응. 시선 전방에 있고(뒤 제외) 로드
       // 깊이 안에 든 타일을 카메라에서 가까운 순으로 채운다 → 전경부터 채워짐.
