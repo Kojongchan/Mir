@@ -567,6 +567,10 @@ export function ThreeDTest() {
     const models = viewer.scene.models as Record<string, { visible?: boolean; destroy(): void }>;
     const fbox = focusToAabb(focus);
     const sceneDiag = fbox ? Math.hypot(fbox[3] - fbox[0], fbox[4] - fbox[1], fbox[5] - fbox[2]) : 5000;
+    // ★ 경량 모드: 지형 베이스 + 개요(lod1)만 로드/표시. 인스턴스 레이어(21.8만 엔티티=파싱·렌더
+    // 과부하)와 타일 스트리밍(트래픽 과다)을 끈다. 약한 클라이언트가 이미 잘 처리하는 지형(1.15M
+    // 삼각형·243MB) 수준으로 총량을 묶어 '지형처럼' 빠르고 부드럽게. 구조물은 저해상이지만 완전·상주.
+    const LIGHT_MODE: boolean = true;
 
     // 지형 베이스(항상 로드·항상 표시). 가벼움(≈115만 삼각형) → 바닥이 늘 있어 빈 구멍 없음.
     let framed = false;
@@ -580,7 +584,7 @@ export function ThreeDTest() {
     }
     // 인스턴스 레이어(반복 구조물 뼈대, 항상 로드·항상 표시). 원본 형상 그대로, 어디서나 즉시 보임
     // → 구조물 절반 이상이 스트리밍 대기 없이 바로 뜬다.
-    if (instUrls && instUrls.length) {
+    if (!LIGHT_MODE && instUrls && instUrls.length) {
       instUrls.forEach((u, i) => {
         const im = loader.load({ id: `inst${i}`, src: u, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
         im.on('loaded', () => frameOnce());
@@ -596,6 +600,9 @@ export function ThreeDTest() {
       lm.on('error', () => { /* noop */ });
     }
     if (!baseUrls?.length && !lod1Url) setBusy(false);
+
+    // 경량 모드: 여기서 종료(타일 스트리밍 기계 전체 스킵). lod1 은 기본 visible=true 로 상시 표시.
+    if (LIGHT_MODE) { setDbg(`경량(지형+개요) · 스트리밍 없음`); return; }
 
     const LOAD_BATCH = 28;   // 한 뷰에서 로드 시도할 최근접 타일 수
     const CACHE_CAP = 44;    // 상주 타일 상한(LRU). 넘으면 오래 안 본 것부터 해제(재방문 시 재로드)
