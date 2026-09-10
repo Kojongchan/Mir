@@ -639,11 +639,12 @@ export function ThreeDTest() {
       const eye = viewer.camera.eye as number[];
       const look = viewer.camera.look as number[];
       const camDist = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
-      // 줌인(가까이)일 때만 원본 타일 스트리밍. 줌아웃이면 개요만(가벼움).
+      // ★ 개요(lod1)는 '항상' 표시 = 구조물이 절대 사라지지 않음(빈 구멍/void 없음, 사용자 지적).
+      // 원본 타일은 가까이 줌인 시 그 위에 얹혀 원본 해상도를 준다. 개요 자체를 더 촘촘히(2m) 구워
+      // 근거리에서도 덜 거칠게 보이도록 한다(재빌드).
+      if (models['lod1'] && models['lod1'].visible !== true) models['lod1'].visible = true;
+      // 줌인(가까이)일 때만 원본 타일 스트리밍(그 외엔 개요만 = 가벼움).
       const overviewOnly = camDist > sceneDiag * 0.30;
-      // ★ 개요(lod1)는 '줌아웃(멀리) 때만' 표시. 가까이 줌인하면 숨긴다 → 근거리에서 개요의 거친
-      // 저해상(뾰족/사각 잔상)이 보이던 문제 제거. 가까이선 원본 타일이 프러스텀을 채운다(아래 스트리밍).
-      if (models['lod1'] && models['lod1'].visible !== overviewOnly) models['lod1'].visible = overviewOnly;
       const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.5, 400), 1600); // 프러스텀 넉넉히 채움
       // 선택 기준을 look(궤도 중심)→eye(카메라)+시선방향으로 변경. 기울어진 조감뷰에서 화면 아래쪽
       // (카메라 근처·look 에서 먼) 전경 타일이 누락되던 문제 대응. 시선 전방에 있고(뒤 제외) 로드
