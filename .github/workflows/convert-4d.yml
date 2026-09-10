@@ -65,6 +65,10 @@ on:
         description: "인스턴스 청크당 고유 지오메트리 바이트 상한. 낮추면 여러 조각(파싱 멈춤 완화)"
         required: false
         default: ''
+      lod_cell:
+        description: "개요(lod1) 격자 셀(m). 기본 4. 낮추면 개요 화질↑·용량↑(예 2~3)"
+        required: false
+        default: ''
       dxf_test:
         description: "'1'이면 SVF 대신 원본 DWG→DXF 변환 검증(project/item 필요)"
         required: false
@@ -226,6 +230,7 @@ jobs:
           XKT_INST_MIN: ${{ github.event.inputs.inst_min }}
           XKT_TILE_CAP: ${{ github.event.inputs.tile_cap }}
           XKT_INST_BYTES: ${{ github.event.inputs.inst_bytes }}
+          XKT_LOD_CELL: ${{ github.event.inputs.lod_cell }}
         run: node scripts/convert4d.mjs
 
       - name: Headless xeokit 렌더 진단 (LOD1 오블리크 · base64 PNG 로그)
