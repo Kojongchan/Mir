@@ -57,6 +57,14 @@ on:
         description: "인스턴싱 최소 반복수(refs). 기본 16(≈43MB로 반복부재 92% 포섭). 높일수록 항상로드↓"
         required: false
         default: ''
+      tile_cap:
+        description: "타일당 삼각형 상한. 기본 120만(큰 타일). 낮추면 타일 잘게(빠른 점진 로드)"
+        required: false
+        default: ''
+      inst_bytes:
+        description: "인스턴스 청크당 고유 지오메트리 바이트 상한. 낮추면 여러 조각(파싱 멈춤 완화)"
+        required: false
+        default: ''
       dxf_test:
         description: "'1'이면 SVF 대신 원본 DWG→DXF 변환 검증(project/item 필요)"
         required: false
@@ -216,6 +224,8 @@ jobs:
           XKT_DIAG_ONLY: ${{ github.event.inputs.diag_only }}
           XKT_INSTANCE: ${{ github.event.inputs.instance }}
           XKT_INST_MIN: ${{ github.event.inputs.inst_min }}
+          XKT_TILE_CAP: ${{ github.event.inputs.tile_cap }}
+          XKT_INST_BYTES: ${{ github.event.inputs.inst_bytes }}
         run: node scripts/convert4d.mjs
 
       - name: Headless xeokit 렌더 진단 (LOD1 오블리크 · base64 PNG 로그)
