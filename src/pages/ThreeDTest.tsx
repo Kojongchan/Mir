@@ -631,12 +631,11 @@ export function ThreeDTest() {
       const eye = viewer.camera.eye as number[];
       const look = viewer.camera.look as number[];
       const camDist = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
-      // 줌아웃(아주 멀리)이면 상세 타일 스트리밍을 아예 멈추고 개요만(트래픽 절약). 개요(lod1)는
-      // 항상 표시라 별도 토글 없음. 가까이 오면 보는 곳 타일을 상세로 스트리밍.
-      // ★ 상세 타일은 '가까이 줌인해 검사할 때만' 스트리밍한다(기본 뷰=인스턴스+개요로 충분).
-      // 처음 열 때(전체 맞춤)·둘러볼 때는 타일을 안 받아 최초 로드가 빠르고 이동 시 재로딩 대기가 없다.
-      const overviewOnly = camDist > sceneDiag * 0.16;
-      const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.1, 200), 900);
+      const overviewOnly = camDist > sceneDiag * 0.35;
+      // ★ 개요(lod1)는 '멀리(줌아웃)'서만 표시 → 가까이서 개요의 거친 격자(스파이크/잔상)가 보이던
+      // 문제 제거. 가까이 오면 개요 숨기고 원본(인스턴스 + 스트리밍 타일)이 대신 보인다.
+      if (models['lod1']) { const v = overviewOnly; if (models['lod1'].visible !== v) models['lod1'].visible = v; }
+      const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.2, 350), 1400);
       // 선택 기준을 look(궤도 중심)→eye(카메라)+시선방향으로 변경. 기울어진 조감뷰에서 화면 아래쪽
       // (카메라 근처·look 에서 먼) 전경 타일이 누락되던 문제 대응. 시선 전방에 있고(뒤 제외) 로드
       // 깊이 안에 든 타일을 카메라에서 가까운 순으로 채운다 → 전경부터 채워짐.
