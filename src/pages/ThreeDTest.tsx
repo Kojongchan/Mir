@@ -601,12 +601,13 @@ export function ThreeDTest() {
     }
     if (!baseUrls?.length && !lod1Url) setBusy(false);
 
-    // 경량 모드: 여기서 종료(타일 스트리밍 기계 전체 스킵). lod1 은 기본 visible=true 로 상시 표시.
-    if (LIGHT_MODE) { setDbg(`경량(지형+개요) · 스트리밍 없음`); return; }
-
-    const LOAD_BATCH = 28;   // 한 뷰에서 로드 시도할 최근접 타일 수
-    const CACHE_CAP = 44;    // 상주 타일 상한(LRU). 넘으면 오래 안 본 것부터 해제(재방문 시 재로드)
-    const CONC = 8;          // 동시 다운로드 수(작은 타일 → 병렬 높여 빨리 채움)
+    // ★ 경량 오버레이 스트리밍: 기본은 지형+개요(lod1)만(가벼움). '가까이 줌인해 특정 구역을 볼 때만'
+    // 그 구역의 원본 타일 소수를 개요 위에 얹어 원본 해상도로 본다(=보는 곳만 원본). 줌아웃하면 원본
+    // 타일을 즉시 해제(메모리·트래픽 상한). 개요는 늘 깔려 사라짐 없음. 약한 클라이언트 대응: 아주
+    // 가까울 때만·소수·작은 타일.
+    const LOAD_BATCH = 8;    // 근접 시 얹을 원본 타일 수(소수)
+    const CACHE_CAP = 16;    // 상주 타일 상한(LRU) — 낮게(메모리 상한)
+    const CONC = 6;          // 동시 다운로드 수
     let loadingCount = 0, useClock = 0;
     let moving = false; // 카메라 이동/회전 중 = 새 로딩 보류 + 상세 타일 숨김(모션 LOD)
     let want: Tile[] = [];
@@ -638,11 +639,12 @@ export function ThreeDTest() {
       const eye = viewer.camera.eye as number[];
       const look = viewer.camera.look as number[];
       const camDist = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
-      const overviewOnly = camDist > sceneDiag * 0.35;
-      // ★ 개요(lod1)는 '멀리(줌아웃)'서만 표시 → 가까이서 개요의 거친 격자(스파이크/잔상)가 보이던
-      // 문제 제거. 가까이 오면 개요 숨기고 원본(인스턴스 + 스트리밍 타일)이 대신 보인다.
-      if (models['lod1']) { const v = overviewOnly; if (models['lod1'].visible !== v) models['lod1'].visible = v; }
-      const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.2, 350), 1400);
+      // '가까이 줌인'했을 때만 원본 타일을 얹는다(그 외엔 개요만 = 가벼움).
+      const overviewOnly = camDist > sceneDiag * 0.12;
+      // ★ 개요(lod1)는 '항상' 표시 = 구조물이 사라지지 않는 베이스. 원본 타일은 그 위에 얹혀 근거리
+      // 원본 해상도를 준다(개요 격자를 원본이 덮음).
+      if (models['lod1'] && models['lod1'].visible !== true) models['lod1'].visible = true;
+      const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.0, 150), 500); // 근접 소구역만
       // 선택 기준을 look(궤도 중심)→eye(카메라)+시선방향으로 변경. 기울어진 조감뷰에서 화면 아래쪽
       // (카메라 근처·look 에서 먼) 전경 타일이 누락되던 문제 대응. 시선 전방에 있고(뒤 제외) 로드
       // 깊이 안에 든 타일을 카메라에서 가까운 순으로 채운다 → 전경부터 채워짐.
@@ -659,11 +661,11 @@ export function ThreeDTest() {
         for (const t of want) t.lastUsed = ++useClock; // 최근 사용 표시(LRU)
       }
       pump();
-      // ★ 타일 지속(persistent): 이동해도 언로드하지 않음 → 재방문 즉시(재스트리밍 없음).
-      // 상주 타일이 CACHE_CAP 초과할 때만, 현재 want 제외하고 '오래 안 본 것'부터 해제.
+      // 줌아웃(개요만)하면 원본 타일을 전부 해제 → 메모리·트래픽 상한(개요가 덮으므로 손실 없음).
+      // 가까울 땐 CACHE_CAP 초과분만 '오래 안 본 것'부터 해제(근접 이동 시 재방문 완충).
       const wantSet = new Set(want.map((t) => t.id));
       const loaded = T.filter((t) => t.state === 'loaded').sort((a, b) => a.lastUsed - b.lastUsed);
-      let over = loaded.length - CACHE_CAP;
+      let over = overviewOnly ? loaded.length : loaded.length - CACHE_CAP;
       for (const t of loaded) { if (over <= 0) break; if (wantSet.has(t.id)) continue; if (models[t.id]) models[t.id].destroy(); t.state = 'idle'; over--; }
       lastLookX = look[0]; lastLookY = look[1]; lastLookZ = look[2]; lastCamDist = camDist;
     };
