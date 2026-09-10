@@ -591,15 +591,16 @@ export function ThreeDTest() {
         im.on('error', () => { /* 일부 실패해도 진행 */ });
       });
     }
-    // ★ 개요(lod1) '덩어리'는 로드하지 않는다(사용자 지적: 뒤의 거친 덩어리 제거, 원본만). 화면엔
-    // 지형 + 보는 영역의 '원본 타일'만 채운다. 아직 안 로드된 곳은 지형이 비칠 뿐 거친 개요는 없음.
-    const SHOW_OVERVIEW = false;
-    if (SHOW_OVERVIEW && lod1Url) {
+    // ★ 개요(lod1)를 '흐릿한 잔상(반투명)'으로 표시(사용자 아이디어). 솔리드 덩어리가 아니라 옅은
+    // 유령처럼 깔려 빈 곳(먼 구조물·로딩 전)이 텅 비지 않게 한다. 트래픽 최소(15MB 1개). 원본 타일은
+    // 그 위에 '불투명'으로 얹혀 실제 해상도를 준다. 회전 중엔 타일을 감춰도 이 잔상이 남아 안 비어보임.
+    const GHOST_OPACITY = 0.3;
+    if (lod1Url) {
       const lm = loader.load({ id: 'lod1', src: lod1Url, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
-      lm.on('loaded', () => frameOnce());
+      lm.on('loaded', () => { try { (lm as unknown as { opacity: number }).opacity = GHOST_OPACITY; } catch { /* noop */ } frameOnce(); });
       lm.on('error', () => { /* noop */ });
     }
-    if (!baseUrls?.length) setBusy(false);
+    if (!baseUrls?.length && !lod1Url) setBusy(false);
 
     // ★ 원본 타일 스트리밍: 보는 영역(프러스텀)을 원본 타일로 넉넉히 채운다. 개요 덩어리 없이 원본만.
     // 작은 타일(7.9MB)이라 가까운 것부터 착착 채워지고, 시점을 벗어난 타일은 해제(메모리 상한).
@@ -637,10 +638,12 @@ export function ThreeDTest() {
       const eye = viewer.camera.eye as number[];
       const look = viewer.camera.look as number[];
       const camDist = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
-      // 개요 덩어리 없음(원본만). 아주 멀리 줌아웃(전체 7km) 때만 스트리밍 중단(타일 과다 방지),
-      // 그 외 대부분 줌에선 보는 프러스텀을 원본 타일로 채운다.
-      const overviewOnly = camDist > sceneDiag * 0.55;
-      const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.6, 500), 2400); // 프러스텀 넉넉히 채움
+      // 흐릿한 잔상(lod1)은 항상 표시 → 빈 곳/먼 구조물이 텅 비지 않음(옅은 유령). 원본 타일은 위에 얹힘.
+      if (models['lod1'] && models['lod1'].visible !== true) models['lod1'].visible = true;
+      // 원본 타일: 아주 멀리 줌아웃(전체 7km)에서만 중단(타일 과다 방지), 그 외엔 프러스텀을 넉넉히 채움.
+      // 거리 제한을 키움(사용자: 거리제한이 큼) — 잔상이 먼 곳을 받쳐주므로 타일 반경을 늘려도 안전.
+      const overviewOnly = camDist > sceneDiag * 0.60;
+      const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.9, 600), 3600); // 프러스텀 더 넓게
       // 선택 기준을 look(궤도 중심)→eye(카메라)+시선방향으로 변경. 기울어진 조감뷰에서 화면 아래쪽
       // (카메라 근처·look 에서 먼) 전경 타일이 누락되던 문제 대응. 시선 전방에 있고(뒤 제외) 로드
       // 깊이 안에 든 타일을 카메라에서 가까운 순으로 채운다 → 전경부터 채워짐.
