@@ -605,8 +605,8 @@ export function ThreeDTest() {
     // 그 구역의 원본 타일 소수를 개요 위에 얹어 원본 해상도로 본다(=보는 곳만 원본). 줌아웃하면 원본
     // 타일을 즉시 해제(메모리·트래픽 상한). 개요는 늘 깔려 사라짐 없음. 약한 클라이언트 대응: 아주
     // 가까울 때만·소수·작은 타일.
-    const LOAD_BATCH = 14;   // 줌인 시 보는 프러스텀을 채울 원본 타일 수(작은 타일 6MB급)
-    const CACHE_CAP = 20;    // 상주 타일 상한(LRU) — 메모리 상한
+    const LOAD_BATCH = 24;   // 줌인 시 보는 프러스텀을 원본 타일로 '채우는' 수(작은 7.9MB 타일)
+    const CACHE_CAP = 32;    // 상주 타일 상한(LRU) — 메모리 상한
     const CONC = 6;          // 동시 다운로드 수
     let loadingCount = 0, useClock = 0;
     let moving = false; // 카메라 이동/회전 중 = 새 로딩 보류 + 상세 타일 숨김(모션 LOD)
@@ -639,12 +639,12 @@ export function ThreeDTest() {
       const eye = viewer.camera.eye as number[];
       const look = viewer.camera.look as number[];
       const camDist = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
-      // ★ 개요(lod1)는 '항상' 표시 = 구조물이 절대 사라지지 않는 베이스(빈 구멍 없음). 원본 타일은
-      // 가까이 줌인했을 때 그 위에 얹혀 원본 해상도를 준다(로드된 구역은 원본이 개요를 덮음).
-      if (models['lod1'] && models['lod1'].visible !== true) models['lod1'].visible = true;
-      // 줌인(가까이)일 때만 원본 타일 스트리밍(그 외엔 개요만 = 가벼움).
+      // 줌인(가까이)일 때만 원본 타일 스트리밍. 줌아웃이면 개요만(가벼움).
       const overviewOnly = camDist > sceneDiag * 0.30;
-      const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.3, 300), 1200); // 보는 프러스텀 채움
+      // ★ 개요(lod1)는 '줌아웃(멀리) 때만' 표시. 가까이 줌인하면 숨긴다 → 근거리에서 개요의 거친
+      // 저해상(뾰족/사각 잔상)이 보이던 문제 제거. 가까이선 원본 타일이 프러스텀을 채운다(아래 스트리밍).
+      if (models['lod1'] && models['lod1'].visible !== overviewOnly) models['lod1'].visible = overviewOnly;
+      const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.5, 400), 1600); // 프러스텀 넉넉히 채움
       // 선택 기준을 look(궤도 중심)→eye(카메라)+시선방향으로 변경. 기울어진 조감뷰에서 화면 아래쪽
       // (카메라 근처·look 에서 먼) 전경 타일이 누락되던 문제 대응. 시선 전방에 있고(뒤 제외) 로드
       // 깊이 안에 든 타일을 카메라에서 가까운 순으로 채운다 → 전경부터 채워짐.
