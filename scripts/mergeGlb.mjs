@@ -825,22 +825,47 @@ export async function buildMergedGlb(imf, opts) {
   const lodMap = new Map();
   const lpx = [], lpy = [], lpz = [];
   let lodIdx = [];
+  // 대표점 = 셀 내 정점들의 '평균(무게중심)'. (기존엔 XY만 격자스냅+Z는 첫 정점의 실제값 → XY와
+  // Z 가 어긋나 뾰족한 shard/잔상 발생.) 평균은 실제 표면 위에 놓여 매끈한 개요를 만든다. lpx/lpy/lpz
+  // 에 '합'을 누적하고 lcnt 로 개수를 세어, 마감(finalizeLod)에서 나눠 평균을 낸다.
+  const lcnt = [];
   const addToLod = (pos, idxF) => {
     const nvL = pos.length / 3;
     const remapL = new Uint32Array(nvL);
     for (let v = 0; v < nvL; v++) {
-      const qx = Math.round(pos[v * 3] / lodCell), qy = Math.round(pos[v * 3 + 1] / lodCell), qz = Math.round(pos[v * 3 + 2] / lodCell);
+      const x = pos[v * 3], y = pos[v * 3 + 1], z = pos[v * 3 + 2];
+      const qx = Math.round(x / lodCell), qy = Math.round(y / lodCell), qz = Math.round(z / lodCell);
       const key = `${qx}_${qy}_${qz}`;
       let ri = lodMap.get(key);
-      // 대표점: XY 는 격자로 스냅하되 Z(높이)는 **실제값** 유지 → 지형이 8m 계단(논밭)으로
-      // 뭉개지던 문제 제거. qz 는 키에만 써서 상하로 겹친 구조물이 안 뭉치게 분리.
-      if (ri === undefined) { ri = lpx.length; lodMap.set(key, ri); lpx.push(qx * lodCell); lpy.push(qy * lodCell); lpz.push(pos[v * 3 + 2]); }
+      if (ri === undefined) { ri = lcnt.length; lodMap.set(key, ri); lpx.push(0); lpy.push(0); lpz.push(0); lcnt.push(0); }
+      lpx[ri] += x; lpy[ri] += y; lpz[ri] += z; lcnt[ri]++;
       remapL[v] = ri;
     }
     for (let k = 0; k + 2 < idxF.length; k += 3) {
       const a = remapL[idxF[k]], b = remapL[idxF[k + 1]], c = remapL[idxF[k + 2]];
       if (a !== b && b !== c && a !== c) lodIdx.push(a, b, c);
     }
+  };
+  // 마감: 합→평균. 그리고 shard(뾰족 슬리버) 삼각형 제거 — 셀 평균점 3개로 이뤄진 삼각형 중
+  // 넓이가 (최장변)² 대비 극히 작은(가늘고 긴) 것은 시각적 잔상이므로 버린다(면적 큰 표면은 유지).
+  const finalizeLod = () => {
+    for (let i = 0; i < lcnt.length; i++) { const n = lcnt[i] || 1; lpx[i] /= n; lpy[i] /= n; lpz[i] /= n; }
+    const filtered = [];
+    for (let k = 0; k + 2 < lodIdx.length; k += 3) {
+      const a = lodIdx[k], b = lodIdx[k + 1], c = lodIdx[k + 2];
+      const ax = lpx[a], ay = lpy[a], az = lpz[a], bx = lpx[b], by = lpy[b], bz = lpz[b], cx = lpx[c], cy = lpy[c], cz = lpz[c];
+      const e1 = (bx - ax) ** 2 + (by - ay) ** 2 + (bz - az) ** 2;
+      const e2 = (cx - ax) ** 2 + (cy - ay) ** 2 + (cz - az) ** 2;
+      const e3 = (cx - bx) ** 2 + (cy - by) ** 2 + (cz - bz) ** 2;
+      const maxE2 = Math.max(e1, e2, e3);
+      // 넓이(외적/2)
+      const ux = bx - ax, uy = by - ay, uz = bz - az, vx = cx - ax, vy = cy - ay, vz = cz - az;
+      const crx = uy * vz - uz * vy, cry = uz * vx - ux * vz, crz = ux * vy - uy * vx;
+      const area = 0.5 * Math.sqrt(crx * crx + cry * cry + crz * crz);
+      if (maxE2 > 0 && area < 0.06 * maxE2) continue; // 슬리버(뾰족) → 버림
+      filtered.push(a, b, c);
+    }
+    lodIdx = filtered;
   };
 
   // === 공간 타일 스트리밍(뷰 종속): 프래그먼트를 월드 수평격자(XKT_TILE_M, 기본 500m) 셀로 묶어
@@ -1287,6 +1312,7 @@ export async function buildMergedGlb(imf, opts) {
     }
     if (nav) await nav.flush();
     // LOD1 개요 메시 방출(전역 격자 클러스터 결과) → onChunk(kind 'lod1')
+    finalizeLod(); // 합→평균(무게중심) + shard 슬리버 제거
     let lodTris = 0;
     if (lpx.length >= 3 && lodIdx.length >= 3) {
       const lp = new Float32Array(lpx.length * 3);
