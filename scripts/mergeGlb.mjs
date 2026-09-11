@@ -896,6 +896,10 @@ export async function buildMergedGlb(imf, opts) {
   // 인스턴스별 행렬로 재사용하므로, refs>1 인 geom 이 많으면 원본 형상 그대로 용량 급감 가능.
   const diagInst = new Map(); // geomId → { refs, tris }
   let diagFlatTris = 0;
+  // 크기 임계별 삼각형 측정(진단): '본구조물 개요'(큰 부재만 원본해상)를 만들 때 용량 가늠용.
+  const SZ = [1, 2, 3, 5, 8, 12, 20];
+  const szTris = new Array(SZ.length).fill(0), szCnt = new Array(SZ.length).fill(0);
+  let szAllTris = 0, szAllCnt = 0;
   if (tilesMode) {
     log(`[tile] 공간 타일 사전패스(셀 ${tileM}m)…`);
     const items = [];
@@ -916,6 +920,10 @@ export async function buildMergedGlb(imf, opts) {
       const step = Math.max(3, Math.floor(verts.length / 3 / 64) * 3);
       for (let v = 0; v < verts.length; v += step) { const x = verts[v], y = verts[v + 1], z = verts[v + 2]; if (x < lx0) lx0 = x; if (y < ly0) ly0 = y; if (z < lz0) lz0 = z; if (x > lx1) lx1 = x; if (y > ly1) ly1 = y; if (z > lz1) lz1 = z; }
       const cx = (lx0 + lx1) / 2, cy = (ly0 + ly1) / 2, cz = (lz0 + lz1) / 2;
+      // 크기 임계 tally: 이 부재의 로컬 대각(크기). 큰 부재만 골라 '본구조물 개요' 용량을 가늠.
+      const diagSz = Math.hypot(lx1 - lx0, ly1 - ly0, lz1 - lz0);
+      szAllTris += di.tris; szAllCnt++;
+      for (let b = 0; b < SZ.length; b++) if (diagSz >= SZ[b]) { szTris[b] += di.tris; szCnt[b]++; }
       const m = matrixOf(node.transform);
       const wx = m ? m[0] * cx + m[4] * cy + m[8] * cz + m[12] : cx;
       const wy = m ? m[1] * cx + m[5] * cy + m[9] * cz + m[13] : cy;
@@ -926,6 +934,13 @@ export async function buildMergedGlb(imf, opts) {
     order = items;
     const nCells = new Set(items.map((i) => nodeCellKey[i])).size;
     log(`[tile] 사전패스 완료: 대상 프래그 ${items.length} · 점유 셀 ${nCells}`);
+    // === '본구조물 개요' 크기 측정 리포트: 임계(로컬 대각 m) 이상 부재만 모은 개요의 삼각형/추정 MB ===
+    // XKT 대략 ~17B/삼각형(무텍스처). 항상로드 후보 = 큰 부재만(작은 rebar/볼트 제외) → 깨끗+가벼움.
+    log(`[main] ── 본구조물(큰 부재만) 개요 크기 측정 ── 전체 ${Math.round(szAllTris).toLocaleString()}삼각형/${szAllCnt.toLocaleString()}개`);
+    for (let b = 0; b < SZ.length; b++) {
+      const mb = (szTris[b] * 17 / 1e6).toFixed(0);
+      log(`[main] 대각>=${SZ[b]}m: ${Math.round(szTris[b]).toLocaleString()}삼각형(~${mb}MB) · 부재 ${szCnt[b].toLocaleString()}개`);
+    }
 
     // === 인스턴싱 측정 리포트 ===
     let uniqueTris = 0, reusedGeoms = 0, reusedRefs = 0;
