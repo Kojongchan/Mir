@@ -209,9 +209,9 @@ export function ThreeDTest() {
       hideEdges: true,
       hideTransparentObjects: false,
       scaleCanvasResolution: true,
-      scaleCanvasResolutionFactor: 0.35, // 회전 중 해상도 더 낮춰(흐릿) 부드럽게 — 멈추면 선명 복원
+      scaleCanvasResolutionFactor: 0.5,
       delayBeforeRestore: true,
-      delayBeforeRestoreSeconds: 0.25,
+      delayBeforeRestoreSeconds: 0.1, // 멈추면 아주 빨리 선명 복원(사용자: 멈추면 엄청 빠르게)
     } as unknown as ConstructorParameters<typeof FastNavPlugin>[1]);
 
     // 방향 큐브(ACC 뷰큐브 유사) — 코너 캔버스에 렌더. 면/모서리 클릭으로 정면·평면뷰 스냅.
@@ -599,19 +599,24 @@ export function ThreeDTest() {
 
     // ★ 원본 타일 스트리밍: 보는 영역(프러스텀)을 원본 타일로 넉넉히 채운다. 개요 덩어리 없이 원본만.
     // 작은 타일(7.9MB)이라 가까운 것부터 착착 채워지고, 시점을 벗어난 타일은 해제(메모리 상한).
-    const LOAD_BATCH = 48;   // 보는 프러스텀을 채우는 원본 타일 수(넉넉히, 좀 더 멀리)
-    const CACHE_CAP = 60;    // 상주 타일 상한(LRU) — 메모리 상한
+    const LOAD_BATCH = 32;   // 보는 프러스텀을 채우는 원본 타일 수(균형: 거리 vs 속도)
+    const CACHE_CAP = 44;    // 상주 타일 상한(LRU) — 메모리 상한
     const CONC = 8;          // 동시 다운로드 수(작은 타일 → 병렬↑로 빨리 채움)
     let loadingCount = 0, useClock = 0;
-    let moving = false; // 카메라 이동/회전 중 = 새 로딩만 보류(모델은 계속 보임, FastNav가 흐릿하게)
+    let moving = false; // 카메라 이동/회전 중
     let want: Tile[] = [];
-    // ★ 회전 중 모델을 '숨기지 않는다'(사용자 지적: 사라졌다 짠하고 나타나는 게 싫음). 대신 계속
-    // 보이되 FastNav 가 해상도↓·PBR/엣지 off 로 '흐릿하게(순간 저LOD)' 만든다. 멈추면 선명 복원.
+    // ★ 회전/이동 '중'엔 무거운 원본 타일을 숨긴다(=LOD 팍 죽임) → 지형만 남아 회전이 엄청 빠름.
+    // 멈추면 즉시 타일 복원(이미 로드돼 있으면 visible 토글만 = 순간). 이게 '아까 빠르던' 그 방식.
+    const setTilesVisible = (v: boolean) => {
+      for (const id of Object.keys(models)) {
+        if (id.startsWith('tile')) { const m = models[id]; if (m && m.visible !== v) m.visible = v; }
+      }
+    };
     const loadTile = (t: Tile) => {
       if (t.state !== 'idle') return;
       t.state = 'loading'; loadingCount++;
       const m = loader.load({ id: t.id, src: t.url, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
-      m.on('loaded', () => { t.state = 'loaded'; loadingCount--; pump(); });
+      m.on('loaded', () => { t.state = 'loaded'; loadingCount--; if (moving && models[t.id]) models[t.id].visible = false; pump(); });
       m.on('error', () => { t.state = 'idle'; loadingCount--; pump(); });
     };
     const pump = () => {
@@ -626,10 +631,10 @@ export function ThreeDTest() {
       const eye = viewer.camera.eye as number[];
       const look = viewer.camera.look as number[];
       const camDist = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
-      // 원본 타일만: 아주 멀리 줌아웃(전체 7km)에서만 중단(타일 과다 방지), 그 외엔 프러스텀을 넉넉히
-      // 채운다. 거리 제한을 더 키움(사용자: 좀 더 멀리까지) — 캡쳐 같은 뷰가 다 채워지도록.
-      const overviewOnly = camDist > sceneDiag * 0.70;
-      const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 2.2, 800), 5000); // 더 멀리까지
+      // 원본 타일만: 아주 멀리 줌아웃에서만 중단(과다 방지), 그 외엔 보는 프러스텀을 채운다.
+      // 거리/속도 균형(사용자: 48개는 몹시 느림) — 반경·개수를 줄여 정지 렌더가 가볍고 빠르게.
+      const overviewOnly = camDist > sceneDiag * 0.55;
+      const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.6, 500), 2600);
       // 선택 기준을 look(궤도 중심)→eye(카메라)+시선방향으로 변경. 기울어진 조감뷰에서 화면 아래쪽
       // (카메라 근처·look 에서 먼) 전경 타일이 누락되던 문제 대응. 시선 전방에 있고(뒤 제외) 로드
       // 깊이 안에 든 타일을 카메라에서 가까운 순으로 채운다 → 전경부터 채워짐.
@@ -659,10 +664,11 @@ export function ThreeDTest() {
     // moving=true + 정지 타이머 리셋 → 약 0.28초 정지하면 moving=false 로 풀고 그때 한 번 재계산.
     let settle: number | null = null;
     lodSubRef.current = viewer.camera.on('matrix', () => {
-      moving = true; // 이동 중: 새 로딩만 보류(모델은 계속 보임, FastNav가 흐릿하게)
+      if (!moving) { moving = true; setTilesVisible(false); } // 이동 시작 → 원본 타일 숨김(LOD 팍 죽임)
       if (settle) clearTimeout(settle);
       settle = window.setTimeout(() => {
         settle = null; moving = false;
+        setTilesVisible(true); // 멈춤 → 원본 타일 즉시 복원(선명)
         const look = viewer.camera.look as number[];
         const eye = viewer.camera.eye as number[];
         const cd = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
@@ -670,7 +676,7 @@ export function ThreeDTest() {
         const zoomChg = Number.isNaN(lastCamDist) ? Infinity : Math.abs(cd - lastCamDist) / Math.max(lastCamDist, 1);
         if (moved < Math.max(cd * 0.12, 90) && zoomChg < 0.15) { pump(); return; } // 변화 작으면 재선정 없이 로딩만 재개
         recompute();
-      }, 260);
+      }, 150); // 멈춤 감지 빠르게 → 타일 즉시 복원
     }) as unknown as string;
     recompute();
     setDbg(`타일 ${T.length}개 · 뷰 종속 스트리밍`);
