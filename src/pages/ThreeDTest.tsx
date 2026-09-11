@@ -599,9 +599,9 @@ export function ThreeDTest() {
 
     // ★ 원본 타일 스트리밍: 보는 영역(프러스텀)을 원본 타일로 넉넉히 채운다. 개요 덩어리 없이 원본만.
     // 작은 타일(7.9MB)이라 가까운 것부터 착착 채워지고, 시점을 벗어난 타일은 해제(메모리 상한).
-    const LOAD_BATCH = 32;   // 보는 프러스텀을 채우는 원본 타일 수(균형: 거리 vs 속도)
-    const CACHE_CAP = 44;    // 상주 타일 상한(LRU) — 메모리 상한
-    const CONC = 8;          // 동시 다운로드 수(작은 타일 → 병렬↑로 빨리 채움)
+    const LOAD_BATCH = 32;   // look 중심 구면 안에서 채우는 원본 타일 수
+    const CACHE_CAP = 48;    // 상주 타일 상한(LRU) — 넉넉히 유지(회전·소이동 시 재방문 즉시)
+    const CONC = 10;         // 동시 다운로드 수(작은 타일 → 병렬↑로 빨리 채움)
     let loadingCount = 0, useClock = 0;
     let moving = false; // 카메라 이동/회전 중
     let want: Tile[] = [];
@@ -635,18 +635,14 @@ export function ThreeDTest() {
       // 거리/속도 균형(사용자: 48개는 몹시 느림) — 반경·개수를 줄여 정지 렌더가 가볍고 빠르게.
       const overviewOnly = camDist > sceneDiag * 0.55;
       const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.6, 500), 2600);
-      // 선택 기준을 look(궤도 중심)→eye(카메라)+시선방향으로 변경. 기울어진 조감뷰에서 화면 아래쪽
-      // (카메라 근처·look 에서 먼) 전경 타일이 누락되던 문제 대응. 시선 전방에 있고(뒤 제외) 로드
-      // 깊이 안에 든 타일을 카메라에서 가까운 순으로 채운다 → 전경부터 채워짐.
-      let fx = look[0] - eye[0], fy = look[1] - eye[1], fz = look[2] - eye[2];
-      const fl = Math.hypot(fx, fy, fz) || 1; fx /= fl; fy /= fl; fz /= fl;
-      const distEye = (t: Tile) => Math.hypot(t.cx - eye[0], t.cy - eye[1], t.cz - eye[2]);
-      const forwardOf = (t: Tile) => (t.cx - eye[0]) * fx + (t.cy - eye[1]) * fy + (t.cz - eye[2]) * fz;
-      const loadFwd = loadR + camDist; // 시선 전방 로드 깊이(카메라~look + 여유)
+      // ★ 선택 기준 = '궤도 중심(look)까지의 거리'(구면). 회전은 look 을 중심으로 도므로 look 이 고정
+      // → 회전해도 원하는 타일 집합이 그대로 = '회전 시 빈 구멍' 근본 해결. 새 타일은 실제로 이동/줌해
+      // look 이 옮겨갈 때만 필요. (기존 시선-전방 기준은 회전마다 집합이 바뀌어 구멍이 생겼음.)
+      const distLook = (t: Tile) => Math.hypot(t.cx - look[0], t.cy - look[1], t.cz - look[2]);
       want = [];
       if (!overviewOnly) {
-        for (const t of T) { const fwd = forwardOf(t); if (fwd < -t.r) continue; if (fwd - t.r > loadFwd) continue; want.push(t); }
-        want.sort((a, b) => distEye(a) - distEye(b)); // 카메라 근접(전경) 우선
+        for (const t of T) { if (distLook(t) - t.r < loadR) want.push(t); }
+        want.sort((a, b) => distLook(a) - distLook(b)); // look 근접(중심) 우선
         if (want.length > LOAD_BATCH) want = want.slice(0, LOAD_BATCH);
         for (const t of want) t.lastUsed = ++useClock; // 최근 사용 표시(LRU)
       }
