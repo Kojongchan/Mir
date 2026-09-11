@@ -209,9 +209,9 @@ export function ThreeDTest() {
       hideEdges: true,
       hideTransparentObjects: false,
       scaleCanvasResolution: true,
-      scaleCanvasResolutionFactor: 0.5,
+      scaleCanvasResolutionFactor: 0.35, // 회전 중 해상도 더 낮춰(흐릿) 부드럽게 — 멈추면 선명 복원
       delayBeforeRestore: true,
-      delayBeforeRestoreSeconds: 0.3,
+      delayBeforeRestoreSeconds: 0.25,
     } as unknown as ConstructorParameters<typeof FastNavPlugin>[1]);
 
     // 방향 큐브(ACC 뷰큐브 유사) — 코너 캔버스에 렌더. 면/모서리 클릭으로 정면·평면뷰 스냅.
@@ -591,39 +591,27 @@ export function ThreeDTest() {
         im.on('error', () => { /* 일부 실패해도 진행 */ });
       });
     }
-    // ★ 개요(lod1)를 '흐릿한 잔상(반투명)'으로 표시(사용자 아이디어). 솔리드 덩어리가 아니라 옅은
-    // 유령처럼 깔려 빈 곳(먼 구조물·로딩 전)이 텅 비지 않게 한다. 트래픽 최소(15MB 1개). 원본 타일은
-    // 그 위에 '불투명'으로 얹혀 실제 해상도를 준다. 회전 중엔 타일을 감춰도 이 잔상이 남아 안 비어보임.
-    const GHOST_OPACITY = 0.3;
-    if (lod1Url) {
-      const lm = loader.load({ id: 'lod1', src: lod1Url, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
-      lm.on('loaded', () => { try { (lm as unknown as { opacity: number }).opacity = GHOST_OPACITY; } catch { /* noop */ } frameOnce(); });
-      lm.on('error', () => { /* noop */ });
-    }
-    if (!baseUrls?.length && !lod1Url) setBusy(false);
+    // ★ 개요(lod1) '하얀 덩어리'는 로드하지 않는다(사용자: 걸리적거려 제거). 화면엔 지형 + 보는
+    // 영역의 '원본 타일'만. 회전 중엔 그 원본 타일을 '사라지게' 하는 대신 흐릿하게(FastNav 저해상)
+    // 유지 → 멈추면 선명. (아래 회전 처리 참고.)
+    void lod1Url;
+    if (!baseUrls?.length) setBusy(false);
 
     // ★ 원본 타일 스트리밍: 보는 영역(프러스텀)을 원본 타일로 넉넉히 채운다. 개요 덩어리 없이 원본만.
     // 작은 타일(7.9MB)이라 가까운 것부터 착착 채워지고, 시점을 벗어난 타일은 해제(메모리 상한).
-    const LOAD_BATCH = 40;   // 보는 프러스텀을 채우는 원본 타일 수(넉넉히)
-    const CACHE_CAP = 52;    // 상주 타일 상한(LRU) — 메모리 상한
+    const LOAD_BATCH = 48;   // 보는 프러스텀을 채우는 원본 타일 수(넉넉히, 좀 더 멀리)
+    const CACHE_CAP = 60;    // 상주 타일 상한(LRU) — 메모리 상한
     const CONC = 8;          // 동시 다운로드 수(작은 타일 → 병렬↑로 빨리 채움)
     let loadingCount = 0, useClock = 0;
-    let moving = false; // 카메라 이동/회전 중 = 새 로딩 보류 + 상세 타일 숨김(모션 LOD)
+    let moving = false; // 카메라 이동/회전 중 = 새 로딩만 보류(모델은 계속 보임, FastNav가 흐릿하게)
     let want: Tile[] = [];
-    // ★ 모션 LOD: 회전/이동 중엔 '무거운 상세 타일(tile*)만' 숨긴다. 지형·인스턴스 구조물·개요는
-    // 계속 보인다(인스턴스=GPU 인스턴싱으로 저비용, 개요=9MB 저해상 → 회전 중에도 가벼움). 이렇게
-    // 하면 회전 시 구조물이 '사라지지 않고'(사용자 지적) 부드럽다. 상세 타일은 근접 검사 때만 쓰므로
-    // 회전 중 숨겨도 손실 적다. 멈추면 복원.
-    const setTilesVisible = (v: boolean) => {
-      for (const id of Object.keys(models)) {
-        if (id.startsWith('tile')) { const m = models[id]; if (m && m.visible !== v) m.visible = v; }
-      }
-    };
+    // ★ 회전 중 모델을 '숨기지 않는다'(사용자 지적: 사라졌다 짠하고 나타나는 게 싫음). 대신 계속
+    // 보이되 FastNav 가 해상도↓·PBR/엣지 off 로 '흐릿하게(순간 저LOD)' 만든다. 멈추면 선명 복원.
     const loadTile = (t: Tile) => {
       if (t.state !== 'idle') return;
       t.state = 'loading'; loadingCount++;
       const m = loader.load({ id: t.id, src: t.url, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
-      m.on('loaded', () => { t.state = 'loaded'; loadingCount--; if (moving && models[t.id]) models[t.id].visible = false; pump(); });
+      m.on('loaded', () => { t.state = 'loaded'; loadingCount--; pump(); });
       m.on('error', () => { t.state = 'idle'; loadingCount--; pump(); });
     };
     const pump = () => {
@@ -638,12 +626,10 @@ export function ThreeDTest() {
       const eye = viewer.camera.eye as number[];
       const look = viewer.camera.look as number[];
       const camDist = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
-      // 흐릿한 잔상(lod1)은 항상 표시 → 빈 곳/먼 구조물이 텅 비지 않음(옅은 유령). 원본 타일은 위에 얹힘.
-      if (models['lod1'] && models['lod1'].visible !== true) models['lod1'].visible = true;
-      // 원본 타일: 아주 멀리 줌아웃(전체 7km)에서만 중단(타일 과다 방지), 그 외엔 프러스텀을 넉넉히 채움.
-      // 거리 제한을 키움(사용자: 거리제한이 큼) — 잔상이 먼 곳을 받쳐주므로 타일 반경을 늘려도 안전.
-      const overviewOnly = camDist > sceneDiag * 0.60;
-      const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.9, 600), 3600); // 프러스텀 더 넓게
+      // 원본 타일만: 아주 멀리 줌아웃(전체 7km)에서만 중단(타일 과다 방지), 그 외엔 프러스텀을 넉넉히
+      // 채운다. 거리 제한을 더 키움(사용자: 좀 더 멀리까지) — 캡쳐 같은 뷰가 다 채워지도록.
+      const overviewOnly = camDist > sceneDiag * 0.70;
+      const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 2.2, 800), 5000); // 더 멀리까지
       // 선택 기준을 look(궤도 중심)→eye(카메라)+시선방향으로 변경. 기울어진 조감뷰에서 화면 아래쪽
       // (카메라 근처·look 에서 먼) 전경 타일이 누락되던 문제 대응. 시선 전방에 있고(뒤 제외) 로드
       // 깊이 안에 든 타일을 카메라에서 가까운 순으로 채운다 → 전경부터 채워짐.
@@ -673,11 +659,10 @@ export function ThreeDTest() {
     // moving=true + 정지 타이머 리셋 → 약 0.28초 정지하면 moving=false 로 풀고 그때 한 번 재계산.
     let settle: number | null = null;
     lodSubRef.current = viewer.camera.on('matrix', () => {
-      if (!moving) { moving = true; setTilesVisible(false); } // 이동 시작 → 무거운 상세 타일만 숨김
+      moving = true; // 이동 중: 새 로딩만 보류(모델은 계속 보임, FastNav가 흐릿하게)
       if (settle) clearTimeout(settle);
       settle = window.setTimeout(() => {
         settle = null; moving = false;
-        setTilesVisible(true); // 멈춤 → 상세 타일 복원
         const look = viewer.camera.look as number[];
         const eye = viewer.camera.eye as number[];
         const cd = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
