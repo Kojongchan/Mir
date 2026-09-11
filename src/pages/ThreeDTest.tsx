@@ -597,11 +597,12 @@ export function ThreeDTest() {
     void lod1Url;
     if (!baseUrls?.length) setBusy(false);
 
-    // ★ 원본 타일 스트리밍: 보는 영역(프러스텀)을 원본 타일로 넉넉히 채운다. 개요 덩어리 없이 원본만.
-    // 작은 타일(7.9MB)이라 가까운 것부터 착착 채워지고, 시점을 벗어난 타일은 해제(메모리 상한).
-    const LOAD_BATCH = 32;   // look 중심 구면 안에서 채우는 원본 타일 수
-    const CACHE_CAP = 48;    // 상주 타일 상한(LRU) — 넉넉히 유지(회전·소이동 시 재방문 즉시)
-    const CONC = 10;         // 동시 다운로드 수(작은 타일 → 병렬↑로 빨리 채움)
+    // ★ 원본 타일 스트리밍(ACC 식 점진 완성): 보는 영역의 원본 타일을 '가까운 것부터 끝까지' 채운다.
+    // 개수를 인위적으로 제한하지 않아(중간에 멈춰 영구 구멍 나던 문제 해결) 시간이 걸려도 완성됨.
+    // GPU 메모리는 상주 상한(CACHE_CAP)으로 묶고, 시점 벗어난 타일은 해제(ACC 처럼).
+    const LOAD_BATCH = 64;   // 보는 영역을 '끝까지' 채움(구면 반경 내 가까운 것부터, 중간에 안 멈춤)
+    const CACHE_CAP = 72;    // 상주 타일 상한(LRU·GPU메모리). LOAD_BATCH 보다 커야 상주분이 안 쫓겨남
+    const CONC = 12;         // 동시 다운로드 수(병렬↑로 빨리 채움)
     let loadingCount = 0, useClock = 0;
     let moving = false; // 카메라 이동/회전 중
     let want: Tile[] = [];
