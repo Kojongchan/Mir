@@ -23,6 +23,7 @@ import '@loaders.gl/polyfills';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { randomUUID } from 'node:crypto';
 import zlib from 'node:zlib';
 import { createClient } from '@supabase/supabase-js';
 import { SVFReader } from 'svf-utils';
@@ -117,8 +118,7 @@ async function getSvfDerivatives(urn) {
 }
 
 // ACC 최신 파일은 뷰어용으로 SVF2 만 있을 때가 많다(svf-utils 는 SVF 만 읽음). SVF 파생물이
-// 없으면 Model Derivative 에 **SVF(2d+3d) 변환 작업**을 요청하고 준비될 때까지 폴링한다.
-// 이렇게 해야 원본 DWG 업로드만으로(추가 파일 없이) 진짜 지표면·코리더(3D 뷰)를 얻는다.
+// 없는 경우 자동 유료 작업을 요청하지 않고 중단한다. 기존 파생물 읽기용 토큰만 발급한다.
 async function apsToken(scope) {
   const basic = Buffer.from(`${APS_CLIENT_ID}:${APS_CLIENT_SECRET}`).toString('base64');
   const res = await fetch(`${APS_BASE}/authentication/v2/token`, {
@@ -144,33 +144,10 @@ function scanManifest(mani) {
 }
 async function ensureSvf(urn) {
   const md = new ModelDerivativeClient();
-  const readTok = async () =>
-    (await new AuthenticationClient().getTwoLeggedToken(APS_CLIENT_ID, APS_CLIENT_SECRET, [Scopes.ViewablesRead])).access_token;
-  let s = scanManifest(await md.getManifest(urn, { accessToken: await readTok(), region: APS_REGION }));
-  console.log(`[convert4d] 기존 파생물: svf=${s.svf} svf2=${s.svf2} 3D뷰=${s.views3d} 2D뷰=${s.views2d} status=${s.status}`);
-  if (s.svf) return;
-  // SVF 없음 → 변환 작업 요청.
-  const tok = await apsToken('data:read data:write data:create viewables:read');
-  const jobRes = await fetch(`${APS_BASE}/modelderivative/v2/designdata/job`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${tok}`, 'content-type': 'application/json',
-      ...(APS_REGION && APS_REGION !== 'US' ? { 'x-ads-region': APS_REGION } : {}),
-    },
-    body: JSON.stringify({ input: { urn }, output: { formats: [{ type: 'svf', views: ['2d', '3d'] }] } }),
-  });
-  const jt = await jobRes.text();
-  if (!jobRes.ok) throw new Error(`SVF 변환 작업 요청 실패(${jobRes.status}): ${jt.slice(0, 200)}`);
-  console.log('[convert4d] SVF 변환 작업 접수 — 완료까지 폴링(최대 40분)…');
-  const t0 = Date.now();
-  for (;;) {
-    await new Promise((r) => setTimeout(r, 12000));
-    s = scanManifest(await md.getManifest(urn, { accessToken: await readTok(), region: APS_REGION }));
-    if (s.svf) { console.log('[convert4d] SVF 파생물 준비됨'); return; }
-    if (s.status === 'failed') throw new Error('APS SVF 변환 실패(manifest status=failed)');
-    if (Date.now() - t0 > 40 * 60 * 1000) throw new Error('SVF 변환 시간 초과(40분)');
-    console.log(`[convert4d]   변환중… status=${s.status} progress=${s.progress}`);
-  }
+  const cred = await new AuthenticationClient().getTwoLeggedToken(APS_CLIENT_ID, APS_CLIENT_SECRET, [Scopes.ViewablesRead]);
+  const state = scanManifest(await md.getManifest(urn, { accessToken: cred.access_token, region: APS_REGION }));
+  // Existing derivatives only. A desktop AEC seat does not authorize a free cloud conversion job.
+  if (!state.svf) throw new Error('기존 SVF 파생물이 없습니다. 추가 비용 방지를 위해 APS 변환 작업을 요청하지 않았습니다.');
 }
 
 // --- 직접 다운로더(레거시 derivativeservice) ---
@@ -396,7 +373,7 @@ async function main() {
   // 이전 실패 마커 제거 — 재시도 중엔 '처리중'으로 보이게(실패로 오인 방지).
   await r2Delete(`${keyBase}/error.json`);
 
-  await ensureSvf(urn); // SVF 없으면(SVF2만 있으면) SVF 변환 요청+대기
+  await ensureSvf(urn); // 기존 SVF만 사용. 없으면 비용 발생 가능한 자동 변환 없이 종료.
   const derivatives = await getSvfDerivatives(urn);
   if (derivatives.length === 0) throw new Error('SVF 파생물을 찾지 못했습니다(변환 후에도 없음).');
   console.log(`[convert4d] SVF 파생물 ${derivatives.length}개`);
@@ -440,7 +417,11 @@ async function main() {
     } catch (e) { console.warn('[convert4d] basis 경로 연결 실패:', e?.message || e); }
     // 스트리밍: mergeGlb 가 청크 GLB 를 하나 만들 때마다 여기서 XKT 로 굽고 R2 업로드 후 즉시 삭제
     // → 디스크·메모리 모두 한 청크로 상한(대용량 OOM/디스크풀 원천 차단).
+    // Immutable chunks: failed rebuilds cannot overwrite files referenced by the last good manifest.
+    const generation = `runs/${randomUUID()}`;
     const xktFiles = [];
+    const chunkInfo = {};
+    const failedChunks = [];
     const navFiles = [];
     const baseFiles = [];
     const instFiles = []; // 인스턴스 레이어(항상 로드 구조물 뼈대)
@@ -451,18 +432,20 @@ async function main() {
     // kind: 'detail'(상세/타일 c*.xkt) | 'nav' | 'lod1'(개요) | 'base'(지형 항상로드 b*.xkt) | 'inst'(인스턴스 레이어 i*.xkt)
     const onChunk = async (glbPath, idx, tris, kind = 'detail') => {
       const xktPath = glbPath.replace(/\.glb$/, '.xkt');
-      const name = path.basename(xktPath);
+      const name = `${generation}/${path.basename(xktPath)}`;
       try {
         await convert2xkt({ source: glbPath, output: xktPath, log: () => {} });
         const buf = fs.readFileSync(xktPath);
         await r2Put(`${keyBase}/xkt/${name}`, buf, 'application/octet-stream');
+        chunkInfo[name] = { byteLength: buf.length, triangles: tris, kind };
         if (kind === 'lod1') { lodFile = name; lodBytes += buf.length; console.log(`[convert4d]   LOD1 → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
         else if (kind === 'nav') { navFiles.push(name); navBytes += buf.length; console.log(`[convert4d]   nav ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
         else if (kind === 'base') { baseFiles.push(name); baseBytes += buf.length; console.log(`[convert4d]   지형베이스 ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
         else if (kind === 'inst') { instFiles.push(name); instBytes += buf.length; console.log(`[convert4d]   인스턴스레이어 ${idx} → ${name} (${MB(buf.length)}MB) 업로드`); }
         else { xktFiles.push(name); detailBytes += buf.length; console.log(`[convert4d]   청크 ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
       } catch (e) {
-        console.warn(`[convert4d]   ${kind} ${idx} XKT 실패: ${e?.message || e}`);
+        failedChunks.push({ name, kind });
+        throw new Error(`XKT ${kind} 청크 변환/업로드 실패: 게시를 중단합니다. ${e?.message || e}`);
       } finally {
         // RENDER_TEST 시 진단용으로 남긴다: LOD1 GLB(개요) + 첫 상세청크 XKT(c0). 나머지는 삭제.
         const keepGlb = kind === 'lod1' && process.env.RENDER_TEST === '1';
@@ -473,13 +456,23 @@ async function main() {
     };
     console.log('[convert4d] XKT 스트리밍 변환 시작(상세+nav LOD)…');
     const res = await buildMergedGlb(scene, { xktStreamDir: 'out/xkt', onChunk, log: console.log, matXforms });
+    if (failedChunks.length) throw new Error(`XKT 청크 ${failedChunks.length}개 실패: 불완전한 모델은 게시하지 않습니다.`);
     if (xktFiles.length === 0) throw new Error('XKT 청크 0개 — 변환할 지오메트리 없음');
     // 매니페스트: 상세청크(xktFiles) + 내비 LOD(navFiles) + 개요(lod1).
     // 뷰어: 정지=상세, 회전중=nav(텍스처 입힌 중간해상도), 극단 줌아웃=lod1.
     // 타일 모드: xktFiles 각각이 '공간 타일(원본 형상)' + AABB. 뷰어가 개요 먼저→보는 타일만 스트리밍.
-    const manifest = { xktFiles, navFiles, lod1: lodFile };
+    const manifest = {
+      schemaVersion: 2, xktFiles, navFiles, lod1: lodFile, chunkInfo, focus: res.focus || null,
+      build: { commit: process.env.GITHUB_SHA || null, ref: process.env.GITHUB_REF || null,
+        createdAt: new Date().toISOString(),
+        options: { tiles: process.env.XKT_TILES === '1', tileM: Number(process.env.XKT_TILE_M || 200),
+          tileCap: Number(process.env.XKT_TILE_CAP || 1200000), instance: process.env.XKT_INSTANCE === '1' } },
+    };
     if (res.tiles) {
-      manifest.tiles = xktFiles.map((n) => ({ n, aabb: res.tileAabbs?.[n.replace(/\.xkt$/, '')] || null })).filter((t) => t.aabb);
+      manifest.tiles = xktFiles.map((n) => ({ n, aabb: res.tileAabbs?.[path.basename(n).replace(/\.xkt$/, '')], byteLength: chunkInfo[n].byteLength }));
+      if (manifest.tiles.some(t => !Array.isArray(t.aabb) || t.aabb.length !== 6 || !t.aabb.every(Number.isFinite))) {
+        throw new Error('타일 공간 정보 누락: 불완전한 모델은 게시하지 않습니다.');
+      }
       manifest.base = baseFiles; // 지형 항상로드 베이스(뷰어가 처음에 로드, 절대 언로드 안 함)
       if (instFiles.length) manifest.inst = instFiles; // 인스턴스 레이어(반복 구조물 뼈대, 항상 로드)
       console.log(`[convert4d] 타일 매니페스트: 구조물 타일 ${manifest.tiles.length}개 + 지형베이스 ${baseFiles.length}청크 + 인스턴스 ${instFiles.length}청크 + 개요 lod1`);

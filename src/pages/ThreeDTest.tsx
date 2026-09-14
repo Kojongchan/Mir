@@ -11,6 +11,7 @@ import { supabase } from '../lib/supabase';
 import { isAccModel } from '../lib/aps';
 import { UiIcon } from '../components/icons/UiIcon';
 import { errMessage } from '../lib/errors';
+import { TileStream } from '../viewer/TileStream';
 
 /** 변환기가 구운 카메라 초점 박스(회전 전 실좌표). 이상치 제외한 중심/반경. */
 type Focus = { center: [number, number, number]; half: [number, number, number] };
@@ -110,6 +111,7 @@ export function ThreeDTest() {
   const lodSubRef = useRef<string | null>(null); // 카메라 LOD 전환 리스너 핸들
   const lodTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // 카메라 정지 감지 디바운스
   const pickedRef = useRef<{ id?: string | number; worldPos?: number[] } | null>(null);
+  const streamCleanupRef = useRef<(() => void) | null>(null);
   const highlightedRef = useRef<string | null>(null); // 현재 하이라이트된 엔티티 id
   const [status, setStatus] = useState('');
   const [dbg, setDbg] = useState('');
@@ -122,9 +124,7 @@ export function ThreeDTest() {
   const [bgDark, setBgDark] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [lastFile, setLastFile] = useState<PickedAccFile | null>(null);
-  const [overage, setOverage] = useState<
-    { file: PickedAccFile; force: boolean; usedGB: number; freeGB: number } | null
-  >(null);
+
 
   // xeokit Viewer 1회 생성/파기.
   useEffect(() => {
@@ -320,6 +320,8 @@ export function ThreeDTest() {
       canvasEl.removeEventListener('wheel', onWheel);
       canvasEl.removeEventListener('dblclick', onDblClick);
       viewer.scene.input.off(onClick);
+      streamCleanupRef.current?.();
+      streamCleanupRef.current = null;
       if (lodTimerRef.current) { clearTimeout(lodTimerRef.current); lodTimerRef.current = null; }
       navCube?.destroy();
       viewerRef.current = null;
@@ -431,6 +433,8 @@ export function ThreeDTest() {
     if (!viewer || !loader || urls.length === 0) return;
     setPick(null);
     highlightedRef.current = null;
+    streamCleanupRef.current?.();
+    streamCleanupRef.current = null;
     for (const id of Object.keys(viewer.scene.models)) viewer.scene.models[id].destroy();
     if (lodSubRef.current) { try { viewer.camera.off(lodSubRef.current); } catch { /* noop */ } lodSubRef.current = null; }
     if (lodTimerRef.current) { clearTimeout(lodTimerRef.current); lodTimerRef.current = null; }
@@ -537,152 +541,151 @@ export function ThreeDTest() {
     loadDetail(0);
   }, []);
 
-  /**
-   * 뷰 종속 공간 타일 스트리밍(오토데스크 DOCS 방식). 개요(lod1)를 먼저 띄우고, 카메라가
-   * 보는 곳 주변 타일만 '원본 형상'으로 내려받는다(화면 밖·먼 곳은 안 받음, 멀어지면 해제).
-   * → 트래픽은 방문 구역만, 구조물은 감량 없는 원본. tiles[i].aabb 는 focus 와 같은 공간
-   * (회전 전 실좌표) → (x,y,z)→(x,z,-y) 로 뷰어공간 변환해 거리 판정.
-   */
-  const mountTiles = useCallback((tiles: { url: string; aabb: number[] }[], baseUrls: string[] | undefined, instUrls: string[] | undefined, lod1Url: string | undefined, label: string, focus?: Focus) => {
+  /** Original tiles remain visible during navigation. Loading has explicit count/encoded-byte budgets.
+   * This is a bounded working view, not a full-scene LOD solution. */
+  const mountTiles = useCallback((tiles: { url: string; aabb: number[]; byteLength?: number }[], baseUrls: string[] | undefined, instUrls: string[] | undefined, _lod1Url: string | undefined, label: string, focus?: Focus) => {
     const viewer = viewerRef.current;
     const loader = xktLoaderRef.current;
     if (!viewer || !loader || !tiles.length) return;
+    // Legacy instance layers contain geometry removed from detail tiles. Never silently omit them,
+    // and never auto-load hundreds of thousands of entities on a weak client.
+    if (instUrls?.length) {
+      setBusy(false);
+      setStatus('이 모델은 별도 반복 부재 파일이 필요합니다. 현재 보기에서는 완전하게 열 수 없습니다.');
+      return;
+    }
+    streamCleanupRef.current?.();
+    streamCleanupRef.current = null;
+    if (lodSubRef.current) { viewer.camera.off(lodSubRef.current); lodSubRef.current = null; }
+    if (lodTimerRef.current) { clearTimeout(lodTimerRef.current); lodTimerRef.current = null; }
+    for (const id of Object.keys(viewer.scene.models)) viewer.scene.models[id].destroy();
     setPick(null);
     highlightedRef.current = null;
-    for (const id of Object.keys(viewer.scene.models)) viewer.scene.models[id].destroy();
-    if (lodSubRef.current) { try { viewer.camera.off(lodSubRef.current); } catch { /* noop */ } lodSubRef.current = null; }
-    if (lodTimerRef.current) { clearTimeout(lodTimerRef.current); lodTimerRef.current = null; }
-
-    type Tile = { id: string; url: string; cx: number; cy: number; cz: number; r: number; state: 'idle' | 'loading' | 'loaded'; lastUsed: number };
-    const T: Tile[] = tiles.map((t, i) => {
-      const [ax, ay, az, bx, by, bz] = t.aabb; // 회전 전 실좌표 AABB
-      const va = [ax, az, -by, bx, bz, -ay];    // (x,y,z)→(x,z,-y) 뷰어공간 AABB
-      return {
-        id: `tile${i}`, url: t.url,
-        cx: (va[0] + va[3]) / 2, cy: (va[1] + va[4]) / 2, cz: (va[2] + va[5]) / 2,
-        r: Math.hypot(va[3] - va[0], va[4] - va[1], va[5] - va[2]) / 2,
-        state: 'idle', lastUsed: 0,
-      };
-    });
-    const models = viewer.scene.models as Record<string, { visible?: boolean; destroy(): void }>;
-    const fbox = focusToAabb(focus);
-    const sceneDiag = fbox ? Math.hypot(fbox[3] - fbox[0], fbox[4] - fbox[1], fbox[5] - fbox[2]) : 5000;
-    // ★ 경량 모드: 지형 베이스 + 개요(lod1)만 로드/표시. 인스턴스 레이어(21.8만 엔티티=파싱·렌더
-    // 과부하)와 타일 스트리밍(트래픽 과다)을 끈다. 약한 클라이언트가 이미 잘 처리하는 지형(1.15M
-    // 삼각형·243MB) 수준으로 총량을 묶어 '지형처럼' 빠르고 부드럽게. 구조물은 저해상이지만 완전·상주.
-    const LIGHT_MODE: boolean = true;
-
-    // 지형 베이스(항상 로드·항상 표시). 가벼움(≈115만 삼각형) → 바닥이 늘 있어 빈 구멍 없음.
+    pickedRef.current = null;
+    let active = true;
     let framed = false;
-    const frameOnce = () => { if (framed) return; framed = true; const b = focusToAabb(focus) ?? (viewer.scene.aabb as number[]); if (b) flyToFramed(viewer, b); setBusy(false); setStatus(''); setModelName(label); };
-    if (baseUrls && baseUrls.length) {
-      baseUrls.forEach((u, i) => {
-        const bm = loader.load({ id: `base${i}`, src: u, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
-        bm.on('loaded', () => frameOnce());
-        bm.on('error', () => { /* 베이스 일부 실패해도 진행 */ });
-      });
-    }
-    // 인스턴스 레이어(반복 구조물 뼈대, 항상 로드·항상 표시). 원본 형상 그대로, 어디서나 즉시 보임
-    // → 구조물 절반 이상이 스트리밍 대기 없이 바로 뜬다.
-    if (!LIGHT_MODE && instUrls && instUrls.length) {
-      instUrls.forEach((u, i) => {
-        const im = loader.load({ id: `inst${i}`, src: u, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
-        im.on('loaded', () => frameOnce());
-        im.on('error', () => { /* 일부 실패해도 진행 */ });
-      });
-    }
-    // ★ 개요(lod1) '하얀 덩어리'는 로드하지 않는다(사용자: 걸리적거려 제거). 화면엔 지형 + 보는
-    // 영역의 '원본 타일'만. 회전 중엔 그 원본 타일을 '사라지게' 하는 대신 흐릿하게(FastNav 저해상)
-    // 유지 → 멈추면 선명. (아래 회전 처리 참고.)
-    void lod1Url;
-    if (!baseUrls?.length) setBusy(false);
-
-    // ★ 원본 타일 스트리밍(ACC 식 점진 완성): 보는 영역의 원본 타일을 '가까운 것부터 끝까지' 채운다.
-    // 개수를 인위적으로 제한하지 않아(중간에 멈춰 영구 구멍 나던 문제 해결) 시간이 걸려도 완성됨.
-    // GPU 메모리는 상주 상한(CACHE_CAP)으로 묶고, 시점 벗어난 타일은 해제(ACC 처럼).
-    const LOAD_BATCH = 64;   // 보는 영역을 '끝까지' 채움(구면 반경 내 가까운 것부터, 중간에 안 멈춤)
-    const CACHE_CAP = 72;    // 상주 타일 상한(LRU·GPU메모리). LOAD_BATCH 보다 커야 상주분이 안 쫓겨남
-    const CONC = 12;         // 동시 다운로드 수(병렬↑로 빨리 채움)
-    let loadingCount = 0, useClock = 0;
-    let moving = false; // 카메라 이동/회전 중
-    let want: Tile[] = [];
-    // ★ 회전/이동 '중'엔 무거운 원본 타일을 숨긴다(=LOD 팍 죽임) → 지형만 남아 회전이 엄청 빠름.
-    // 멈추면 즉시 타일 복원(이미 로드돼 있으면 visible 토글만 = 순간). 이게 '아까 빠르던' 그 방식.
-    const setTilesVisible = (v: boolean) => {
-      for (const id of Object.keys(models)) {
-        if (id.startsWith('tile')) { const m = models[id]; if (m && m.visible !== v) m.visible = v; }
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    const models = viewer.scene.models;
+    const frameOnce = () => {
+      if (!active || framed) return;
+      const box = focusToAabb(focus) ?? viewer.scene.aabb;
+      if (box && Array.from(box).every(Number.isFinite)) {
+        framed = true;
+        flyToFramed(viewer, box as number[]);
       }
+      setBusy(false); setModelName(label);
     };
-    const loadTile = (t: Tile) => {
-      if (t.state !== 'idle') return;
-      t.state = 'loading'; loadingCount++;
-      const m = loader.load({ id: t.id, src: t.url, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
-      m.on('loaded', () => { t.state = 'loaded'; loadingCount--; if (moving && models[t.id]) models[t.id].visible = false; pump(); });
-      m.on('error', () => { t.state = 'idle'; loadingCount--; pump(); });
-    };
-    const pump = () => {
-      // 카메라 이동/회전 중엔 새 다운로드 시작 안 함(이미 로딩 중인 것만 마무리) → 회전 시 트래픽
-      // 몰림·끊김 방지. 멈추면(settle) recompute 가 다시 pump 를 호출해 그때 필요한 것만 로드.
-      if (!moving) for (const t of want) { if (loadingCount >= CONC) break; if (t.state === 'idle') loadTile(t); }
-      const ld = want.filter((t) => t.state === 'loaded').length;
-      setStatus(moving ? '' : (want.length && ld < want.length ? `구조물 로딩… ${ld}/${want.length}` : ''));
-    };
-    let lastLookX = NaN, lastLookY = NaN, lastLookZ = NaN, lastCamDist = NaN;
+    const T = tiles.filter(t => t.aabb.length === 6 && t.aabb.every(Number.isFinite)).map((t, i) => {
+      const [ax, ay, az, bx, by, bz] = t.aabb;
+      return { id: `tile${i}`, url: t.url, byteLength: t.byteLength,
+        cx: (ax + bx) / 2, cy: (az + bz) / 2, cz: -(ay + by) / 2,
+        r: Math.hypot(bx - ax, by - ay, bz - az) / 2 };
+    });
+    const stream = new TileStream<typeof T[number]>({
+      // A small number of outstanding downloads also limits bursts of main-thread XKT parsing.
+      concurrency: 2, maxTiles: 24, maxEncodedBytes: 192 * 1024 * 1024,
+      load: async (tile, signal) => {
+        const response = await fetch(tile.url, { signal });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const declaredBytes = Number(response.headers.get('content-length'));
+        if (declaredBytes > 0 && !stream.accountBytes(tile.id, declaredBytes)) {
+          await response.body?.cancel();
+          throw new Error('타일 크기 예산 초과');
+        }
+        const xkt = await response.arrayBuffer();
+        if (signal.aborted || !active) throw new Error('cancelled');
+        if (!stream.accountBytes(tile.id, xkt.byteLength)) throw new Error('타일 크기 예산 초과');
+        await new Promise<void>((resolve, reject) => {
+          let finished = false;
+          const timeout = window.setTimeout(() => finish(new Error('타일 로딩 시간 초과')), 60_000);
+          const abort = () => finish(new Error('cancelled'));
+          const finish = (error?: Error) => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timeout);
+            signal.removeEventListener('abort', abort);
+            if (error) reject(error); else resolve();
+          };
+          signal.addEventListener('abort', abort, { once: true });
+          try {
+            const model = loader.load({ id: tile.id, xkt, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
+            model.on('loaded', () => { if (active && !signal.aborted) frameOnce(); finish(); });
+            model.on('error', () => finish(new Error('타일을 읽지 못했습니다')));
+          } catch (e) { finish(e instanceof Error ? e : new Error(String(e))); }
+        });
+      },
+      unload: tile => { models[tile.id]?.destroy(); },
+      onChange: stats => {
+        if (!active) return;
+        const limited = stats.total > stats.selected;
+        setStatus(stats.failed ? `일부 구간 로드 실패 ${stats.failed}개 — 모델을 다시 열어 주세요.` :
+          stats.loaded < stats.selected ? (stats.loading ? `구조물 로딩… ${stats.loaded}/${stats.selected}` : '표시 예산에 도달했습니다. 확인할 위치로 확대해 주세요.') :
+          limited ? '주변 구간 표시 중 · 확인할 위치로 확대해 주세요.' : '');
+        setDbg(`타일 ${stats.loaded}/${stats.selected} · 후보 ${stats.total} · 다운로드 중 ${stats.loading} · 실패 ${stats.failed} · 타일 압축크기 예산 사용 ≈${Math.round(stats.encodedBytes / 1048576)}MB (GPU 메모리 아님)`);
+      },
+    });
     const recompute = () => {
+      if (!active) return;
       const eye = viewer.camera.eye as number[];
       const look = viewer.camera.look as number[];
-      const camDist = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
-      // 원본 타일만: 아주 멀리 줌아웃에서만 중단(과다 방지), 그 외엔 보는 프러스텀을 채운다.
-      // 거리/속도 균형(사용자: 48개는 몹시 느림) — 반경·개수를 줄여 정지 렌더가 가볍고 빠르게.
-      const overviewOnly = camDist > sceneDiag * 0.55;
-      const loadR = overviewOnly ? 0 : Math.min(Math.max(camDist * 1.6, 500), 2600);
-      // ★ 선택 기준 = '궤도 중심(look)까지의 거리'(구면). 회전은 look 을 중심으로 도므로 look 이 고정
-      // → 회전해도 원하는 타일 집합이 그대로 = '회전 시 빈 구멍' 근본 해결. 새 타일은 실제로 이동/줌해
-      // look 이 옮겨갈 때만 필요. (기존 시선-전방 기준은 회전마다 집합이 바뀌어 구멍이 생겼음.)
-      const distLook = (t: Tile) => Math.hypot(t.cx - look[0], t.cy - look[1], t.cz - look[2]);
-      want = [];
-      if (!overviewOnly) {
-        for (const t of T) { if (distLook(t) - t.r < loadR) want.push(t); }
-        want.sort((a, b) => distLook(a) - distLook(b)); // look 근접(중심) 우선
-        if (want.length > LOAD_BATCH) want = want.slice(0, LOAD_BATCH);
-        for (const t of want) t.lastUsed = ++useClock; // 최근 사용 표시(LRU)
-      }
-      pump();
-      // 줌아웃(개요만)하면 원본 타일을 전부 해제 → 메모리·트래픽 상한(개요가 덮으므로 손실 없음).
-      // 가까울 땐 CACHE_CAP 초과분만 '오래 안 본 것'부터 해제(근접 이동 시 재방문 완충).
-      const wantSet = new Set(want.map((t) => t.id));
-      const loaded = T.filter((t) => t.state === 'loaded').sort((a, b) => a.lastUsed - b.lastUsed);
-      let over = overviewOnly ? loaded.length : loaded.length - CACHE_CAP;
-      for (const t of loaded) { if (over <= 0) break; if (wantSet.has(t.id)) continue; if (models[t.id]) models[t.id].destroy(); t.state = 'idle'; over--; }
-      lastLookX = look[0]; lastLookY = look[1]; lastLookZ = look[2]; lastCamDist = camDist;
+      const distance = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
+      const radius = Math.min(Math.max(distance * 1.6, 500), 2600);
+      const d = (t: typeof T[number]) => Math.hypot(t.cx - look[0], t.cy - look[1], t.cz - look[2]);
+      // Keep orbit-centre stability. Far views retain a bounded original working set, never an empty
+      // overview switch or the rejected coarse global proxy.
+      stream.select(T.filter(t => d(t) - t.r < radius).sort((a, b) => d(a) - d(b)));
     };
-    // ★ 이동/회전 '중'엔 로딩 보류, '멈춘 뒤'에만 로드(settle-gated). 카메라가 움직이는 동안 매
-    // 프레임 새 타일을 큐잉하면 다운로드+파싱이 겹쳐 회전이 끊긴다(사용자 지적). matrix 이벤트마다
-    // moving=true + 정지 타이머 리셋 → 약 0.28초 정지하면 moving=false 로 풀고 그때 한 번 재계산.
-    let settle: number | null = null;
-    lodSubRef.current = viewer.camera.on('matrix', () => {
-      if (!moving) { moving = true; setTilesVisible(false); } // 이동 시작 → 원본 타일 숨김(LOD 팍 죽임)
-      if (settle) clearTimeout(settle);
-      settle = window.setTimeout(() => {
-        settle = null; moving = false;
-        setTilesVisible(true); // 멈춤 → 원본 타일 즉시 복원(선명)
-        const look = viewer.camera.look as number[];
-        const eye = viewer.camera.eye as number[];
-        const cd = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
-        const moved = Number.isNaN(lastLookX) ? Infinity : Math.hypot(look[0] - lastLookX, look[1] - lastLookY, look[2] - lastLookZ);
-        const zoomChg = Number.isNaN(lastCamDist) ? Infinity : Math.abs(cd - lastCamDist) / Math.max(lastCamDist, 1);
-        if (moved < Math.max(cd * 0.12, 90) && zoomChg < 0.15) { pump(); return; } // 변화 작으면 재선정 없이 로딩만 재개
-        recompute();
-      }, 150); // 멈춤 감지 빠르게 → 타일 즉시 복원
-    }) as unknown as string;
-    recompute();
-    setDbg(`타일 ${T.length}개 · 뷰 종속 스트리밍`);
+    const sub = viewer.camera.on('matrix', () => {
+      stream.setPaused(true);
+      clearTimeout(settle);
+      settle = setTimeout(() => { if (!active) return; recompute(); stream.setPaused(false); }, 180);
+    });
+    const baseControllers: AbortController[] = [];
+    streamCleanupRef.current = () => {
+      active = false;
+      clearTimeout(settle);
+      viewer.camera.off(sub);
+      baseControllers.forEach(c => c.abort());
+      stream.dispose();
+    };
+    // Sequential base loading avoids firing all texture decoders at once.
+    void (async () => {
+      try {
+        for (const [i, url] of (baseUrls ?? []).entries()) {
+          if (!active) return;
+          const controller = new AbortController();
+          baseControllers.push(controller);
+          const r = await fetch(url, { signal: controller.signal });
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const xkt = await r.arrayBuffer();
+          if (!active) return;
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(() => finish(new Error('지형 로딩 시간 초과')), 60_000);
+            const abort = () => finish(new Error('cancelled'));
+            const finish = (e?: Error) => {
+              clearTimeout(timer); controller.signal.removeEventListener('abort', abort);
+              if (e) reject(e); else resolve();
+            };
+            controller.signal.addEventListener('abort', abort, { once: true });
+            try {
+              const model = loader.load({ id: `base${i}`, xkt, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
+              model.on('loaded', () => { if (active) frameOnce(); finish(); });
+              model.on('error', () => finish(new Error('지형을 읽지 못했습니다')));
+            } catch (e) { finish(e instanceof Error ? e : new Error(String(e))); }
+          });
+        }
+      } catch {
+        if (active) setTexWarn('일부 지형을 읽지 못했습니다. 모델을 다시 열어 주세요.');
+      } finally {
+        if (active) { frameOnce(); recompute(); }
+      }
+    })();
   }, []);
 
   /** ACC 모델 선택 → (캐시/실패 조회 → 없으면 변환 dispatch → 폴링) → GLB/XKT 로드.
    *  force=true 면 캐시/실패 마커를 지우고 재변환(빈 캐시 갱신·재시도). */
   const openFromAcc = useCallback(
-    async (f: PickedAccFile, force = false, ackOverage = false) => {
+    async (f: PickedAccFile, force = false) => {
       if (!isAccModel(f.name)) {
         setStatus(`3D 모델(rvt·nwd·dwg·ifc)만 지원합니다 (선택: ${f.name})`);
         return;
@@ -704,7 +707,7 @@ export function ThreeDTest() {
         xkt?: boolean;
         urls?: string[];
         navUrls?: string[];
-        tiles?: { url: string; aabb: number[] }[];
+        tiles?: { url: string; aabb: number[]; byteLength?: number }[];
         baseUrls?: string[];
         instUrls?: string[];
         lod1Url?: string;
@@ -758,20 +761,13 @@ export function ThreeDTest() {
         const res = await fetch('/api/aps-convert', {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...authz },
-          body: JSON.stringify({ urn, name: f.name, project: f.accProjectId, item: f.accItemId, force, ackOverage }),
+          body: JSON.stringify({ urn, name: f.name, project: f.accProjectId, item: f.accItemId, force }),
         });
         let rj: State = {};
         try {
           rj = JSON.parse(await res.text()) as State;
         } catch {
           /* 비-JSON */
-        }
-        if (rj.warn) {
-          // R2 무료 한도 임박 — 사용자 확인 후에만 진행(추가 결제 방지).
-          setOverage({ file: f, force, usedGB: rj.usedGB ?? 0, freeGB: rj.freeGB ?? 0 });
-          setStatus('');
-          setBusy(false);
-          return;
         }
         if (isReady(rj)) {
           setStatus(`불러오는 중… ${f.name}`);
@@ -856,12 +852,9 @@ export function ThreeDTest() {
 
   const fitAll = () => {
     const viewer = viewerRef.current;
-    const model = viewer?.scene.models['test'];
-    if (!viewer || !model) return;
-    const box = model.aabb as number[] | undefined;
-    // 평평한 도면은 top-down 으로(edge-on 방지). 3D 모델은 기존대로.
-    if (box) flyToFramed(viewer, box);
-    else viewer.cameraFlight.flyTo(model);
+    if (!viewer || !Object.keys(viewer.scene.models).length) return;
+    const box = viewer.scene.aabb as number[];
+    if (box && Array.from(box).every(Number.isFinite)) flyToFramed(viewer, box);
   };
 
   return (
@@ -874,30 +867,6 @@ export function ThreeDTest() {
           (캐시)해 로드합니다. 첫 변환만 대기, 이후 모든 사용자는 즉시.
         </span>
       </div>
-
-      {overage && (
-        <div className="threed-test__overage" role="alert">
-          <span>
-            ⚠️ 저장소 <strong>{overage.usedGB}GB / 10GB</strong> 사용 — 이 변환은 무료 한도를 넘어
-            <strong> 추가 결제</strong>가 발생할 수 있습니다(남은 {overage.freeGB}GB).
-          </span>
-          <div className="threed-test__overage-btns">
-            <button
-              className="btn btn--sm btn--primary"
-              onClick={() => {
-                const o = overage;
-                setOverage(null);
-                void openFromAcc(o.file, o.force, true);
-              }}
-            >
-              추가 결제 감수하고 변환
-            </button>
-            <button className="btn btn--sm" onClick={() => setOverage(null)}>
-              취소
-            </button>
-          </div>
-        </div>
-      )}
 
       <div className="threed-test__viewer">
         <div className="viewer-bar">
@@ -932,7 +901,7 @@ export function ThreeDTest() {
             className="btn btn--sm"
             onClick={() => lastFile && void openFromAcc(lastFile, true)}
             disabled={busy || !lastFile}
-            title="캐시를 지우고 다시 변환(빈 캐시·실패 재시도)"
+            title="기존 모델을 유지하며 변환 요청(운영 설정에서 활성화된 경우만)"
           >
             재변환
           </button>

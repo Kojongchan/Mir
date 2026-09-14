@@ -24,7 +24,9 @@ const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const GH_REPO = process.env.GH_REPO;
 const GH_TOKEN = process.env.GH_TOKEN;
-const GH_REF = process.env.GH_REF || 'main';
+const GH_REF = process.env.GH_REF || process.env.VERCEL_GIT_COMMIT_REF;
+// Cache browsing remains available. Workflow execution is disabled unless operations explicitly enable it.
+const CONVERSION_ENABLED = process.env.ENABLE_MODEL_CONVERSION === 'true';
 const WORKFLOW_FILE = 'convert-4d.yml';
 
 const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID;
@@ -74,10 +76,6 @@ async function r2GetText(key: string): Promise<string | null> {
   const res = await r2().fetch(objUrl(key));
   return res.ok ? await res.text() : null;
 }
-async function r2Delete(key: string): Promise<void> {
-  await r2().fetch(objUrl(key), { method: 'DELETE' }).catch(() => {});
-}
-
 // R2 무료 한도(10GB)에 임박하면 변환 전 경고하기 위해 총 사용량을 잰다.
 const FREE_BYTES = 10e9;
 const WARN_BYTES = 9e9; // 9GB 부터 경고
@@ -90,19 +88,19 @@ async function r2TotalSize(): Promise<number> {
       `${R2_ENDPOINT}/${R2_BUCKET}?list-type=2&max-keys=1000` +
       (token ? `&continuation-token=${encodeURIComponent(token)}` : '');
     const res = await client.fetch(u);
-    if (!res.ok) break;
+    if (!res.ok) throw new Error('저장소 사용량을 확인하지 못했습니다.');
     const xml = await res.text();
     for (const m of xml.matchAll(/<Size>(\d+)<\/Size>/g)) total += Number(m[1]);
-    if (!/<IsTruncated>true<\/IsTruncated>/.test(xml)) break;
+    if (!/<IsTruncated>true<\/IsTruncated>/.test(xml)) return total;
     const nt = xml.match(/<NextContinuationToken>([^<]+)<\/NextContinuationToken>/);
-    if (!nt) break;
+    if (!nt) throw new Error('저장소 사용량 페이지 정보가 없습니다.');
     token = nt[1];
   }
-  return total;
+  throw new Error('저장소 사용량 조회 한도를 넘었습니다.');
 }
 
 type Focus = { center: [number, number, number]; half: [number, number, number] };
-type Tile = { url: string; aabb: number[] };
+type Tile = { url: string; aabb: number[]; byteLength?: number };
 type CacheState =
   | { ready: true; xkt: true; urls: string[]; navUrls?: string[]; tiles?: Tile[]; baseUrls?: string[]; instUrls?: string[]; lod1Url?: string; focus?: Focus }
   | { ready: true; url: string; focus?: Focus }
@@ -130,7 +128,7 @@ async function cacheState(urn: string): Promise<CacheState> {
   const manifestText = await r2GetText(`${dir}/xkt/manifest.json`);
   if (manifestText) {
     try {
-      const { xktFiles, navFiles, lod1, tiles, base, inst } = JSON.parse(manifestText) as { xktFiles: string[]; navFiles?: string[]; lod1?: string | null; tiles?: { n: string; aabb: number[] }[]; base?: string[]; inst?: string[] };
+      const { xktFiles, navFiles, lod1, tiles, base, inst, focus: manifestFocus } = JSON.parse(manifestText) as { xktFiles: string[]; navFiles?: string[]; lod1?: string | null; tiles?: { n: string; aabb: number[]; byteLength?: number }[]; base?: string[]; inst?: string[]; focus?: Focus | null };
       if (Array.isArray(xktFiles) && xktFiles.length > 0) {
         const urls = await Promise.all(xktFiles.map((f) => r2PresignGet(`${dir}/xkt/${f}`)));
         const navUrls = Array.isArray(navFiles) && navFiles.length > 0
@@ -138,7 +136,7 @@ async function cacheState(urn: string): Promise<CacheState> {
           : undefined;
         // 타일(뷰 종속 스트리밍): 각 타일 presigned URL + AABB(뷰어 컬링용).
         const tileList = Array.isArray(tiles) && tiles.length > 0
-          ? await Promise.all(tiles.map(async (t) => ({ url: await r2PresignGet(`${dir}/xkt/${t.n}`), aabb: t.aabb })))
+          ? await Promise.all(tiles.map(async (t) => ({ url: await r2PresignGet(`${dir}/xkt/${t.n}`), aabb: t.aabb, byteLength: t.byteLength })))
           : undefined;
         // 지형 항상로드 베이스.
         const baseUrls = Array.isArray(base) && base.length > 0
@@ -149,7 +147,7 @@ async function cacheState(urn: string): Promise<CacheState> {
           ? await Promise.all(inst.map((f) => r2PresignGet(`${dir}/xkt/${f}`)))
           : undefined;
         const lod1Url = lod1 ? await r2PresignGet(`${dir}/xkt/${lod1}`) : undefined;
-        return { ready: true, xkt: true, urls, navUrls, tiles: tileList, baseUrls, instUrls, lod1Url, focus: await readFocus(dir) };
+        return { ready: true, xkt: true, urls, navUrls, tiles: tileList, baseUrls, instUrls, lod1Url, focus: manifestFocus ?? await readFocus(dir) };
       }
     } catch {
       /* 매니페스트 파손 — GLB/실패 경로로 폴백 */
@@ -179,28 +177,6 @@ async function cacheState(urn: string): Promise<CacheState> {
     return { failed: true, error };
   }
   return { ready: false };
-}
-
-async function clearCache(urn: string): Promise<void> {
-  const dir = glbKey(urn);
-  await Promise.all([r2Delete(`${dir}/model.glb`), r2Delete(`${dir}/error.json`)]);
-  // XKT 분할 파일 전체 삭제(list → delete) — 재변환 시 이전 잔재(파일 수 변동)가 남지 않게.
-  const client = r2();
-  let token = '';
-  for (let i = 0; i < 50; i++) {
-    const u =
-      `${R2_ENDPOINT}/${R2_BUCKET}?list-type=2&prefix=${encodeURIComponent(`${dir}/xkt/`)}&max-keys=1000` +
-      (token ? `&continuation-token=${encodeURIComponent(token)}` : '');
-    const res = await client.fetch(u);
-    if (!res.ok) break;
-    const xml = await res.text();
-    const keys = [...xml.matchAll(/<Key>([^<]+)<\/Key>/g)].map((m) => m[1]);
-    await Promise.all(keys.map((k) => r2Delete(k)));
-    if (!/<IsTruncated>true<\/IsTruncated>/.test(xml)) break;
-    const nt = xml.match(/<NextContinuationToken>([^<]+)<\/NextContinuationToken>/);
-    if (!nt) break;
-    token = nt[1];
-  }
 }
 
 // DWG 는 솔리드 + 선/점을 모두 보여줘야 하므로 선 유지('1'), 그 외(IFC/RVT/NWD)는
@@ -263,6 +239,16 @@ export default async function handler(req: Request): Promise<Response> {
   }
   const urn = body.urn ?? '';
   if (!urn) return json({ error: 'urn 필요' }, 400);
+  if (!CONVERSION_ENABLED) {
+    if (!body.force) {
+      const cached = await cacheState(urn);
+      if ('ready' in cached && cached.ready) return json(cached);
+    }
+    return json({ error: '추가 비용 방지를 위해 새 변환은 비활성화되어 있습니다. 이미 준비된 모델은 열 수 있습니다.', code: 'CONVERSION_DISABLED' }, 403);
+  }
+  if (!GH_REPO || !GH_TOKEN || !GH_REF) {
+    return json({ error: '변환 저장소·인증·브랜치를 명시해야 합니다(GH_REPO/GH_TOKEN/GH_REF).' }, 503);
+  }
   const isDwg = (body.name ?? '').split('.').pop()?.toLowerCase() === 'dwg';
   // DWG 3D: 자체 DXF 경로(깔끔한 벡터 선형·문자)를 기본으로 쓴다. 이 DWG 의 지표면은 계산식
   // Civil3D 객체라 오토데스크 3D 변환(SVF)에도 음영면으로 안 나온다(ACC 3D 뷰에서도 동일 확인).
@@ -271,33 +257,23 @@ export default async function handler(req: Request): Promise<Response> {
   const useDxf = isDwg && !!body.project && !!body.item;
   const includeLines = includeLinesFor(body.name ?? '');
 
-  if (body.force) {
-    await clearCache(urn);
-  } else {
+  if (!body.force) {
     const st = await cacheState(urn);
     if ('ready' in st && st.ready) return json(st);
-    if ('failed' in st) await clearCache(urn);
+    // Converter clears its failure marker; old cached chunks remain available.
   }
 
-  // 저장소 임박 경고: 9GB 이상이면 변환(=새 업로드) 전에 경고. 사용자가 ackOverage 로 진행.
-  if (!body.ackOverage) {
+  // No client-side override for storage limits. This is not a complete billing quota system.
+  try {
     const used = await r2TotalSize();
-    if (used >= WARN_BYTES) {
-      return json({
-        warn: true,
-        usedGB: +(used / 1e9).toFixed(2),
-        freeGB: +Math.max(0, (FREE_BYTES - used) / 1e9).toFixed(2),
-      });
-    }
-  }
-
-  if (!GH_REPO || !GH_TOKEN) {
-    return json({ error: '변환 워크플로가 설정되지 않았습니다(GH_REPO/GH_TOKEN).' }, 503);
+    if (used >= WARN_BYTES) return json({ error: '저장소 여유 공간이 부족하여 변환을 중단했습니다.', usedGB: used / 1e9, freeGB: Math.max(0, (FREE_BYTES - used) / 1e9) }, 409);
+  } catch {
+    return json({ error: '저장소 사용량을 확인할 수 없어 변환을 중단했습니다.' }, 503);
   }
 
   const inputs: Record<string, string> = useDxf
     ? { urn, region: 'US', dxf_test: '1', project: body.project as string, item: body.item as string }
-    : { urn, region: 'US', include_lines: includeLines };
+    : { urn, region: 'US', include_lines: includeLines, tiles: '1', tile_m: '200', tile_cap: '300000', instance: '0' };
   const d = await dispatchConvert(inputs);
   if (!d.ok) {
     return json({ error: `워크플로 dispatch 실패(${d.status}): ${d.body.slice(0, 200)}` }, 502);
