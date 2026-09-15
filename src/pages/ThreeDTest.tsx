@@ -12,6 +12,7 @@ import { isAccModel } from '../lib/aps';
 import { UiIcon } from '../components/icons/UiIcon';
 import { errMessage } from '../lib/errors';
 import { TileStream } from '../viewer/TileStream';
+import { readBounded } from '../viewer/readBounded';
 import { NavigationQuality } from '../viewer/NavigationQuality';
 import { rankTileRegion, regionNeedsRefresh, safeDollyFactor } from '../viewer/TileRegion';
 
@@ -118,6 +119,8 @@ export function ThreeDTest() {
   const highlightedRef = useRef<string | null>(null); // 현재 하이라이트된 엔티티 id
   const refreshRegionRef = useRef<(() => void) | null>(null);
   const reportRef = useRef<(() => unknown) | null>(null);
+  const sampleExportRef = useRef<(() => Promise<void>) | null>(null);
+  const [sampleBusy, setSampleBusy] = useState(false);
   const structureFitRef = useRef<(() => void) | null>(null);
   const [terrainHidden, setTerrainHidden] = useState(false);
   const [regionMode, setRegionMode] = useState(false);
@@ -635,6 +638,7 @@ export function ThreeDTest() {
     let initialBox: number[] | undefined;
     let selectedRegion: { center: number[]; distance: number } | undefined;
     let structureFramed = false;
+    let sampleController: AbortController | undefined;
     let settle: ReturnType<typeof setTimeout> | undefined;
     const models = viewer.scene.models;
     const frameOnce = () => {
@@ -656,6 +660,7 @@ export function ThreeDTest() {
     const T = tiles.filter(t => t.aabb.length === 6 && t.aabb.every(Number.isFinite)).map((t, i) => {
       const [ax, ay, az, bx, by, bz] = t.aabb;
       return { id: `tile${i}`, url: t.url, byteLength: t.byteLength,
+        sourceAabb: [...t.aabb],
         cx: (ax + bx) / 2, cy: (az + bz) / 2, cz: -(ay + by) / 2,
         r: Math.hypot(bx - ax, by - ay, bz - az) / 2 };
     });
@@ -703,7 +708,7 @@ export function ThreeDTest() {
         }
         setStatus(!stats.total ? '현재 위치에 구조물 후보가 없습니다. 위치를 이동한 뒤 현재 위치 불러오기를 눌러 주세요.' : stats.failed ? `일부 구간 로드 실패 ${stats.failed}개 — 모델을 다시 열어 주세요.` :
           stats.loaded < stats.selected ? (stats.loading ? `구조물 로딩… ${stats.loaded}/${stats.selected}` : '표시 용량 제한으로 일부 구간이 미표시 상태입니다.') :
-          limited ? '주변 구조물 표시 중 · 구간 이동 시 자동 갱신' : '주변 구조물 로딩 완료');
+          limited ? `일부 표시: 후보 ${stats.total}개 중 ${stats.loaded}개 로드 · 전체 구간 아님` : '주변 구조물 로딩 완료');
         setDbg(`타일 ${stats.loaded}/${stats.selected} · 후보 ${stats.total} · 다운로드 중 ${stats.loading} · 실패 ${stats.failed} · 타일 압축크기 예산 사용 ≈${Math.round(stats.encodedBytes / 1048576)}MB (GPU 메모리 아님)`);
       },
     });
@@ -722,6 +727,40 @@ export function ThreeDTest() {
       const candidates = rankTileRegion(T, look, radius, initial);
       selectedRegion = { center: [...look], distance };
       stream.select(candidates);
+    };
+    sampleExportRef.current = async () => {
+      if (sampleController || !active) return;
+      const point = pickedRef.current?.worldPos ?? Array.from(viewer.camera.look);
+      const distance = (box: ArrayLike<number>) => Math.hypot(...point.map((v, i) => Math.max(box[i] - v, 0, v - box[i + 3])));
+      const tile = T.filter(t => models[t.id]).sort((a, b) => distance(models[a.id].aabb) - distance(models[b.id].aabb))[0];
+      if (!tile) { setStatus('먼저 구조물 로딩을 기다려 주세요.'); return; }
+      const controller = new AbortController();
+      sampleController = controller;
+      setSampleBusy(true);
+      const timeout = setTimeout(() => controller.abort(), 60000);
+      try {
+        const snapshot = { diagnostics: reportRef.current?.(), tileId: tile.id,
+          sourceAabb: tile.sourceAabb, worldAabb: Array.from(models[tile.id].aabb),
+          rotation: [-90, 0, 0], byteLength: tile.byteLength ?? null,
+          scope: 'One detail chunk only. Missing neighbouring chunks and terrain are not included.' };
+        const bytes = await readBounded(await fetch(tile.url, { signal: controller.signal }), 32 * 1024 * 1024, controller.signal);
+        const { default: PizZip } = await import('pizzip');
+        if (!active || controller.signal.aborted) return;
+        const zip = new PizZip();
+        zip.file('sample.xkt', bytes);
+        zip.file('sample.json', JSON.stringify(snapshot, null, 2));
+        const blob = zip.generate({ type: 'blob', compression: 'STORE' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = 'viewer-sample.zip'; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        setStatus('검증 파일 저장 완료 · 구조물 조각 1개가 포함되어 있습니다.');
+      } catch (error) {
+        if (active) setStatus(`검증 저장 실패: ${errMessage(error)}`);
+      } finally {
+        clearTimeout(timeout);
+        sampleController = undefined;
+        if (active) setSampleBusy(false);
+      }
     };
     structureFitRef.current = () => {
       const boxes = T.map(t => models[t.id]?.aabb).filter((b): b is number[] => !!b && Array.from(b).every(Number.isFinite));
@@ -749,6 +788,9 @@ export function ThreeDTest() {
       active = false;
       refreshRegionRef.current = null;
       structureFitRef.current = null;
+      sampleExportRef.current = null;
+      sampleController?.abort();
+      setSampleBusy(false);
       setRegionMode(false);
       clearTimeout(settle);
       viewer.camera.off(sub);
@@ -1018,6 +1060,7 @@ export function ThreeDTest() {
           </label>
           {regionMode && <button className="btn btn--sm" onClick={() => refreshRegionRef.current?.()} title="구간 이동 시 자동 갱신됩니다. 누르면 현재 위치에서 즉시 다시 선택합니다.">현재 위치 불러오기</button>}
           {regionMode && <>
+            <button className="btn btn--sm" disabled={sampleBusy} title="부재를 클릭한 뒤 누르면 가까운 구조물 파일 하나(최대 32MiB)와 진단 정보를 ZIP으로 저장합니다. 기존 파일을 다시 다운로드합니다." onClick={() => void sampleExportRef.current?.()}>{sampleBusy ? '검증 파일 준비 중' : '검증 구간 저장'}</button>
             <button className="btn btn--sm" onClick={() => structureFitRef.current?.()}>구조물 맞춤</button>
             <button className="btn btn--sm" onClick={() => {
               const hidden = !terrainHidden;

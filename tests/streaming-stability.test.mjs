@@ -249,3 +249,16 @@ test('repeated wheel zoom cannot move its target inside the clipping safety marg
   assert.ok(0.225 * safeDollyFactor(0.225, 0.82, 0.5) >= 2 - 1e-9);
   assert.equal(safeDollyFactor(10, 1.18, 0.5), 1.18);
 });
+
+const { readBounded } = compile('src/viewer/readBounded.ts');
+test('sample export bounds streamed bytes without relying on Content-Length', async () => {
+  const signal = new AbortController().signal;
+  await assert.rejects(readBounded(new Response(new Uint8Array(9)), 8, signal), /제한/);
+  assert.deepEqual(await readBounded(new Response(new Uint8Array([1, 2, 3])), 8, signal), new Uint8Array([1, 2, 3]));
+});
+test('sample export rejects oversized headers and cancelled reads', async () => {
+  await assert.rejects(readBounded(new Response('abc', { headers: { 'content-length': '100' } }), 8, new AbortController().signal), /제한/);
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(readBounded(new Response('abc'), 8, controller.signal), /취소/);
+});
