@@ -13,7 +13,7 @@ import { UiIcon } from '../components/icons/UiIcon';
 import { errMessage } from '../lib/errors';
 import { TileStream } from '../viewer/TileStream';
 import { NavigationQuality } from '../viewer/NavigationQuality';
-import { rankTileRegion } from '../viewer/TileRegion';
+import { rankTileRegion, regionNeedsRefresh, safeDollyFactor } from '../viewer/TileRegion';
 
 /** 변환기가 구운 카메라 초점 박스(회전 전 실좌표). 이상치 제외한 중심/반경. */
 type Focus = { center: [number, number, number]; half: [number, number, number] };
@@ -51,7 +51,8 @@ function dollyToward(viewer: Viewer, target: number[], factor: number): void {
   const cam = viewer.camera;
   const eye = [...(cam.eye as number[])];
   const look = [...(cam.look as number[])];
-  const t = 1 - factor; // target 쪽으로 이동할 비율
+  const distance = Math.hypot(...eye.map((n, i) => n - look[i]));
+  const t = 1 - safeDollyFactor(distance, factor, cam.perspective.near); // 과접근 방지
   cam.eye = [eye[0] + (target[0] - eye[0]) * t, eye[1] + (target[1] - eye[1]) * t, eye[2] + (target[2] - eye[2]) * t];
   cam.look = [look[0] + (target[0] - look[0]) * t, look[1] + (target[1] - look[1]) * t, look[2] + (target[2] - look[2]) * t];
 }
@@ -117,6 +118,8 @@ export function ThreeDTest() {
   const highlightedRef = useRef<string | null>(null); // 현재 하이라이트된 엔티티 id
   const refreshRegionRef = useRef<(() => void) | null>(null);
   const reportRef = useRef<(() => unknown) | null>(null);
+  const structureFitRef = useRef<(() => void) | null>(null);
+  const [terrainHidden, setTerrainHidden] = useState(false);
   const [regionMode, setRegionMode] = useState(false);
   const [performanceText, setPerformanceText] = useState('');
   const [status, setStatus] = useState('');
@@ -251,14 +254,14 @@ export function ThreeDTest() {
       camera: { eye: Array.from(viewer.camera.eye), look: Array.from(viewer.camera.look) },
       models: Object.values(viewer.scene.models).map(m => {
         const model = m as unknown as { id: string; numTriangles?: number; numEntities?: number; aabb: ArrayLike<number> };
-        return { id: model.id, approximateTriangles: model.numTriangles ?? null, entities: model.numEntities ?? null, aabb: Array.from(model.aabb) };
+        return { id: model.id, approximateTriangles: model.numTriangles && model.numTriangles > 0 ? model.numTriangles : null, entities: model.numEntities ?? null, aabb: Array.from(model.aabb) };
       }),
       note: 'Frame intervals are recent navigation samples; CPU submission is not GPU time. Triangle counts are SDK estimates, not visible triangles.',
     });
     const diagnosticTimer = setInterval(() => {
       const ms = avg(intervals);
       const triangles = Object.values(viewer.scene.models).reduce((sum, m) => sum + ((m as unknown as { numTriangles?: number }).numTriangles ?? 0), 0);
-      setPerformanceText(`최근 이동 프레임 ${ms ? ms.toFixed(0) + 'ms' : '측정 대기'} · 로드된 삼각형 약 ${(triangles / 1000000).toFixed(1)}백만`);
+      setPerformanceText(`최근 이동 프레임 ${ms ? ms.toFixed(0) + 'ms' : '측정 대기'} · 삼각형 ${triangles > 0 ? '약 ' + (triangles / 1000000).toFixed(1) + '백만' : '집계 미지원'}`);
     }, 1500);
 
     // 방향 큐브(ACC 뷰큐브 유사) — 코너 캔버스에 렌더. 면/모서리 클릭으로 정면·평면뷰 스냅.
@@ -630,6 +633,8 @@ export function ThreeDTest() {
     let active = true;
     let framed = false;
     let initialBox: number[] | undefined;
+    let selectedRegion: { center: number[]; distance: number } | undefined;
+    let structureFramed = false;
     let settle: ReturnType<typeof setTimeout> | undefined;
     const models = viewer.scene.models;
     const frameOnce = () => {
@@ -691,9 +696,14 @@ export function ThreeDTest() {
       onChange: stats => {
         if (!active) return;
         const limited = stats.total > stats.selected;
+        // Correct the initial terrain-centred view once the first structure working set is ready.
+        if (!structureFramed && stats.loaded > 0 && stats.loading === 0) {
+          structureFramed = true;
+          structureFitRef.current?.();
+        }
         setStatus(!stats.total ? '현재 위치에 구조물 후보가 없습니다. 위치를 이동한 뒤 현재 위치 불러오기를 눌러 주세요.' : stats.failed ? `일부 구간 로드 실패 ${stats.failed}개 — 모델을 다시 열어 주세요.` :
           stats.loaded < stats.selected ? (stats.loading ? `구조물 로딩… ${stats.loaded}/${stats.selected}` : '표시 용량 제한으로 일부 구간이 미표시 상태입니다.') :
-          limited ? '일부 구간만 표시 중 · 다른 구간은 이동 후 현재 위치 불러오기' : '표시 구간 고정 · 회전해도 교체하지 않습니다.');
+          limited ? '주변 구조물 표시 중 · 구간 이동 시 자동 갱신' : '주변 구조물 로딩 완료');
         setDbg(`타일 ${stats.loaded}/${stats.selected} · 후보 ${stats.total} · 다운로드 중 ${stats.loading} · 실패 ${stats.failed} · 타일 압축크기 예산 사용 ≈${Math.round(stats.encodedBytes / 1048576)}MB (GPU 메모리 아님)`);
       },
     });
@@ -709,19 +719,36 @@ export function ThreeDTest() {
       const radius = Math.min(Math.max(distance * 1.6, 500), 2600);
       // Initial selection uses the flight destination, never an in-flight camera position.
       // An empty focus area starts with the closest structure region, within the same load budget.
-      stream.select(rankTileRegion(T, look, radius, initial));
+      const candidates = rankTileRegion(T, look, radius, initial);
+      selectedRegion = { center: [...look], distance };
+      stream.select(candidates);
+    };
+    structureFitRef.current = () => {
+      const boxes = T.map(t => models[t.id]?.aabb).filter((b): b is number[] => !!b && Array.from(b).every(Number.isFinite));
+      if (!boxes.length) return;
+      const box = [0, 1, 2].map(i => Math.min(...boxes.map(b => b[i])))
+        .concat([3, 4, 5].map(i => Math.max(...boxes.map(b => b[i]))));
+      flyToFramed(viewer, box);
     };
     refreshRegionRef.current = () => recompute();
     setRegionMode(true);
+    setTerrainHidden(false);
     const sub = viewer.camera.on('matrix', () => {
       stream.setPaused(true);
       clearTimeout(settle);
-      settle = setTimeout(() => { if (!active) return; stream.setPaused(false); }, 350);
+      settle = setTimeout(() => {
+        if (!active) return;
+        const center = Array.from(viewer.camera.look);
+        const distance = Math.hypot(...Array.from(viewer.camera.eye).map((n, i) => n - center[i]));
+        if (selectedRegion && regionNeedsRefresh(selectedRegion, center, distance)) recompute();
+        stream.setPaused(false);
+      }, 350);
     });
     const baseControllers: AbortController[] = [];
     streamCleanupRef.current = () => {
       active = false;
       refreshRegionRef.current = null;
+      structureFitRef.current = null;
       setRegionMode(false);
       clearTimeout(settle);
       viewer.camera.off(sub);
@@ -989,7 +1016,16 @@ export function ThreeDTest() {
             .glb
             <input type="file" accept=".glb,.gltf" onChange={onLocalInput} hidden />
           </label>
-          {regionMode && <button className="btn btn--sm" onClick={() => refreshRegionRef.current?.()} title="카메라 이동만으로는 표시 구간을 바꾸지 않습니다. 누르면 현재 위치의 타일을 선택해 불러옵니다.">현재 위치 불러오기</button>}
+          {regionMode && <button className="btn btn--sm" onClick={() => refreshRegionRef.current?.()} title="구간 이동 시 자동 갱신됩니다. 누르면 현재 위치에서 즉시 다시 선택합니다.">현재 위치 불러오기</button>}
+          {regionMode && <>
+            <button className="btn btn--sm" onClick={() => structureFitRef.current?.()}>구조물 맞춤</button>
+            <button className="btn btn--sm" onClick={() => {
+              const hidden = !terrainHidden;
+              setTerrainHidden(hidden);
+              const models = viewerRef.current?.scene.models ?? {};
+              for (const [id, model] of Object.entries(models)) if (/^base\d+$/.test(id)) model.visible = !hidden;
+            }}>{terrainHidden ? '지형 표시' : '지형 숨김'}</button>
+          </>}
           <button className="btn btn--sm" disabled={!modelName} onClick={() => {
             const report = reportRef.current?.();
             if (!report) return;

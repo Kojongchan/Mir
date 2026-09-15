@@ -233,3 +233,19 @@ test('empty initial focus falls back to a nearby structure cluster, manual empty
   assert.deepEqual(rankTileRegion(tiles, [NaN, 0, 0], 500, true), []);
   assert.equal(tiles.length, 2);
 });
+
+const { regionNeedsRefresh, safeDollyFactor } = compile('src/viewer/TileRegion.ts');
+test('orbit keeps its region while a move to the reported camera location refreshes it', () => {
+  const previous = { center: [4078, -55, 2600], distance: 500 };
+  assert.equal(regionNeedsRefresh(previous, [...previous.center], 500), false);
+  assert.equal(regionNeedsRefresh(previous, [4080, -55, 2602], 505), false);
+  assert.equal(regionNeedsRefresh(previous, [5357, 64, 3880], 500), true);
+  assert.equal(regionNeedsRefresh(previous, [...previous.center], 200), true);
+});
+test('repeated wheel zoom cannot move its target inside the clipping safety margin', () => {
+  let distance = 500;
+  for (let i = 0; i < 100; i++) distance *= safeDollyFactor(distance, 0.82, 0.5);
+  assert.ok(distance >= 2 - 1e-9);
+  assert.ok(0.225 * safeDollyFactor(0.225, 0.82, 0.5) >= 2 - 1e-9);
+  assert.equal(safeDollyFactor(10, 1.18, 0.5), 1.18);
+});
