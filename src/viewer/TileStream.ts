@@ -7,6 +7,7 @@ export type StreamStats = { selected: number; total: number; loaded: number; loa
 export class TileStream<T extends StreamTile> {
   private entries = new Map<string, Entry<T>>();
   private wanted: Entry<T>[] = [];
+  private candidates: T[] = [];
   private total = 0;
   private clock = 0;
   private paused = false;
@@ -48,11 +49,17 @@ export class TileStream<T extends StreamTile> {
   /** Sorted candidates. Keep the budget explicit instead of promising full-scene completion. */
   select(tiles: T[]) {
     if (this.disposed) return;
+    this.candidates = tiles;
     this.total = tiles.length;
+    this.plan();
+    this.pump();
+  }
+  /** Revisit the full candidate list when estimates become measured file sizes. */
+  private plan() {
     this.wanted = [];
     let bytes = 0;
     const seen = new Set<string>();
-    for (const tile of tiles) {
+    for (const tile of this.candidates) {
       if (seen.has(tile.id)) continue;
       seen.add(tile.id);
       let e = this.entries.get(tile.id);
@@ -67,7 +74,6 @@ export class TileStream<T extends StreamTile> {
     for (const e of this.entries.values()) {
       if (e.state === 'loading' && !wanted.has(e)) this.release(e);
     }
-    this.pump();
   }
   setPaused(paused: boolean) {
     if (this.disposed) return;
@@ -88,6 +94,7 @@ export class TileStream<T extends StreamTile> {
   private pump() {
     if (this.disposed) return;
     if (!this.paused) {
+      this.plan();
       for (const e of this.wanted) {
         if (this.resident().filter(r => r.state === 'loading').length >= (this.options.concurrency ?? 2)) break;
         if (e.state !== 'idle') continue;
@@ -149,5 +156,6 @@ export class TileStream<T extends StreamTile> {
     for (const e of this.entries.values()) if (e.state === 'loaded' || e.state === 'loading') this.release(e);
     this.entries.clear();
     this.wanted = [];
+    this.candidates = [];
   }
 }

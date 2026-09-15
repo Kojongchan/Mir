@@ -262,3 +262,15 @@ test('sample export rejects oversized headers and cancelled reads', async () => 
   controller.abort();
   await assert.rejects(readBounded(new Response('abc'), 8, controller.signal), /취소/);
 });
+
+test('legacy size estimates are replanned after actual bytes arrive without another camera move', async () => {
+  let stats; const loaded = [];
+  const stream = new TileStream({ maxTiles: 4, maxEncodedBytes: 40, fallbackBytes: 16, concurrency: 1,
+    load: async tile => { assert.equal(stream.accountBytes(tile.id, 8), true); loaded.push(tile.id); },
+    unload: () => {}, onChange: s => { stats = s; assert.ok(s.encodedBytes <= 40); } });
+  stream.select(['a', 'b', 'c', 'd'].map(id => ({ id })));
+  await flush();
+  assert.deepEqual(loaded, ['a', 'b', 'c', 'd']);
+  assert.equal(stats.loaded, 4);
+  stream.dispose();
+});
