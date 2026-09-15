@@ -188,3 +188,33 @@ test('a stalled network request releases its slot and eventually stops retrying'
   assert.equal(stats.failed, 1);
   stream.dispose();
 });
+
+const { NavigationQuality } = compile('src/viewer/NavigationQuality.ts');
+test('quality never restores during a held drag, even across slow frames', async () => {
+  let entered = 0, restored = 0;
+  const q = new NavigationQuality({ enter: () => entered++, leave: () => restored++, delayMs: 10 });
+  q.hold(true);
+  await wait(30);
+  q.moved();
+  await wait(30);
+  assert.equal(entered, 1);
+  assert.equal(restored, 0);
+  q.hold(false);
+  await wait(30);
+  assert.equal(restored, 1);
+  q.dispose();
+});
+test('quality restore waits for inactivity and disposal cancels pending work', async () => {
+  let restored = 0;
+  const q = new NavigationQuality({ enter: () => {}, leave: () => restored++, delayMs: 30 });
+  q.moved();
+  await wait(20);
+  q.moved();
+  await wait(20);
+  assert.equal(restored, 0);
+  q.dispose();
+  assert.equal(restored, 1);
+  await wait(40);
+  q.moved();
+  assert.equal(restored, 1);
+});

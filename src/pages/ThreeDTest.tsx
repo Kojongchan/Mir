@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Viewer, GLTFLoaderPlugin, XKTLoaderPlugin, NavCubePlugin, FastNavPlugin } from '@xeokit/xeokit-sdk';
+import { Viewer, GLTFLoaderPlugin, XKTLoaderPlugin, NavCubePlugin } from '@xeokit/xeokit-sdk';
 import * as XeokitSDK from '@xeokit/xeokit-sdk';
 // KTX2TextureTranscoder 는 런타임엔 export 되지만 .d.ts 에 누락 → 네임스페이스에서 가져온다.
 // 생성자는 단일 옵션객체 { viewer, transcoderPath, workerLimit } 를 받는다(위치인자 아님).
@@ -12,6 +12,7 @@ import { isAccModel } from '../lib/aps';
 import { UiIcon } from '../components/icons/UiIcon';
 import { errMessage } from '../lib/errors';
 import { TileStream } from '../viewer/TileStream';
+import { NavigationQuality } from '../viewer/NavigationQuality';
 
 /** 변환기가 구운 카메라 초점 박스(회전 전 실좌표). 이상치 제외한 중심/반경. */
 type Focus = { center: [number, number, number]; half: [number, number, number] };
@@ -113,6 +114,10 @@ export function ThreeDTest() {
   const pickedRef = useRef<{ id?: string | number; worldPos?: number[] } | null>(null);
   const streamCleanupRef = useRef<(() => void) | null>(null);
   const highlightedRef = useRef<string | null>(null); // 현재 하이라이트된 엔티티 id
+  const refreshRegionRef = useRef<(() => void) | null>(null);
+  const reportRef = useRef<(() => unknown) | null>(null);
+  const [regionMode, setRegionMode] = useState(false);
+  const [performanceText, setPerformanceText] = useState('');
   const [status, setStatus] = useState('');
   const [dbg, setDbg] = useState('');
   const [texWarn, setTexWarn] = useState<string | null>(null);
@@ -197,22 +202,63 @@ export function ThreeDTest() {
     (hm as unknown as { glowThrough?: boolean }).glowThrough = true;
     viewerRef.current = viewer;
 
-    // FastNav — 통합모델 XKT 는 2억+ 정점이라 정지 상태 풀품질은 무겁다. 카메라를 움직이는
-    // 동안엔 SAO·PBR·텍스처·엣지를 끄고 해상도를 절반으로 낮춰 '부드러운 네비'를 확보하고,
-    // 멈추면 잠깐 뒤 풀품질로 복원한다(대용량 모델 렉의 표준 해법).
-    // hideColorTexture 는 false — 회전 중 지오메트리는 모션 LOD(setupSwap)가 LOD1(단색)로 낮추므로
-    // 텍스처를 끌 필요가 없고, 끄면 상세 복원 순간 지형이 잠깐 흰색으로 번쩍인다(baseColor=흰색).
-    new FastNavPlugin(viewer, {
-      hideSAO: true,
-      hidePBR: true,
-      hideColorTexture: false,
-      hideEdges: true,
-      hideTransparentObjects: false,
-      scaleCanvasResolution: true,
-      scaleCanvasResolutionFactor: 0.5,
-      delayBeforeRestore: true,
-      delayBeforeRestoreSeconds: 0.1, // 멈추면 아주 빨리 선명 복원(사용자: 멈추면 엄청 빠르게)
-    } as unknown as ConstructorParameters<typeof FastNavPlugin>[1]);
+    // Keep geometry/material visibility unchanged. Restore resolution only after real inactivity;
+    // SDK FastNav subtracts the preceding frame's delta, which can expire in a slow moving frame.
+    const sceneCanvas = viewer.scene.canvas as unknown as { resolutionScale: number; canvas: HTMLCanvasElement };
+    let lastMotion = -Infinity, lastFrame = 0, renderStart = 0;
+    const quality = new NavigationQuality({
+      enter: () => { sceneCanvas.resolutionScale = 0.5; },
+      leave: () => { sceneCanvas.resolutionScale = 1; lastFrame = 0; },
+    });
+    const qualitySub = viewer.camera.on('matrix', () => quality.moved());
+    const pointerDown = () => quality.hold(true);
+    const pointerUp = () => quality.hold(false);
+    canvasRef.current.addEventListener('pointerdown', pointerDown);
+    window.addEventListener('pointerup', pointerUp);
+    window.addEventListener('pointercancel', pointerUp);
+    window.addEventListener('blur', pointerUp);
+
+    // Bounded, local diagnostics. No URLs, credentials, object names or remote telemetry.
+    let navigationFrame = false;
+    const intervals: number[] = [], cpuTimes: number[] = [];
+    let longTasks = 0, longTaskMs = 0;
+    const motionSub = viewer.camera.on('matrix', () => { lastMotion = performance.now(); });
+    const renderingSub = viewer.scene.on('rendering', () => {
+      renderStart = performance.now();
+      navigationFrame = renderStart - lastMotion < 600;
+    });
+    const renderedSub = viewer.scene.on('rendered', () => {
+      const now = performance.now();
+      if (navigationFrame) {
+        if (lastFrame) intervals.push(now - lastFrame);
+        cpuTimes.push(now - renderStart);
+        if (intervals.length > 120) intervals.shift();
+        if (cpuTimes.length > 120) cpuTimes.shift();
+        lastFrame = now;
+      } else lastFrame = 0;
+    });
+    const observer = typeof PerformanceObserver !== 'undefined' && PerformanceObserver.supportedEntryTypes?.includes('longtask')
+      ? new PerformanceObserver(list => { for (const e of list.getEntries()) { longTasks++; longTaskMs += e.duration; } }) : null;
+    observer?.observe({ type: 'longtask', buffered: false });
+    const avg = (a: number[]) => a.length ? a.reduce((sum, n) => sum + n, 0) / a.length : null;
+    reportRef.current = () => ({
+      version: 'navigation-diagnostics-1', capturedAt: new Date().toISOString(),
+      frameIntervalMs: avg(intervals), cpuRenderSubmissionMs: avg(cpuTimes),
+      longTasks, longTaskMs, longTasksSupported: !!observer,
+      resolutionScale: sceneCanvas.resolutionScale,
+      canvas: [sceneCanvas.canvas.width, sceneCanvas.canvas.height],
+      camera: { eye: Array.from(viewer.camera.eye), look: Array.from(viewer.camera.look) },
+      models: Object.values(viewer.scene.models).map(m => {
+        const model = m as unknown as { id: string; numTriangles?: number; numEntities?: number; aabb: ArrayLike<number> };
+        return { id: model.id, approximateTriangles: model.numTriangles ?? null, entities: model.numEntities ?? null, aabb: Array.from(model.aabb) };
+      }),
+      note: 'Frame intervals are recent navigation samples; CPU submission is not GPU time. Triangle counts are SDK estimates, not visible triangles.',
+    });
+    const diagnosticTimer = setInterval(() => {
+      const ms = avg(intervals);
+      const triangles = Object.values(viewer.scene.models).reduce((sum, m) => sum + ((m as unknown as { numTriangles?: number }).numTriangles ?? 0), 0);
+      setPerformanceText(`최근 이동 프레임 ${ms ? ms.toFixed(0) + 'ms' : '측정 대기'} · 로드된 삼각형 약 ${(triangles / 1000000).toFixed(1)}백만`);
+    }, 1500);
 
     // 방향 큐브(ACC 뷰큐브 유사) — 코너 캔버스에 렌더. 면/모서리 클릭으로 정면·평면뷰 스냅.
     let navCube: NavCubePlugin | null = null;
@@ -298,13 +344,19 @@ export function ThreeDTest() {
     const canvasEl = canvasRef.current;
     // 비율 기반 커스텀 휠 줌 — 커서 아래 표면 지점(worldPos)을 향해, 없으면 현재 look 을
     // 향해 당긴다. 측량좌표(225km)에서도 축척 무관하게 즉시 확대/축소.
+    let wheelAt = -Infinity;
+    let wheelTarget: number[] | null = null;
     const onWheel = (ev: WheelEvent) => {
       ev.preventDefault();
       const rect = canvasEl.getBoundingClientRect();
       const canvasPos = [ev.clientX - rect.left, ev.clientY - rect.top];
-      const hit = viewer.scene.pick({ canvasPos, pickSurface: true }) as { worldPos?: number[] } | undefined;
-      const target = hit?.worldPos ?? [...(viewer.camera.look as number[])];
-      dollyToward(viewer, target, ev.deltaY > 0 ? 1.18 : 0.82); // 축소 : 확대(약 18%/노치)
+      const now = performance.now();
+      if (!wheelTarget || now - wheelAt > 200) {
+        const hit = viewer.scene.pick({ canvasPos, pickSurface: true }) as { worldPos?: number[] } | undefined;
+        wheelTarget = hit?.worldPos ? Array.from(hit.worldPos) : Array.from(viewer.camera.look);
+      }
+      wheelAt = now;
+      dollyToward(viewer, wheelTarget, ev.deltaY > 0 ? 1.18 : 0.82); // 축소 : 확대(약 18%/노치)
     };
     canvasEl.addEventListener('wheel', onWheel, { passive: false });
     // 더블클릭 → 클릭한 표면 지점으로 부드럽게 당긴다(반복 시 점점 접근).
@@ -317,6 +369,18 @@ export function ThreeDTest() {
     canvasEl.addEventListener('dblclick', onDblClick);
 
     return () => {
+      quality.dispose();
+      viewer.camera.off(qualitySub);
+      viewer.camera.off(motionSub);
+      viewer.scene.off(renderingSub);
+      viewer.scene.off(renderedSub);
+      clearInterval(diagnosticTimer);
+      observer?.disconnect();
+      reportRef.current = null;
+      canvasEl.removeEventListener('pointerdown', pointerDown);
+      window.removeEventListener('pointerup', pointerUp);
+      window.removeEventListener('pointercancel', pointerUp);
+      window.removeEventListener('blur', pointerUp);
       canvasEl.removeEventListener('wheel', onWheel);
       canvasEl.removeEventListener('dblclick', onDblClick);
       viewer.scene.input.off(onClick);
@@ -619,8 +683,8 @@ export function ThreeDTest() {
         if (!active) return;
         const limited = stats.total > stats.selected;
         setStatus(stats.failed ? `일부 구간 로드 실패 ${stats.failed}개 — 모델을 다시 열어 주세요.` :
-          stats.loaded < stats.selected ? (stats.loading ? `구조물 로딩… ${stats.loaded}/${stats.selected}` : '표시 예산에 도달했습니다. 확인할 위치로 확대해 주세요.') :
-          limited ? '주변 구간 표시 중 · 확인할 위치로 확대해 주세요.' : '');
+          stats.loaded < stats.selected ? (stats.loading ? `구조물 로딩… ${stats.loaded}/${stats.selected}` : '표시 용량 제한으로 일부 구간이 미표시 상태입니다.') :
+          limited ? '일부 구간만 표시 중 · 다른 구간은 이동 후 현재 위치 불러오기' : '표시 구간 고정 · 회전해도 교체하지 않습니다.');
         setDbg(`타일 ${stats.loaded}/${stats.selected} · 후보 ${stats.total} · 다운로드 중 ${stats.loading} · 실패 ${stats.failed} · 타일 압축크기 예산 사용 ≈${Math.round(stats.encodedBytes / 1048576)}MB (GPU 메모리 아님)`);
       },
     });
@@ -635,14 +699,18 @@ export function ThreeDTest() {
       // overview switch or the rejected coarse global proxy.
       stream.select(T.filter(t => d(t) - t.r < radius).sort((a, b) => d(a) - d(b)));
     };
+    refreshRegionRef.current = recompute;
+    setRegionMode(true);
     const sub = viewer.camera.on('matrix', () => {
       stream.setPaused(true);
       clearTimeout(settle);
-      settle = setTimeout(() => { if (!active) return; recompute(); stream.setPaused(false); }, 180);
+      settle = setTimeout(() => { if (!active) return; stream.setPaused(false); }, 350);
     });
     const baseControllers: AbortController[] = [];
     streamCleanupRef.current = () => {
       active = false;
+      refreshRegionRef.current = null;
+      setRegionMode(false);
       clearTimeout(settle);
       viewer.camera.off(sub);
       baseControllers.forEach(c => c.abort());
@@ -909,6 +977,14 @@ export function ThreeDTest() {
             .glb
             <input type="file" accept=".glb,.gltf" onChange={onLocalInput} hidden />
           </label>
+          {regionMode && <button className="btn btn--sm" onClick={() => refreshRegionRef.current?.()} title="카메라 이동만으로는 표시 구간을 바꾸지 않습니다. 누르면 현재 위치의 타일을 선택해 불러옵니다.">현재 위치 불러오기</button>}
+          <button className="btn btn--sm" disabled={!modelName} onClick={() => {
+            const report = reportRef.current?.();
+            if (!report) return;
+            const url = URL.createObjectURL(new Blob([JSON.stringify({ ...report as object, streaming: dbg }, null, 2)], { type: 'application/json' }));
+            const a = document.createElement('a'); a.href = url; a.download = 'viewer-diagnostics.json'; a.click();
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+          }}>진단 저장</button>
           <div className="spacer" />
           {modelName && !busy && <span className="muted">{modelName}</span>}
           {status && <span className="muted">{status}</span>}
@@ -945,7 +1021,7 @@ export function ThreeDTest() {
                 zIndex: 20,
               }}
             >
-              {dbg}
+              {dbg} · {performanceText}
             </div>
           )}
           {texWarn && (
