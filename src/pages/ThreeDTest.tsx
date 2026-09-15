@@ -13,6 +13,7 @@ import { UiIcon } from '../components/icons/UiIcon';
 import { errMessage } from '../lib/errors';
 import { TileStream } from '../viewer/TileStream';
 import { NavigationQuality } from '../viewer/NavigationQuality';
+import { rankTileRegion } from '../viewer/TileRegion';
 
 /** 변환기가 구운 카메라 초점 박스(회전 전 실좌표). 이상치 제외한 중심/반경. */
 type Focus = { center: [number, number, number]; half: [number, number, number] };
@@ -628,13 +629,21 @@ export function ThreeDTest() {
     pickedRef.current = null;
     let active = true;
     let framed = false;
+    let initialBox: number[] | undefined;
     let settle: ReturnType<typeof setTimeout> | undefined;
     const models = viewer.scene.models;
     const frameOnce = () => {
       if (!active || framed) return;
-      const box = focusToAabb(focus) ?? viewer.scene.aabb;
+      const candidate = focusToAabb(focus) ?? viewer.scene.aabb;
+      const validBox = candidate && Array.from(candidate).every(Number.isFinite) &&
+        candidate[0] <= candidate[3] && candidate[1] <= candidate[4] && candidate[2] <= candidate[5];
+      const box = validBox ? Array.from(candidate) : T.length ? [
+        Math.min(...T.map(t => t.cx - t.r)), Math.min(...T.map(t => t.cy - t.r)), Math.min(...T.map(t => t.cz - t.r)),
+        Math.max(...T.map(t => t.cx + t.r)), Math.max(...T.map(t => t.cy + t.r)), Math.max(...T.map(t => t.cz + t.r)),
+      ] : undefined;
       if (box && Array.from(box).every(Number.isFinite)) {
         framed = true;
+        initialBox = Array.from(box);
         flyToFramed(viewer, box as number[]);
       }
       setBusy(false); setModelName(label);
@@ -682,24 +691,27 @@ export function ThreeDTest() {
       onChange: stats => {
         if (!active) return;
         const limited = stats.total > stats.selected;
-        setStatus(stats.failed ? `일부 구간 로드 실패 ${stats.failed}개 — 모델을 다시 열어 주세요.` :
+        setStatus(!stats.total ? '현재 위치에 구조물 후보가 없습니다. 위치를 이동한 뒤 현재 위치 불러오기를 눌러 주세요.' : stats.failed ? `일부 구간 로드 실패 ${stats.failed}개 — 모델을 다시 열어 주세요.` :
           stats.loaded < stats.selected ? (stats.loading ? `구조물 로딩… ${stats.loaded}/${stats.selected}` : '표시 용량 제한으로 일부 구간이 미표시 상태입니다.') :
           limited ? '일부 구간만 표시 중 · 다른 구간은 이동 후 현재 위치 불러오기' : '표시 구간 고정 · 회전해도 교체하지 않습니다.');
         setDbg(`타일 ${stats.loaded}/${stats.selected} · 후보 ${stats.total} · 다운로드 중 ${stats.loading} · 실패 ${stats.failed} · 타일 압축크기 예산 사용 ≈${Math.round(stats.encodedBytes / 1048576)}MB (GPU 메모리 아님)`);
       },
     });
-    const recompute = () => {
+    const recompute = (initial = false) => {
       if (!active) return;
-      const eye = viewer.camera.eye as number[];
-      const look = viewer.camera.look as number[];
-      const distance = Math.hypot(eye[0] - look[0], eye[1] - look[1], eye[2] - look[2]);
+      const eye = Array.from(viewer.camera.eye);
+      const look = initial && initialBox
+        ? [0, 1, 2].map(i => (initialBox![i] + initialBox![i + 3]) / 2)
+        : Array.from(viewer.camera.look);
+      const distance = initial && initialBox
+        ? Math.hypot(...[0, 1, 2].map(i => initialBox![i + 3] - initialBox![i]))
+        : Math.hypot(...eye.map((n, i) => n - look[i]));
       const radius = Math.min(Math.max(distance * 1.6, 500), 2600);
-      const d = (t: typeof T[number]) => Math.hypot(t.cx - look[0], t.cy - look[1], t.cz - look[2]);
-      // Keep orbit-centre stability. Far views retain a bounded original working set, never an empty
-      // overview switch or the rejected coarse global proxy.
-      stream.select(T.filter(t => d(t) - t.r < radius).sort((a, b) => d(a) - d(b)));
+      // Initial selection uses the flight destination, never an in-flight camera position.
+      // An empty focus area starts with the closest structure region, within the same load budget.
+      stream.select(rankTileRegion(T, look, radius, initial));
     };
-    refreshRegionRef.current = recompute;
+    refreshRegionRef.current = () => recompute();
     setRegionMode(true);
     const sub = viewer.camera.on('matrix', () => {
       stream.setPaused(true);
@@ -745,7 +757,7 @@ export function ThreeDTest() {
       } catch {
         if (active) setTexWarn('일부 지형을 읽지 못했습니다. 모델을 다시 열어 주세요.');
       } finally {
-        if (active) { frameOnce(); recompute(); }
+        if (active) { frameOnce(); recompute(true); }
       }
     })();
   }, []);

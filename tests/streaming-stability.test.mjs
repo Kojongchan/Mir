@@ -218,3 +218,18 @@ test('quality restore waits for inactivity and disposal cancels pending work', a
   q.moved();
   assert.equal(restored, 1);
 });
+
+const { rankTileRegion } = compile('src/viewer/TileRegion.ts');
+test('initial destination selects distant structures while an old camera position would select none', () => {
+  const tiles = [{ id: 'bridge', cx: 5000, cy: 50, cz: 3600, r: 100 }];
+  assert.equal(rankTileRegion(tiles, [0, 0, 0], 500).length, 0);
+  assert.deepEqual(rankTileRegion(tiles, [5000, 50, 3600], 500, true), tiles);
+});
+test('empty initial focus falls back to a nearby structure cluster, manual empty regions stay empty', () => {
+  const tiles = [{ id: 'near', cx: 5000, cy: 0, cz: 0, r: 50 }, { id: 'far', cx: 15000, cy: 0, cz: 0, r: 50 }];
+  assert.deepEqual(rankTileRegion(tiles, [0, 0, 0], 500, true).map(t => t.id), ['near']);
+  assert.deepEqual(rankTileRegion(tiles, [0, 0, 0], 500), []);
+  assert.deepEqual(rankTileRegion([], [0, 0, 0], 500, true), []);
+  assert.deepEqual(rankTileRegion(tiles, [NaN, 0, 0], 500, true), []);
+  assert.equal(tiles.length, 2);
+});
