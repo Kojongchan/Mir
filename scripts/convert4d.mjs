@@ -462,7 +462,7 @@ async function main() {
     // 뷰어: 정지=상세, 회전중=nav(텍스처 입힌 중간해상도), 극단 줌아웃=lod1.
     // 타일 모드: xktFiles 각각이 '공간 타일(원본 형상)' + AABB. 뷰어가 개요 먼저→보는 타일만 스트리밍.
     const manifest = {
-      schemaVersion: 2, xktFiles, navFiles, lod1: lodFile, chunkInfo, focus: res.focus || null,
+      schemaVersion: 2, tileLayout: res.tileLayout ?? null, xktFiles, navFiles, lod1: lodFile, chunkInfo, focus: res.focus || null,
       build: { commit: process.env.GITHUB_SHA || null, ref: process.env.GITHUB_REF || null,
         createdAt: new Date().toISOString(),
         options: { tiles: process.env.XKT_TILES === '1', tileM: Number(process.env.XKT_TILE_M || 200),

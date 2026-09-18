@@ -12,6 +12,7 @@
 // =====================================================================
 import fs from 'node:fs';
 import path from 'node:path';
+import { partitionSpatialObjects } from './spatial-partition.mjs';
 import { MeshoptSimplifier } from 'meshoptimizer';
 
 // sharp 지연 로드(텍스처 POT 리사이즈용). Basis/블록압축 GPU 텍스처는 base·mip 레벨이 모두
@@ -903,6 +904,8 @@ export async function buildMergedGlb(imf, opts) {
   if (tilesMode) {
     log(`[tile] 공간 타일 사전패스(셀 ${tileM}m)…`);
     const items = [];
+    const spatialObjects = new Map();
+    const localBounds = new Map();
     for (let i = 0; i < nodeCount; i++) {
       const node = imf.getNode(i);
       if (node.kind !== NODE_OBJECT) continue;
@@ -915,10 +918,20 @@ export async function buildMergedGlb(imf, opts) {
       let di = diagInst.get(gid);
       if (!di) { const gi = geom.getIndices?.(); const tris = gi && gi.length ? gi.length / 3 : verts.length / 9; di = { refs: 0, tris }; diagInst.set(gid, di); }
       di.refs++; diagFlatTris += di.tris;
-      // 로컬 bbox 중심(정점 샘플링으로 저비용) → 노드 행렬로 월드 변환 → 수평 셀 키.
-      let lx0 = Infinity, ly0 = Infinity, lz0 = Infinity, lx1 = -Infinity, ly1 = -Infinity, lz1 = -Infinity;
-      const step = Math.max(3, Math.floor(verts.length / 3 / 64) * 3);
-      for (let v = 0; v < verts.length; v += step) { const x = verts[v], y = verts[v + 1], z = verts[v + 2]; if (x < lx0) lx0 = x; if (y < ly0) ly0 = y; if (z < lz0) lz0 = z; if (x > lx1) lx1 = x; if (y > ly1) ly1 = y; if (z > lz1) lz1 = z; }
+      // Cache exact local bounds per reusable geometry. Sampling 64 vertices can
+      // miss the end of a long object and assign it to the wrong spatial group.
+      let bounds = localBounds.get(gid);
+      if (!bounds) {
+        bounds = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+        for (let v = 0; v < verts.length; v += 3) for (let axis = 0; axis < 3; axis++) {
+          const value = verts[v + axis];
+          if (!Number.isFinite(value)) throw new Error('Non-finite geometry position');
+          bounds[axis] = Math.min(bounds[axis], value);
+          bounds[axis + 3] = Math.max(bounds[axis + 3], value);
+        }
+        localBounds.set(gid, bounds);
+      }
+      const [lx0, ly0, lz0, lx1, ly1, lz1] = bounds;
       const cx = (lx0 + lx1) / 2, cy = (ly0 + ly1) / 2, cz = (lz0 + lz1) / 2;
       // 크기 임계 tally: 이 부재의 로컬 대각(크기). 큰 부재만 골라 '본구조물 개요' 용량을 가늠.
       const diagSz = Math.hypot(lx1 - lx0, ly1 - ly0, lz1 - lz0);
@@ -927,13 +940,28 @@ export async function buildMergedGlb(imf, opts) {
       const m = matrixOf(node.transform);
       const wx = m ? m[0] * cx + m[4] * cy + m[8] * cz + m[12] : cx;
       const wy = m ? m[1] * cx + m[5] * cy + m[9] * cz + m[13] : cy;
+      const wz = m ? m[2] * cx + m[6] * cy + m[10] * cz + m[14] : cz;
       nodeCellKey[i] = `${Math.floor(wx / tileM)}_${Math.floor(wy / tileM)}`;
+      const group = spatialObjects.get(nodeCellKey[i]) ?? [];
+      group.push({ id: i, center: [wx, wy, wz], triangles: di.tris });
+      spatialObjects.set(nodeCellKey[i], group);
       items.push(i);
     }
-    items.sort((a, b) => (nodeCellKey[a] < nodeCellKey[b] ? -1 : nodeCellKey[a] > nodeCellKey[b] ? 1 : a - b));
-    order = items;
-    const nCells = new Set(items.map((i) => nodeCellKey[i])).size;
-    log(`[tile] 사전패스 완료: 대상 프래그 ${items.length} · 점유 셀 ${nCells}`);
+    // Original node order scatters each triangle-limited chunk across the whole
+    // 200m cell. Subdivide each cell by actual 3D proximity before emitting chunks.
+    // Whole-object membership is retained; a leaf boundary also flushes the writer.
+    order = [];
+    let leafCount = 0, oversizedLeaves = 0;
+    for (const key of [...spatialObjects.keys()].sort()) {
+      const leaves = partitionSpatialObjects(spatialObjects.get(key), tileCap);
+      for (const leaf of leaves) {
+        const leafKey = `${key}:${leafCount++}`;
+        if (leaf.oversized) oversizedLeaves++;
+        for (const object of leaf.objects) { nodeCellKey[object.id] = leafKey; order.push(object.id); }
+      }
+    }
+    log(`[tile] spatial-median-v1: objects=${order.length}, cells=${spatialObjects.size}, leaves=${leafCount}, oversized=${oversizedLeaves}`);
+    spatialObjects.clear(); localBounds.clear();
     // === '본구조물 개요' 크기 측정 리포트: 임계(로컬 대각 m) 이상 부재만 모은 개요의 삼각형/추정 MB ===
     // XKT 대략 ~17B/삼각형(무텍스처). 항상로드 후보 = 큰 부재만(작은 rebar/볼트 제외) → 깨끗+가벼움.
     log(`[main] ── 본구조물(큰 부재만) 개요 크기 측정 ── 전체 ${Math.round(szAllTris).toLocaleString()}삼각형/${szAllCnt.toLocaleString()}개`);
@@ -1365,7 +1393,7 @@ export async function buildMergedGlb(imf, opts) {
       log(`[tex]   ${uri.slice(-42)} ${span}${straddleV || straddleU ? ` ⚠STRADDLE(u:${straddleU} v:${straddleV})` : ''}`);
     }
     if (tilesMode) log(`[tile] 타일 ${Object.keys(tileAabbs).length}개(구조물, 원본) · 지형베이스 ${base ? base.idx : 0}청크(삼각형 ${Math.round(baseT).toLocaleString()}) · 인스턴스 ${inst ? inst.idx : 0}청크(메시 ${instMeshesN.toLocaleString()}) · 셀 ${tileM}m.`);
-    return { xkt: true, tiles: tilesMode, tileAabbs, baseChunks: base ? base.idx : 0, baseTris: baseT, instChunks: inst ? inst.idx : 0, instMeshes: instMeshesN, instTris: instTrisStored, chunks: detail.idx, navChunks: nav ? nav.idx : 0, navTris: navT, vertices: streamV, triangles: streamT, lodTris, decimated: 0, focus: robustFocus(foci) };
+    return { xkt: true, tiles: tilesMode, tileLayout: tilesMode ? 'spatial-median-v1' : null, tileAabbs, baseChunks: base ? base.idx : 0, baseTris: baseT, instChunks: inst ? inst.idx : 0, instMeshes: instMeshesN, instTris: instTrisStored, chunks: detail.idx, navChunks: nav ? nav.idx : 0, navTris: navT, vertices: streamV, triangles: streamT, lodTris, decimated: 0, focus: robustFocus(foci) };
   }
   // 솔리드(삼각형) 부재가 하나라도 있으면 선/점은 대개 엣지/주석 클러터(IFC 의 와이어프레임
   // 11만개 등) → 제외. 순수 선형(솔리드 0 = DWG 도면)만 선/점 유지. 정점수 비율은 엣지선이
