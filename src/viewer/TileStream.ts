@@ -34,8 +34,17 @@ export class TileStream<T extends StreamTile> {
   accountBytes(id: string, bytes: number): boolean {
     const e = this.entries.get(id);
     if (this.disposed || !e || e.state !== 'loading' || !Number.isFinite(bytes) || bytes <= 0) return false;
-    const others = this.resident().filter(r => r !== e).reduce((sum, r) => sum + this.bytes(r), 0);
-    if (others + bytes > (this.options.maxEncodedBytes ?? 192 * 1024 * 1024)) return false;
+    const budget = this.options.maxEncodedBytes ?? 192 * 1024 * 1024;
+    if (bytes > budget) return false;
+    let others = this.resident().filter(r => r !== e).reduce((sum, r) => sum + this.bytes(r), 0);
+    const wanted = new Set(this.wanted);
+    const stale = this.resident().filter(r => r !== e && !wanted.has(r)).sort((a, b) => a.used - b.used);
+    for (const victim of stale) {
+      if (others + bytes <= budget) break;
+      others -= this.bytes(victim);
+      this.release(victim);
+    }
+    if (others + bytes > budget) return false;
     e.tile.byteLength = bytes;
     this.notify();
     return true;

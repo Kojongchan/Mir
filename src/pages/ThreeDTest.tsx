@@ -657,10 +657,12 @@ export function ThreeDTest() {
       }
       setBusy(false); setModelName(label);
     };
-    const T = tiles.filter(t => t.aabb.length === 6 && t.aabb.every(Number.isFinite)).map((t, i) => {
+    const T = tiles.map((t, i) => ({ ...t, manifestIndex: i })).filter(t => t.aabb.length === 6 && t.aabb.every(Number.isFinite) &&
+      [0, 1, 2].every(i => t.aabb[i] <= t.aabb[i + 3])).map(t => {
       const [ax, ay, az, bx, by, bz] = t.aabb;
-      return { id: `tile${i}`, url: t.url, byteLength: t.byteLength,
+      return { id: `tile${t.manifestIndex}`, url: t.url, byteLength: t.byteLength,
         sourceAabb: [...t.aabb],
+        worldAabb: [ax, az, -by, bx, bz, -ay],
         cx: (ax + bx) / 2, cy: (az + bz) / 2, cz: -(ay + by) / 2,
         r: Math.hypot(bx - ax, by - ay, bz - az) / 2 };
     });

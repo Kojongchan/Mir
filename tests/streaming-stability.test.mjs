@@ -274,3 +274,21 @@ test('legacy size estimates are replanned after actual bytes arrive without anot
   assert.equal(stats.loaded, 4);
   stream.dispose();
 });
+
+test('long structure intersecting the focus outranks a closer centre outside it', () => {
+  const bridge = { id: 'bridge', cx: 500, cy: 0, cz: 0, r: 501, worldAabb: [0,-1,-1,1000,1,1] };
+  const detail = { id: 'detail', cx: 30, cy: 0, cz: 0, r: 1, worldAabb: [29,-1,-1,31,1,1] };
+  const offAxis = { id: 'off-axis', cx: 500, cy: 0, cz: 200, r: 501, worldAabb: [0,-1,199,1000,1,201] };
+  assert.deepEqual(rankTileRegion([detail, offAxis, bridge], [0,0,0], 50).map(t => t.id), ['bridge','detail']);
+});
+
+test('measured growth evicts stale cached tiles before rejecting a wanted tile', async () => {
+  const removed = []; let stats;
+  const stream = new TileStream({maxTiles: 3, maxEncodedBytes: 30, fallbackBytes: 10, concurrency: 1,
+    load: async t => { if (t.id === 'new') assert.equal(stream.accountBytes(t.id, 25), true); },
+    unload: t => removed.push(t.id), onChange: s => { stats = s; assert.ok(s.encodedBytes <= 30); }});
+  stream.select([{id:'old',byteLength:10}]); await flush();
+  stream.select([{id:'new'}]); await flush();
+  assert.deepEqual(removed, ['old']); assert.equal(stats.loaded, 1); assert.equal(stats.failed, 0);
+  stream.dispose();
+});
