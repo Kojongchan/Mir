@@ -23,3 +23,13 @@ Code deployment does not rewrite existing XKT caches. No conversion job is dispa
 Before requesting another screenshot, rebuild a representative region from available source geometry and compare original/rebuilt membership and visual coverage. Then measure navigation on the same camera path and client. A single exported detail chunk cannot reconstruct missing neighbours or prove full source-model completeness.
 
 Dense overlapping geometry, long objects, coarse coverage/LOD, terrain occlusion and GPU cost remain separate issues. A spatial partition alone is not a complete large-model rendering solution. Median splitting may increase file counts and exact bounds add preprocessing work. No measured full-model speedup or completed visual repair is claimed here.
+
+## Exact detail welding follow-up
+
+Local reprocessing of one uploaded detail chunk exposed a separate issue: the legacy 2cm coordinate grid reduced 351,025 input triangles to 331,744. This is a reprocessing experiment on an already converted chunk, not a measurement of original NWD loss.
+
+The tiled detail path now deduplicates identical position/normal tuples only. It keeps input numeric precision until the existing world-to-local transform and does not remove faces. Repeating the same experiment retains all 351,025 triangles and all 329 input objects across two output GLB chunks. This validates membership/counts for this step, not original-source completeness, final XKT precision or GPU performance. More retained geometry may cost more memory than the lossy path.
+
+`node --test tests/exact-weld.test.mjs tests/spatial-partition.test.mjs tests/streaming-stability.test.mjs` covers exact tuples, sharp normal seams, precision, malformed data and actual GLB conversion of 5mm synthetic faces that the previous grid collapsed.
+
+Existing XKT files cannot recover previously removed faces. An original-source rebuild is required for restoration. No cloud conversion job has been launched.

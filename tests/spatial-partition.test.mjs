@@ -47,7 +47,7 @@ test('empty input is valid; invalid bounds, IDs and budgets fail closed', () => 
   assert.throws(() => partitionSpatialObjects([item, item], 10));
 });
 
-test('converter emits local GLB chunks and preserves every synthetic object and triangle', async () => {
+test('converter preserves thin faces through spatial GLB output', async () => {
   const { buildMergedGlb } = await import('../scripts/mergeGlb.mjs');
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'spatial-converter-'));
   const overrides = { DECIMATE: '0', XKT_TILE_CAP: '6', XKT_TILE_M: '200', XKT_INSTANCE: '0', XKT_DIAG_ONLY: '0' };
@@ -57,7 +57,7 @@ test('converter emits local GLB chunks and preserves every synthetic object and 
     const nodes = Array.from({ length: 24 }, (_, id) => ({ kind: 1, geometry: id, dbid: id, material: 0 }));
     const geometries = nodes.map((_, id) => {
       const x = (id % 4) * 40, y = Math.floor(id / 4) * 2;
-      return { kind: 0, getVertices: () => new Float32Array([x, y, 0, x + 1, y, 0, x, y + 1, 0]),
+      return { kind: 0, getVertices: () => new Float32Array([x, y, 0, x + .005, y, 0, x, y + .005, 0]),
         getIndices: () => new Uint32Array([0, 1, 2]), getNormals: () => new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]) };
     });
     const chunks = [];
@@ -73,7 +73,7 @@ test('converter emits local GLB chunks and preserves every synthetic object and 
     assert.equal(chunks.length, 4);
     assert.equal(chunks.reduce((sum, c) => sum + c.triangles, 0), 24);
     assert.deepEqual(chunks.flatMap(c => c.json.nodes.map(n => Number(n.name))).sort((a, b) => a - b), nodes.map(n => n.dbid));
-    assert.ok(Object.values(result.tileAabbs).every(box => box[3] - box[0] <= 1.001));
+    assert.ok(Object.values(result.tileAabbs).every(box => box[3] - box[0] <= .006));
   } finally {
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;

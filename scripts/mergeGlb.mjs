@@ -13,6 +13,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { partitionSpatialObjects } from './spatial-partition.mjs';
+import { weldExact } from './exact-weld.mjs';
 import { MeshoptSimplifier } from 'meshoptimizer';
 
 // sharp 지연 로드(텍스처 POT 리사이즈용). Basis/블록압축 GPU 텍스처는 base·mip 레벨이 모두
@@ -1155,10 +1156,14 @@ export async function buildMergedGlb(imf, opts) {
     // shard 가 수학적으로 불가능하고 홀도 없다(연결면 유지). 여기(프래그먼트)선 자기 크기 비례
     // 셀로 1차 감량(구조 형상 보존 + 메모리 보호), 최종 예산 감량은 그룹 단위(clusterVND)에서.
     // 예산 이하 소형 모델(globalRatio=1)은 기존 meshopt 경로 그대로(shard 무관, 잘 동작).
-    // XKT 경로(감량 없음): 프래그먼트 '삼각형 수프'를 미세 격자(기본 2cm)로 무손실 병합해
-    // 좌표 중복 정점·면적0 슬리버를 제거 → 누적 메모리를 묶는다(7km 부지에서 2cm 이동은
-    // 시각 차이 0 = 감량 아님, 형상 보존). 대용량 원본을 통째로 안 쌓게 하는 게 목적.
-    if ((opts.perGroupDir || xktStream) && idx32.length >= 3 && !tex) {
+    // Detail tiles preserve exact input positions and all faces. The legacy
+    // non-tile path below still uses approximate welding; it is not lossless.
+    if (tilesMode && idx32.length >= 3 && !tex) {
+      // Original-detail tiles must not snap thin faces to a 2cm grid or delete
+      // triangles. Only identical position/normal tuples may share a vertex.
+      const exact = weldExact(verts, idx32, normals);
+      verts = exact.verts; normals = exact.normals; idx32 = exact.idx;
+    } else if ((opts.perGroupDir || xktStream) && idx32.length >= 3 && !tex) {
       const q = Number(process.env.XKT_WELD_Q || 50); // 1/0.02m = 2cm 격자점
       try {
         const w = weld(verts, idx32, normals, q);

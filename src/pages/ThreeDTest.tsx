@@ -14,6 +14,7 @@ import { errMessage } from '../lib/errors';
 import { TileStream } from '../viewer/TileStream';
 import { readBounded } from '../viewer/readBounded';
 import { NavigationQuality } from '../viewer/NavigationQuality';
+import { keepViewerPresent } from '../viewer/ViewerPresence';
 import { rankTileRegion, regionNeedsRefresh, safeDollyFactor } from '../viewer/TileRegion';
 
 /** 변환기가 구운 카메라 초점 박스(회전 전 실좌표). 이상치 제외한 중심/반경. */
@@ -128,7 +129,6 @@ export function ThreeDTest() {
   const [status, setStatus] = useState('');
   const [dbg, setDbg] = useState('');
   const [texWarn, setTexWarn] = useState<string | null>(null);
-  const [settling, setSettling] = useState(false); // 회전 멈춤 후 상세(풀디테일) 렌더 중 표시
   const [busy, setBusy] = useState(false);
   const [modelName, setModelName] = useState<string | null>(null);
   const [pick, setPick] = useState<{ id: string; name?: string; type?: string } | null>(null);
@@ -224,6 +224,9 @@ export function ThreeDTest() {
     window.addEventListener('pointerup', pointerUp);
     window.addEventListener('pointercancel', pointerUp);
     window.addEventListener('blur', pointerUp);
+    const stopPresence = keepViewerPresent(document, window,
+      'wakeLock' in navigator ? () => navigator.wakeLock.request('screen') : undefined,
+      () => viewer.scene.render(true));
 
     // Bounded, local diagnostics. No URLs, credentials, object names or remote telemetry.
     let navigationFrame = false;
@@ -376,6 +379,7 @@ export function ThreeDTest() {
     canvasEl.addEventListener('dblclick', onDblClick);
 
     return () => {
+      stopPresence();
       quality.dispose();
       viewer.camera.off(qualitySub);
       viewer.camera.off(motionSub);
@@ -498,7 +502,7 @@ export function ThreeDTest() {
    * 줌아웃(멀면) 개요만(수백만 삼각형=가벼움), 줌인(가까우면) 상세(프러스텀 컬링으로 보이는
    * 부분만) → 양 극단 모두 부드럽게. 3.6억 삼각형 렉의 근본 완화.
    */
-  const mountXkt = useCallback((urls: string[], lod1Url: string | undefined, label: string, focus?: Focus, navUrls?: string[]) => {
+  const mountXkt = useCallback((urls: string[], _lod1Url: string | undefined, label: string, focus?: Focus, _navUrls?: string[]) => {
     const viewer = viewerRef.current;
     const loader = xktLoaderRef.current;
     if (!viewer || !loader || urls.length === 0) return;
@@ -512,72 +516,22 @@ export function ThreeDTest() {
 
     const total = urls.length;
     let done = 0, failed = 0, framed = false;
-    const models = viewer.scene.models as Record<string, { visible?: boolean }>;
     const frameOnce = () => {
       if (framed) return; framed = true;
       const box = focusToAabb(focus) ?? (viewer.scene.aabb as number[] | undefined);
       if (box) flyToFramed(viewer, box);
     };
-    // 상세 로드 완료 후: **모션 기반 LOD 전환** 설정.
-    // 통합모델은 3.62억 삼각형이라 카메라가 움직이는 매 프레임 전부 그리면 회전이 사실상 정지
-    // (멈췄다 튀는 수준). 해결: **카메라가 움직이는 동안엔 개요(LOD1, ~110만 삼각형)만** 그려
-    // 부드럽게 회전하고, **멈추면(≈220ms) 상세(항공사진 포함)로 복원**한다. FastNav 의 화질 저하
-    // (텍스처/SAO off)만으론 지오메트리 부하가 그대로라 부족 → 지오메트리 자체를 LOD1 로 교체.
-    // 회전 중 흰색(텍스처 off) 문제도 함께 해소(회전 중엔 LOD1=단색 지형만 보임).
-    const navTotal = navUrls ? navUrls.length : 0;
-    const setupSwap = () => {
-      const hasNav = navTotal > 0;
-      // 기본 배포는 **감량 모델 1개**(경량)라 모션 LOD 스왑이 필요 없다(항상 상세 고정 = 부드럽고
-      // 팝 없음). 회전 중 회색 LOD1 로 바꾸면 오히려 팝이 생기므로 nav(풀 빌드)일 때만 스왑한다.
-      if (!hasNav) return;
-      let mode: 'detail' | 'lod' | null = null;
-      // 상세 = 풀디테일(정지). 저해상(motion) = nav(텍스처 입힌 중간해상도)가 있으면 그걸,
-      // 없으면 lod1(단색 개요). nav 가 있으면 lod1 은 항상 숨김.
-      const setMode = (m: 'detail' | 'lod') => {
-        if (m === mode) return; // 상태 동일 → 무동작(회전 중 매 프레임 호출돼도 싸다)
-        mode = m;
-        const showDetail = m === 'detail';
-        for (let i = 0; i < total; i++) { const mm = models[`xkt${i}`]; if (mm) mm.visible = showDetail; }
-        if (hasNav) {
-          for (let i = 0; i < navTotal; i++) { const nm = models[`nav${i}`]; if (nm) nm.visible = !showDetail; }
-          if (models['lod1']) models['lod1'].visible = false;
-        } else if (models['lod1']) {
-          models['lod1'].visible = !showDetail;
-        }
-      };
-      // 상세 복원은 무거운 1회 렌더(수초 멈춤)라, '상세 렌더링 중' 오버레이를 먼저 그린 뒤(rAF)
-      // 상세를 켜고, 렌더 완료(scene 'rendered') 시 오버레이를 내려 "아직 다 안 떴구나"를 알린다.
-      const toDetailWithSpinner = () => {
-        if (mode === 'detail') return;
-        setSettling(true);
-        requestAnimationFrame(() => {
-          setMode('detail');
-          const sub = viewer.scene.on('rendered', () => {
-            try { viewer.scene.off(sub); } catch { /* noop */ }
-            setSettling(false);
-          });
-        });
-      };
-      // 정지 = 항상 상세(어느 줌이든 항공사진 풀디테일 — 정적 렌더는 3.62억도 표시 가능).
-      // 움직이는 동안만 개요(LOD1)로 낮춰 부드럽게. 멈추면 220ms 뒤 상세 복원.
-      setMode('detail');
-      lodSubRef.current = viewer.camera.on('matrix', () => {
-        setSettling(false); // 다시 움직이면 스피너 취소
-        setMode('lod');
-        if (lodTimerRef.current) clearTimeout(lodTimerRef.current);
-        lodTimerRef.current = setTimeout(() => toDetailWithSpinner(), 220);
-      }) as unknown as string;
-    };
+    // Keep loaded detail visible during motion and inactivity. Unverified nav/LOD
+    // replacements must not hide the only complete representation.
     const finishDetail = () => {
       setModelName(label);
       setStatus('');
       setBusy(false);
-      setupSwap();
       try {
         const ids = Object.keys(viewer.scene.objects || {});
         const a = (viewer.scene.aabb as number[]) || [0, 0, 0, 0, 0, 0];
         const span = [a[3] - a[0], a[4] - a[1], a[5] - a[2]].map((x) => Math.round(x));
-        setDbg(`XKT ${done}/${total} + nav${navTotal || 0}${lod1Url ? '+LOD1' : ''} · 엔티티 ${ids.length}개 · AABB span(${span.join(',')})`);
+        setDbg(`XKT ${done}/${total} · 엔티티 ${ids.length}개 · AABB span(${span.join(',')})`);
       } catch { setDbg('진단 수집 실패'); }
     };
     // 상세 청크 순차 로드(숨긴 채) — 병렬이면 메모리 스파이크.
@@ -591,23 +545,6 @@ export function ThreeDTest() {
       model.on('loaded', () => { done++; frameOnce(); loadDetail(i + 1); });
       model.on('error', () => { failed++; loadDetail(i + 1); });
     };
-    // LOD1(개요)은 풀 빌드(nav 있음)의 모션 스왑 폴백일 때만 로드(기본 경량 빌드는 불필요 · 대역폭 절약).
-    if (lod1Url && navUrls && navUrls.length) {
-      const lm = loader.load({ id: 'lod1', src: lod1Url, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
-      try { (lm as unknown as { visible?: boolean }).visible = false; } catch { /* noop */ }
-      lm.on('loaded', () => { const m = models['lod1']; if (m) m.visible = false; });
-    }
-    // 내비 LOD(nav): 텍스처 입힌 중간해상도. 숨긴 채 순차 로드 → 회전 중 이걸 그려 부드럽게.
-    if (navUrls && navUrls.length) {
-      const loadNav = (i: number) => {
-        if (i >= navUrls.length) return;
-        const nm = loader.load({ id: `nav${i}`, src: navUrls[i], edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
-        try { (nm as unknown as { visible?: boolean }).visible = false; } catch { /* noop */ }
-        nm.on('loaded', () => { const m = models[`nav${i}`]; if (m) m.visible = false; loadNav(i + 1); });
-        nm.on('error', () => loadNav(i + 1));
-      };
-      loadNav(0);
-    }
     setBusy(false);
     loadDetail(0);
   }, []);
@@ -1137,40 +1074,6 @@ export function ThreeDTest() {
               ⚠ {texWarn}
             </div>
           )}
-          {settling && (
-            <div
-              style={{
-                position: 'absolute',
-                top: 12,
-                left: '50%',
-                transform: 'translateX(-50%)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '6px 14px',
-                background: 'rgba(0,0,0,0.72)',
-                color: '#fff',
-                font: '12px/1 system-ui, sans-serif',
-                borderRadius: 999,
-                pointerEvents: 'none',
-                zIndex: 22,
-              }}
-            >
-              <span
-                style={{
-                  width: 12,
-                  height: 12,
-                  border: '2px solid rgba(255,255,255,0.35)',
-                  borderTopColor: '#fff',
-                  borderRadius: '50%',
-                  display: 'inline-block',
-                  animation: 'mir-spin 0.7s linear infinite',
-                }}
-              />
-              상세 렌더링 중…
-            </div>
-          )}
-          <style>{'@keyframes mir-spin{to{transform:rotate(360deg)}}'}</style>
           {!modelName && !busy && (
             <div className="threed-test__empty">
               <UiIcon name="cube" size={40} />
