@@ -84,6 +84,22 @@ export class TileStream<T extends StreamTile> {
       if (e.state === 'loading' && !wanted.has(e)) this.release(e);
     }
   }
+  /** Explicit user-selected limits; narrowing releases non-selected resident data immediately. */
+  setLimits(limits: { maxTiles: number; maxEncodedBytes: number; concurrency: number }) {
+    if (this.disposed) return;
+    if (![limits.maxTiles, limits.maxEncodedBytes, limits.concurrency].every(n => n > 0 && !Number.isNaN(n))) throw new Error('invalid stream limits');
+    Object.assign(this.options, limits);
+    this.plan();
+    const wanted = new Set(this.wanted);
+    for (const entry of this.resident()) if (!wanted.has(entry)) this.release(entry);
+    this.pump();
+  }
+  /** Stop outstanding work while retaining already loaded geometry. */
+  stopLoading() {
+    this.paused = true;
+    for (const entry of this.resident()) if (entry.state === 'loading') this.release(entry);
+    this.notify();
+  }
   setPaused(paused: boolean) {
     if (this.disposed) return;
     this.paused = paused;

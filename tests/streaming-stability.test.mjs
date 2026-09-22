@@ -324,3 +324,37 @@ test('cancelled and disposed model work never resumes after navigation', async (
   gate.setPaused(false);
   await assert.rejects(gate.wait(new AbortController().signal), /cancelled/);
 });
+
+test('explicit complete region loads all 195 candidates past the old byte ceiling; returning releases excess', async () => {
+  let stats;
+  const live = new Set();
+  const stream = new TileStream({ maxTiles: Infinity, maxEncodedBytes: 192, concurrency: 2,
+    load: async t => { live.add(t.id); }, unload: t => live.delete(t.id), onChange: s => stats = s });
+  stream.select(Array.from({length: 195}, (_, i) => ({id: `piece${i}`, byteLength: 8.3})));
+  for (let i=0; i<200; i++) await flush();
+  assert.equal(stats.loaded, 23);
+  stream.setLimits({maxTiles: Infinity, maxEncodedBytes: Infinity, concurrency: 1});
+  for (let i=0; i<210; i++) await flush();
+  assert.equal(stats.loaded, 195);
+  assert.equal(stats.failed, 0);
+  assert.equal(live.size, 195);
+  stream.setLimits({maxTiles: Infinity, maxEncodedBytes: 192, concurrency: 2});
+  assert.equal(stats.loaded, 23);
+  assert.ok(stats.encodedBytes <= 192);
+  assert.equal(live.size, 23);
+  stream.dispose();
+});
+test('stop cancels outstanding requests, retains loaded pieces and supports resume', async () => {
+  const jobs = new Map(), live = new Set(); let stats;
+  const stream = new TileStream({maxTiles: Infinity, maxEncodedBytes: Infinity, concurrency: 1,
+    load: t => new Promise(resolve => jobs.set(t.id, () => {live.add(t.id); resolve();})),
+    unload: t => live.delete(t.id), onChange: s => stats=s});
+  stream.select([{id:'a',byteLength:1},{id:'b',byteLength:1}]);
+  await flush(); jobs.get('a')(); await flush();
+  stream.stopLoading();
+  assert.equal(stats.loaded, 1); assert.equal(stats.loading, 0);
+  assert.deepEqual([...live], ['a']);
+  stream.setPaused(false); await flush(); jobs.get('b')(); await flush();
+  assert.equal(stats.loaded, 2);
+  stream.dispose();
+});

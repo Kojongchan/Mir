@@ -121,11 +121,14 @@ export function ThreeDTest() {
   const highlightedRef = useRef<string | null>(null); // 현재 하이라이트된 엔티티 id
   const refreshRegionRef = useRef<(() => void) | null>(null);
   const reportRef = useRef<(() => unknown) | null>(null);
+  const coverageReportRef = useRef<(() => unknown) | null>(null);
   const sampleExportRef = useRef<(() => Promise<void>) | null>(null);
   const [sampleBusy, setSampleBusy] = useState(false);
   const structureFitRef = useRef<(() => void) | null>(null);
   const [terrainHidden, setTerrainHidden] = useState(false);
   const [regionMode, setRegionMode] = useState(false);
+  const [coverageMode, setCoverageMode] = useState<'bounded' | 'complete' | 'paused'>('bounded');
+  const coverageActionRef = useRef<((mode: 'bounded' | 'complete' | 'paused') => void) | null>(null);
   const [performanceText, setPerformanceText] = useState('');
   const [status, setStatus] = useState('');
   const [dbg, setDbg] = useState('');
@@ -264,12 +267,14 @@ export function ThreeDTest() {
     observer?.observe({ type: 'longtask', buffered: false });
     const avg = (a: number[]) => a.length ? a.reduce((sum, n) => sum + n, 0) / a.length : null;
     reportRef.current = () => ({
-      version: 'navigation-diagnostics-1', capturedAt: new Date().toISOString(),
+      version: 'navigation-diagnostics-2', capturedAt: new Date().toISOString(),
       frameIntervalMs: avg(intervals), cpuRenderSubmissionMs: avg(cpuTimes),
       longTasks, longTaskMs, longTasksSupported: !!observer,
       resolutionScale: sceneCanvas.resolutionScale,
       canvas: [sceneCanvas.canvas.width, sceneCanvas.canvas.height],
-      camera: { eye: Array.from(viewer.camera.eye), look: Array.from(viewer.camera.look) },
+      coverage: coverageReportRef.current?.() ?? null,
+      camera: { eye: Array.from(viewer.camera.eye), look: Array.from(viewer.camera.look), up: Array.from(viewer.camera.up),
+        projection: viewer.camera.projection, near: viewer.camera.perspective.near, far: viewer.camera.perspective.far },
       models: Object.values(viewer.scene.models).map(m => {
         const model = m as unknown as { id: string; numTriangles?: number; numEntities?: number; aabb: ArrayLike<number> };
         return { id: model.id, approximateTriangles: model.numTriangles && model.numTriangles > 0 ? model.numTriangles : null, entities: model.numEntities ?? null, aabb: Array.from(model.aabb) };
@@ -587,6 +592,8 @@ export function ThreeDTest() {
     let initialBox: number[] | undefined;
     let selectedRegion: { center: number[]; distance: number } | undefined;
     let structureFramed = false;
+    let completeRegion = false;
+    let loadingStopped = false;
     let sampleController: AbortController | undefined;
     let settle: ReturnType<typeof setTimeout> | undefined;
     const models = viewer.scene.models;
@@ -614,6 +621,16 @@ export function ThreeDTest() {
         worldAabb: [ax, az, -by, bx, bz, -ay],
         cx: (ax + bx) / 2, cy: (az + bz) / 2, cz: -(ay + by) / 2,
         r: Math.hypot(bx - ax, by - ay, bz - az) / 2 };
+    });
+    let regionCandidates: typeof T = [];
+    coverageReportRef.current = () => ({
+      mode: completeRegion ? 'fixed-complete-region' : 'bounded', stopped: loadingStopped,
+      focus: selectedRegion,
+      candidateIds: regionCandidates.map(t => t.id),
+      loadedBounds: T.filter(t => models[t.id]).map(t => ({
+        id: t.id, expectedWorldAabb: t.worldAabb, actualWorldAabb: Array.from(models[t.id].aabb),
+      })),
+      note: 'Bounds compare manifest axis conversion with decoded geometry; file loading does not prove original-model completeness.',
     });
     const loadGate = new NavigationLoadGate();
     const stream = new TileStream<typeof T[number]>({
@@ -660,14 +677,16 @@ export function ThreeDTest() {
           structureFramed = true;
           structureFitRef.current?.();
         }
-        setStatus(!stats.total ? '현재 위치에 구조물 후보가 없습니다. 위치를 이동한 뒤 현재 위치 불러오기를 눌러 주세요.' : stats.failed ? `일부 구간 로드 실패 ${stats.failed}개 — 모델을 다시 열어 주세요.` :
+        if (completeRegion) {
+          setStatus(`${loadingStopped ? '구간 로딩 중지' : stats.loaded === stats.total ? '고정 구간 파일 로딩 완료' : '고정 구간 전체 로딩'}: ${stats.loaded}/${stats.total} · 실패 ${stats.failed} · 전체 현장 아님`);
+        } else setStatus(!stats.total ? '현재 위치에 구조물 후보가 없습니다. 위치를 이동한 뒤 현재 위치 불러오기를 눌러 주세요.' : stats.failed ? `일부 구간 로드 실패 ${stats.failed}개 — 모델을 다시 열어 주세요.` :
           stats.loaded < stats.selected ? (stats.loading ? `구조물 로딩… ${stats.loaded}/${stats.selected}` : '표시 용량 제한으로 일부 구간이 미표시 상태입니다.') :
           limited ? `일부 표시: 후보 ${stats.total}개 중 ${stats.loaded}개 로드 · 전체 구간 아님` : '주변 구조물 로딩 완료');
         setDbg(`타일 ${stats.loaded}/${stats.selected} · 후보 ${stats.total} · 다운로드 중 ${stats.loading} · 실패 ${stats.failed} · 타일 압축크기 예산 사용 ≈${Math.round(stats.encodedBytes / 1048576)}MB (GPU 메모리 아님)`);
       },
     });
     const recompute = (initial = false) => {
-      if (!active) return;
+      if (!active || completeRegion) return;
       const eye = Array.from(viewer.camera.eye);
       const look = initial && initialBox
         ? [0, 1, 2].map(i => (initialBox![i] + initialBox![i + 3]) / 2)
@@ -680,6 +699,7 @@ export function ThreeDTest() {
       // An empty focus area starts with the closest structure region, within the same load budget.
       const candidates = rankTileRegion(T, look, radius, initial);
       selectedRegion = { center: [...look], distance };
+      regionCandidates = candidates;
       stream.select(candidates);
     };
     sampleExportRef.current = async () => {
@@ -723,6 +743,32 @@ export function ThreeDTest() {
         .concat([3, 4, 5].map(i => Math.max(...boxes.map(b => b[i]))));
       flyToFramed(viewer, box);
     };
+    coverageActionRef.current = mode => {
+      if (!active) return;
+      if (mode === 'paused') {
+        loadingStopped = true;
+        setCoverageMode('paused');
+        stream.stopLoading();
+        return;
+      }
+      if (mode === 'complete') {
+        // Reuse the existing candidate list on resume; no camera-dependent replacement.
+        if (!completeRegion) recompute();
+        completeRegion = true;
+        loadingStopped = false;
+        setCoverageMode('complete');
+        stream.setLimits({ maxTiles: Infinity, maxEncodedBytes: Infinity, concurrency: 1 });
+        stream.setPaused(false);
+        return;
+      }
+      completeRegion = false;
+      loadingStopped = false;
+      setCoverageMode('bounded');
+      stream.setLimits({ maxTiles: Infinity, maxEncodedBytes: 192 * 1024 * 1024, concurrency: 2 });
+      recompute();
+      stream.setPaused(false);
+    };
+    setCoverageMode('bounded');
     refreshRegionRef.current = () => recompute();
     setRegionMode(true);
     setTerrainHidden(false);
@@ -736,13 +782,16 @@ export function ThreeDTest() {
         const distance = Math.hypot(...Array.from(viewer.camera.eye).map((n, i) => n - center[i]));
         if (selectedRegion && regionNeedsRefresh(selectedRegion, center, distance)) recompute();
         loadGate.setPaused(false);
-        stream.setPaused(false);
+        if (!loadingStopped) stream.setPaused(false);
       }, 350);
     });
     const baseControllers: AbortController[] = [];
     streamCleanupRef.current = () => {
       active = false;
       loadGate.dispose();
+      coverageActionRef.current = null;
+      coverageReportRef.current = null;
+      setCoverageMode('bounded');
       refreshRegionRef.current = null;
       structureFitRef.current = null;
       sampleExportRef.current = null;
@@ -1015,8 +1064,15 @@ export function ThreeDTest() {
             .glb
             <input type="file" accept=".glb,.gltf" onChange={onLocalInput} hidden />
           </label>
-          {regionMode && <button className="btn btn--sm" onClick={() => refreshRegionRef.current?.()} title="구간 이동 시 자동 갱신됩니다. 누르면 현재 위치에서 즉시 다시 선택합니다.">현재 위치 불러오기</button>}
+          {regionMode && <button className="btn btn--sm" disabled={coverageMode !== 'bounded'} onClick={() => refreshRegionRef.current?.()} title="구간 이동 시 자동 갱신됩니다. 누르면 현재 위치에서 즉시 다시 선택합니다.">현재 위치 불러오기</button>}
           {regionMode && <>
+            {coverageMode === 'bounded'
+              ? <button className="btn btn--sm" title="현재 위치의 후보 파일을 용량 제한 없이 순차 로드합니다. 메모리 사용량과 회전 부하가 커질 수 있습니다." onClick={() => coverageActionRef.current?.('complete')}>현재 구간 전체 로드</button>
+              : <>
+                <span className="muted">구간 고정 · 메모리 사용 증가</span>
+                <button className="btn btn--sm" onClick={() => coverageActionRef.current?.(coverageMode === 'paused' ? 'complete' : 'paused')}>{coverageMode === 'paused' ? '구간 로딩 계속' : '구간 로딩 중지'}</button>
+                <button className="btn btn--sm" onClick={() => coverageActionRef.current?.('bounded')}>기본 보기 복귀</button>
+              </>}
             <button className="btn btn--sm" disabled={sampleBusy} title="부재를 클릭한 뒤 누르면 가까운 구조물 파일 하나(최대 32MiB)와 진단 정보를 ZIP으로 저장합니다. 기존 파일을 다시 다운로드합니다." onClick={() => void sampleExportRef.current?.()}>{sampleBusy ? '검증 파일 준비 중' : '검증 구간 저장'}</button>
             <button className="btn btn--sm" onClick={() => structureFitRef.current?.()}>구조물 맞춤</button>
             <button className="btn btn--sm" onClick={() => {
