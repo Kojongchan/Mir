@@ -13,6 +13,7 @@ import { UiIcon } from '../components/icons/UiIcon';
 import { errMessage } from '../lib/errors';
 import { TileStream } from '../viewer/TileStream';
 import { readBounded } from '../viewer/readBounded';
+import { NavigationLoadGate } from '../viewer/NavigationLoadGate';
 import { NavigationQuality } from '../viewer/NavigationQuality';
 import { keepViewerPresent } from '../viewer/ViewerPresence';
 import { rankTileRegion, regionNeedsRefresh, safeDollyFactor } from '../viewer/TileRegion';
@@ -136,12 +137,15 @@ export function ThreeDTest() {
   const [bgDark, setBgDark] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [lastFile, setLastFile] = useState<PickedAccFile | null>(null);
+  const [initializationError, setInitializationError] = useState(false);
 
 
   // xeokit Viewer 1회 생성/파기.
   useEffect(() => {
     if (!canvasRef.current) return;
-    const viewer = new Viewer({
+    let viewer: Viewer;
+    try {
+      viewer = new Viewer({
       canvasElement: canvasRef.current,
       transparent: false,
       backgroundColor: [1, 1, 1],
@@ -157,7 +161,15 @@ export function ThreeDTest() {
       // 극단적이다. 이게 없으면 전체를 담으면 near 가 커져 가까이 못 가고(콩알), 가까이
       // 맞추면 far 가 작아 잘린다. 로그버퍼로 km~m 스케일을 한 화면에서 오가게 한다.
       logarithmicDepthBufferEnabled: true,
-    });
+      });
+    } catch (error) {
+      // A missing WebGL context must not unmount the entire project shell.
+      // Do not retry automatically or start a model conversion on this failure.
+      console.error('3D viewer initialization failed', error);
+      setInitializationError(true);
+      setStatus('3D 화면 초기화 실패 · 모델은 아직 불러오지 않았습니다.');
+      return;
+    }
     // 감마 출력(sRGB) — 지형 항공사진 등 텍스처는 sRGB 인코딩인데, 이 값이 꺼져 있으면 xeokit 가
     // 선형공간 그대로 표시해 중간톤이 검게 뭉갠다(지형이 검게 보이던 원인). 켜면 사진이 제 밝기로
     // 보인다. 텍스처 없는 구조물/지오메트리도 sRGB 로 일관 표시(물리적으로 올바른 설정).
@@ -603,9 +615,10 @@ export function ThreeDTest() {
         cx: (ax + bx) / 2, cy: (az + bz) / 2, cz: -(ay + by) / 2,
         r: Math.hypot(bx - ax, by - ay, bz - az) / 2 };
     });
+    const loadGate = new NavigationLoadGate();
     const stream = new TileStream<typeof T[number]>({
       // A small number of outstanding downloads also limits bursts of main-thread XKT parsing.
-      concurrency: 2, maxTiles: 24, maxEncodedBytes: 192 * 1024 * 1024,
+      concurrency: 2, maxTiles: Number.POSITIVE_INFINITY, maxEncodedBytes: 192 * 1024 * 1024,
       load: async (tile, signal) => {
         const response = await fetch(tile.url, { signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -617,6 +630,8 @@ export function ThreeDTest() {
         const xkt = await response.arrayBuffer();
         if (signal.aborted || !active) throw new Error('cancelled');
         if (!stream.accountBytes(tile.id, xkt.byteLength)) throw new Error('타일 크기 예산 초과');
+        await loadGate.wait(signal);
+        if (signal.aborted || !active) throw new Error('cancelled');
         await new Promise<void>((resolve, reject) => {
           let finished = false;
           const timeout = window.setTimeout(() => finish(new Error('타일 로딩 시간 초과')), 60_000);
@@ -712,6 +727,7 @@ export function ThreeDTest() {
     setRegionMode(true);
     setTerrainHidden(false);
     const sub = viewer.camera.on('matrix', () => {
+      loadGate.setPaused(true);
       stream.setPaused(true);
       clearTimeout(settle);
       settle = setTimeout(() => {
@@ -719,12 +735,14 @@ export function ThreeDTest() {
         const center = Array.from(viewer.camera.look);
         const distance = Math.hypot(...Array.from(viewer.camera.eye).map((n, i) => n - center[i]));
         if (selectedRegion && regionNeedsRefresh(selectedRegion, center, distance)) recompute();
+        loadGate.setPaused(false);
         stream.setPaused(false);
       }, 350);
     });
     const baseControllers: AbortController[] = [];
     streamCleanupRef.current = () => {
       active = false;
+      loadGate.dispose();
       refreshRegionRef.current = null;
       structureFitRef.current = null;
       sampleExportRef.current = null;
@@ -1030,6 +1048,14 @@ export function ThreeDTest() {
           onDrop={onDrop}
         >
           <canvas ref={canvasRef} className="threed-test__canvas" />
+          {initializationError && (
+            <div role="alert" style={{ position: 'absolute', inset: 0, display: 'grid', placeContent: 'center', padding: 24, background: 'var(--bg, #fff)', zIndex: 30 }}>
+              <h3>3D 화면을 시작하지 못했습니다</h3>
+              <p>브라우저의 그래픽 기능 초기화에 실패했습니다. 모델 파일을 열기 전에 발생한 오류입니다.</p>
+              <p>다시 시도해도 계속되면 다른 메뉴는 그대로 이용할 수 있습니다.</p>
+              <button className="btn" onClick={() => window.location.reload()}>화면 다시 불러오기</button>
+            </div>
+          )}
           {/* 방향 큐브(ACC 뷰큐브 유사) — 우상단 코너. */}
           <canvas ref={navCubeRef} className="threed-test__navcube" width={140} height={140} />
           {/* 진단 오버레이 — 로드된 지오메트리/카메라 상태를 화면에 표시(스크린샷 디버그용). */}

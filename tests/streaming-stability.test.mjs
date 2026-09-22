@@ -292,3 +292,35 @@ test('measured growth evicts stale cached tiles before rejecting a wanted tile',
   assert.deepEqual(removed, ['old']); assert.equal(stats.loaded, 1); assert.equal(stats.failed, 0);
   stream.dispose();
 });
+
+test('small chunks are not cut off at 24 when byte budget permits', async () => {
+  let stats;
+  const stream = new TileStream({ maxTiles: Infinity, maxEncodedBytes: 100,
+    load: async () => {}, unload: () => {}, onChange: s => stats = s });
+  stream.select(Array.from({length: 40}, (_, i) => ({id: String(i), byteLength: 1})));
+  for (let i = 0; i < 45; i++) await flush();
+  assert.equal(stats.loaded, 40);
+  assert.equal(stats.encodedBytes, 40);
+  stream.dispose();
+});
+
+const { NavigationLoadGate } = compile('src/viewer/NavigationLoadGate.ts');
+test('download completion waits for navigation to stop before model work', async () => {
+  const gate = new NavigationLoadGate();
+  gate.setPaused(true);
+  let started = false;
+  const work = gate.wait(new AbortController().signal).then(() => { started = true; });
+  await flush(); assert.equal(started, false);
+  gate.setPaused(false); await work; assert.equal(started, true);
+  gate.dispose();
+});
+test('cancelled and disposed model work never resumes after navigation', async () => {
+  const gate = new NavigationLoadGate(); gate.setPaused(true);
+  const controller = new AbortController();
+  const cancelled = assert.rejects(gate.wait(controller.signal), /cancelled/);
+  controller.abort(); await cancelled;
+  const disposed = assert.rejects(gate.wait(new AbortController().signal), /cancelled/);
+  gate.dispose(); await disposed;
+  gate.setPaused(false);
+  await assert.rejects(gate.wait(new AbortController().signal), /cancelled/);
+});
