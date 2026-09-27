@@ -63,6 +63,14 @@ export class TileStream<T extends StreamTile> {
     this.plan();
     this.pump();
   }
+  /** Camera priority can change without narrowing the fixed region or interrupting a request. */
+  prioritize(ids: string[]) {
+    if (this.disposed) return;
+    const rank = new Map(ids.map((id, i) => [id, i]));
+    this.candidates = [...this.candidates].sort((a, b) =>
+      (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity));
+    this.pump();
+  }
   /** Revisit the full candidate list when estimates become measured file sizes. */
   private plan() {
     this.wanted = [];

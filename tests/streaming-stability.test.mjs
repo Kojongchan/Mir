@@ -388,3 +388,58 @@ test('normal navigation avoids unnecessary resolution changes', () => {
   assert.deepEqual(applied, [0.5]); quality.end();
   assert.deepEqual(applied, [0.5, 1]);
 });
+
+const { viewPlanes, inTileView, prioritizeTileView } = compile('src/viewer/TileView.ts');
+const identity4 = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+test('view selection preserves crossing bridges, boundaries and invalid bounds', () => {
+  const planes = viewPlanes(identity4, identity4);
+  assert.equal(inTileView([-5,-.1,-1,5,.1,1], planes), true);
+  assert.equal(inTileView([1.2,0,0,2,1,1], planes), true);
+  assert.equal(inTileView([2,0,0,3,1,1], planes), false);
+  assert.equal(inTileView([0,0,-1e8,1,1,1e8], planes), true);
+  assert.equal(inTileView([NaN,0,0,1,1,1], planes), true);
+  assert.equal(inTileView([2,0,0,1,1,1], planes), true);
+  assert.equal(inTileView([2,0,0,3,1,1], viewPlanes([], identity4)), true);
+});
+test('large survey coordinates and rotated views agree with homogeneous corner clipping', () => {
+  const projection = [1.3,0,0,0, 0,1.7,0,0, 0,0,-1.0001,-1, 0,0,-.2,0];
+  for (let step = 0; step < 72; step++) {
+    const a = step * Math.PI / 36, c = Math.cos(a), s = Math.sin(a);
+    const x = 230000, y = 450000;
+    const view = [c,s,0,0, -s,c,0,0, 0,0,1,0, -c*x+s*y,-s*x-c*y,-50,1];
+    const planes = viewPlanes(view, projection, 0);
+    for (let i = 0; i < 20; i++) {
+      const box = [x+i*10-90,y-2,-5,x+i*10-82,y+2,5];
+      const corners = [];
+      for (const bx of [box[0],box[3]]) for (const by of [box[1],box[4]]) for (const bz of [box[2],box[5]]) {
+        const input = [bx,by,bz,1];
+        const v = [0,1,2,3].map(row => input.reduce((sum,n,col) => sum + view[col*4+row]*n, 0));
+        corners.push([0,1,2,3].map(row => v.reduce((sum,n,col) => sum + projection[col*4+row]*n, 0)));
+      }
+      const expected = ![0,1].some(axis => [-1,1].some(sign => corners.every(v => v[3]+sign*v[axis] < -1e-6)));
+      assert.equal(inTileView(box, planes), expected);
+    }
+  }
+});
+test('visible downloads outrank offscreen files without removing any region candidates', () => {
+  const off = { id:'off', worldAabb:[3,0,0,4,1,1] };
+  const near = { id:'near', worldAabb:[0,0,0,.1,.1,.1] };
+  const far = { id:'far', worldAabb:[.5,0,0,.6,.1,.1] };
+  const tiles = [off,far,near];
+  assert.deepEqual(prioritizeTileView(tiles, viewPlanes(identity4,identity4), [0,0,0]).map(t=>t.id), ['near','far','off']);
+  assert.deepEqual(tiles.map(t=>t.id), ['off','far','near']);
+});
+test('camera reprioritization retains residents and active download and eventually completes the region', async () => {
+  const jobs = new Map(), started = [], removed = []; let stats;
+  const stream = new TileStream({ maxTiles:Infinity, maxEncodedBytes:Infinity, concurrency:1,
+    load:t => new Promise(resolve => { started.push(t.id); jobs.set(t.id,resolve); }),
+    unload:t => removed.push(t.id), onChange:s => { stats=s; } });
+  stream.select(['a','b','c','d'].map(id=>({id,byteLength:1})));
+  await flush(); jobs.get('a')(); await flush();
+  stream.prioritize(['d','c','b','a']);
+  await flush(); assert.deepEqual(started,['a','b']);
+  jobs.get('b')(); await flush(); assert.deepEqual(started,['a','b','d']);
+  jobs.get('d')(); await flush(); jobs.get('c')(); await flush();
+  assert.equal(stats.loaded,4); assert.equal(stats.total,4); assert.deepEqual(removed,[]);
+  stream.dispose();
+});

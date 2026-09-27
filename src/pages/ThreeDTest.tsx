@@ -18,6 +18,7 @@ import { NavigationResolution } from '../viewer/NavigationResolution';
 import { NavigationQuality } from '../viewer/NavigationQuality';
 import { keepViewerPresent } from '../viewer/ViewerPresence';
 import { rankTileRegion, regionNeedsRefresh, safeDollyFactor } from '../viewer/TileRegion';
+import { inTileView, prioritizeTileView, viewPlanes } from '../viewer/TileView';
 
 /** 변환기가 구운 카메라 초점 박스(회전 전 실좌표). 이상치 제외한 중심/반경. */
 type Focus = { center: [number, number, number]; half: [number, number, number] };
@@ -595,7 +596,6 @@ export function ThreeDTest() {
     let framed = false;
     let initialBox: number[] | undefined;
     let selectedRegion: { center: number[]; distance: number } | undefined;
-    let structureFramed = false;
     let completeRegion = false;
     let loadingStopped = false;
     let pointerHeld = false;
@@ -629,9 +629,30 @@ export function ThreeDTest() {
         r: Math.hypot(bx - ax, by - ay, bz - az) / 2 };
     });
     let regionCandidates: typeof T = [];
+    let viewDirty = true;
+    let inViewCount = 0, culledCount = 0;
+    const currentPlanes = () => viewPlanes(viewer.camera.viewMatrix, viewer.camera.projMatrix);
+    const prioritizeCurrentView = () => {
+      stream.prioritize(prioritizeTileView(regionCandidates, currentPlanes(), viewer.camera.look).map(t => t.id));
+    };
+    const renderSubscription = viewer.scene.on('rendering', () => {
+      if (!active || !viewDirty) return;
+      const planes = currentPlanes();
+      viewDirty = false;
+      inViewCount = 0; culledCount = 0;
+      for (const tile of T) {
+        const model = models[tile.id];
+        if (!model) continue;
+        // Decoded bounds are authoritative for rendering; manifest bounds only prioritize downloads.
+        const culled = !inTileView(model.aabb, planes);
+        if (model.culled !== culled) model.culled = culled;
+        if (culled) culledCount++; else inViewCount++;
+      }
+    });
     coverageReportRef.current = () => ({
       mode: completeRegion ? 'fixed-complete-region' : 'bounded', stopped: loadingStopped,
       modelLoadTiming: { count: parseCount, totalMs: parseTotalMs, maxMs: parseMaxMs },
+      renderCoverage: { inViewCount, culledCount, policy: 'padded-side-planes-decoded-bounds' },
       focus: selectedRegion,
       candidateIds: regionCandidates.map(t => t.id),
       loadedBounds: T.filter(t => models[t.id]).map(t => ({
@@ -678,6 +699,7 @@ export function ThreeDTest() {
               if (active && !signal.aborted) {
                 const ms = performance.now() - parseStarted;
                 parseCount++; parseTotalMs += ms; parseMaxMs = Math.max(parseMaxMs, ms);
+                viewDirty = true;
                 frameOnce();
               }
               finish();
@@ -690,11 +712,8 @@ export function ThreeDTest() {
       onChange: stats => {
         if (!active) return;
         const limited = stats.total > stats.selected;
-        // Correct the initial terrain-centred view once the first structure working set is ready.
-        if (!structureFramed && stats.loaded > 0 && stats.loading === 0) {
-          structureFramed = true;
-          structureFitRef.current?.();
-        }
+        // Completion must not fly the camera to the union of hundreds of loaded chunks.
+        // Keep the user's current work location; structure fit remains an explicit action.
         if (completeRegion) {
           setStatus(`${loadingStopped ? '구간 로딩 중지' : stats.loaded === stats.total ? '고정 구간 파일 로딩 완료' : '고정 구간 전체 로딩'}: ${stats.loaded}/${stats.total} · 실패 ${stats.failed} · 전체 현장 아님`);
         } else setStatus(!stats.total ? '현재 위치에 구조물 후보가 없습니다. 위치를 이동한 뒤 현재 위치 불러오기를 눌러 주세요.' : stats.failed ? `일부 구간 로드 실패 ${stats.failed}개 — 모델을 다시 열어 주세요.` :
@@ -718,7 +737,7 @@ export function ThreeDTest() {
       const candidates = rankTileRegion(T, look, radius, initial);
       selectedRegion = { center: [...look], distance };
       regionCandidates = candidates;
-      stream.select(candidates);
+      stream.select(prioritizeTileView(candidates, currentPlanes(), viewer.camera.look));
     };
     sampleExportRef.current = async () => {
       if (sampleController || !active) return;
@@ -791,6 +810,7 @@ export function ThreeDTest() {
     setRegionMode(true);
     setTerrainHidden(false);
     const pauseForNavigation = () => {
+      viewDirty = true;
       loadGate.setPaused(true);
       stream.setPaused(true);
       clearTimeout(settle);
@@ -799,11 +819,13 @@ export function ThreeDTest() {
         const center = Array.from(viewer.camera.look);
         const distance = Math.hypot(...Array.from(viewer.camera.eye).map((n, i) => n - center[i]));
         if (selectedRegion && regionNeedsRefresh(selectedRegion, center, distance)) recompute();
+        if (completeRegion) prioritizeCurrentView();
         loadGate.setPaused(false);
         if (!loadingStopped && !pointerHeld) stream.setPaused(false);
       }, 900);
     };
     const sub = viewer.camera.on('matrix', pauseForNavigation);
+    const projectionSub = viewer.camera.on('projMatrix', pauseForNavigation);
     const navigationCanvas = canvasRef.current!;
     const holdLoading = () => { pointerHeld = true; loadGate.hold(true); pauseForNavigation(); };
     const releaseLoading = () => { if (!pointerHeld) return; pointerHeld = false; pauseForNavigation(); loadGate.hold(false); };
@@ -830,6 +852,8 @@ export function ThreeDTest() {
       setRegionMode(false);
       clearTimeout(settle);
       viewer.camera.off(sub);
+      viewer.camera.off(projectionSub);
+      viewer.scene.off(renderSubscription);
       baseControllers.forEach(c => c.abort());
       stream.dispose();
     };
