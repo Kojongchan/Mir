@@ -2,14 +2,19 @@
 export class NavigationLoadGate {
   private paused = false;
   private disposed = false;
+  private held = false;
   private waiters = new Set<() => void>();
   setPaused(value: boolean) {
     this.paused = value;
-    if (!value) for (const finish of [...this.waiters]) finish();
+    if (!value && !this.held) for (const finish of [...this.waiters]) finish();
+  }
+  hold(value: boolean) {
+    this.held = value;
+    if (!value && !this.paused) for (const finish of [...this.waiters]) finish();
   }
   wait(signal: AbortSignal): Promise<void> {
     if (signal.aborted || this.disposed) return Promise.reject(new Error('cancelled'));
-    if (!this.paused) return Promise.resolve();
+    if (!this.paused && !this.held) return Promise.resolve();
     return new Promise((resolve, reject) => {
       const finish = () => {
         this.waiters.delete(finish);

@@ -14,6 +14,7 @@ import { errMessage } from '../lib/errors';
 import { TileStream } from '../viewer/TileStream';
 import { readBounded } from '../viewer/readBounded';
 import { NavigationLoadGate } from '../viewer/NavigationLoadGate';
+import { NavigationResolution } from '../viewer/NavigationResolution';
 import { NavigationQuality } from '../viewer/NavigationQuality';
 import { keepViewerPresent } from '../viewer/ViewerPresence';
 import { rankTileRegion, regionNeedsRefresh, safeDollyFactor } from '../viewer/TileRegion';
@@ -151,6 +152,7 @@ export function ThreeDTest() {
       viewer = new Viewer({
       canvasElement: canvasRef.current,
       transparent: false,
+      antialias: false, // Avoid multisample framebuffer cost for dense integrated scenes.
       backgroundColor: [1, 1, 1],
       // DTX(데이터텍스처) 모드 — 대용량 메시를 지오메트리 텍스처로 압축 저장해 GPU 메모리를
       // 급감시킨다. 통합모델 XKT 는 2억+ 정점이라 VBO 로는 GPU 초과 → dtx 필수. (dtx 는 선/점
@@ -228,9 +230,11 @@ export function ThreeDTest() {
     // SDK FastNav subtracts the preceding frame's delta, which can expire in a slow moving frame.
     const sceneCanvas = viewer.scene.canvas as unknown as { resolutionScale: number; canvas: HTMLCanvasElement };
     let lastMotion = -Infinity, lastFrame = 0, renderStart = 0;
+    const navigationResolution = new NavigationResolution(scale => { sceneCanvas.resolutionScale = scale; });
     const quality = new NavigationQuality({
-      enter: () => { sceneCanvas.resolutionScale = 0.5; },
-      leave: () => { sceneCanvas.resolutionScale = 1; lastFrame = 0; },
+      delayMs: 900,
+      enter: () => navigationResolution.begin(),
+      leave: () => { navigationResolution.end(); lastFrame = 0; },
     });
     const qualitySub = viewer.camera.on('matrix', () => quality.moved());
     const pointerDown = () => quality.hold(true);
@@ -255,7 +259,7 @@ export function ThreeDTest() {
     const renderedSub = viewer.scene.on('rendered', () => {
       const now = performance.now();
       if (navigationFrame) {
-        if (lastFrame) intervals.push(now - lastFrame);
+        if (lastFrame) { intervals.push(now - lastFrame); navigationResolution.sample(now - lastFrame); }
         cpuTimes.push(now - renderStart);
         if (intervals.length > 120) intervals.shift();
         if (cpuTimes.length > 120) cpuTimes.shift();
@@ -594,6 +598,8 @@ export function ThreeDTest() {
     let structureFramed = false;
     let completeRegion = false;
     let loadingStopped = false;
+    let pointerHeld = false;
+    let parseCount = 0, parseTotalMs = 0, parseMaxMs = 0;
     let sampleController: AbortController | undefined;
     let settle: ReturnType<typeof setTimeout> | undefined;
     const models = viewer.scene.models;
@@ -625,6 +631,7 @@ export function ThreeDTest() {
     let regionCandidates: typeof T = [];
     coverageReportRef.current = () => ({
       mode: completeRegion ? 'fixed-complete-region' : 'bounded', stopped: loadingStopped,
+      modelLoadTiming: { count: parseCount, totalMs: parseTotalMs, maxMs: parseMaxMs },
       focus: selectedRegion,
       candidateIds: regionCandidates.map(t => t.id),
       loadedBounds: T.filter(t => models[t.id]).map(t => ({
@@ -635,7 +642,7 @@ export function ThreeDTest() {
     const loadGate = new NavigationLoadGate();
     const stream = new TileStream<typeof T[number]>({
       // A small number of outstanding downloads also limits bursts of main-thread XKT parsing.
-      concurrency: 2, maxTiles: Number.POSITIVE_INFINITY, maxEncodedBytes: 192 * 1024 * 1024,
+      concurrency: 1, maxTiles: Number.POSITIVE_INFINITY, maxEncodedBytes: Number.POSITIVE_INFINITY,
       load: async (tile, signal) => {
         const response = await fetch(tile.url, { signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -647,6 +654,9 @@ export function ThreeDTest() {
         const xkt = await response.arrayBuffer();
         if (signal.aborted || !active) throw new Error('cancelled');
         if (!stream.accountBytes(tile.id, xkt.byteLength)) throw new Error('타일 크기 예산 초과');
+        await loadGate.wait(signal);
+        // Let pending input events run before non-preemptible SDK parsing begins.
+        await new Promise<void>(resolve => setTimeout(resolve, 0));
         await loadGate.wait(signal);
         if (signal.aborted || !active) throw new Error('cancelled');
         await new Promise<void>((resolve, reject) => {
@@ -662,8 +672,16 @@ export function ThreeDTest() {
           };
           signal.addEventListener('abort', abort, { once: true });
           try {
+            const parseStarted = performance.now();
             const model = loader.load({ id: tile.id, xkt, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
-            model.on('loaded', () => { if (active && !signal.aborted) frameOnce(); finish(); });
+            model.on('loaded', () => {
+              if (active && !signal.aborted) {
+                const ms = performance.now() - parseStarted;
+                parseCount++; parseTotalMs += ms; parseMaxMs = Math.max(parseMaxMs, ms);
+                frameOnce();
+              }
+              finish();
+            });
             model.on('error', () => finish(new Error('타일을 읽지 못했습니다')));
           } catch (e) { finish(e instanceof Error ? e : new Error(String(e))); }
         });
@@ -772,7 +790,7 @@ export function ThreeDTest() {
     refreshRegionRef.current = () => recompute();
     setRegionMode(true);
     setTerrainHidden(false);
-    const sub = viewer.camera.on('matrix', () => {
+    const pauseForNavigation = () => {
       loadGate.setPaused(true);
       stream.setPaused(true);
       clearTimeout(settle);
@@ -782,13 +800,25 @@ export function ThreeDTest() {
         const distance = Math.hypot(...Array.from(viewer.camera.eye).map((n, i) => n - center[i]));
         if (selectedRegion && regionNeedsRefresh(selectedRegion, center, distance)) recompute();
         loadGate.setPaused(false);
-        if (!loadingStopped) stream.setPaused(false);
-      }, 350);
-    });
+        if (!loadingStopped && !pointerHeld) stream.setPaused(false);
+      }, 900);
+    };
+    const sub = viewer.camera.on('matrix', pauseForNavigation);
+    const navigationCanvas = canvasRef.current!;
+    const holdLoading = () => { pointerHeld = true; loadGate.hold(true); pauseForNavigation(); };
+    const releaseLoading = () => { if (!pointerHeld) return; pointerHeld = false; pauseForNavigation(); loadGate.hold(false); };
+    navigationCanvas.addEventListener('pointerdown', holdLoading);
+    window.addEventListener('pointerup', releaseLoading);
+    window.addEventListener('pointercancel', releaseLoading);
+    window.addEventListener('blur', releaseLoading);
     const baseControllers: AbortController[] = [];
     streamCleanupRef.current = () => {
       active = false;
       loadGate.dispose();
+      navigationCanvas.removeEventListener('pointerdown', holdLoading);
+      window.removeEventListener('pointerup', releaseLoading);
+      window.removeEventListener('pointercancel', releaseLoading);
+      window.removeEventListener('blur', releaseLoading);
       coverageActionRef.current = null;
       coverageReportRef.current = null;
       setCoverageMode('bounded');
@@ -832,7 +862,7 @@ export function ThreeDTest() {
       } catch {
         if (active) setTexWarn('일부 지형을 읽지 못했습니다. 모델을 다시 열어 주세요.');
       } finally {
-        if (active) { frameOnce(); recompute(true); }
+        if (active) { frameOnce(); recompute(true); completeRegion = true; setCoverageMode('complete'); }
       }
     })();
   }, []);

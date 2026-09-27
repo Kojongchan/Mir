@@ -358,3 +358,33 @@ test('stop cancels outstanding requests, retains loaded pieces and supports resu
   assert.equal(stats.loaded, 2);
   stream.dispose();
 });
+
+test('held drag prevents parsing even if the camera stops emitting movement', async () => {
+  const gate = new NavigationLoadGate();
+  gate.hold(true); gate.setPaused(true);
+  let admitted = false;
+  const work = gate.wait(new AbortController().signal).then(() => admitted = true);
+  gate.setPaused(false); await flush(); assert.equal(admitted, false);
+  gate.setPaused(true); gate.hold(false); await flush(); assert.equal(admitted, false);
+  gate.setPaused(false); await work; assert.equal(admitted, true);
+  gate.dispose();
+});
+const { NavigationResolution } = compile('src/viewer/NavigationResolution.ts');
+test('slow navigation lowers only resolution and restores full quality after motion', () => {
+  const applied = [];
+  const quality = new NavigationResolution(s => applied.push(s));
+  quality.begin();
+  for (let i=0; i<80; i++) quality.sample(157);
+  assert.equal(applied[0], 0.5);
+  assert.equal(applied.at(-1), 0.25);
+  assert.ok(applied.every(n => n >= 0.25));
+  quality.end(); assert.equal(applied.at(-1), 1);
+  for (let i=0; i<16; i++) quality.sample(200);
+  assert.equal(applied.at(-1), 1);
+});
+test('normal navigation avoids unnecessary resolution changes', () => {
+  const applied = []; const quality = new NavigationResolution(s => applied.push(s));
+  quality.begin(); for(let i=0;i<32;i++) quality.sample(16);
+  assert.deepEqual(applied, [0.5]); quality.end();
+  assert.deepEqual(applied, [0.5, 1]);
+});
