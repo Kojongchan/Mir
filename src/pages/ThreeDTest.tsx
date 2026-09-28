@@ -128,6 +128,10 @@ export function ThreeDTest() {
   const sampleExportRef = useRef<(() => Promise<void>) | null>(null);
   const [sampleBusy, setSampleBusy] = useState(false);
   const [inventoryBusy, setInventoryBusy] = useState(false);
+  const [storageBusy, setStorageBusy] = useState(false);
+  const [storageNotice, setStorageNotice] = useState('');
+  const [storagePoll, setStoragePoll] = useState(0);
+  const storageSince = useRef<string | null>(null);
   const structureFitRef = useRef<(() => void) | null>(null);
   const [terrainHidden, setTerrainHidden] = useState(false);
   const [regionMode, setRegionMode] = useState(false);
@@ -145,6 +149,64 @@ export function ThreeDTest() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [lastFile, setLastFile] = useState<PickedAccFile | null>(null);
   const [initializationError, setInitializationError] = useState(false);
+
+  const startStorageCompaction = async () => {
+    setStorageBusy(true);
+    setStorageNotice('저장소 압축 작업을 연결하고 있습니다.');
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) throw new Error('로그인이 필요합니다.');
+      const r = await fetch(`/api/r2-compact?projectId=${encodeURIComponent(projectId)}`, {
+        method: 'POST', headers: { Authorization: `Bearer ${data.session.access_token}` },
+      });
+      const result = await r.json();
+      if (!r.ok) throw new Error(result.error ?? '압축 시작 실패');
+      storageSince.current = result.requestedAt ?? result.startedAt ?? null;
+      setStorageNotice('저장소 압축 작업이 접수되었습니다. 창을 닫아도 서버에서 계속 진행됩니다.');
+      setStoragePoll(n => n + 1);
+    } catch (e) { setStorageNotice(errMessage(e)); setStorageBusy(false); }
+  };
+
+  useEffect(() => {
+    if (!canManage) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!active || !data.session) return;
+        const headers = { Authorization: `Bearer ${data.session.access_token}` };
+        const since = storageSince.current ? `&since=${encodeURIComponent(storageSince.current)}` : '';
+        const r = await fetch(`/api/r2-compact?projectId=${encodeURIComponent(projectId)}${since}`, { headers });
+        const result = await r.json();
+        if (!active) return;
+        if (!r.ok) throw new Error(result.error ?? '상태 조회 실패');
+        const running = result.state === 'pending' || result.state === 'running';
+        setStorageBusy(running);
+        if (running) {
+          setStorageNotice('저장소 압축 진행 중 · 파일별 원본 일치를 검증하고 있습니다. 창을 닫아도 계속됩니다.');
+          timer = setTimeout(() => void poll(), 15000);
+        } else if (result.state === 'success') {
+          const audit = await fetch(`/api/r2-inventory?projectId=${encodeURIComponent(projectId)}`, { headers });
+          const report = await audit.json();
+          if (!active) return;
+          setStorageNotice(audit.ok
+            ? `압축 완료 · 현재 저장소 ${(report.totalBytes / 1e9).toFixed(3)}GB · 모델을 다시 열면 압축된 파일로 불러옵니다.`
+            : '압축 완료 · 현재 용량은 저장소 용량 점검으로 확인해 주세요.');
+        } else if (result.state === 'failed') {
+          setStorageNotice('압축 작업이 중단되었습니다. 저장소 용량 점검 결과로 진행 상태를 확인해 주세요.');
+        } else if (storageSince.current) setStorageNotice('작업 시작을 확인하지 못했습니다. 다시 실행하거나 연결 상태를 확인해 주세요.');
+      } catch (e) {
+        if (!active) return;
+        if (storageSince.current) {
+          setStorageNotice(`작업 상태 확인 재시도 중 · ${errMessage(e)}`);
+          timer = setTimeout(() => void poll(), 15000);
+        }
+      }
+    };
+    void poll();
+    return () => { active = false; clearTimeout(timer); };
+  }, [canManage, projectId, storagePoll]);
 
   const downloadStorageInventory = async () => {
     setInventoryBusy(true);
@@ -1174,14 +1236,20 @@ export function ThreeDTest() {
             const a = document.createElement('a'); a.href = url; a.download = 'viewer-diagnostics.json'; a.click();
             setTimeout(() => URL.revokeObjectURL(url), 1000);
           }}>진단 저장</button>
-          {canManage && <button className="btn btn--sm" disabled={inventoryBusy} onClick={() => void downloadStorageInventory()} title="R2 저장소 전체 목록과 현재 참조 중인 모델을 읽기 전용으로 점검합니다. 파일을 변경하지 않습니다.">
-            {inventoryBusy ? '저장소 점검 중' : '저장소 용량 점검'}
-          </button>}
           <div className="spacer" />
           {modelName && !busy && <span className="muted">{modelName}</span>}
           {status && <span className="muted">{status}</span>}
         </div>
 
+        {canManage && <div style={{ display: 'flex', gap: 8, padding: '4px 12px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button className="btn btn--sm" disabled={inventoryBusy} onClick={() => void downloadStorageInventory()}>
+            {inventoryBusy ? '저장소 점검 중' : '저장소 용량 점검'}
+          </button>
+          <button className="btn btn--sm btn--primary" disabled={storageBusy} onClick={() => void startStorageCompaction()} title="활성 XKT를 원본과 동일한 내용으로 압축하여 같은 위치에 교체합니다. 완료 후 사용량을 다시 확인합니다.">
+            {storageBusy ? '저장소 압축 중' : '저장소 압축 실행'}
+          </button>
+          {storageNotice && <span role="status" style={{ fontSize: 12 }}>{storageNotice}</span>}
+        </div>}
         <div
           className={`threed-test__viewport${dragOver ? ' is-dragover' : ''}`}
           onDragOver={(e) => {

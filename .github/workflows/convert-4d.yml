@@ -1,4 +1,5 @@
 name: 4D 모델 변환(SVF→GLB)
+run-name: ${{ github.event.inputs.diag_only == 'compact-xkt' && 'R2 XKT storage compaction' || '4D model conversion' }}
 
 # 4D 공정관리 자체 뷰어용: ACC 모델(SVF)을 glTF/GLB 로 변환해 Supabase Storage 에
 # 올린다. 대형 모델 변환은 Vercel 서버리스 한도를 넘으므로 여기(러너: 7GB/14GB/6h)서
@@ -91,7 +92,34 @@ on:
         default: ''
 
 jobs:
+  compact-storage:
+    if: github.event.inputs.diag_only == 'compact-xkt'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    concurrency:
+      group: mir-r2-storage-compaction
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare storage maintenance runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/r2-maintenance"
+          cp scripts/compact-r2-xkt.mjs scripts/xkt-transfer.mjs "$RUNNER_TEMP/r2-maintenance/"
+          npm install --prefix "$RUNNER_TEMP/r2-maintenance" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 @aws-sdk/s3-request-presigner@3
+      - name: Compress and verify active XKT objects in place
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: node "$RUNNER_TEMP/r2-maintenance/compact-r2-xkt.mjs" --apply
   convert:
+    if: github.event.inputs.diag_only != 'compact-xkt'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
