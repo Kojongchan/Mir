@@ -111,7 +111,7 @@ function focusToAabb(focus?: Focus): number[] | null {
  */
 export function ThreeDTest() {
   const { projectId = '' } = useParams();
-  const { canEdit } = useProjectRole(projectId);
+  const { canEdit, isSystemAdmin } = useProjectRole(projectId);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const navCubeRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
@@ -127,6 +127,7 @@ export function ThreeDTest() {
   const coverageReportRef = useRef<(() => unknown) | null>(null);
   const sampleExportRef = useRef<(() => Promise<void>) | null>(null);
   const [sampleBusy, setSampleBusy] = useState(false);
+  const [inventoryBusy, setInventoryBusy] = useState(false);
   const structureFitRef = useRef<(() => void) | null>(null);
   const [terrainHidden, setTerrainHidden] = useState(false);
   const [regionMode, setRegionMode] = useState(false);
@@ -144,6 +145,24 @@ export function ThreeDTest() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [lastFile, setLastFile] = useState<PickedAccFile | null>(null);
   const [initializationError, setInitializationError] = useState(false);
+
+  const downloadStorageInventory = async () => {
+    setInventoryBusy(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) throw new Error('로그인이 필요합니다.');
+      const response = await fetch('/api/r2-inventory', {
+        headers: { Authorization: `Bearer ${data.session.access_token}` },
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? '용량 조회 실패');
+      const url = URL.createObjectURL(new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' }));
+      const a = document.createElement('a'); a.href = url; a.download = 'r2-storage-audit.json'; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setStatus(`저장소 ${ (result.totalBytes / 1e9).toFixed(2) }GB · 무료 한도 목표 9.8GB · 점검 파일 저장 완료`);
+    } catch (error) { setStatus(`저장소 점검 실패: ${errMessage(error)}`); }
+    finally { setInventoryBusy(false); }
+  };
 
 
   // xeokit Viewer 1회 생성/파기.
@@ -1155,6 +1174,9 @@ export function ThreeDTest() {
             const a = document.createElement('a'); a.href = url; a.download = 'viewer-diagnostics.json'; a.click();
             setTimeout(() => URL.revokeObjectURL(url), 1000);
           }}>진단 저장</button>
+          {isSystemAdmin && <button className="btn btn--sm" disabled={inventoryBusy} onClick={() => void downloadStorageInventory()} title="R2 저장소 전체 목록과 현재 참조 중인 모델을 읽기 전용으로 점검합니다. 파일을 변경하지 않습니다.">
+            {inventoryBusy ? '저장소 점검 중' : '저장소 용량 점검'}
+          </button>}
           <div className="spacer" />
           {modelName && !busy && <span className="muted">{modelName}</span>}
           {status && <span className="muted">{status}</span>}
