@@ -14,6 +14,7 @@ import { errMessage } from '../lib/errors';
 import { TileStream } from '../viewer/TileStream';
 import { readBounded } from '../viewer/readBounded';
 import { NavigationLoadGate } from '../viewer/NavigationLoadGate';
+import { ModelLoadQueue } from '../viewer/ModelLoadQueue';
 import { NavigationResolution } from '../viewer/NavigationResolution';
 import { NavigationQuality } from '../viewer/NavigationQuality';
 import { keepViewerPresent } from '../viewer/ViewerPresence';
@@ -600,6 +601,7 @@ export function ThreeDTest() {
     let loadingStopped = false;
     let pointerHeld = false;
     let parseCount = 0, parseTotalMs = 0, parseMaxMs = 0;
+    let downloadCount = 0, downloadTotalMs = 0, downloadMaxMs = 0;
     let sampleController: AbortController | undefined;
     let settle: ReturnType<typeof setTimeout> | undefined;
     const models = viewer.scene.models;
@@ -652,6 +654,7 @@ export function ThreeDTest() {
     coverageReportRef.current = () => ({
       mode: completeRegion ? 'fixed-complete-region' : 'bounded', stopped: loadingStopped,
       modelLoadTiming: { count: parseCount, totalMs: parseTotalMs, maxMs: parseMaxMs },
+      downloadTiming: { count: downloadCount, totalMs: downloadTotalMs, maxMs: downloadMaxMs, maxConcurrentLoads: 2 },
       renderCoverage: { inViewCount, culledCount, policy: 'padded-side-planes-decoded-bounds' },
       focus: selectedRegion,
       candidateIds: regionCandidates.map(t => t.id),
@@ -661,10 +664,13 @@ export function ThreeDTest() {
       note: 'Bounds compare manifest axis conversion with decoded geometry; file loading does not prove original-model completeness.',
     });
     const loadGate = new NavigationLoadGate();
+    const modelQueue = new ModelLoadQueue();
     const stream = new TileStream<typeof T[number]>({
-      // A small number of outstanding downloads also limits bursts of main-thread XKT parsing.
-      concurrency: 1, maxTiles: Number.POSITIVE_INFINITY, maxEncodedBytes: Number.POSITIVE_INFINITY,
+      // Overlap the next download with the current model load, but serialize GPU construction.
+      // Two end-to-end slots bound prefetched buffers even during a long held drag.
+      concurrency: 2, maxTiles: Number.POSITIVE_INFINITY, maxEncodedBytes: Number.POSITIVE_INFINITY,
       load: async (tile, signal) => {
+        const downloadStarted = performance.now();
         const response = await fetch(tile.url, { signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const declaredBytes = Number(response.headers.get('content-length'));
@@ -675,38 +681,43 @@ export function ThreeDTest() {
         const xkt = await response.arrayBuffer();
         if (signal.aborted || !active) throw new Error('cancelled');
         if (!stream.accountBytes(tile.id, xkt.byteLength)) throw new Error('타일 크기 예산 초과');
-        await loadGate.wait(signal);
-        // Let pending input events run before non-preemptible SDK parsing begins.
-        await new Promise<void>(resolve => setTimeout(resolve, 0));
-        await loadGate.wait(signal);
-        if (signal.aborted || !active) throw new Error('cancelled');
-        await new Promise<void>((resolve, reject) => {
-          let finished = false;
-          const timeout = window.setTimeout(() => finish(new Error('타일 로딩 시간 초과')), 60_000);
-          const abort = () => finish(new Error('cancelled'));
-          const finish = (error?: Error) => {
-            if (finished) return;
-            finished = true;
-            clearTimeout(timeout);
-            signal.removeEventListener('abort', abort);
-            if (error) reject(error); else resolve();
-          };
-          signal.addEventListener('abort', abort, { once: true });
-          try {
-            const parseStarted = performance.now();
-            const model = loader.load({ id: tile.id, xkt, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
-            model.on('loaded', () => {
-              if (active && !signal.aborted) {
-                const ms = performance.now() - parseStarted;
-                parseCount++; parseTotalMs += ms; parseMaxMs = Math.max(parseMaxMs, ms);
-                viewDirty = true;
-                frameOnce();
-              }
-              finish();
-            });
-            model.on('error', () => finish(new Error('타일을 읽지 못했습니다')));
-          } catch (e) { finish(e instanceof Error ? e : new Error(String(e))); }
-        });
+        const downloadMs = performance.now() - downloadStarted;
+        downloadCount++; downloadTotalMs += downloadMs; downloadMaxMs = Math.max(downloadMaxMs, downloadMs);
+        const releaseModel = await modelQueue.acquire(signal);
+        try {
+          await loadGate.wait(signal);
+          // Let pending input events run before non-preemptible SDK parsing begins.
+          await new Promise<void>(resolve => setTimeout(resolve, 0));
+          await loadGate.wait(signal);
+          if (signal.aborted || !active) throw new Error('cancelled');
+          await new Promise<void>((resolve, reject) => {
+            let finished = false;
+            const timeout = window.setTimeout(() => finish(new Error('타일 로딩 시간 초과')), 60_000);
+            const abort = () => finish(new Error('cancelled'));
+            const finish = (error?: Error) => {
+              if (finished) return;
+              finished = true;
+              clearTimeout(timeout);
+              signal.removeEventListener('abort', abort);
+              if (error) reject(error); else resolve();
+            };
+            signal.addEventListener('abort', abort, { once: true });
+            try {
+              const parseStarted = performance.now();
+              const model = loader.load({ id: tile.id, xkt, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
+              model.on('loaded', () => {
+                if (active && !signal.aborted) {
+                  const ms = performance.now() - parseStarted;
+                  parseCount++; parseTotalMs += ms; parseMaxMs = Math.max(parseMaxMs, ms);
+                  viewDirty = true;
+                  frameOnce();
+                }
+                finish();
+              });
+              model.on('error', () => finish(new Error('타일을 읽지 못했습니다')));
+            } catch (e) { finish(e instanceof Error ? e : new Error(String(e))); }
+          });
+        } finally { releaseModel(); }
       },
       unload: tile => { models[tile.id]?.destroy(); },
       onChange: stats => {
@@ -794,7 +805,7 @@ export function ThreeDTest() {
         completeRegion = true;
         loadingStopped = false;
         setCoverageMode('complete');
-        stream.setLimits({ maxTiles: Infinity, maxEncodedBytes: Infinity, concurrency: 1 });
+        stream.setLimits({ maxTiles: Infinity, maxEncodedBytes: Infinity, concurrency: 2 });
         stream.setPaused(false);
         return;
       }
@@ -837,6 +848,7 @@ export function ThreeDTest() {
     streamCleanupRef.current = () => {
       active = false;
       loadGate.dispose();
+      modelQueue.dispose();
       navigationCanvas.removeEventListener('pointerdown', holdLoading);
       window.removeEventListener('pointerup', releaseLoading);
       window.removeEventListener('pointercancel', releaseLoading);

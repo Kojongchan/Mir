@@ -443,3 +443,45 @@ test('camera reprioritization retains residents and active download and eventual
   assert.equal(stats.loaded,4); assert.equal(stats.total,4); assert.deepEqual(removed,[]);
   stream.dispose();
 });
+
+const { ModelLoadQueue } = compile('src/viewer/ModelLoadQueue.ts');
+test('model queue serializes completed downloads and release is idempotent', async () => {
+  const queue = new ModelLoadQueue(), signal = new AbortController().signal;
+  const releaseA = await queue.acquire(signal);
+  let admittedB = false, admittedC = false;
+  const b = queue.acquire(signal).then(release => { admittedB = true; return release; });
+  const c = queue.acquire(signal).then(release => { admittedC = true; return release; });
+  await flush(); assert.equal(admittedB, false);
+  releaseA(); const releaseB = await b;
+  releaseA(); await flush(); assert.equal(admittedC, false);
+  releaseB(); (await c)(); queue.dispose();
+});
+test('cancelled or disposed queued model work never enters the renderer', async () => {
+  const queue = new ModelLoadQueue(), a = new AbortController(), b = new AbortController();
+  const release = await queue.acquire(a.signal);
+  const cancelled = assert.rejects(queue.acquire(b.signal), /cancelled/);
+  b.abort(); await cancelled;
+  const disposed = assert.rejects(queue.acquire(a.signal), /cancelled/);
+  queue.dispose(); await disposed; release();
+  await assert.rejects(queue.acquire(a.signal), /cancelled/);
+});
+test('two pipeline slots download ahead while one model loads, retaining complete coverage', async () => {
+  const queue = new ModelLoadQueue(), downloads = new Map(), parsed = [], parseJobs = new Map();
+  let stats;
+  const stream = new TileStream({ concurrency:2, maxTiles:Infinity, maxEncodedBytes:Infinity,
+    load:async (t, signal) => {
+      await new Promise(resolve => downloads.set(t.id, resolve));
+      const release = await queue.acquire(signal);
+      try { parsed.push(t.id); await new Promise(resolve => parseJobs.set(t.id, resolve)); }
+      finally { release(); }
+    }, unload:()=>{}, onChange:s=>{stats=s;} });
+  stream.select(['a','b','c'].map(id=>({id,byteLength:1})));
+  await flush(); assert.deepEqual([...downloads.keys()], ['a','b']);
+  downloads.get('a')(); await flush(); downloads.get('b')(); await flush();
+  assert.deepEqual(parsed,['a']);
+  parseJobs.get('a')(); await flush(); assert.deepEqual(parsed,['a','b']);
+  assert.ok(downloads.has('c')); // c downloads while b is still constructing.
+  downloads.get('c')(); await flush(); assert.deepEqual(parsed,['a','b']);
+  parseJobs.get('b')(); await flush(); parseJobs.get('c')(); await flush();
+  assert.equal(stats.loaded,3); queue.dispose(); stream.dispose();
+});

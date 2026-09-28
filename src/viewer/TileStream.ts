@@ -129,8 +129,8 @@ export class TileStream<T extends StreamTile> {
     if (!this.paused) {
       this.plan();
       for (const e of this.wanted) {
-        if (this.resident().filter(r => r.state === 'loading').length >= (this.options.concurrency ?? 2)) break;
         if (e.state !== 'idle') continue;
+        if (this.resident().filter(r => r.state === 'loading').length >= (this.options.concurrency ?? 2)) break;
         const wanted = new Set(this.wanted);
         const old = this.resident().filter(r => !wanted.has(r)).sort((a, b) => a.used - b.used);
         while (this.resident().length >= (this.options.maxTiles ?? 24) ||
