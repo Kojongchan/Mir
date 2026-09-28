@@ -33,6 +33,7 @@ import AdmZip from 'adm-zip';
 import gltfPipeline from 'gltf-pipeline';
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { buildMergedGlb } from './mergeGlb.mjs';
+import { encodeXktTransfer } from './xkt-transfer.mjs';
 
 const APS_BASE = 'https://developer.api.autodesk.com';
 
@@ -74,8 +75,8 @@ function r2() {
   }
   return _r2;
 }
-async function r2Put(key, body, contentType) {
-  await r2().send(new PutObjectCommand({ Bucket: R2_BUCKET, Key: key, Body: body, ContentType: contentType }));
+async function r2Put(key, body, contentType, contentEncoding) {
+  await r2().send(new PutObjectCommand({ Bucket: R2_BUCKET, Key: key, Body: body, ContentType: contentType, ContentEncoding: contentEncoding }));
 }
 async function r2Delete(key) {
   await r2().send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: key })).catch(() => {});
@@ -436,8 +437,12 @@ async function main() {
       try {
         await convert2xkt({ source: glbPath, output: xktPath, log: () => {} });
         const buf = fs.readFileSync(xktPath);
-        await r2Put(`${keyBase}/xkt/${name}`, buf, 'application/octet-stream');
-        chunkInfo[name] = { byteLength: buf.length, triangles: tris, kind };
+        const transfer = encodeXktTransfer(buf);
+        await r2Put(`${keyBase}/xkt/${name}`, transfer.body, 'application/octet-stream', transfer.contentEncoding);
+        // byteLength remains decoded file size for the viewer's residency budget.
+        chunkInfo[name] = { byteLength: buf.length, transferByteLength: transfer.transferByteLength,
+          contentEncoding: transfer.contentEncoding ?? 'identity', triangles: tris, kind };
+        console.log(`[convert4d] transport ${MB(buf.length)}MB → ${MB(transfer.transferByteLength)}MB (lossless)`);
         if (kind === 'lod1') { lodFile = name; lodBytes += buf.length; console.log(`[convert4d]   LOD1 → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
         else if (kind === 'nav') { navFiles.push(name); navBytes += buf.length; console.log(`[convert4d]   nav ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
         else if (kind === 'base') { baseFiles.push(name); baseBytes += buf.length; console.log(`[convert4d]   지형베이스 ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
