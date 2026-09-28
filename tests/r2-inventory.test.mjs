@@ -33,3 +33,37 @@ test('active XKT remains separate from unreferenced bytes; broken manifests neve
   manifests.set('active', { xktFiles: ['missing.xkt'] });
   assert.equal(inventory.inventorySummary(objects, manifests).groups.find(group => group.prefix === 'active').staleXktBytes, null);
 });
+
+test('project administrators can audit their own project; viewers cannot read bucket inventory', async () => {
+  const projectId = '784ab8b8-2a64-47ec-81cf-6490b4d4d3ed';
+  let role = 'viewer', bucketReads = 0;
+  class AwsClient {
+    async fetch() {
+      bucketReads++;
+      return new Response('<ListBucketResult><Contents><Key>sample/model.glb</Key><Size>23</Size></Contents><IsTruncated>false</IsTruncated></ListBucketResult>');
+    }
+  }
+  const admin = {
+    auth: { getUser: async () => ({ data: { user: { id: 'u1' } } }) },
+    from(table) {
+      return { select() { return this; }, eq() { return this; }, async maybeSingle() {
+        return { data: table === 'profiles' ? { is_admin: false } : { role } };
+      } };
+    },
+  };
+  const api = {};
+  new Function('exports', 'require', 'process', code)(api,
+    name => name === 'aws4fetch' ? { AwsClient } : { createClient: () => admin },
+    { env: { SUPABASE_URL: 'https://example.invalid', SUPABASE_SERVICE_ROLE_KEY: 'test',
+      R2_ACCOUNT_ID: 'a', R2_ACCESS_KEY_ID: 'k', R2_SECRET_ACCESS_KEY: 's', R2_BUCKET: 'b' } });
+  const request = new Request(`https://example.invalid/api/r2-inventory?projectId=${projectId}`, {
+    headers: { authorization: 'Bearer test' },
+  });
+  assert.equal((await api.default(request)).status, 403);
+  assert.equal(bucketReads, 0);
+  role = 'admin';
+  const response = await api.default(request);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).totalBytes, 23);
+  assert.equal(bucketReads, 1);
+});

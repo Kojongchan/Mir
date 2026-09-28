@@ -111,7 +111,7 @@ function focusToAabb(focus?: Focus): number[] | null {
  */
 export function ThreeDTest() {
   const { projectId = '' } = useParams();
-  const { canEdit, isSystemAdmin } = useProjectRole(projectId);
+  const { canEdit, canManage } = useProjectRole(projectId);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const navCubeRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
@@ -151,7 +151,7 @@ export function ThreeDTest() {
     try {
       const { data } = await supabase.auth.getSession();
       if (!data.session) throw new Error('로그인이 필요합니다.');
-      const response = await fetch('/api/r2-inventory', {
+      const response = await fetch(`/api/r2-inventory?projectId=${encodeURIComponent(projectId)}`, {
         headers: { Authorization: `Bearer ${data.session.access_token}` },
       });
       const result = await response.json();
@@ -1174,7 +1174,7 @@ export function ThreeDTest() {
             const a = document.createElement('a'); a.href = url; a.download = 'viewer-diagnostics.json'; a.click();
             setTimeout(() => URL.revokeObjectURL(url), 1000);
           }}>진단 저장</button>
-          {isSystemAdmin && <button className="btn btn--sm" disabled={inventoryBusy} onClick={() => void downloadStorageInventory()} title="R2 저장소 전체 목록과 현재 참조 중인 모델을 읽기 전용으로 점검합니다. 파일을 변경하지 않습니다.">
+          {canManage && <button className="btn btn--sm" disabled={inventoryBusy} onClick={() => void downloadStorageInventory()} title="R2 저장소 전체 목록과 현재 참조 중인 모델을 읽기 전용으로 점검합니다. 파일을 변경하지 않습니다.">
             {inventoryBusy ? '저장소 점검 중' : '저장소 용량 점검'}
           </button>}
           <div className="spacer" />

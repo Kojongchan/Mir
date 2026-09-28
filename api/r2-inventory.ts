@@ -95,7 +95,13 @@ export default async function handler(req: Request): Promise<Response> {
   const { data: userData, error } = await admin.auth.getUser(bearer);
   if (error || !userData.user) return reply({ error: 'invalid session' }, 401);
   const { data: profile } = await admin.from('profiles').select('is_admin').eq('id', userData.user.id).maybeSingle();
-  if (!profile?.is_admin) return reply({ error: 'system administrator only' }, 403);
+  if (!profile?.is_admin) {
+    const projectId = new URL(req.url).searchParams.get('projectId');
+    if (!projectId || !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(projectId)) return reply({ error: '프로젝트 관리자 권한이 필요합니다.' }, 403);
+    const { data: membership, error: memberError } = await admin.from('project_members').select('role')
+      .eq('project_id', projectId).eq('user_id', userData.user.id).maybeSingle();
+    if (memberError || membership?.role !== 'admin') return reply({ error: '프로젝트 관리자 권한이 필요합니다.' }, 403);
+  }
   const client = new AwsClient({ accessKeyId: KEY, secretAccessKey: SECRET, service: 's3', region: 'auto' });
   try {
     const objects: { key: string; bytes: number }[] = [];
