@@ -115,10 +115,17 @@ export default async function handler(req: Request): Promise<Response> {
     if (manifestKeys.length > 100) throw new Error('Too many manifests for a bounded audit');
     const manifests = new Map<string, unknown>();
     for (const item of manifestKeys) {
+      const prefix = item.key.split('/')[0];
+      // Multiple manifest generations under one prefix make any single one unsafe
+      // as the sole source of live references.
+      if (manifestKeys.filter(entry => entry.key.split('/')[0] === prefix).length !== 1) {
+        manifests.set(prefix, null);
+        continue;
+      }
       const response = await client.fetch(`${endpoint}/${item.key.split('/').map(encodeURIComponent).join('/')}`);
       if (!response.ok) throw new Error('Cannot inspect cached manifest');
-      try { manifests.set(item.key.split('/')[0], await response.json()); }
-      catch { manifests.set(item.key.split('/')[0], null); }
+      try { manifests.set(prefix, await response.json()); }
+      catch { manifests.set(prefix, null); }
     }
     return reply({ ...inventorySummary(objects, manifests), inspectedAt: new Date().toISOString(),
       note: 'Read-only snapshot. Stale XKT estimate requires manifest validation; no object was modified or marked for automatic deletion.' });
