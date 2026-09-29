@@ -91,6 +91,11 @@ on:
         required: false
         default: ''
 
+# All R2-writing jobs in this workflow share one budget.
+concurrency:
+  group: mir-r2-writer
+  cancel-in-progress: false
+
 jobs:
   compact-storage:
     if: github.event.inputs.diag_only == 'compact-xkt'
@@ -98,9 +103,6 @@ jobs:
     timeout-minutes: 120
     permissions:
       contents: read
-    concurrency:
-      group: mir-r2-storage-compaction
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

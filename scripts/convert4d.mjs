@@ -31,9 +31,10 @@ import { AuthenticationClient, Scopes } from '@aps_sdk/authentication';
 import { ModelDerivativeClient } from '@aps_sdk/model-derivative';
 import AdmZip from 'adm-zip';
 import gltfPipeline from 'gltf-pipeline';
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { buildMergedGlb } from './mergeGlb.mjs';
 import { encodeXktTransfer } from './xkt-transfer.mjs';
+import { checkStorageBudget } from './storage-budget.mjs';
 
 const APS_BASE = 'https://developer.api.autodesk.com';
 
@@ -75,7 +76,11 @@ function r2() {
   }
   return _r2;
 }
-async function r2Put(key, body, contentType, contentEncoding) {
+async function r2Put(key, body, contentType, contentEncoding, beforeWrite) {
+  await checkStorageBudget(token => r2().send(new ListObjectsV2Command({
+    Bucket: R2_BUCKET, ContinuationToken: token, MaxKeys: 1000,
+  })), body.byteLength);
+  beforeWrite?.();
   await r2().send(new PutObjectCommand({ Bucket: R2_BUCKET, Key: key, Body: body, ContentType: contentType, ContentEncoding: contentEncoding }));
 }
 async function r2Delete(key) {
@@ -420,6 +425,9 @@ async function main() {
     // → 디스크·메모리 모두 한 청크로 상한(대용량 OOM/디스크풀 원천 차단).
     // Immutable chunks: failed rebuilds cannot overwrite files referenced by the last good manifest.
     const generation = `runs/${randomUUID()}`;
+    const stagedKeys = [];
+    let publishAttempted = false;
+    try {
     const xktFiles = [];
     const chunkInfo = {};
     const failedChunks = [];
@@ -438,6 +446,7 @@ async function main() {
         await convert2xkt({ source: glbPath, output: xktPath, log: () => {} });
         const buf = fs.readFileSync(xktPath);
         const transfer = encodeXktTransfer(buf);
+        stagedKeys.push(`${keyBase}/xkt/${name}`);
         await r2Put(`${keyBase}/xkt/${name}`, transfer.body, 'application/octet-stream', transfer.contentEncoding);
         // byteLength remains decoded file size for the viewer's residency budget.
         chunkInfo[name] = { byteLength: buf.length, transferByteLength: transfer.transferByteLength,
@@ -483,7 +492,10 @@ async function main() {
       if (instFiles.length) manifest.inst = instFiles; // 인스턴스 레이어(반복 구조물 뼈대, 항상 로드)
       console.log(`[convert4d] 타일 매니페스트: 구조물 타일 ${manifest.tiles.length}개 + 지형베이스 ${baseFiles.length}청크 + 인스턴스 ${instFiles.length}청크 + 개요 lod1`);
     }
-    await r2Put(`${keyBase}/xkt/manifest.json`, Buffer.from(JSON.stringify(manifest)), 'application/json');
+    // A lost response may still mean a successful manifest write. Once attempted,
+    // never delete generation files automatically.
+    await r2Put(`${keyBase}/xkt/manifest.json`, Buffer.from(JSON.stringify(manifest)),
+      'application/json', undefined, () => { publishAttempted = true; });
     if (res.focus) await r2Put(`${keyBase}/focus.json`, Buffer.from(JSON.stringify(res.focus)), 'application/json');
     else await r2Delete(`${keyBase}/focus.json`);
     await r2Delete(`${keyBase}/model.glb`); // 구 GLB 캐시 제거(프런트가 XKT 우선)
@@ -498,6 +510,13 @@ async function main() {
     }
     console.log('[convert4d] DONE');
     return;
+    } catch (error) {
+      if (!publishAttempted) {
+        // Only this run's unique generation; never the previous manifest/cache.
+        for (const key of stagedKeys) await r2Delete(key);
+      }
+      throw error;
+    }
   }
 
   // 재질별 병합 + 정점당 dbId → 단일 GLB(거대 모델의 glTF JSON 한계 회피).
