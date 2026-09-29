@@ -471,7 +471,8 @@ async function main() {
       build: { commit: process.env.GITHUB_SHA || null, ref: process.env.GITHUB_REF || null,
         createdAt: new Date().toISOString(),
         options: { tiles: process.env.XKT_TILES === '1', tileM: Number(process.env.XKT_TILE_M || 200),
-          tileCap: Number(process.env.XKT_TILE_CAP || 1200000), instance: process.env.XKT_INSTANCE === '1' } },
+          tileCap: Number(process.env.XKT_TILE_CAP || 1200000), instance: process.env.XKT_INSTANCE === '1',
+          tileReuse: process.env.XKT_TILE_REUSE !== '0', tileInstanceReferences: res.tileInstanceReferences ?? 0 } },
     };
     if (res.tiles) {
       manifest.tiles = xktFiles.map((n) => ({ n, aabb: res.tileAabbs?.[path.basename(n).replace(/\.xkt$/, '')], byteLength: chunkInfo[n].byteLength }));
