@@ -5,7 +5,7 @@ import { MeshoptSimplifier } from 'meshoptimizer';
 export async function simplifyTileMesh(pos, nrm, indices, { ratio = .2, relativeError = .001 } = {}) {
   await MeshoptSimplifier.ready;
   if (!(ratio > 0 && ratio < 1) || !(relativeError > 0 && relativeError <= .01)) throw new Error('Invalid LOD limits');
-  const original = { pos, nrm, idx: indices, reduced: false };
+  const original = { pos, nrm, idx: indices, sourceIndices: indices, reduced: false };
   const nv = pos.length / 3;
   if (!Number.isInteger(nv) || nrm?.length !== pos.length || indices.length % 3 ||
       !pos.every(Number.isFinite) || !nrm.every(Number.isFinite) ||
@@ -56,5 +56,5 @@ export async function simplifyTileMesh(pos, nrm, indices, { ratio = .2, relative
     if (!map.has(v)) { map.set(v, map.size); p.push(pos[v*3],pos[v*3+1],pos[v*3+2]); n.push(nrm[v*3],nrm[v*3+1],nrm[v*3+2]); }
     return map.get(v);
   });
-  return { pos: Float32Array.from(p), nrm: Float32Array.from(n), idx, reduced: true };
+  return { pos: Float32Array.from(p), nrm: Float32Array.from(n), idx, sourceIndices: Uint32Array.from(chosen), reduced: true };
 }

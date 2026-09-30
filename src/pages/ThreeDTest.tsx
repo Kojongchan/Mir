@@ -151,6 +151,42 @@ export function ThreeDTest() {
   const [lastFile, setLastFile] = useState<PickedAccFile | null>(null);
   const [initializationError, setInitializationError] = useState(false);
 
+  const [motionJob, setMotionJob] = useState<string>('');
+  const [motionJobBusy, setMotionJobBusy] = useState(false);
+  const [motionSince, setMotionSince] = useState<string | null>(null);
+  const startMotionCache = async () => {
+    if (!lastFile?.accUrn || motionJobBusy) return;
+    setMotionJobBusy(true); setMotionJob('경량 파일 생성 요청 중…');
+    try {
+      const { data } = await supabase.auth.getSession();
+      const response = await fetch(`/api/r2-motion?projectId=${encodeURIComponent(projectId ?? '')}`, {
+        method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${data.session?.access_token ?? ''}` },
+        body: JSON.stringify({ urn: lastFile.accUrn }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '요청 실패');
+      setMotionSince(result.requestedAt || new Date().toISOString());
+      setMotionJob('경량 파일 생성 중 · 상태를 자동 확인합니다.');
+    } catch (error) { setMotionJob(errMessage(error)); }
+    finally { setMotionJobBusy(false); }
+  };
+  const checkMotionCache = async () => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const response = await fetch(`/api/r2-motion?projectId=${encodeURIComponent(projectId ?? '')}${motionSince ? '&since=' + encodeURIComponent(motionSince) : ''}`, {
+        headers: { authorization: `Bearer ${data.session?.access_token ?? ''}` },
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '상태 조회 실패');
+      if (['success', 'failed', 'idle'].includes(result.state)) setMotionSince(null);
+      setMotionJob(result.state === 'success' ? '경량 파일 생성 완료 · ACC에서 같은 모델을 다시 열어 적용하세요.' : result.state === 'failed' ? '경량 파일 생성 실패 · 기존 상세 모델은 유지됩니다.' : result.state === 'idle' ? '경량 생성 작업이 없습니다.' : '경량 파일 생성 진행 중');
+    } catch (error) { setMotionJob(errMessage(error)); }
+  };
+  useEffect(() => {
+    if (!motionSince) return;
+    const timer = setInterval(() => void checkMotionCache(), 5000);
+    return () => clearInterval(timer);
+  }, [motionSince, projectId]);
   const startStorageCompaction = async () => {
     setStorageBusy(true);
     setStorageNotice('저장소 압축 작업을 연결하고 있습니다.');
@@ -1305,6 +1341,9 @@ export function ThreeDTest() {
           <button className="btn btn--sm btn--primary" disabled={storageBusy} onClick={() => void startStorageCompaction()} title="활성 XKT를 원본과 동일한 내용으로 압축하여 같은 위치에 교체합니다. 완료 후 사용량을 다시 확인합니다.">
             {storageBusy ? '저장소 압축 중' : '저장소 압축 실행'}
           </button>
+          <button className="btn btn--sm" disabled={!lastFile?.accUrn || motionJobBusy} onClick={() => void startMotionCache()}>경량 파일 생성</button>
+          <button className="btn btn--sm" onClick={() => void checkMotionCache()}>경량 생성 상태 확인</button>
+          {motionJob && <span role="status" style={{ fontSize: 12 }}>{motionJob}</span>}
           {storageNotice && <span role="status" style={{ fontSize: 12 }}>{storageNotice}</span>}
         </div>}
         <div
