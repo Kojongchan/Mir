@@ -15,6 +15,7 @@ import path from 'node:path';
 import { partitionSpatialObjects } from './spatial-partition.mjs';
 import { weldExact } from './exact-weld.mjs';
 import { tileInstance } from './tile-instance.mjs';
+import { simplifyTileMesh } from './tile-lod.mjs';
 import { MeshoptSimplifier } from 'meshoptimizer';
 
 // sharp 지연 로드(텍스처 POT 리사이즈용). Basis/블록압축 GPU 텍스처는 base·mip 레벨이 모두
@@ -881,6 +882,10 @@ export async function buildMergedGlb(imf, opts) {
   const tileCap = Number(process.env.XKT_TILE_CAP || 1_200_000);
   const tileReuse = opts.tileReuse ?? (process.env.XKT_TILE_REUSE !== '0');
   let tileInstanceReferences = 0;
+  // Opt-in until representative source geometry has passed visual validation.
+  const motionLod = tilesMode && (opts.motionLod ?? process.env.XKT_MOTION_LOD === '1') ? makeStream('motion', 'motion') : null;
+  const tileLods = {};
+  let lodMembers = 0;
   const tileAabbs = {}; // 'c<idx>' → [minx,miny,minz,maxx,maxy,maxz] (origin-rel 월드 = focus 와 동일 공간)
   const base = tilesMode ? makeStream('b', 'base') : null; // 지형 항상로드 베이스(타일모드 전용)
   let baseT = 0;
@@ -1013,7 +1018,18 @@ export async function buildMergedGlb(imf, opts) {
   let curCell = null;
   const flushTile = async () => {
     if (!detail.chunk || detail.chunk.meshes.length === 0) return;
-    tileAabbs[`c${detail.idx}`] = tileAabb.slice();
+    const tileKey = `c${detail.idx}`;
+    tileAabbs[tileKey] = tileAabb.slice();
+    if (motionLod?.chunk) {
+      if (motionLod.chunk.nodes.length !== detail.chunk.nodes.length) throw new Error('LOD member count mismatch');
+      // Publish a paired tile only when it actually reduces drawing work.
+      if (motionLod.chunk.tris < detail.chunk.tris * .75) {
+        tileLods[tileKey] = { n: `motion${motionLod.idx}.xkt`, members: lodMembers,
+          detailTriangles: detail.chunk.tris, triangles: motionLod.chunk.tris, policy: 'component-border-v1' };
+        await motionLod.flush();
+      } else motionLod.chunk = null;
+      lodMembers = 0;
+    }
     await detail.flush();
     tileAabb = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
   };
@@ -1275,6 +1291,12 @@ export async function buildMergedGlb(imf, opts) {
           } else {
             detail.add(pos, nrm, idx32, [fnx, fny, fnz], [fxx, fxy, fxz], baseColor, metal, rough, String(node.dbid), tex);
           }
+          if (motionLod) {
+            const proxy = tex ? { pos, nrm, idx: idx32 } : await simplifyTileMesh(pos, nrm, idx32);
+            motionLod.add(proxy.pos, proxy.nrm, proxy.idx, [fnx, fny, fnz], [fxx, fxy, fxz],
+              baseColor, metal, rough, String(node.dbid), tex);
+            lodMembers++;
+          }
           if (fnx < tileAabb[0]) tileAabb[0] = fnx; if (fny < tileAabb[1]) tileAabb[1] = fny; if (fnz < tileAabb[2]) tileAabb[2] = fnz;
           if (fxx > tileAabb[3]) tileAabb[3] = fxx; if (fxy > tileAabb[4]) tileAabb[4] = fxy; if (fxz > tileAabb[5]) tileAabb[5] = fxz;
           streamV += nv; streamT += idx32.length / 3;
@@ -1411,7 +1433,7 @@ export async function buildMergedGlb(imf, opts) {
       log(`[tex]   ${uri.slice(-42)} ${span}${straddleV || straddleU ? ` ⚠STRADDLE(u:${straddleU} v:${straddleV})` : ''}`);
     }
     if (tilesMode) log(`[tile] 타일 ${Object.keys(tileAabbs).length}개(구조물, 원본) · 지형베이스 ${base ? base.idx : 0}청크(삼각형 ${Math.round(baseT).toLocaleString()}) · 인스턴스 ${inst ? inst.idx : 0}청크(메시 ${instMeshesN.toLocaleString()}) · 셀 ${tileM}m.`);
-    return { xkt: true, tiles: tilesMode, tileLayout: tilesMode ? 'spatial-median-v1' : null, tileAabbs, tileInstanceReferences, baseChunks: base ? base.idx : 0, baseTris: baseT, instChunks: inst ? inst.idx : 0, instMeshes: instMeshesN, instTris: instTrisStored, chunks: detail.idx, navChunks: nav ? nav.idx : 0, navTris: navT, vertices: streamV, triangles: streamT, lodTris, decimated: 0, focus: robustFocus(foci) };
+    return { xkt: true, tiles: tilesMode, tileLayout: tilesMode ? 'spatial-median-v1' : null, tileAabbs, tileInstanceReferences, tileLods, baseChunks: base ? base.idx : 0, baseTris: baseT, instChunks: inst ? inst.idx : 0, instMeshes: instMeshesN, instTris: instTrisStored, chunks: detail.idx, navChunks: nav ? nav.idx : 0, navTris: navT, vertices: streamV, triangles: streamT, lodTris, decimated: 0, focus: robustFocus(foci) };
   }
   // 솔리드(삼각형) 부재가 하나라도 있으면 선/점은 대개 엣지/주석 클러터(IFC 의 와이어프레임
   // 11만개 등) → 제외. 순수 선형(솔리드 0 = DWG 도면)만 선/점 유지. 정점수 비율은 엣지선이

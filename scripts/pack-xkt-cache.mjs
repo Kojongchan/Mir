@@ -16,6 +16,7 @@ export async function packXktCache(inputDirectory, outputDirectory) {
   const manifest = JSON.parse(await fs.readFile(path.join(root, 'manifest.json'), 'utf8'));
   const names = [...new Set([
     ...(manifest.xktFiles ?? []), ...(manifest.navFiles ?? []), ...(manifest.base ?? []),
+    ...(manifest.tiles ?? []).filter(t => t.motion).map(t => t.motion.n),
     ...(manifest.inst ?? []), ...(manifest.tiles ?? []).map(t => t.n), ...(manifest.lod1 ? [manifest.lod1] : []),
   ])];
   if (!names.length) throw new Error('No cached XKT files');
@@ -52,7 +53,8 @@ export async function packXktCache(inputDirectory, outputDirectory) {
     if (manifest.lod1) result.lod1 = replacements.get(manifest.lod1);
     if (manifest.tiles) result.tiles = manifest.tiles.map(t => {
       const n = replacements.get(t.n);
-      return { ...t, n, byteLength: info[n].byteLength };
+      return { ...t, n, byteLength: info[n].byteLength,
+        ...(t.motion ? { motion: { ...t.motion, n: replacements.get(t.motion.n), byteLength: info[replacements.get(t.motion.n)].byteLength } } : {}) };
     });
     await fs.writeFile(path.join(output, 'upload-plan.json'), JSON.stringify({ uploads,
       publishLast: 'manifest.json', note: 'Set Content-Encoding exactly as listed; uploading gzip as identity breaks XKT loading.' }, null, 2));

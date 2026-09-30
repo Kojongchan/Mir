@@ -84,3 +84,8 @@ test('real HTTP Content-Encoding gzip yields byte-identical viewer response', as
     assert.ok(Buffer.from(await r.arrayBuffer()).equals(bytes));
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 });
+
+test('paired motion files are active references, never stale geometry',()=>{
+ const keys=manifestKeys('sample',{xktFiles:['runs/test/c0.xkt'],tiles:[{n:'runs/test/c0.xkt',motion:{n:'runs/test/motion0.xkt'}}]});
+ assert.ok(keys.includes('sample/xkt/runs/test/motion0.xkt'));
+});

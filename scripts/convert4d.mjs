@@ -453,6 +453,7 @@ async function main() {
           contentEncoding: transfer.contentEncoding ?? 'identity', triangles: tris, kind };
         console.log(`[convert4d] transport ${MB(buf.length)}MB → ${MB(transfer.transferByteLength)}MB (lossless)`);
         if (kind === 'lod1') { lodFile = name; lodBytes += buf.length; console.log(`[convert4d]   LOD1 → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
+        else if (kind === 'motion') { console.log(`[convert4d] motion tile ${idx}: ${tris} triangles`); }
         else if (kind === 'nav') { navFiles.push(name); navBytes += buf.length; console.log(`[convert4d]   nav ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
         else if (kind === 'base') { baseFiles.push(name); baseBytes += buf.length; console.log(`[convert4d]   지형베이스 ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
         else if (kind === 'inst') { instFiles.push(name); instBytes += buf.length; console.log(`[convert4d]   인스턴스레이어 ${idx} → ${name} (${MB(buf.length)}MB) 업로드`); }
@@ -481,10 +482,16 @@ async function main() {
         createdAt: new Date().toISOString(),
         options: { tiles: process.env.XKT_TILES === '1', tileM: Number(process.env.XKT_TILE_M || 200),
           tileCap: Number(process.env.XKT_TILE_CAP || 1200000), instance: process.env.XKT_INSTANCE === '1',
-          tileReuse: process.env.XKT_TILE_REUSE !== '0', tileInstanceReferences: res.tileInstanceReferences ?? 0 } },
+          motionLod: process.env.XKT_MOTION_LOD === '1', tileReuse: process.env.XKT_TILE_REUSE !== '0', tileInstanceReferences: res.tileInstanceReferences ?? 0 } },
     };
     if (res.tiles) {
-      manifest.tiles = xktFiles.map((n) => ({ n, aabb: res.tileAabbs?.[path.basename(n).replace(/\.xkt$/, '')], byteLength: chunkInfo[n].byteLength }));
+      manifest.tiles = xktFiles.map((n) => ({ n, aabb: res.tileAabbs?.[path.basename(n).replace(/\.xkt$/, '')], byteLength: chunkInfo[n].byteLength,
+        ...(res.tileLods?.[path.basename(n).replace(/\.xkt$/, '')] ? { motion: (() => {
+          const meta = res.tileLods[path.basename(n).replace(/\.xkt$/, '')];
+          const key = `${generation}/${meta.n}`;
+          if (!chunkInfo[key]) throw new Error('Missing paired motion tile');
+          return { ...meta, n: key, byteLength: chunkInfo[key].byteLength };
+        })() } : {}) }));
       if (manifest.tiles.some(t => !Array.isArray(t.aabb) || t.aabb.length !== 6 || !t.aabb.every(Number.isFinite))) {
         throw new Error('타일 공간 정보 누락: 불완전한 모델은 게시하지 않습니다.');
       }

@@ -19,6 +19,7 @@ export function manifestKeys(prefix, manifest) {
   if (manifest.tiles !== undefined) {
     if (!Array.isArray(manifest.tiles)) throw new Error('Invalid active tiles');
     names.push(...manifest.tiles.map(t => t?.n));
+    names.push(...manifest.tiles.filter(t => t?.motion).map(t => t.motion.n));
   }
   for (const name of names) {
     if (typeof name !== 'string' || !/^[a-zA-Z0-9_./-]+\.xkt$/.test(name) || name.startsWith('/') ||

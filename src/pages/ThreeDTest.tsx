@@ -1,3 +1,4 @@
+import { motionPairMatches, motionTileVisibility } from '../viewer/MotionTile';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Viewer, GLTFLoaderPlugin, XKTLoaderPlugin, NavCubePlugin } from '@xeokit/xeokit-sdk';
@@ -655,7 +656,7 @@ export function ThreeDTest() {
 
   /** Original tiles remain visible during navigation. Loading has explicit count/encoded-byte budgets.
    * This is a bounded working view, not a full-scene LOD solution. */
-  const mountTiles = useCallback((tiles: { url: string; aabb: number[]; byteLength?: number }[], baseUrls: string[] | undefined, instUrls: string[] | undefined, _lod1Url: string | undefined, label: string, focus?: Focus) => {
+  const mountTiles = useCallback((tiles: { url: string; aabb: number[]; byteLength?: number; motion?: { url: string; byteLength: number; policy: string } }[], baseUrls: string[] | undefined, instUrls: string[] | undefined, _lod1Url: string | undefined, label: string, focus?: Focus) => {
     const viewer = viewerRef.current;
     const loader = xktLoaderRef.current;
     if (!viewer || !loader || !tiles.length) return;
@@ -705,7 +706,7 @@ export function ThreeDTest() {
     const T = tiles.map((t, i) => ({ ...t, manifestIndex: i })).filter(t => t.aabb.length === 6 && t.aabb.every(Number.isFinite) &&
       [0, 1, 2].every(i => t.aabb[i] <= t.aabb[i + 3])).map(t => {
       const [ax, ay, az, bx, by, bz] = t.aabb;
-      return { id: `tile${t.manifestIndex}`, url: t.url, byteLength: t.byteLength,
+      return { id: `tile${t.manifestIndex}`, url: t.url, byteLength: t.byteLength, motion: t.motion,
         sourceAabb: [...t.aabb],
         worldAabb: [ax, az, -by, bx, bz, -ay],
         cx: (ax + bx) / 2, cy: (az + bz) / 2, cz: -(ay + by) / 2,
@@ -714,6 +715,12 @@ export function ThreeDTest() {
     let regionCandidates: typeof T = [];
     let viewDirty = true;
     let inViewCount = 0, culledCount = 0;
+    let motionActive = false, motionBytes = 0;
+    const motionReady = new Set<string>();
+    const motionQuality = new NavigationQuality({ delayMs: 900,
+      enter: () => { motionActive = true; viewDirty = true; },
+      leave: () => { motionActive = false; viewDirty = true; viewer.scene.render(true); },
+    });
     const currentPlanes = () => viewPlanes(viewer.camera.viewMatrix, viewer.camera.projMatrix);
     const prioritizeCurrentView = () => {
       stream.prioritize(prioritizeTileView(regionCandidates, currentPlanes(), viewer.camera.look).map(t => t.id));
@@ -728,12 +735,19 @@ export function ThreeDTest() {
         if (!model) continue;
         // Decoded bounds are authoritative for rendering; manifest bounds only prioritize downloads.
         const culled = !inTileView(model.aabb, planes);
-        if (model.culled !== culled) model.culled = culled;
+        const proxy = models[`${tile.id}-motion`];
+        // Motion approximation never replaces a tile until decoded membership is checked.
+        // Keep original detail for picking, measurements and idle inspection.
+        const useProxy = motionActive && motionReady.has(tile.id) && !!proxy;
+        const visibility = motionTileVisibility(!culled, motionActive, useProxy);
+        if (proxy && proxy.culled !== visibility.proxyCulled) proxy.culled = visibility.proxyCulled;
+        if (model.culled !== visibility.detailCulled) model.culled = visibility.detailCulled;
         if (culled) culledCount++; else inViewCount++;
       }
     });
     coverageReportRef.current = () => ({
       mode: completeRegion ? 'fixed-complete-region' : 'bounded', stopped: loadingStopped,
+      motionLod: { readyTiles: motionReady.size, active: motionActive, decodedFileBytes: motionBytes, policy: 'component-border-v1' },
       modelLoadTiming: { count: parseCount, totalMs: parseTotalMs, maxMs: parseMaxMs },
       downloadTiming: { count: downloadCount, totalMs: downloadTotalMs, maxMs: downloadMaxMs, maxConcurrentLoads: 2 },
       renderCoverage: { inViewCount, culledCount, policy: 'padded-side-planes-decoded-bounds' },
@@ -799,8 +813,49 @@ export function ThreeDTest() {
             } catch (e) { finish(e instanceof Error ? e : new Error(String(e))); }
           });
         } finally { releaseModel(); }
+        // Optional small paired approximation. Failed/oversized proxies never fail
+        // a successfully loaded detail tile. The aggregate budget bounds extra data.
+        const motion = tile.motion;
+        if (motion?.policy === 'component-border-v1' && motion.byteLength > 0 && motion.byteLength <= 8 * 1048576 && motionBytes + motion.byteLength <= 64 * 1048576) {
+          motionBytes += motion.byteLength;
+          let kept = false;
+          try {
+            const response = await fetch(motion.url, { signal });
+            if (!response.ok) throw new Error('Motion tile download failed');
+            const data = await response.arrayBuffer();
+            if (data.byteLength !== motion.byteLength || signal.aborted || !active) throw new Error('Motion tile size mismatch');
+            const release = await modelQueue.acquire(signal);
+            try {
+              await loadGate.wait(signal);
+              await new Promise<void>((resolve, reject) => {
+                let finished = false;
+                const finish = (error?: Error) => { if (finished) return; finished = true; clearTimeout(timer); signal.removeEventListener('abort', abort); error ? reject(error) : resolve(); };
+                const abort = () => finish(new Error('cancelled'));
+                const timer = window.setTimeout(() => finish(new Error('Motion tile timeout')), 60000);
+                signal.addEventListener('abort', abort, { once: true });
+                try {
+                  const proxy = loader.load({ id: `${tile.id}-motion`, xkt: data, edges: false, rotation: [-90, 0, 0], culled: true, pickable: false, globalizeObjectIds: true } as unknown as Parameters<typeof loader.load>[0]);
+                  proxy.on('error', () => finish(new Error('Motion tile parse failed')));
+                  proxy.on('loaded', () => {
+                    if (signal.aborted || !active) { finish(new Error('cancelled')); return; }
+                    const original = models[tile.id];
+                    if (!original) { finish(new Error('Detail unavailable')); return; }
+                    if (!motionPairMatches(original as unknown as typeof proxy, proxy)) { finish(new Error('Motion tile membership mismatch')); return; }
+                    finish();
+                  });
+                } catch (e) { finish(e instanceof Error ? e : new Error(String(e))); }
+              });
+              if (signal.aborted || !active) throw new Error('cancelled');
+              motionReady.add(tile.id); kept = true; viewDirty = true;
+            } finally { release(); }
+          } catch { /* Keep complete detail when the approximation is unavailable. */ }
+          finally { if (!kept) { models[`${tile.id}-motion`]?.destroy(); motionBytes -= motion.byteLength; } }
+        }
       },
-      unload: tile => { models[tile.id]?.destroy(); },
+      unload: tile => {
+        if (motionReady.delete(tile.id)) motionBytes -= tile.motion?.byteLength ?? 0;
+        models[`${tile.id}-motion`]?.destroy(); models[tile.id]?.destroy();
+      },
       onChange: stats => {
         if (!active) return;
         const limited = stats.total > stats.selected;
@@ -902,6 +957,7 @@ export function ThreeDTest() {
     setRegionMode(true);
     setTerrainHidden(false);
     const pauseForNavigation = () => {
+      motionQuality.moved();
       viewDirty = true;
       loadGate.setPaused(true);
       stream.setPaused(true);
@@ -919,8 +975,8 @@ export function ThreeDTest() {
     const sub = viewer.camera.on('matrix', pauseForNavigation);
     const projectionSub = viewer.camera.on('projMatrix', pauseForNavigation);
     const navigationCanvas = canvasRef.current!;
-    const holdLoading = () => { pointerHeld = true; loadGate.hold(true); pauseForNavigation(); };
-    const releaseLoading = () => { if (!pointerHeld) return; pointerHeld = false; pauseForNavigation(); loadGate.hold(false); };
+    const holdLoading = () => { pointerHeld = true; motionQuality.hold(true); loadGate.hold(true); pauseForNavigation(); };
+    const releaseLoading = () => { if (!pointerHeld) return; pointerHeld = false; motionQuality.hold(false); pauseForNavigation(); loadGate.hold(false); };
     navigationCanvas.addEventListener('pointerdown', holdLoading);
     window.addEventListener('pointerup', releaseLoading);
     window.addEventListener('pointercancel', releaseLoading);
@@ -928,6 +984,7 @@ export function ThreeDTest() {
     const baseControllers: AbortController[] = [];
     streamCleanupRef.current = () => {
       active = false;
+      motionQuality.dispose();
       loadGate.dispose();
       modelQueue.dispose();
       navigationCanvas.removeEventListener('pointerdown', holdLoading);
@@ -1009,7 +1066,7 @@ export function ThreeDTest() {
         xkt?: boolean;
         urls?: string[];
         navUrls?: string[];
-        tiles?: { url: string; aabb: number[]; byteLength?: number }[];
+        tiles?: { url: string; aabb: number[]; byteLength?: number; motion?: { url: string; byteLength: number; policy: string } }[];
         baseUrls?: string[];
         instUrls?: string[];
         lod1Url?: string;

@@ -42,6 +42,10 @@ on:
         description: "'1'이면 공간 타일 스트리밍(원본 형상, 뷰 종속). 트래픽·구조물 근본해결"
         required: false
         default: ''
+      motion_lod:
+        description: "'1'=experimental paired motion LOD (representative validation required)"
+        required: false
+        default: '0'
       tile_m:
         description: "공간 타일 셀 크기(m). 기본 500"
         required: false
@@ -253,6 +257,7 @@ jobs:
           RENDER_TEST: ${{ github.event.inputs.render_test }}
           XKT_UV_FLIP: ${{ github.event.inputs.uv_flip }}
           XKT_UV_MODE: ${{ github.event.inputs.uv_mode }}
+          XKT_MOTION_LOD: ${{ github.event.inputs.motion_lod }}
           XKT_TILES: ${{ github.event.inputs.tiles }}
           XKT_TILE_M: ${{ github.event.inputs.tile_m }}
           XKT_DIAG_ONLY: ${{ github.event.inputs.diag_only }}

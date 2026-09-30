@@ -38,7 +38,7 @@ test('existing cache repack preserves every reference and tile bounds in a new g
   await fs.mkdir(input);
   const raw = Buffer.alloc(32768,12);
   const manifest = { schemaVersion:2,tileLayout:'spatial-median-v1',xktFiles:['a.xkt'],navFiles:['b.xkt'],base:['b.xkt'],inst:['a.xkt'],lod1:'b.xkt',
-    tiles:[{n:'a.xkt',aabb:[1,2,3,4,5,6],byteLength:raw.length}],focus:{center:[0,0,0],half:[1,1,1]},
+    tiles:[{n:'a.xkt',motion:{n:'b.xkt',byteLength:raw.length,policy:'component-border-v1'},aabb:[1,2,3,4,5,6],byteLength:raw.length}],focus:{center:[0,0,0],half:[1,1,1]},
     chunkInfo:{'a.xkt':{triangles:123,kind:'detail'}} };
   await fs.writeFile(path.join(input,'a.xkt'),raw); await fs.writeFile(path.join(input,'b.xkt'),raw);
   await fs.writeFile(path.join(input,'manifest.json'),JSON.stringify(manifest));
@@ -47,6 +47,7 @@ test('existing cache repack preserves every reference and tile bounds in a new g
     const result = JSON.parse(await fs.readFile(path.join(output,'manifest.json')));
     assert.deepEqual(result.tiles[0].aabb,manifest.tiles[0].aabb);
     assert.deepEqual(result.focus,manifest.focus);assert.equal(result.tileLayout,manifest.tileLayout);
+    assert.equal(result.tiles[0].motion.n,result.navFiles[0]);assert.equal(result.tiles[0].motion.byteLength,raw.length);
     assert.equal(result.tiles[0].n,result.xktFiles[0]);assert.equal(result.inst[0],result.xktFiles[0]);
     assert.equal(result.base[0],result.navFiles[0]);assert.equal(result.lod1,result.base[0]);
     assert.equal(result.chunkInfo[result.xktFiles[0]].triangles,123);

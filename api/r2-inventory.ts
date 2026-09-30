@@ -70,6 +70,10 @@ export function inventorySummary(objects: { key: string; bytes: number }[], mani
         if (Array.isArray(tiles)) for (const tile of tiles) {
           if (!tile || typeof tile.n !== 'string') return { prefix, ...groupInfo(group), state: 'invalid-manifest', staleXktBytes: null };
           referenced.add(`${prefix}/xkt/${tile.n}`);
+          if (tile.motion != null) {
+            if (typeof tile.motion.n !== 'string') return { prefix, ...groupInfo(group), state: 'invalid-manifest', staleXktBytes: null };
+            referenced.add(`${prefix}/xkt/${tile.motion.n}`);
+          }
         }
       }
       if (valid && m?.tiles != null && !Array.isArray(m.tiles)) return { prefix, ...groupInfo(group), state: 'invalid-manifest', staleXktBytes: null };
