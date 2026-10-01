@@ -70,6 +70,10 @@ function dollyToward(viewer: Viewer, target: number[], factor: number): void {
  * edge-on(옆에서) 으로 얇은 선만 보인다 → 위에서 내려다보는 평면도(top-down) 시점으로.
  * 높이 있는 3D 모델은 기존대로 aabb fit(비스듬).
  */
+/** Encoded-byte cap for resident structure tiles (not GPU memory). Measured on the 5공구 model:
+ * 1,655MB encoded ≈ 2.5GB JS heap at 203 tiles, so uncapped full-region loading exceeds Chrome's heap. */
+const STRUCTURE_LIMITS = { maxTiles: 120, maxEncodedBytes: 768 * 1048576, concurrency: 2 };
+
 function flyToFramed(viewer: Viewer, box: number[]): void {
   const dx = box[3] - box[0], dy = box[4] - box[1], dz = box[5] - box[2];
   const horiz = Math.max(dx, dz);
@@ -348,7 +352,16 @@ export function ThreeDTest() {
 
     // Keep geometry/material visibility unchanged. Restore resolution only after real inactivity;
     // SDK FastNav subtracts the preceding frame's delta, which can expire in a slow moving frame.
-    const sceneCanvas = viewer.scene.canvas as unknown as { resolutionScale: number; canvas: HTMLCanvasElement };
+    const sceneCanvas = viewer.scene.canvas as unknown as { resolutionScale: number; canvas: HTMLCanvasElement; gl?: WebGLRenderingContext };
+    // A CPU (software) WebGL renderer makes every frame slow regardless of tiling; tell the user.
+    let glRenderer: string | null = null;
+    try {
+      const gl = sceneCanvas.gl, info = gl?.getExtension('WEBGL_debug_renderer_info');
+      glRenderer = gl ? String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER)) : null;
+    } catch { glRenderer = null; }
+    if (glRenderer && /basic render driver|swiftshader|llvmpipe|software/i.test(glRenderer)) {
+      setTexWarn(`그래픽카드 가속이 꺼져 있습니다(${glRenderer}). 크롬 설정 › 시스템 › "가능한 경우 그래픽 가속 사용"을 켜고 재시작하세요. chrome://gpu 에서 확인할 수 있습니다.`);
+    }
     let lastMotion = -Infinity, lastFrame = 0, renderStart = 0;
     const navigationResolution = new NavigationResolution(scale => { sceneCanvas.resolutionScale = scale; });
     const quality = new NavigationQuality({
@@ -392,6 +405,7 @@ export function ThreeDTest() {
     const avg = (a: number[]) => a.length ? a.reduce((sum, n) => sum + n, 0) / a.length : null;
     reportRef.current = () => ({
       version: 'navigation-diagnostics-2', capturedAt: new Date().toISOString(),
+      glRenderer,
       frameIntervalMs: avg(intervals), cpuRenderSubmissionMs: avg(cpuTimes),
       longTasks, longTaskMs, longTasksSupported: !!observer,
       resolutionScale: sceneCanvas.resolutionScale,
@@ -857,7 +871,8 @@ export function ThreeDTest() {
     const stream = new TileStream<typeof T[number]>({
       // Overlap the next download with the current model load, but serialize GPU construction.
       // Two end-to-end slots bound prefetched buffers even during a long held drag.
-      concurrency: 2, maxTiles: Number.POSITIVE_INFINITY, maxEncodedBytes: Number.POSITIVE_INFINITY,
+      // Resident set is capped in every mode: lowest-priority tiles (camera ranking) are unloaded first.
+      ...STRUCTURE_LIMITS,
       load: async (tile, signal) => {
         const motion = tile.motion;
         if (motion && canUseOverview(motion, tile.detailByteLength)) {
@@ -883,7 +898,7 @@ export function ThreeDTest() {
         // Completion must not fly the camera to the union of hundreds of loaded chunks.
         // Keep the user's current work location; structure fit remains an explicit action.
         if (completeRegion) {
-          setStatus(`${loadingStopped ? '구간 로딩 중지' : stats.loaded === stats.total ? '고정 구간 표시 완료 · 경량/상세 혼합' : '고정 구간 전체 로딩'}: ${stats.loaded}/${stats.total} · 실패 ${stats.failed} · 전체 현장 아님`);
+          setStatus(`${loadingStopped ? '구간 로딩 중지' : stats.loaded < stats.selected ? '화면 우선 로딩' : stats.selected < stats.total ? '메모리 상한 내 표시 완료 · 화면 밖부터 해제' : '고정 구간 표시 완료 · 경량/상세 혼합'}: ${stats.loaded}/${stats.selected} · 후보 ${stats.total} · 실패 ${stats.failed}`);
         } else setStatus(!stats.total ? '현재 위치에 구조물 후보가 없습니다. 위치를 이동한 뒤 현재 위치 불러오기를 눌러 주세요.' : stats.failed ? `일부 구간 로드 실패 ${stats.failed}개 — 모델을 다시 열어 주세요.` :
           stats.loaded < stats.selected ? (stats.loading ? `구조물 로딩… ${stats.loaded}/${stats.selected}` : '표시 용량 제한으로 일부 구간이 미표시 상태입니다.') :
           limited ? `일부 표시: 후보 ${stats.total}개 중 ${stats.loaded}개 로드 · 전체 구간 아님` : '주변 구조물 표시 완료 · 가까운 구간 상세화');
@@ -994,7 +1009,7 @@ export function ThreeDTest() {
         completeRegion = true;
         loadingStopped = false;
         setCoverageMode('complete');
-        stream.setLimits({ maxTiles: Infinity, maxEncodedBytes: Infinity, concurrency: 2 });
+        stream.setLimits(STRUCTURE_LIMITS);
         stream.setPaused(false);
         detailStream.setPaused(false);
         return;
@@ -1002,7 +1017,7 @@ export function ThreeDTest() {
       completeRegion = false;
       loadingStopped = false;
       setCoverageMode('bounded');
-      stream.setLimits({ maxTiles: Infinity, maxEncodedBytes: Infinity, concurrency: 2 });
+      stream.setLimits(STRUCTURE_LIMITS);
       recompute();
       stream.setPaused(false);
       detailStream.setPaused(false);
@@ -1332,9 +1347,9 @@ export function ThreeDTest() {
           {regionMode && <button className="btn btn--sm" disabled={coverageMode !== 'bounded'} onClick={() => refreshRegionRef.current?.()} title="구간 이동 시 자동 갱신됩니다. 누르면 현재 위치에서 즉시 다시 선택합니다.">현재 위치 불러오기</button>}
           {regionMode && <>
             {coverageMode === 'bounded'
-              ? <button className="btn btn--sm" title="현재 위치의 후보 파일을 용량 제한 없이 순차 로드합니다. 메모리 사용량과 회전 부하가 커질 수 있습니다." onClick={() => coverageActionRef.current?.('complete')}>현재 구간 전체 로드</button>
+              ? <button className="btn btn--sm" title="현재 위치의 후보 파일을 화면 우선순위로 순차 로드합니다. 메모리 상한을 넘으면 화면 밖·먼 타일부터 내립니다." onClick={() => coverageActionRef.current?.('complete')}>현재 구간 전체 로드</button>
               : <>
-                <span className="muted">구간 고정 · 메모리 사용 증가</span>
+                <span className="muted">구간 고정 · 메모리 상한 적용</span>
                 <button className="btn btn--sm" onClick={() => coverageActionRef.current?.(coverageMode === 'paused' ? 'complete' : 'paused')}>{coverageMode === 'paused' ? '구간 로딩 계속' : '구간 로딩 중지'}</button>
                 <button className="btn btn--sm" onClick={() => coverageActionRef.current?.('bounded')}>기본 보기 복귀</button>
               </>}

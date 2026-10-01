@@ -525,3 +525,14 @@ test('zoom reprioritization during paused loading determines the next request', 
  stream.setPaused(false);await flush();assert.deepEqual(started,['active','zoom-target']);
  jobs.get('zoom-target')();await flush();jobs.get('old-target')();await flush();stream.dispose();
 });
+test('capped stream unloads the lowest-priority resident tile when the view changes', async () => {
+ const removed=[],jobs=new Map();
+ const stream=new TileStream({maxTiles:2,maxEncodedBytes:Infinity,concurrency:1,
+  load:t=>new Promise(r=>jobs.set(t.id,r)),unload:t=>removed.push(t.id),onChange:()=>{}});
+ stream.select(['a','b','c'].map(id=>({id,byteLength:1})));
+ await flush();jobs.get('a')();await flush();jobs.get('b')();await flush();
+ assert.ok(!jobs.has('c'));
+ stream.prioritize(['c','a','b']);await flush();
+ assert.ok(jobs.has('c'));assert.deepEqual(removed,['b']);
+ jobs.get('c')();await flush();stream.dispose();
+});
