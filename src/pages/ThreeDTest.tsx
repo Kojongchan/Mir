@@ -74,6 +74,7 @@ function dollyToward(viewer: Viewer, target: number[], factor: number): void {
  * heap ≈ 560MB + 1.2 × encoded (559MB → 1.3GB, 1,655MB → 2.5GB), so 640MB keeps heap near 1.5GB.
  * Downloads, not parsing, were the bottleneck (240s download vs 7.7s parse for 172 tiles at 2 slots);
  * model construction stays serialized by ModelLoadQueue. */
+const LIGHT_TINT = [1, 0.55, 0.15];
 const STRUCTURE_LIMITS = { maxTiles: 120, maxEncodedBytes: 640 * 1048576, concurrency: 4 };
 
 function flyToFramed(viewer: Viewer, box: number[]): void {
@@ -140,6 +141,10 @@ export function ThreeDTest() {
   const [storagePoll, setStoragePoll] = useState(0);
   const storageSince = useRef<string | null>(null);
   const structureFitRef = useRef<(() => void) | null>(null);
+  // Debug: tint light (motion) tiles orange so they can be compared with original detail tiles.
+  const lightTintRef = useRef<((on: boolean) => void) | null>(null);
+  const lightTintOnRef = useRef(false);
+  const [lightTint, setLightTint] = useState(false);
   const [terrainHidden, setTerrainHidden] = useState(false);
   const [regionMode, setRegionMode] = useState(false);
   const [coverageMode, setCoverageMode] = useState<'bounded' | 'complete' | 'paused'>('bounded');
@@ -941,6 +946,7 @@ export function ThreeDTest() {
             await loadRepresentation(signal, tile.id, motion.url, motion.members, bytes => bytes === motion.byteLength && stream.accountBytes(tile.id, bytes));
             if (signal.aborted || !active) throw new Error('cancelled');
             overviewReady.add(tile.id); viewDirty = true;
+            if (lightTintOnRef.current) (models[tile.id] as unknown as { colorize: number[] | null }).colorize = LIGHT_TINT;
             return;
           } catch (error) {
             models[tile.id]?.destroy();
@@ -1006,9 +1012,10 @@ export function ThreeDTest() {
       const distance = initial && initialBox
         ? Math.hypot(...[0, 1, 2].map(i => initialBox![i + 3] - initialBox![i]))
         : Math.hypot(...eye.map((n, i) => n - look[i]));
-      const radius = Math.min(Math.max(distance * 1.6, 500), 2600);
-      // Initial selection uses the flight destination, never an in-flight camera position.
-      // An empty focus area starts with the closest structure region, within the same load budget.
+      // Every valid tile is a candidate: the encoded-byte cap plus camera priority decide what loads,
+      // so moving anywhere on the site finds its structures. (A 2.6km region left ~170 of 1,073 tiles
+      // permanently unloadable once the region was fixed after the first view.)
+      const radius = Number.MAX_SAFE_INTEGER;
       const candidates = rankTileRegion(T, look, radius, initial);
       selectedRegion = { center: [...look], distance };
       regionCandidates = candidates;
@@ -1047,6 +1054,13 @@ export function ThreeDTest() {
         sampleController = undefined;
         if (active) setSampleBusy(false);
       }
+    };
+    lightTintRef.current = on => {
+      for (const id of overviewReady) {
+        const model = models[id] as unknown as { colorize: number[] | null } | undefined;
+        if (model) model.colorize = on ? LIGHT_TINT : null;
+      }
+      viewer.scene.render(true);
     };
     structureFitRef.current = () => {
       const boxes = T.map(t => models[t.id]?.aabb).filter((b): b is number[] => !!b && Array.from(b).every(Number.isFinite));
@@ -1128,6 +1142,7 @@ export function ThreeDTest() {
       setCoverageMode('bounded');
       refreshRegionRef.current = null;
       structureFitRef.current = null;
+      lightTintRef.current = null;
       sampleExportRef.current = null;
       sampleController?.abort();
       setSampleBusy(false);
@@ -1416,6 +1431,8 @@ export function ThreeDTest() {
               </>}
             <button className="btn btn--sm" disabled={sampleBusy} title="부재를 클릭한 뒤 누르면 가까운 구조물 파일 하나(최대 32MiB)와 진단 정보를 ZIP으로 저장합니다. 기존 파일을 다시 다운로드합니다." onClick={() => void sampleExportRef.current?.()}>{sampleBusy ? '검증 파일 준비 중' : '검증 구간 저장'}</button>
             <button className="btn btn--sm" onClick={() => structureFitRef.current?.()}>구조물 맞춤</button>
+            <button className={`btn btn--sm${lightTint ? ' btn--primary' : ''}`} title="경량(이동·원경용) 타일을 주황색으로 표시해 원본 타일과 구분합니다. 확인용입니다."
+              onClick={() => { const on = !lightTint; setLightTint(on); lightTintOnRef.current = on; lightTintRef.current?.(on); }}>경량 표시</button>
             <button className="btn btn--sm" onClick={() => {
               const hidden = !terrainHidden;
               setTerrainHidden(hidden);
