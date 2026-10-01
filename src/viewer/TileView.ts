@@ -30,3 +30,19 @@ export function prioritizeTileView<T extends { worldAabb: number[] }>(tiles: T[]
     .sort((a, b) => Number(b.visible) - Number(a.visible) || a.gap - b.gap || a.index - b.index)
     .map(x => x.tile);
 }
+
+/** Loading-only priority: central screen first, then visible perimeter, then background.
+ * Eye-to-box distance does not depend on the orbit pivot (look), which may stay far away after dolly.
+ * Keep every candidate, including long geometry crossing the central frustum.
+ */
+export function prioritizeCameraView<T extends { worldAabb: number[] }>(tiles: T[], view: ArrayLike<number>, projection: ArrayLike<number>, eye: ArrayLike<number>): T[] {
+  const full = viewPlanes(view, projection), center = viewPlanes(view, projection, -0.65);
+  const gap = (box: number[]) => {
+    if (box.length !== 6 || ![...box, ...Array.from(eye)].every(Number.isFinite)) return Infinity;
+    return Math.hypot(...[0,1,2].map(i => Math.max(box[i] - eye[i], 0, eye[i] - box[i+3])));
+  };
+  return tiles.map((tile,index) => ({ tile,index,
+    band: inTileView(tile.worldAabb, center) ? 0 : inTileView(tile.worldAabb, full) ? 1 : 2,
+    distance: gap(tile.worldAabb) }))
+    .sort((a,b) => a.band-b.band || a.distance-b.distance || a.index-b.index).map(v=>v.tile);
+}

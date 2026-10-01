@@ -485,3 +485,28 @@ test('two pipeline slots download ahead while one model loads, retaining complet
   parseJobs.get('b')(); await flush(); parseJobs.get('c')(); await flush();
   assert.equal(stats.loaded,3); queue.dispose(); stream.dispose();
 });
+
+const { prioritizeCameraView } = compile('src/viewer/TileView.ts');
+test('dolly prioritizes screen center and eye distance without losing long crossing geometry', () => {
+ const tiles = [
+  {id:'edge',worldAabb:[.7,0,0,.8,.1,.1]},
+  {id:'far-center',worldAabb:[0,0,8,.1,.1,9]},
+  {id:'crossing',worldAabb:[-4,-.1,1,4,.1,2]},
+  {id:'near-center',worldAabb:[0,0,.2,.1,.1,.3]},
+  {id:'offscreen',worldAabb:[3,0,0,4,1,1]},
+ ];
+ const ordered=prioritizeCameraView(tiles,identity4,identity4,[0,0,0]);
+ assert.deepEqual(ordered.map(t=>t.id),['near-center','crossing','far-center','edge','offscreen']);
+ assert.equal(new Set(ordered).size,tiles.length);
+ assert.equal(tiles[0].id,'edge');
+});
+test('zoom reprioritization during paused loading determines the next request', async () => {
+ const started=[],jobs=new Map();
+ const stream=new TileStream({maxTiles:Infinity,maxEncodedBytes:Infinity,concurrency:1,
+ load:t=>new Promise(r=>{started.push(t.id);jobs.set(t.id,r)}),unload:()=>{},onChange:()=>{}});
+ stream.select(['active','old-target','zoom-target'].map(id=>({id,byteLength:1})));
+ await flush();stream.setPaused(true);stream.prioritize(['zoom-target','old-target','active']);
+ jobs.get('active')();await flush();assert.deepEqual(started,['active']);
+ stream.setPaused(false);await flush();assert.deepEqual(started,['active','zoom-target']);
+ jobs.get('zoom-target')();await flush();jobs.get('old-target')();await flush();stream.dispose();
+});

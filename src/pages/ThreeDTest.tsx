@@ -20,7 +20,7 @@ import { NavigationResolution } from '../viewer/NavigationResolution';
 import { NavigationQuality } from '../viewer/NavigationQuality';
 import { keepViewerPresent } from '../viewer/ViewerPresence';
 import { rankTileRegion, regionNeedsRefresh, safeDollyFactor } from '../viewer/TileRegion';
-import { inTileView, prioritizeTileView, viewPlanes } from '../viewer/TileView';
+import { inTileView, prioritizeTileView, prioritizeCameraView, viewPlanes } from '../viewer/TileView';
 
 /** 변환기가 구운 카메라 초점 박스(회전 전 실좌표). 이상치 제외한 중심/반경. */
 type Focus = { center: [number, number, number]; half: [number, number, number] };
@@ -761,7 +761,7 @@ export function ThreeDTest() {
     });
     const currentPlanes = () => viewPlanes(viewer.camera.viewMatrix, viewer.camera.projMatrix);
     const prioritizeCurrentView = () => {
-      stream.prioritize(prioritizeTileView(regionCandidates, currentPlanes(), viewer.camera.look).map(t => t.id));
+      stream.prioritize(prioritizeCameraView(regionCandidates, viewer.camera.viewMatrix, viewer.camera.projMatrix, viewer.camera.eye).map(t => t.id));
     };
     const renderSubscription = viewer.scene.on('rendering', () => {
       if (!active || !viewDirty) return;
@@ -912,7 +912,7 @@ export function ThreeDTest() {
       const pickedPoint = pickedRef.current?.worldPos;
       const candidates = regionCandidates.filter(t => overviewReady.has(t.id) && inTileView(t.worldAabb, planes) &&
         (needsDetail(eye, models[t.id]?.aabb ?? t.worldAabb) || !!pickedPoint && needsDetail(pickedPoint, models[t.id]?.aabb ?? t.worldAabb, 1)));
-      const ordered = prioritizeTileView(candidates, planes, pickedPoint ?? viewer.camera.look);
+      const ordered = pickedPoint ? prioritizeTileView(candidates, planes, pickedPoint) : prioritizeCameraView(candidates, viewer.camera.viewMatrix, viewer.camera.projMatrix, viewer.camera.eye);
       detailWanted = new Set(ordered.slice(0, 8).map(t => t.id));
       detailStream.select(ordered.map(t => ({ ...t, byteLength: t.detailByteLength })));
       viewDirty = true;
@@ -935,7 +935,7 @@ export function ThreeDTest() {
       const candidates = rankTileRegion(T, look, radius, initial);
       selectedRegion = { center: [...look], distance };
       regionCandidates = candidates;
-      stream.select(prioritizeTileView(candidates, currentPlanes(), viewer.camera.look));
+      stream.select(prioritizeCameraView(candidates, viewer.camera.viewMatrix, viewer.camera.projMatrix, viewer.camera.eye));
     };
     sampleExportRef.current = async () => {
       if (sampleController || !active) return;
@@ -1022,7 +1022,7 @@ export function ThreeDTest() {
         const center = Array.from(viewer.camera.look);
         const distance = Math.hypot(...Array.from(viewer.camera.eye).map((n, i) => n - center[i]));
         if (selectedRegion && regionNeedsRefresh(selectedRegion, center, distance)) recompute();
-        if (completeRegion) prioritizeCurrentView();
+        prioritizeCurrentView();
         loadGate.setPaused(false);
         if (!loadingStopped && !pointerHeld) { stream.setPaused(false); detailStream.setPaused(false); refineView(); }
       }, 900);
