@@ -20,3 +20,15 @@ test('no blank frame while proxy loads, fails, or motion ends; viewport culling 
  }
  assert.deepEqual(lib.motionTileVisibility(false,true,true),{detailCulled:true,proxyCulled:true});
 });
+
+test('overview eligibility rejects missing coverage, inflated assets and unknown policies', () => {
+ const valid={policy:'component-border-v1',members:329,byteLength:4000};
+ assert.equal(lib.canUseOverview(valid,9000),true);
+ for (const change of [{members:undefined},{members:0},{members:1.5},{byteLength:NaN},{byteLength:10000},{policy:'legacy'}])
+  assert.equal(lib.canUseOverview({...valid,...change},9000),false);
+});
+test('detail admission uses distance to actual box, including long bridges and large coordinates', () => {
+ assert.equal(lib.needsDetail([500000,0,0],[499999,-1,-1,510000,1,1]),true);
+ assert.equal(lib.needsDetail([0,0,0],[200,-1,-1,10000,1,1]),false);
+ assert.equal(lib.needsDetail([0,0,0],[0,0,0,NaN,1,1]),false);
+});

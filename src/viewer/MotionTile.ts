@@ -20,3 +20,19 @@ export function motionPairMatches(detail: Model, proxy: Model): boolean {
 export function motionTileVisibility(inView: boolean, moving: boolean, ready: boolean) {
   return { detailCulled: !inView || (moving && ready), proxyCulled: !inView || !moving || !ready };
 }
+
+/** Overview-first is available only for generated assets with explicit coverage metadata. */
+export function canUseOverview(motion: { policy: string; byteLength: number; members?: number } | undefined, detailBytes?: number): boolean {
+  return !!motion && motion.policy === 'component-border-v1' && Number.isInteger(motion.members) && motion.members! > 0 &&
+    Number.isFinite(motion.byteLength) && motion.byteLength > 0 && motion.byteLength <= 128 * 1048576 && motion.byteLength < (detailBytes ?? Infinity);
+}
+export function needsDetail(eye: ArrayLike<number>, box: ArrayLike<number>, distance = 150): boolean {
+  if (box.length !== 6 || eye.length !== 3 || ![...Array.from(eye), ...Array.from(box)].every(Number.isFinite)) return false;
+  let squared = 0;
+  for (let axis = 0; axis < 3; axis++) {
+    if (box[axis] > box[axis + 3]) return false;
+    const gap = Math.max(box[axis] - eye[axis], 0, eye[axis] - box[axis + 3]);
+    squared += gap * gap;
+  }
+  return squared < distance * distance;
+}

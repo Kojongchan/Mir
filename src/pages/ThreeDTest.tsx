@@ -1,4 +1,4 @@
-import { motionPairMatches, motionTileVisibility } from '../viewer/MotionTile';
+import { motionPairMatches, canUseOverview, needsDetail } from '../viewer/MotionTile';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Viewer, GLTFLoaderPlugin, XKTLoaderPlugin, NavCubePlugin } from '@xeokit/xeokit-sdk';
@@ -692,7 +692,7 @@ export function ThreeDTest() {
 
   /** Original tiles remain visible during navigation. Loading has explicit count/encoded-byte budgets.
    * This is a bounded working view, not a full-scene LOD solution. */
-  const mountTiles = useCallback((tiles: { url: string; aabb: number[]; byteLength?: number; motion?: { url: string; byteLength: number; policy: string } }[], baseUrls: string[] | undefined, instUrls: string[] | undefined, _lod1Url: string | undefined, label: string, focus?: Focus) => {
+  const mountTiles = useCallback((tiles: { url: string; aabb: number[]; byteLength?: number; motion?: { url: string; byteLength: number; policy: string; members?: number } }[], baseUrls: string[] | undefined, instUrls: string[] | undefined, _lod1Url: string | undefined, label: string, focus?: Focus) => {
     const viewer = viewerRef.current;
     const loader = xktLoaderRef.current;
     if (!viewer || !loader || !tiles.length) return;
@@ -742,7 +742,7 @@ export function ThreeDTest() {
     const T = tiles.map((t, i) => ({ ...t, manifestIndex: i })).filter(t => t.aabb.length === 6 && t.aabb.every(Number.isFinite) &&
       [0, 1, 2].every(i => t.aabb[i] <= t.aabb[i + 3])).map(t => {
       const [ax, ay, az, bx, by, bz] = t.aabb;
-      return { id: `tile${t.manifestIndex}`, url: t.url, byteLength: t.byteLength, motion: t.motion,
+      return { id: `tile${t.manifestIndex}`, url: t.url, byteLength: t.byteLength, detailByteLength: t.byteLength, motion: t.motion,
         sourceAabb: [...t.aabb],
         worldAabb: [ax, az, -by, bx, bz, -ay],
         cx: (ax + bx) / 2, cy: (az + bz) / 2, cz: -(ay + by) / 2,
@@ -751,8 +751,10 @@ export function ThreeDTest() {
     let regionCandidates: typeof T = [];
     let viewDirty = true;
     let inViewCount = 0, culledCount = 0;
-    let motionActive = false, motionBytes = 0;
-    const motionReady = new Set<string>();
+    let motionActive = false;
+    const overviewReady = new Set<string>();
+    const detailReady = new Set<string>();
+    let detailWanted = new Set<string>();
     const motionQuality = new NavigationQuality({ delayMs: 900,
       enter: () => { motionActive = true; viewDirty = true; },
       leave: () => { motionActive = false; viewDirty = true; viewer.scene.render(true); },
@@ -769,23 +771,26 @@ export function ThreeDTest() {
       for (const tile of T) {
         const model = models[tile.id];
         if (!model) continue;
+        const detail = models[`${tile.id}-detail`];
+        if (overviewReady.has(tile.id)) {
+          const inView = inTileView(model.aabb, planes);
+          const showDetail = !motionActive && detailReady.has(tile.id) && detailWanted.has(tile.id) && !!detail;
+          model.culled = !inView || showDetail;
+          if (detail) detail.culled = !inView || !showDetail;
+          if (inView) inViewCount++; else culledCount++;
+          continue;
+        }
         // Decoded bounds are authoritative for rendering; manifest bounds only prioritize downloads.
         const culled = !inTileView(model.aabb, planes);
-        const proxy = models[`${tile.id}-motion`];
-        // Motion approximation never replaces a tile until decoded membership is checked.
-        // Keep original detail for picking, measurements and idle inspection.
-        const useProxy = motionActive && motionReady.has(tile.id) && !!proxy;
-        const visibility = motionTileVisibility(!culled, motionActive, useProxy);
-        if (proxy && proxy.culled !== visibility.proxyCulled) proxy.culled = visibility.proxyCulled;
-        if (model.culled !== visibility.detailCulled) model.culled = visibility.detailCulled;
+        model.culled = culled;
         if (culled) culledCount++; else inViewCount++;
       }
     });
     coverageReportRef.current = () => ({
       mode: completeRegion ? 'fixed-complete-region' : 'bounded', stopped: loadingStopped,
-      motionLod: { readyTiles: motionReady.size, active: motionActive, decodedFileBytes: motionBytes, policy: 'component-border-v1' },
+      motionLod: { readyTiles: overviewReady.size, active: motionActive, overviewTiles: overviewReady.size, detailedTiles: detailReady.size, policy: 'component-border-v1' },
       modelLoadTiming: { count: parseCount, totalMs: parseTotalMs, maxMs: parseMaxMs },
-      downloadTiming: { count: downloadCount, totalMs: downloadTotalMs, maxMs: downloadMaxMs, maxConcurrentLoads: 2 },
+      downloadTiming: { count: downloadCount, totalMs: downloadTotalMs, maxMs: downloadMaxMs, maxConcurrentLoads: 3 },
       renderCoverage: { inViewCount, culledCount, policy: 'padded-side-planes-decoded-bounds' },
       focus: selectedRegion,
       candidateIds: regionCandidates.map(t => t.id),
@@ -796,22 +801,19 @@ export function ThreeDTest() {
     });
     const loadGate = new NavigationLoadGate();
     const modelQueue = new ModelLoadQueue();
-    const stream = new TileStream<typeof T[number]>({
-      // Overlap the next download with the current model load, but serialize GPU construction.
-      // Two end-to-end slots bound prefetched buffers even during a long held drag.
-      concurrency: 2, maxTiles: Number.POSITIVE_INFINITY, maxEncodedBytes: Number.POSITIVE_INFINITY,
-      load: async (tile, signal) => {
+    const loadRepresentation = async (signal: AbortSignal, id: string, url: string, expectedMembers?: number, account?: (bytes: number) => boolean) => {
         const downloadStarted = performance.now();
-        const response = await fetch(tile.url, { signal });
+        const response = await fetch(url, { signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const declaredBytes = Number(response.headers.get('content-length'));
-        if (declaredBytes > 0 && !stream.accountBytes(tile.id, declaredBytes)) {
+        if (id.endsWith('-detail') && declaredBytes > 128 * 1048576) {
           await response.body?.cancel();
           throw new Error('타일 크기 예산 초과');
         }
         const xkt = await response.arrayBuffer();
         if (signal.aborted || !active) throw new Error('cancelled');
-        if (!stream.accountBytes(tile.id, xkt.byteLength)) throw new Error('타일 크기 예산 초과');
+        if (id.endsWith('-detail') && xkt.byteLength > 128 * 1048576) throw new Error('타일 크기 예산 초과');
+        if (account && !account(xkt.byteLength)) throw new Error('타일 크기 예산 초과');
         const downloadMs = performance.now() - downloadStarted;
         downloadCount++; downloadTotalMs += downloadMs; downloadMaxMs = Math.max(downloadMaxMs, downloadMs);
         const releaseModel = await modelQueue.acquire(signal);
@@ -830,13 +832,14 @@ export function ThreeDTest() {
               finished = true;
               clearTimeout(timeout);
               signal.removeEventListener('abort', abort);
-              if (error) reject(error); else resolve();
+              if (error) { models[id]?.destroy(); reject(error); } else resolve();
             };
             signal.addEventListener('abort', abort, { once: true });
             try {
               const parseStarted = performance.now();
-              const model = loader.load({ id: tile.id, xkt, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
+              const model = loader.load({ id, xkt, edges: false, rotation: [-90, 0, 0], globalizeObjectIds: true, culled: id.endsWith('-detail') } as unknown as Parameters<typeof loader.load>[0]);
               model.on('loaded', () => {
+                if (expectedMembers !== undefined && Object.keys(model.objects).length !== expectedMembers) { model.destroy(); finish(new Error('경량 객체 수 불일치')); return; }
                 if (active && !signal.aborted) {
                   const ms = performance.now() - parseStarted;
                   parseCount++; parseTotalMs += ms; parseMaxMs = Math.max(parseMaxMs, ms);
@@ -849,48 +852,29 @@ export function ThreeDTest() {
             } catch (e) { finish(e instanceof Error ? e : new Error(String(e))); }
           });
         } finally { releaseModel(); }
-        // Optional small paired approximation. Failed/oversized proxies never fail
-        // a successfully loaded detail tile. The aggregate budget bounds extra data.
+    };
+    const stream = new TileStream<typeof T[number]>({
+      // Overlap the next download with the current model load, but serialize GPU construction.
+      // Two end-to-end slots bound prefetched buffers even during a long held drag.
+      concurrency: 2, maxTiles: Number.POSITIVE_INFINITY, maxEncodedBytes: Number.POSITIVE_INFINITY,
+      load: async (tile, signal) => {
         const motion = tile.motion;
-        if (motion?.policy === 'component-border-v1' && motion.byteLength > 0 && motion.byteLength <= 8 * 1048576 && motionBytes + motion.byteLength <= 64 * 1048576) {
-          motionBytes += motion.byteLength;
-          let kept = false;
+        if (motion && canUseOverview(motion, tile.detailByteLength)) {
           try {
-            const response = await fetch(motion.url, { signal });
-            if (!response.ok) throw new Error('Motion tile download failed');
-            const data = await response.arrayBuffer();
-            if (data.byteLength !== motion.byteLength || signal.aborted || !active) throw new Error('Motion tile size mismatch');
-            const release = await modelQueue.acquire(signal);
-            try {
-              await loadGate.wait(signal);
-              await new Promise<void>((resolve, reject) => {
-                let finished = false;
-                const finish = (error?: Error) => { if (finished) return; finished = true; clearTimeout(timer); signal.removeEventListener('abort', abort); error ? reject(error) : resolve(); };
-                const abort = () => finish(new Error('cancelled'));
-                const timer = window.setTimeout(() => finish(new Error('Motion tile timeout')), 60000);
-                signal.addEventListener('abort', abort, { once: true });
-                try {
-                  const proxy = loader.load({ id: `${tile.id}-motion`, xkt: data, edges: false, rotation: [-90, 0, 0], culled: true, pickable: false, globalizeObjectIds: true } as unknown as Parameters<typeof loader.load>[0]);
-                  proxy.on('error', () => finish(new Error('Motion tile parse failed')));
-                  proxy.on('loaded', () => {
-                    if (signal.aborted || !active) { finish(new Error('cancelled')); return; }
-                    const original = models[tile.id];
-                    if (!original) { finish(new Error('Detail unavailable')); return; }
-                    if (!motionPairMatches(original as unknown as typeof proxy, proxy)) { finish(new Error('Motion tile membership mismatch')); return; }
-                    finish();
-                  });
-                } catch (e) { finish(e instanceof Error ? e : new Error(String(e))); }
-              });
-              if (signal.aborted || !active) throw new Error('cancelled');
-              motionReady.add(tile.id); kept = true; viewDirty = true;
-            } finally { release(); }
-          } catch { /* Keep complete detail when the approximation is unavailable. */ }
-          finally { if (!kept) { models[`${tile.id}-motion`]?.destroy(); motionBytes -= motion.byteLength; } }
+            await loadRepresentation(signal, tile.id, motion.url, motion.members, bytes => bytes === motion.byteLength && stream.accountBytes(tile.id, bytes));
+            if (signal.aborted || !active) throw new Error('cancelled');
+            overviewReady.add(tile.id); viewDirty = true;
+            return;
+          } catch (error) {
+            models[tile.id]?.destroy();
+            if (signal.aborted || !active) throw error;
+          }
         }
+        await loadRepresentation(signal, tile.id, tile.url, undefined, bytes => stream.accountBytes(tile.id, bytes));
       },
       unload: tile => {
-        if (motionReady.delete(tile.id)) motionBytes -= tile.motion?.byteLength ?? 0;
-        models[`${tile.id}-motion`]?.destroy(); models[tile.id]?.destroy();
+        overviewReady.delete(tile.id); detailReady.delete(tile.id);
+        models[`${tile.id}-detail`]?.destroy(); models[tile.id]?.destroy();
       },
       onChange: stats => {
         if (!active) return;
@@ -898,13 +882,44 @@ export function ThreeDTest() {
         // Completion must not fly the camera to the union of hundreds of loaded chunks.
         // Keep the user's current work location; structure fit remains an explicit action.
         if (completeRegion) {
-          setStatus(`${loadingStopped ? '구간 로딩 중지' : stats.loaded === stats.total ? '고정 구간 파일 로딩 완료' : '고정 구간 전체 로딩'}: ${stats.loaded}/${stats.total} · 실패 ${stats.failed} · 전체 현장 아님`);
+          setStatus(`${loadingStopped ? '구간 로딩 중지' : stats.loaded === stats.total ? '고정 구간 표시 완료 · 경량/상세 혼합' : '고정 구간 전체 로딩'}: ${stats.loaded}/${stats.total} · 실패 ${stats.failed} · 전체 현장 아님`);
         } else setStatus(!stats.total ? '현재 위치에 구조물 후보가 없습니다. 위치를 이동한 뒤 현재 위치 불러오기를 눌러 주세요.' : stats.failed ? `일부 구간 로드 실패 ${stats.failed}개 — 모델을 다시 열어 주세요.` :
           stats.loaded < stats.selected ? (stats.loading ? `구조물 로딩… ${stats.loaded}/${stats.selected}` : '표시 용량 제한으로 일부 구간이 미표시 상태입니다.') :
-          limited ? `일부 표시: 후보 ${stats.total}개 중 ${stats.loaded}개 로드 · 전체 구간 아님` : '주변 구조물 로딩 완료');
-        setDbg(`타일 ${stats.loaded}/${stats.selected} · 후보 ${stats.total} · 다운로드 중 ${stats.loading} · 실패 ${stats.failed} · 타일 압축크기 예산 사용 ≈${Math.round(stats.encodedBytes / 1048576)}MB (GPU 메모리 아님)`);
+          limited ? `일부 표시: 후보 ${stats.total}개 중 ${stats.loaded}개 로드 · 전체 구간 아님` : '주변 구조물 표시 완료 · 가까운 구간 상세화');
+        setDbg(`타일 ${stats.loaded}/${stats.selected} · 후보 ${stats.total} · 다운로드 중 ${stats.loading} · 실패 ${stats.failed} · 경량 ${overviewReady.size} · 상세화 ${detailReady.size} · 파일 크기 예산 사용 ≈${Math.round(stats.encodedBytes / 1048576)}MB (GPU 메모리 아님)`);
       },
     });
+    const detailStream = new TileStream<typeof T[number]>({
+      concurrency: 1, maxTiles: 8, maxEncodedBytes: 128 * 1048576,
+      load: async (tile, signal) => {
+        await loadRepresentation(signal, `${tile.id}-detail`, tile.url, undefined, bytes => detailStream.accountBytes(tile.id, bytes));
+        const overview = models[tile.id], detail = models[`${tile.id}-detail`];
+        if (signal.aborted || !active || !overview || !detail || !motionPairMatches(detail as unknown as Parameters<typeof motionPairMatches>[0], overview as unknown as Parameters<typeof motionPairMatches>[1])) {
+          detail?.destroy(); throw new Error('상세 형상 검증 실패');
+        }
+        detailReady.add(tile.id); viewDirty = true; viewer.scene.render(true);
+      },
+      unload: tile => {
+        detailReady.delete(tile.id); models[`${tile.id}-detail`]?.destroy();
+        if (models[tile.id]) models[tile.id].culled = false;
+        viewDirty = true;
+      },
+      onChange: () => {},
+    });
+    const refineView = () => {
+      const eye = Array.from(viewer.camera.eye);
+      const planes = currentPlanes();
+      const pickedPoint = pickedRef.current?.worldPos;
+      const candidates = regionCandidates.filter(t => overviewReady.has(t.id) && inTileView(t.worldAabb, planes) &&
+        (needsDetail(eye, models[t.id]?.aabb ?? t.worldAabb) || !!pickedPoint && needsDetail(pickedPoint, models[t.id]?.aabb ?? t.worldAabb, 1)));
+      const ordered = prioritizeTileView(candidates, planes, pickedPoint ?? viewer.camera.look);
+      detailWanted = new Set(ordered.slice(0, 8).map(t => t.id));
+      detailStream.select(ordered.map(t => ({ ...t, byteLength: t.detailByteLength })));
+      viewDirty = true;
+    };
+    const refinementTimer = window.setInterval(() => {
+      if (active && !motionActive && !pointerHeld && !loadingStopped) refineView();
+    }, 1500);
     const recompute = (initial = false) => {
       if (!active || completeRegion) return;
       const eye = Array.from(viewer.camera.eye);
@@ -969,6 +984,7 @@ export function ThreeDTest() {
         loadingStopped = true;
         setCoverageMode('paused');
         stream.stopLoading();
+        detailStream.stopLoading();
         return;
       }
       if (mode === 'complete') {
@@ -979,14 +995,16 @@ export function ThreeDTest() {
         setCoverageMode('complete');
         stream.setLimits({ maxTiles: Infinity, maxEncodedBytes: Infinity, concurrency: 2 });
         stream.setPaused(false);
+        detailStream.setPaused(false);
         return;
       }
       completeRegion = false;
       loadingStopped = false;
       setCoverageMode('bounded');
-      stream.setLimits({ maxTiles: Infinity, maxEncodedBytes: 192 * 1024 * 1024, concurrency: 2 });
+      stream.setLimits({ maxTiles: Infinity, maxEncodedBytes: Infinity, concurrency: 2 });
       recompute();
       stream.setPaused(false);
+      detailStream.setPaused(false);
     };
     setCoverageMode('bounded');
     refreshRegionRef.current = () => recompute();
@@ -997,6 +1015,7 @@ export function ThreeDTest() {
       viewDirty = true;
       loadGate.setPaused(true);
       stream.setPaused(true);
+      detailStream.setPaused(true);
       clearTimeout(settle);
       settle = setTimeout(() => {
         if (!active) return;
@@ -1005,7 +1024,7 @@ export function ThreeDTest() {
         if (selectedRegion && regionNeedsRefresh(selectedRegion, center, distance)) recompute();
         if (completeRegion) prioritizeCurrentView();
         loadGate.setPaused(false);
-        if (!loadingStopped && !pointerHeld) stream.setPaused(false);
+        if (!loadingStopped && !pointerHeld) { stream.setPaused(false); detailStream.setPaused(false); refineView(); }
       }, 900);
     };
     const sub = viewer.camera.on('matrix', pauseForNavigation);
@@ -1041,6 +1060,8 @@ export function ThreeDTest() {
       viewer.camera.off(projectionSub);
       viewer.scene.off(renderSubscription);
       baseControllers.forEach(c => c.abort());
+      clearInterval(refinementTimer);
+      detailStream.dispose();
       stream.dispose();
     };
     // Sequential base loading avoids firing all texture decoders at once.
@@ -1102,7 +1123,7 @@ export function ThreeDTest() {
         xkt?: boolean;
         urls?: string[];
         navUrls?: string[];
-        tiles?: { url: string; aabb: number[]; byteLength?: number; motion?: { url: string; byteLength: number; policy: string } }[];
+        tiles?: { url: string; aabb: number[]; byteLength?: number; motion?: { url: string; byteLength: number; policy: string; members?: number } }[];
         baseUrls?: string[];
         instUrls?: string[];
         lod1Url?: string;
