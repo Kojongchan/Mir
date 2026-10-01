@@ -404,12 +404,35 @@ export function ThreeDTest() {
     const observer = typeof PerformanceObserver !== 'undefined' && PerformanceObserver.supportedEntryTypes?.includes('longtask')
       ? new PerformanceObserver(list => { for (const e of list.getEntries()) { longTasks++; longTaskMs += e.duration; } }) : null;
     observer?.observe({ type: 'longtask', buffered: false });
+    // Long Animation Frames (Chrome 123+) attribute blocking time to scripts vs rendering,
+    // so field reports show what stalls a reload burst (SDK parse, GC-heavy code, our own loops).
+    type LoafScript = { invoker?: string; invokerType?: string; sourceURL?: string; sourceFunctionName?: string; duration: number };
+    type Loaf = PerformanceEntry & { renderStart?: number; blockingDuration?: number; scripts?: LoafScript[] };
+    const loaf = { frames: 0, totalMs: 0, blockingMs: 0, scriptMs: 0, renderMs: 0, scripts: new Map<string, { count: number; ms: number }>() };
+    const loafObserver = typeof PerformanceObserver !== 'undefined' && PerformanceObserver.supportedEntryTypes?.includes('long-animation-frame')
+      ? new PerformanceObserver(list => {
+        for (const entry of list.getEntries() as Loaf[]) {
+          loaf.frames++; loaf.totalMs += entry.duration; loaf.blockingMs += entry.blockingDuration ?? 0;
+          if (entry.renderStart) loaf.renderMs += Math.max(0, entry.startTime + entry.duration - entry.renderStart);
+          for (const script of entry.scripts ?? []) {
+            loaf.scriptMs += script.duration;
+            const file = (script.sourceURL ?? '').split('?')[0].split('/').pop() ?? '';
+            const key = `${script.invokerType ?? ''}:${script.invoker ?? ''} ${script.sourceFunctionName ?? ''}@${file}`.slice(0, 160);
+            const slot = loaf.scripts.get(key);
+            if (slot) { slot.count++; slot.ms += script.duration; } else if (loaf.scripts.size < 300) loaf.scripts.set(key, { count: 1, ms: script.duration });
+          }
+        }
+      }) : null;
+    loafObserver?.observe({ type: 'long-animation-frame', buffered: false });
     const avg = (a: number[]) => a.length ? a.reduce((sum, n) => sum + n, 0) / a.length : null;
     reportRef.current = () => ({
       version: 'navigation-diagnostics-2', capturedAt: new Date().toISOString(),
       glRenderer,
       frameIntervalMs: avg(intervals), cpuRenderSubmissionMs: avg(cpuTimes),
       longTasks, longTaskMs, longTasksSupported: !!observer,
+      longAnimationFrames: loafObserver ? { frames: loaf.frames, totalMs: Math.round(loaf.totalMs), blockingMs: Math.round(loaf.blockingMs),
+        scriptMs: Math.round(loaf.scriptMs), renderMs: Math.round(loaf.renderMs),
+        topScripts: [...loaf.scripts].sort((a, b) => b[1].ms - a[1].ms).slice(0, 15).map(([key, v]) => ({ key, count: v.count, ms: Math.round(v.ms) })) } : null,
       resolutionScale: sceneCanvas.resolutionScale,
       canvas: [sceneCanvas.canvas.width, sceneCanvas.canvas.height],
       coverage: coverageReportRef.current?.() ?? null,
@@ -531,6 +554,12 @@ export function ThreeDTest() {
       const rect = canvasEl.getBoundingClientRect();
       const canvasPos = [ev.clientX - rect.left, ev.clientY - rect.top];
       const hit = viewer.scene.pick({ canvasPos, pickSurface: true }) as { worldPos?: number[] } | undefined;
+      // A double-click is navigation: undo the selection its first click made.
+      const objs = viewer.scene.objects as Record<string, { highlighted?: boolean }>;
+      if (highlightedRef.current && objs[highlightedRef.current]) objs[highlightedRef.current].highlighted = false;
+      highlightedRef.current = null;
+      pickedRef.current = null;
+      setPick(null);
       if (hit?.worldPos) flyToWorldPoint(viewer, hit.worldPos);
     };
     canvasEl.addEventListener('dblclick', onDblClick);
@@ -544,6 +573,7 @@ export function ThreeDTest() {
       viewer.scene.off(renderedSub);
       clearInterval(diagnosticTimer);
       observer?.disconnect();
+      loafObserver?.disconnect();
       reportRef.current = null;
       canvasEl.removeEventListener('pointerdown', pointerDown);
       window.removeEventListener('pointerup', pointerUp);
@@ -759,7 +789,10 @@ export function ThreeDTest() {
     const T = tiles.map((t, i) => ({ ...t, manifestIndex: i })).filter(t => t.aabb.length === 6 && t.aabb.every(Number.isFinite) &&
       [0, 1, 2].every(i => t.aabb[i] <= t.aabb[i + 3])).map(t => {
       const [ax, ay, az, bx, by, bz] = t.aabb;
-      return { id: `tile${t.manifestIndex}`, url: t.url, byteLength: t.byteLength, detailByteLength: t.byteLength, motion: t.motion,
+      // The structure stream loads the light pair first when one exists, so budget it at that size;
+      // detail refinement has its own stream sized by detailByteLength.
+      return { id: `tile${t.manifestIndex}`, url: t.url, byteLength: canUseOverview(t.motion, t.byteLength) ? t.motion!.byteLength : t.byteLength,
+        detailByteLength: t.byteLength, motion: t.motion,
         sourceAabb: [...t.aabb],
         worldAabb: [ax, az, -by, bx, bz, -ay],
         cx: (ax + bx) / 2, cy: (az + bz) / 2, cz: -(ay + by) / 2,
@@ -836,8 +869,9 @@ export function ThreeDTest() {
         const releaseModel = await modelQueue.acquire(signal);
         try {
           await loadGate.wait(signal);
-          // Let pending input events run before non-preemptible SDK parsing begins.
-          await new Promise<void>(resolve => setTimeout(resolve, 0));
+          // Draw a frame and let pending input run before each non-preemptible SDK parse, so a burst
+          // of reloads after a view change interleaves with rendering instead of blocking back to back.
+          await new Promise<void>(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
           await loadGate.wait(signal);
           if (signal.aborted || !active) throw new Error('cancelled');
           await new Promise<void>((resolve, reject) => {
@@ -875,6 +909,8 @@ export function ThreeDTest() {
       // A few end-to-end slots bound prefetched buffers even during a long held drag.
       // Resident set is capped in every mode: lowest-priority tiles (camera ranking) are unloaded first.
       ...STRUCTURE_LIMITS,
+      // Swap, not pre-evict: tiles leaving the view stay drawn until replacements have loaded.
+      replaceAfterLoad: true,
       load: async (tile, signal) => {
         const motion = tile.motion;
         if (motion && canUseOverview(motion, tile.detailByteLength)) {
@@ -904,7 +940,7 @@ export function ThreeDTest() {
         } else setStatus(!stats.total ? '현재 위치에 구조물 후보가 없습니다. 위치를 이동한 뒤 현재 위치 불러오기를 눌러 주세요.' : stats.failed ? `일부 구간 로드 실패 ${stats.failed}개 — 모델을 다시 열어 주세요.` :
           stats.loaded < stats.selected ? (stats.loading ? `구조물 로딩… ${stats.loaded}/${stats.selected}` : '표시 용량 제한으로 일부 구간이 미표시 상태입니다.') :
           limited ? `일부 표시: 후보 ${stats.total}개 중 ${stats.loaded}개 로드 · 전체 구간 아님` : '주변 구조물 표시 완료 · 가까운 구간 상세화');
-        setDbg(`타일 ${stats.loaded}/${stats.selected} · 후보 ${stats.total} · 다운로드 중 ${stats.loading} · 실패 ${stats.failed} · 경량 ${overviewReady.size} · 상세화 ${detailReady.size} · 파일 크기 예산 사용 ≈${Math.round(stats.encodedBytes / 1048576)}MB (GPU 메모리 아님)`);
+        setDbg(`타일 ${stats.loaded}/${stats.selected} · 표시 ${stats.resident} · 후보 ${stats.total} · 다운로드 중 ${stats.loading} · 실패 ${stats.failed} · 경량 ${overviewReady.size} · 상세화 ${detailReady.size} · 파일 크기 예산 사용 ≈${Math.round(stats.encodedBytes / 1048576)}MB (GPU 메모리 아님)`);
       },
     });
     const detailStream = new TileStream<typeof T[number]>({

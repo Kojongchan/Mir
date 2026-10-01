@@ -536,3 +536,33 @@ test('capped stream unloads the lowest-priority resident tile when the view chan
  assert.ok(jobs.has('c'));assert.deepEqual(removed,['b']);
  jobs.get('c')();await flush();stream.dispose();
 });
+test('replaceAfterLoad keeps stale tiles on screen until the replacement loads, then trims by priority', async () => {
+ const removed=[],jobs=new Map();let stats;
+ const stream=new TileStream({maxTiles:Infinity,maxEncodedBytes:30,concurrency:2,replaceAfterLoad:true,
+  load:t=>new Promise(r=>jobs.set(t.id,r)),unload:t=>removed.push(t.id),onChange:s=>{stats=s;}});
+ stream.select(['a','b','c','d','e'].map(id=>({id,byteLength:10})));
+ await flush();jobs.get('a')();await flush();jobs.get('b')();await flush();jobs.get('c')();await flush();
+ assert.equal(stats.resident,3);
+ // New view: d, e first; a is now lowest priority, b next.
+ stream.prioritize(['d','e','c','b','a']);await flush();
+ assert.ok(jobs.has('d')&&jobs.has('e'));
+ assert.deepEqual(removed,[]); // nothing unloaded before a replacement exists
+ assert.equal(stats.resident,3);
+ jobs.get('d')();await flush();
+ assert.deepEqual(removed,['a']);
+ assert.ok(stats.encodedBytes<=40); // overshoot bounded by in-flight work
+ jobs.get('e')();await flush();
+ assert.deepEqual(removed,['a','b']);
+ assert.equal(stats.encodedBytes,30);
+ stream.dispose();
+});
+test('replaceAfterLoad never trims tiles that are still wanted', async () => {
+ const removed=[],jobs=new Map();
+ const stream=new TileStream({maxTiles:2,maxEncodedBytes:Infinity,concurrency:1,replaceAfterLoad:true,
+  load:t=>new Promise(r=>jobs.set(t.id,r)),unload:t=>removed.push(t.id),onChange:()=>{}});
+ stream.select(['a','b'].map(id=>({id,byteLength:1})));
+ await flush();jobs.get('a')();await flush();jobs.get('b')();await flush();
+ stream.select(['a','b','c'].map(id=>({id,byteLength:1})));await flush();
+ assert.ok(!jobs.has('c'));assert.deepEqual(removed,[]);
+ stream.dispose();
+});

@@ -2,7 +2,7 @@
 export type StreamTile = { id: string; byteLength?: number };
 type State = 'idle' | 'loading' | 'loaded' | 'failed';
 type Entry<T> = { tile: T; state: State; attempts: number; used: number; controller?: AbortController };
-export type StreamStats = { selected: number; total: number; loaded: number; loading: number; failed: number; encodedBytes: number };
+export type StreamStats = { selected: number; total: number; loaded: number; loading: number; failed: number; encodedBytes: number; resident: number };
 
 export class TileStream<T extends StreamTile> {
   private entries = new Map<string, Entry<T>>();
@@ -23,6 +23,9 @@ export class TileStream<T extends StreamTile> {
     fallbackBytes?: number;
     retryMs?: number;
     loadTimeoutMs?: number;
+    /** Keep tiles that left the wanted set on screen until a replacement has loaded. Resident bytes may
+     * exceed the budget by the in-flight downloads; each completion trims lowest-priority stale tiles. */
+    replaceAfterLoad?: boolean;
   }) {}
 
   private bytes(e: Entry<T>) {
@@ -36,10 +39,10 @@ export class TileStream<T extends StreamTile> {
     if (this.disposed || !e || e.state !== 'loading' || !Number.isFinite(bytes) || bytes <= 0) return false;
     const budget = this.options.maxEncodedBytes ?? 192 * 1024 * 1024;
     if (bytes > budget) return false;
-    let others = this.resident().filter(r => r !== e).reduce((sum, r) => sum + this.bytes(r), 0);
     const wanted = new Set(this.wanted);
-    const stale = this.resident().filter(r => r !== e && !wanted.has(r)).sort((a, b) => a.used - b.used);
-    for (const victim of stale) {
+    const replace = !!this.options.replaceAfterLoad;
+    let others = this.resident().filter(r => r !== e && (!replace || wanted.has(r))).reduce((sum, r) => sum + this.bytes(r), 0);
+    if (!replace) for (const victim of this.evictionOrder(this.resident().filter(r => r !== e && !wanted.has(r)))) {
       if (others + bytes <= budget) break;
       others -= this.bytes(victim);
       this.release(victim);
@@ -48,6 +51,26 @@ export class TileStream<T extends StreamTile> {
     e.tile.byteLength = bytes;
     this.notify();
     return true;
+  }
+  /** Victims first: not a candidate, then lowest current priority, then least recently wanted. */
+  private evictionOrder(entries: Entry<T>[]) {
+    const rank = new Map(this.candidates.map((t, i) => [t.id, i]));
+    const order = (e: Entry<T>) => rank.get(e.tile.id) ?? Number.MAX_SAFE_INTEGER;
+    return [...entries].sort((a, b) => order(b) - order(a) || a.used - b.used);
+  }
+  /** replaceAfterLoad: bring resident data back within limits by dropping loaded stale tiles only. */
+  private trimStale() {
+    if (!this.options.replaceAfterLoad) return;
+    const wanted = new Set(this.wanted);
+    const maxTiles = this.options.maxTiles ?? 24, budget = this.options.maxEncodedBytes ?? 192 * 1024 * 1024;
+    // In-flight tiles are not counted: each one trims for itself when it lands (swap, not pre-evict).
+    const loaded = this.resident().filter(r => r.state === 'loaded');
+    let count = loaded.length, bytes = loaded.reduce((sum, r) => sum + this.bytes(r), 0);
+    for (const victim of this.evictionOrder(loaded.filter(r => !wanted.has(r)))) {
+      if (count <= maxTiles && bytes <= budget) break;
+      count--; bytes -= this.bytes(victim);
+      this.release(victim);
+    }
   }
   private release(e: Entry<T>) {
     e.controller?.abort();
@@ -122,25 +145,28 @@ export class TileStream<T extends StreamTile> {
       loading: all.filter(e => e.state === 'loading').length,
       failed: this.wanted.filter(e => e.state === 'failed').length,
       encodedBytes: all.reduce((sum, e) => sum + this.bytes(e), 0),
+      resident: all.filter(e => e.state === 'loaded').length,
     });
   }
   private pump() {
     if (this.disposed) return;
     if (!this.paused) {
       this.plan();
+      const wanted = new Set(this.wanted);
+      // replaceAfterLoad: stale tiles do not block loads; they are trimmed after each completion.
+      const pool = () => this.options.replaceAfterLoad ? this.resident().filter(r => wanted.has(r)) : this.resident();
       for (const e of this.wanted) {
         if (e.state !== 'idle') continue;
         if (this.resident().filter(r => r.state === 'loading').length >= (this.options.concurrency ?? 2)) break;
-        const wanted = new Set(this.wanted);
-        const old = this.resident().filter(r => !wanted.has(r)).sort((a, b) => a.used - b.used);
-        while (this.resident().length >= (this.options.maxTiles ?? 24) ||
-          this.resident().reduce((sum, r) => sum + this.bytes(r), 0) + this.bytes(e) > (this.options.maxEncodedBytes ?? 192 * 1024 * 1024)) {
+        const old = this.evictionOrder(this.resident().filter(r => !wanted.has(r)));
+        while (!this.options.replaceAfterLoad && (this.resident().length >= (this.options.maxTiles ?? 24) ||
+          this.resident().reduce((sum, r) => sum + this.bytes(r), 0) + this.bytes(e) > (this.options.maxEncodedBytes ?? 192 * 1024 * 1024))) {
           const victim = old.shift();
           if (!victim) break;
           this.release(victim);
         }
-        if (this.resident().length >= (this.options.maxTiles ?? 24) ||
-          this.resident().reduce((sum, r) => sum + this.bytes(r), 0) + this.bytes(e) > (this.options.maxEncodedBytes ?? 192 * 1024 * 1024)) continue;
+        if (pool().length >= (this.options.maxTiles ?? 24) ||
+          pool().reduce((sum, r) => sum + this.bytes(r), 0) + this.bytes(e) > (this.options.maxEncodedBytes ?? 192 * 1024 * 1024)) continue;
         const controller = new AbortController();
         e.controller = controller;
         e.state = 'loading';
@@ -163,11 +189,13 @@ export class TileStream<T extends StreamTile> {
           if (this.disposed || e.controller !== controller) return;
           e.state = 'loaded';
           e.attempts = 0;
+          this.trimStale();
           this.pump();
         }, () => {
           if (this.disposed || e.controller !== controller) return;
           this.options.unload(e.tile);
           e.state = 'failed';
+          this.trimStale();
           // One delayed retry; persistent failures never produce an endless request loop.
           if (e.attempts < 2 && !this.retryTimer) {
             this.retryTimer = setTimeout(() => {
