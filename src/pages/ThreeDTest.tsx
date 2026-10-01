@@ -71,8 +71,10 @@ function dollyToward(viewer: Viewer, target: number[], factor: number): void {
  * 높이 있는 3D 모델은 기존대로 aabb fit(비스듬).
  */
 /** Encoded-byte cap for resident structure tiles (not GPU memory). Measured on the 5공구 model:
- * 1,655MB encoded ≈ 2.5GB JS heap at 203 tiles, so uncapped full-region loading exceeds Chrome's heap. */
-const STRUCTURE_LIMITS = { maxTiles: 120, maxEncodedBytes: 768 * 1048576, concurrency: 2 };
+ * heap ≈ 560MB + 1.2 × encoded (559MB → 1.3GB, 1,655MB → 2.5GB), so 640MB keeps heap near 1.5GB.
+ * Downloads, not parsing, were the bottleneck (240s download vs 7.7s parse for 172 tiles at 2 slots);
+ * model construction stays serialized by ModelLoadQueue. */
+const STRUCTURE_LIMITS = { maxTiles: 120, maxEncodedBytes: 640 * 1048576, concurrency: 4 };
 
 function flyToFramed(viewer: Viewer, box: number[]): void {
   const dx = box[3] - box[0], dy = box[4] - box[1], dz = box[5] - box[2];
@@ -805,7 +807,7 @@ export function ThreeDTest() {
       mode: completeRegion ? 'fixed-complete-region' : 'bounded', stopped: loadingStopped,
       motionLod: { readyTiles: overviewReady.size, active: motionActive, overviewTiles: overviewReady.size, detailedTiles: detailReady.size, policy: 'component-border-v1' },
       modelLoadTiming: { count: parseCount, totalMs: parseTotalMs, maxMs: parseMaxMs },
-      downloadTiming: { count: downloadCount, totalMs: downloadTotalMs, maxMs: downloadMaxMs, maxConcurrentLoads: 3 },
+      downloadTiming: { count: downloadCount, totalMs: downloadTotalMs, maxMs: downloadMaxMs, maxConcurrentLoads: STRUCTURE_LIMITS.concurrency + 1 },
       renderCoverage: { inViewCount, culledCount, policy: 'padded-side-planes-decoded-bounds' },
       focus: selectedRegion,
       candidateIds: regionCandidates.map(t => t.id),
@@ -869,8 +871,8 @@ export function ThreeDTest() {
         } finally { releaseModel(); }
     };
     const stream = new TileStream<typeof T[number]>({
-      // Overlap the next download with the current model load, but serialize GPU construction.
-      // Two end-to-end slots bound prefetched buffers even during a long held drag.
+      // Overlap downloads with the current model load, but serialize GPU construction.
+      // A few end-to-end slots bound prefetched buffers even during a long held drag.
       // Resident set is capped in every mode: lowest-priority tiles (camera ranking) are unloaded first.
       ...STRUCTURE_LIMITS,
       load: async (tile, signal) => {

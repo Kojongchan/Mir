@@ -23,7 +23,7 @@
 상한 없으면 430~450개에서 크롬 heap 4.4GB 도달 추정). 경량 0·`motionLod.active=false`.
 long task 272건/135초, 파싱 합 7.7초, 다운로드 합 240초. 테스트 PC 렌더러 "Microsoft Basic Render
 Driver"(소프트웨어 렌더링) → 프레임 수치 신뢰 불가, 탭 hidden 상태 측정.
-- 모든 모드에 메모리 상한 `STRUCTURE_LIMITS`(120타일·인코딩 768MB) 적용. 화면 우선순위 낮은(화면 밖·먼)
+- 모든 모드에 메모리 상한 `STRUCTURE_LIMITS`(120타일·인코딩 640MB ≈ heap 1.5GB, 동시 다운로드 4) 적용. 화면 우선순위 낮은(화면 밖·먼)
   타일부터 LRU 해제. "전체 로드"도 상한 내에서만 동작.
 - 소프트웨어 WebGL(Basic Render/SwiftShader/llvmpipe) 감지 시 경고 배너 + 진단 JSON `glRenderer`.
 - 검증: 회귀 90개(상한 시 우선순위 낮은 타일 해제 테스트 추가), 타입, 빌드.
