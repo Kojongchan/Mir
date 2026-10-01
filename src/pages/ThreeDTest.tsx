@@ -725,7 +725,8 @@ export function ThreeDTest() {
     const models = viewer.scene.models;
     const frameOnce = () => {
       if (!active || framed) return;
-      const candidate = focusToAabb(focus) ?? viewer.scene.aabb;
+      // An empty xeokit scene reports a placeholder ±100 box; use structure tile bounds instead.
+      const candidate = focusToAabb(focus) ?? (Object.keys(models).length ? viewer.scene.aabb : undefined);
       const validBox = candidate && Array.from(candidate).every(Number.isFinite) &&
         candidate[0] <= candidate[3] && candidate[1] <= candidate[4] && candidate[2] <= candidate[5];
       const box = validBox ? Array.from(candidate) : T.length ? [
@@ -1064,6 +1065,9 @@ export function ThreeDTest() {
       detailStream.dispose();
       stream.dispose();
     };
+    // Structures in view start immediately instead of waiting for the whole terrain (≈243MB).
+    // Framing uses the focus or structure bounds; terrain fills in underneath afterwards.
+    frameOnce(); recompute(true); completeRegion = true; setCoverageMode('complete');
     // Sequential base loading avoids firing all texture decoders at once.
     void (async () => {
       try {
@@ -1093,7 +1097,7 @@ export function ThreeDTest() {
       } catch {
         if (active) setTexWarn('일부 지형을 읽지 못했습니다. 모델을 다시 열어 주세요.');
       } finally {
-        if (active) { frameOnce(); recompute(true); completeRegion = true; setCoverageMode('complete'); }
+        if (active) frameOnce();
       }
     })();
   }, []);

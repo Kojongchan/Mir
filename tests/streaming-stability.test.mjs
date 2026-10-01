@@ -487,7 +487,7 @@ test('two pipeline slots download ahead while one model loads, retaining complet
 });
 
 const { prioritizeCameraView } = compile('src/viewer/TileView.ts');
-test('dolly prioritizes screen center and eye distance without losing long crossing geometry', () => {
+test('apparent size ranks long crossing geometry first and keeps every candidate', () => {
  const tiles = [
   {id:'edge',worldAabb:[.7,0,0,.8,.1,.1]},
   {id:'far-center',worldAabb:[0,0,8,.1,.1,9]},
@@ -496,9 +496,24 @@ test('dolly prioritizes screen center and eye distance without losing long cross
   {id:'offscreen',worldAabb:[3,0,0,4,1,1]},
  ];
  const ordered=prioritizeCameraView(tiles,identity4,identity4,[0,0,0]);
- assert.deepEqual(ordered.map(t=>t.id),['near-center','crossing','far-center','edge','offscreen']);
+ // Identity projection has no perspective: far-center (1.0 deep) is apparently larger than edge.
+ assert.deepEqual(ordered.map(t=>t.id),['crossing','near-center','far-center','edge','offscreen']);
  assert.equal(new Set(ordered).size,tiles.length);
  assert.equal(tiles[0].id,'edge');
+});
+test('visible foreground at the screen edge loads before distant tiles along the view axis', () => {
+ // 90° perspective, camera at origin looking down -Z (column-major).
+ const n=1,f=10000,perspective=[1,0,0,0, 0,1,0,0, 0,0,(f+n)/(n-f),-1, 0,0,2*f*n/(n-f),0];
+ const far=Array.from({length:12},(_,i)=>({id:`far${i}`,worldAabb:[-100,-100,-1200-i*200,100,100,-1000-i*200]}));
+ const tiles=[...far,
+  {id:'behind',worldAabb:[-100,-100,50,100,100,250]},
+  {id:'foreground-bottom',worldAabb:[-100,-160,-200,100,-90,-40]},
+  {id:'foreground-side',worldAabb:[120,-50,-160,200,50,-80]},
+ ];
+ const ordered=prioritizeCameraView(tiles,identity4,perspective,[0,0,0]).map(t=>t.id);
+ assert.deepEqual(ordered.slice(0,2).sort(),['foreground-bottom','foreground-side']);
+ assert.deepEqual(ordered.slice(2,14),far.map(t=>t.id));
+ assert.equal(ordered[14],'behind');
 });
 test('zoom reprioritization during paused loading determines the next request', async () => {
  const started=[],jobs=new Map();
