@@ -24,6 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { cacheKey } from './cache-key.mjs';
 import zlib from 'node:zlib';
 import { createClient } from '@supabase/supabase-js';
 import { SVFReader } from 'svf-utils';
@@ -373,7 +374,7 @@ async function main() {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
     urn = await resolveUrn(supabase);
   }
-  const keyBase = PROJECT_ID || urn.replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
+  const keyBase = PROJECT_ID || cacheKey(urn);
   console.log(`[convert4d] URN=${urn.slice(0, 24)}… region=${APS_REGION} bucket=${STORAGE_BUCKET} key=${keyBase}`);
   errCtx = { keyBase };
   // 이전 실패 마커 제거 — 재시도 중엔 '처리중'으로 보이게(실패로 오인 방지).

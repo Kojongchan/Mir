@@ -1,17 +1,18 @@
 // 자체 DWG 파이프라인 결과 업로드 — DWG→DXF→GLB(dxfToGlb) 산출물을 Cloudflare R2 에
 // 올려 앱(신규 3D뷰)이 SVF 대신 이걸 로드하게 한다. 캐시 키 규약은 SVF 경로(convert4d.mjs)
-// · 게이트웨이(api/aps-convert.ts)와 **반드시 동일**: urn → 영숫자만 남겨 앞 40자.
-//   저장 경로: R2  <bucket>/<urn40>/model.glb (+ focus.json). 실패 시 error.json 마커.
+// · 게이트웨이(api/aps-convert.ts)와 **반드시 동일**: scripts/cache-key.mjs (전체 URN SHA-256 앞 40자).
+//   저장 경로: R2  <bucket>/<key>/model.glb (+ focus.json). 실패 시 error.json 마커.
 // env: URN, R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET
 import fs from 'node:fs';
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { cacheKey } from './cache-key.mjs';
 
 const { URN, R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET } = process.env;
 if (!URN) throw new Error('URN 필요');
 for (const [k, v] of Object.entries({ R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET }))
   if (!v) throw new Error(`환경변수 누락: ${k}`);
 
-const keyBase = URN.replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
+const keyBase = cacheKey(URN);
 const s3 = new S3Client({
   region: 'auto',
   endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,

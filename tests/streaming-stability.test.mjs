@@ -122,7 +122,7 @@ test('existing cached models remain readable when new conversion is disabled', a
   const r = await handler(request({}));
   assert.equal(r.status, 200);
   assert.equal((await r.json()).ready, true);
-  assert.ok(requests.every(r => r.method === 'GET'));
+  assert.ok(requests.every(r => r.method === 'GET' || r.method === 'HEAD')); // read-only
 });
 
 test('conversion with an unspecified branch fails before any storage mutation', async () => {

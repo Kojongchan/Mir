@@ -35,8 +35,14 @@ const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
 const R2_BUCKET = process.env.R2_BUCKET;
 const R2_ENDPOINT = `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
 
-// convert4d.mjs 와 **동일한** 캐시 키 규약(반드시 일치).
-const glbKey = (urn: string) => urn.replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
+// scripts/cache-key.mjs 와 **동일한** 캐시 키 규약(반드시 일치): 전체 URN(버전 포함)의 SHA-256 앞 40자.
+async function cacheKey(urn: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(urn));
+  return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('').slice(0, 40);
+}
+// 이전 규약: base64 URN 영숫자 앞 40자 = "urn:adsk.wipprod:fs.file:vf." + ID 2글자 → 버전·다른 파일이 충돌.
+// 읽기 호환 전용(새 데이터는 쓰지 않음).
+const legacyCacheKey = (urn: string) => urn.replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -71,6 +77,37 @@ async function r2PresignGet(key: string, expires = 3600): Promise<string> {
     aws: { signQuery: true },
   });
   return signed.url;
+}
+async function r2PutJson(key: string, value: unknown, onlyIfAbsent = false): Promise<boolean> {
+  const res = await r2().fetch(objUrl(key), { method: 'PUT', body: JSON.stringify(value),
+    headers: { 'content-type': 'application/json', ...(onlyIfAbsent ? { 'if-none-match': '*' } : {}) } });
+  return res.ok;
+}
+/**
+ * Cache directory for this exact URN. A legacy directory (shared key) is used only by the URN that
+ * owns it: the first URN to open it after this change claims it (claim.json, write-if-absent) and gets
+ * an alias; any other version/file sharing the legacy key is treated as uncached under its own key.
+ * Nothing is copied or deleted.
+ */
+async function resolveCacheDir(urn: string): Promise<string> {
+  const key = await cacheKey(urn);
+  if (await r2Head(`${key}/xkt/manifest.json`) || await r2Head(`${key}/model.glb`) || await r2Head(`${key}/error.json`)) return key;
+  const owns = (text: string | null) => {
+    try { return text ? (JSON.parse(text) as { urn?: string }).urn === urn : false; } catch { return false; }
+  };
+  const legacy = legacyCacheKey(urn);
+  if (!/^[A-Za-z0-9]{1,40}$/.test(legacy)) return key;
+  const aliasText = await r2GetText(`${key}/alias.json`);
+  if (owns(aliasText)) return legacy;
+  if (!(await r2Head(`${legacy}/xkt/manifest.json`) || await r2Head(`${legacy}/model.glb`))) return key;
+  let claimText = await r2GetText(`${legacy}/claim.json`);
+  if (!claimText) {
+    await r2PutJson(`${legacy}/claim.json`, { urn, claimedAt: new Date().toISOString() }, true);
+    claimText = await r2GetText(`${legacy}/claim.json`);
+  }
+  if (!owns(claimText)) return key;
+  await r2PutJson(`${key}/alias.json`, { urn, prefix: legacy });
+  return legacy;
 }
 async function r2GetText(key: string): Promise<string | null> {
   const res = await r2().fetch(objUrl(key));
@@ -125,7 +162,7 @@ async function readFocus(dir: string): Promise<Focus | undefined> {
  *  3) error.json → 실패. 없으면 처리중.
  */
 async function cacheState(urn: string): Promise<CacheState> {
-  const dir = glbKey(urn);
+  const dir = await resolveCacheDir(urn);
   const manifestText = await r2GetText(`${dir}/xkt/manifest.json`);
   if (manifestText) {
     try {

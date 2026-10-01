@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import ts from 'typescript';
+import { cacheKey } from '../scripts/cache-key.mjs';
 const code = ts.transpileModule(fs.readFileSync('api/r2-motion.ts', 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -32,7 +33,8 @@ test('project administrator starts only maintenance on the test branch', async (
   const t = setup();
   assert.equal((await t.call('POST')).status, 202);
   const dispatch = t.requests.find(r => r.method === 'POST');
-  assert.deepEqual(JSON.parse(dispatch.body), { ref: 'feature/3d-streaming-stability', inputs: { diag_only: 'motion-cache', item: 'testModel' } });
+  // Same per-URN key as the converter (scripts/cache-key.mjs).
+  assert.deepEqual(JSON.parse(dispatch.body), { ref: 'feature/3d-streaming-stability', inputs: { diag_only: 'motion-cache', item: cacheKey('testModel') } });
 });
 test('viewer and non-test deployment cannot dispatch', async () => {
   for (const options of [{ role: 'viewer' }, { ref: 'main' }]) {

@@ -56,7 +56,9 @@ export default async function handler(req: Request): Promise<Response> {
     let body: { urn?: string };
     try { body = await req.json(); } catch { return reply({ error: '선택한 모델 정보가 필요합니다.' }, 400); }
     if (!body.urn || typeof body.urn !== 'string' || body.urn.length > 4096) return reply({ error: '모델을 먼저 열어 주세요.' }, 400);
-    const prefix = body.urn.replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
+    // Same key as api/aps-convert.ts cacheKey(); the job follows alias.json to a claimed legacy directory.
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(body.urn));
+    const prefix = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('').slice(0, 40);
     if (!prefix) return reply({ error: '모델 식별자를 확인하지 못했습니다.' }, 400);
     const requestedAt = new Date().toISOString();
     const dispatch = await fetch(`${base}/actions/workflows/convert-4d.yml/dispatches`, {

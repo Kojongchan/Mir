@@ -76,6 +76,16 @@ run5: 경량 동작, 같은 640MB에 타일 81→최대 115. 위치 오차 5m �
 - motion-cache 2차 실행(남은 828개, 실행당 256MB → 약 4회 필요).
 다음: 경량 전 구간 채운 뒤 run6(전체 맞춤 전환·회전 진동·주황 비교). 타일당 레이어 병합은 재변환 필요(후속 검토).
 
+### 같은 날 — R2 캐시 키 충돌 수정 (사용자 승인, 경량 생성 완료 후 반영)
+버그: 캐시 키 = base64 URN 영숫자 앞 40자 = "urn:adsk.wipprod:fs.file:vf." + 파일ID 2글자.
+→ 같은 파일의 새 버전은 옛 변환을 열고, ID 앞 2글자가 같은 다른 파일은 이 모델을 열 수 있었음.
+- 새 키 `scripts/cache-key.mjs` cacheKey = SHA-256(전체 URN, 버전 포함) 앞 40 hex. API(crypto.subtle)·
+  convert4d·uploadDxfGlb·r2-motion 동일 규약. 테스트로 API↔변환기 일치 검증.
+- 기존 캐시는 복사 없이(복사 시 10GB 초과) **처음 여는 URN이 소유**: `<legacy>/claim.json`(write-if-absent) +
+  `<newKey>/alias.json`. 다른 버전/파일은 상속 불가 → 자기 키로 변환 대상. 새 키에 manifest가 생기면 alias보다 우선.
+- motion-cache 는 새 키를 받아 manifest 없으면 alias 를 따라 legacy 에 기록.
+주의: 배포 후 통합모델을 **처음 여는 URN(버전)** 이 기존 7GB 캐시의 소유자가 됨.
+
 
 ## 2026-09-16 — 실제 크기 확인 뒤 타일 후보 보충 누락 수정
 
