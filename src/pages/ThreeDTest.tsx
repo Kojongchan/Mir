@@ -386,6 +386,9 @@ export function ThreeDTest() {
     let navigationFrame = false;
     const intervals: number[] = [], cpuTimes: number[] = [];
     let longTasks = 0, longTaskMs = 0;
+    // Settled frames are re-renders without camera motion (e.g. after each tile load): their CPU
+    // submission time shows whether reload stalls come from drawing the resident scene itself.
+    const settledRender = { frames: 0, totalMs: 0, maxMs: 0, over50: 0 };
     const motionSub = viewer.camera.on('matrix', () => { lastMotion = performance.now(); });
     const renderingSub = viewer.scene.on('rendering', () => {
       renderStart = performance.now();
@@ -399,7 +402,12 @@ export function ThreeDTest() {
         if (intervals.length > 120) intervals.shift();
         if (cpuTimes.length > 120) cpuTimes.shift();
         lastFrame = now;
-      } else lastFrame = 0;
+      } else {
+        lastFrame = 0;
+        const ms = now - renderStart;
+        settledRender.frames++; settledRender.totalMs += ms; settledRender.maxMs = Math.max(settledRender.maxMs, ms);
+        if (ms > 50) settledRender.over50++;
+      }
     });
     const observer = typeof PerformanceObserver !== 'undefined' && PerformanceObserver.supportedEntryTypes?.includes('longtask')
       ? new PerformanceObserver(list => { for (const e of list.getEntries()) { longTasks++; longTaskMs += e.duration; } }) : null;
@@ -430,6 +438,8 @@ export function ThreeDTest() {
       glRenderer,
       frameIntervalMs: avg(intervals), cpuRenderSubmissionMs: avg(cpuTimes),
       longTasks, longTaskMs, longTasksSupported: !!observer,
+      settledRender: { frames: settledRender.frames, totalMs: Math.round(settledRender.totalMs), maxMs: Math.round(settledRender.maxMs),
+        avgMs: settledRender.frames ? Math.round(settledRender.totalMs / settledRender.frames) : null, over50: settledRender.over50 },
       longAnimationFrames: loafObserver ? { frames: loaf.frames, totalMs: Math.round(loaf.totalMs), blockingMs: Math.round(loaf.blockingMs),
         scriptMs: Math.round(loaf.scriptMs), renderMs: Math.round(loaf.renderMs),
         topScripts: [...loaf.scripts].sort((a, b) => b[1].ms - a[1].ms).slice(0, 15).map(([key, v]) => ({ key, count: v.count, ms: Math.round(v.ms) })) } : null,
@@ -813,6 +823,8 @@ export function ThreeDTest() {
     const prioritizeCurrentView = () => {
       stream.prioritize(prioritizeCameraView(regionCandidates, viewer.camera.viewMatrix, viewer.camera.projMatrix, viewer.camera.eye).map(t => t.id));
     };
+    // SceneModel.culled walks every entity even when unchanged; only write real transitions.
+    const setCulled = (model: { culled: boolean }, value: boolean) => { if (model.culled !== value) model.culled = value; };
     const renderSubscription = viewer.scene.on('rendering', () => {
       if (!active || !viewDirty) return;
       const planes = currentPlanes();
@@ -825,14 +837,14 @@ export function ThreeDTest() {
         if (overviewReady.has(tile.id)) {
           const inView = inTileView(model.aabb, planes);
           const showDetail = !motionActive && detailReady.has(tile.id) && detailWanted.has(tile.id) && !!detail;
-          model.culled = !inView || showDetail;
-          if (detail) detail.culled = !inView || !showDetail;
+          setCulled(model, !inView || showDetail);
+          if (detail) setCulled(detail, !inView || !showDetail);
           if (inView) inViewCount++; else culledCount++;
           continue;
         }
         // Decoded bounds are authoritative for rendering; manifest bounds only prioritize downloads.
         const culled = !inTileView(model.aabb, planes);
-        model.culled = culled;
+        setCulled(model, culled);
         if (culled) culledCount++; else inViewCount++;
       }
     });
@@ -871,7 +883,8 @@ export function ThreeDTest() {
           await loadGate.wait(signal);
           // Draw a frame and let pending input run before each non-preemptible SDK parse, so a burst
           // of reloads after a view change interleaves with rendering instead of blocking back to back.
-          await new Promise<void>(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+          // Wrapped (not a bare native resolve) so Long Animation Frame attribution names this file.
+          await new Promise<void>(resolve => requestAnimationFrame(() => setTimeout(function beforeModelParse() { resolve(); }, 0)));
           await loadGate.wait(signal);
           if (signal.aborted || !active) throw new Error('cancelled');
           await new Promise<void>((resolve, reject) => {
