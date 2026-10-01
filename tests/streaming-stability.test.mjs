@@ -566,3 +566,15 @@ test('replaceAfterLoad never trims tiles that are still wanted', async () => {
  assert.ok(!jobs.has('c'));assert.deepEqual(removed,[]);
  stream.dispose();
 });
+test('a small rotation does not swap a resident tile for one that just crossed into the centre band', () => {
+ const n=1,f=10000,perspective=[1,0,0,0, 0,1,0,0, 0,0,(f+n)/(n-f),-1, 0,0,2*f*n/(n-f),0];
+ // Same size and distance; 'entering' is in the centre band (×2), 'loaded' just outside it.
+ const tiles=[{id:'entering',worldAabb:[-10,-10,-510,10,10,-490]},{id:'loaded',worldAabb:[250,-10,-510,270,10,-490]}];
+ const fresh=prioritizeCameraView(tiles,identity4,perspective,[0,0,0]).map(t=>t.id);
+ assert.deepEqual(fresh,['entering','loaded']);
+ const sticky=prioritizeCameraView(tiles,identity4,perspective,[0,0,0],new Set(['loaded'])).map(t=>t.id);
+ assert.deepEqual(sticky,['loaded','entering']);
+ // Off-screen resident tiles get no bonus.
+ const off=[{id:'gone',worldAabb:[5000,-10,-510,5020,10,-490]},...tiles];
+ assert.equal(prioritizeCameraView(off,identity4,perspective,[0,0,0],new Set(['gone'])).map(t=>t.id).at(-1),'gone');
+});

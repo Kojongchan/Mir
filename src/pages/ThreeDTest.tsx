@@ -449,9 +449,17 @@ export function ThreeDTest() {
       camera: { eye: Array.from(viewer.camera.eye), look: Array.from(viewer.camera.look), up: Array.from(viewer.camera.up),
         projection: viewer.camera.projection, near: viewer.camera.perspective.near, far: viewer.camera.perspective.far },
       models: Object.values(viewer.scene.models).map(m => {
-        const model = m as unknown as { id: string; numTriangles?: number; numEntities?: number; aabb: ArrayLike<number> };
-        return { id: model.id, approximateTriangles: model.numTriangles && model.numTriangles > 0 ? model.numTriangles : null, entities: model.numEntities ?? null, aabb: Array.from(model.aabb) };
+        const model = m as unknown as { id: string; numTriangles?: number; numEntities?: number; aabb: ArrayLike<number>; layerList?: unknown[]; culled?: boolean };
+        return { id: model.id, approximateTriangles: model.numTriangles && model.numTriangles > 0 ? model.numTriangles : null, entities: model.numEntities ?? null,
+          layers: model.layerList?.length ?? null, culled: !!model.culled, aabb: Array.from(model.aabb) };
       }),
+      // Each layer is at least one draw call per render pass; settled re-render cost scales with drawn layers.
+      layerSummary: (() => {
+        const list = Object.values(viewer.scene.models) as unknown as { layerList?: unknown[]; culled?: boolean }[];
+        const drawn = list.filter(m => !m.culled);
+        return { models: list.length, layers: list.reduce((n, m) => n + (m.layerList?.length ?? 0), 0),
+          drawnModels: drawn.length, drawnLayers: drawn.reduce((n, m) => n + (m.layerList?.length ?? 0), 0) };
+      })(),
       note: 'Frame intervals are recent navigation samples; CPU submission is not GPU time. Triangle counts are SDK estimates, not visible triangles.',
     });
     const diagnosticTimer = setInterval(() => {
@@ -820,8 +828,10 @@ export function ThreeDTest() {
       leave: () => { motionActive = false; viewDirty = true; viewer.scene.render(true); },
     });
     const currentPlanes = () => viewPlanes(viewer.camera.viewMatrix, viewer.camera.projMatrix);
+    // Loaded tiles (detail or light pair) resist being swapped out by marginal ranking changes.
+    const residentIds = () => new Set(T.filter(t => models[t.id]).map(t => t.id));
     const prioritizeCurrentView = () => {
-      stream.prioritize(prioritizeCameraView(regionCandidates, viewer.camera.viewMatrix, viewer.camera.projMatrix, viewer.camera.eye).map(t => t.id));
+      stream.prioritize(prioritizeCameraView(regionCandidates, viewer.camera.viewMatrix, viewer.camera.projMatrix, viewer.camera.eye, residentIds()).map(t => t.id));
     };
     // SceneModel.culled walks every entity even when unchanged; only write real transitions.
     const setCulled = (model: { culled: boolean }, value: boolean) => { if (model.culled !== value) model.culled = value; };
@@ -1002,7 +1012,7 @@ export function ThreeDTest() {
       const candidates = rankTileRegion(T, look, radius, initial);
       selectedRegion = { center: [...look], distance };
       regionCandidates = candidates;
-      stream.select(prioritizeCameraView(candidates, viewer.camera.viewMatrix, viewer.camera.projMatrix, viewer.camera.eye));
+      stream.select(prioritizeCameraView(candidates, viewer.camera.viewMatrix, viewer.camera.projMatrix, viewer.camera.eye, residentIds()));
     };
     sampleExportRef.current = async () => {
       if (sampleController || !active) return;

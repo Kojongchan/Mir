@@ -58,6 +58,15 @@ GC로 보이는 2.8s 단일 정지.
   경량 = 원본 ID·재질·색 유지, 부재별 섬 단위 meshopt simplify(비율 0.2, 오차 0.1%, 경계 검증), 법선 제거로
   이동/원경에서 면 단위 음영. 원본 파일 삭제 없음, manifest 는 ETag If-Match 로 교체.
 
+### 같은 날 — run4 반영
+run4: settledRender 평균 74ms(최대 127, 189중 145가 50ms 초과) → 정지 60fps는 "다시 안 그림" 확인. 파싱 ≈58ms/타일.
+경량 0: run 157(motion-cache)이 아직 실행 중이었음. `/api/r2-motion` 403 = 테스트 URL(mir-cgynxfi9e)이
+`claude/3d-view-testing-hlrugl` 브랜치 배포(같은 커밋을 두 브랜치에 푸시 → 배포 2개)였던 것으로 판단.
+관리자 버튼은 feature 브랜치 별칭 `mir-git-feature-3d-streaming-stability-…vercel.app` 에서만 동작.
+회전 시 객체가 사라졌다 나타남: 예산이 꽉 찬 상태(81/81)에서 중앙 가중치 ×2 경계를 넘는 작은 회전으로
+순위가 뒤집혀 로드↔해제 반복(진동). → 화면 안에 있는 상주 타일 ×2.5 가산(히스테리시스).
+- 진단 models[].layers / layerSummary(그려지는 레이어 수 ≈ draw call) 추가.
+
 
 ## 2026-09-16 — 실제 크기 확인 뒤 타일 후보 보충 누락 수정
 

@@ -39,8 +39,11 @@ export function prioritizeTileView<T extends { worldAabb: number[] }>(tiles: T[]
  * along the view axis ahead of the visible foreground. Centre and on-screen only weight the size.
  * Off-screen tiles follow by eye distance. Eye-to-box distance does not depend on the orbit pivot.
  * Keep every candidate, including long geometry crossing the frustum.
+ * `resident` tiles that are still visible get a ×RESIDENT_STICKINESS bonus: with a full budget, a small
+ * rotation (e.g. a tile crossing the centre band, ×2) must not swap loaded tiles out and back in.
  */
-export function prioritizeCameraView<T extends { worldAabb: number[] }>(tiles: T[], view: ArrayLike<number>, projection: ArrayLike<number>, eye: ArrayLike<number>): T[] {
+export const RESIDENT_STICKINESS = 2.5;
+export function prioritizeCameraView<T extends { worldAabb: number[]; id?: string }>(tiles: T[], view: ArrayLike<number>, projection: ArrayLike<number>, eye: ArrayLike<number>, resident?: ReadonlySet<string>): T[] {
   const padded = viewPlanes(view, projection, 0.2, true), screen = viewPlanes(view, projection, 0, true), center = viewPlanes(view, projection, -0.65, true);
   const finite = (box: number[]) => box.length === 6 && [...box, ...Array.from(eye)].every(Number.isFinite);
   const gap = (box: number[]) => finite(box)
@@ -50,7 +53,8 @@ export function prioritizeCameraView<T extends { worldAabb: number[] }>(tiles: T
     const box = tile.worldAabb, distance = gap(box), size = diagonal(box);
     const weight = !inTileView(box, padded) ? 0 : inTileView(box, center) ? 2 : inTileView(box, screen) ? 1 : 0.25;
     // The size term keeps eye-containing tiles finite: they all share the top score.
-    const apparent = weight && Number.isFinite(distance) ? weight * size / (distance + 0.1 * size + 1e-9) : 0;
+    const sticky = weight && tile.id !== undefined && resident?.has(tile.id) ? RESIDENT_STICKINESS : 1;
+    const apparent = weight && Number.isFinite(distance) ? sticky * weight * size / (distance + 0.1 * size + 1e-9) : 0;
     return { tile, index, visible: weight > 0, apparent, distance };
   }).sort((a,b) => Number(b.visible) - Number(a.visible) || b.apparent - a.apparent || a.distance - b.distance || a.index - b.index)
     .map(v=>v.tile);
