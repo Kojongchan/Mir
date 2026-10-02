@@ -88,3 +88,20 @@ test('far simplifies whole meshes: a dense plane collapses to a handful of trian
   const after = tables(r.bytes), ip = arr(after[19], Uint32Array), indices = arr(after[8], Uint32Array);
   for (let m = 0; m < ip.length; m++) assert.ok((m + 1 < ip.length ? ip[m + 1] : indices.length) - ip[m] >= 3);
 });
+
+test('far drops needle slivers longer than 1 m but never empties a mesh', async () => {
+  const { default: mod } = { default: await import('../scripts/tile-lod-merge.mjs') };
+  const r = await mod.buildMergedLod(fixture(), 'far');
+  const after = tables(r.bytes), world = mod.decodeMergedPositions(r.bytes), idx = arr(after[8], Uint32Array), ip = arr(after[19], Uint32Array), pp = arr(after[15], Uint32Array);
+  for (let m = 0; m < ip.length; m++) {
+    const end = m + 1 < ip.length ? ip[m + 1] : idx.length, base = pp[m] / 3;
+    assert.ok(end - ip[m] >= 3);
+    for (let i = ip[m]; i < end; i += 3) {
+      const p = k => [0, 1, 2].map(a => world[(base + idx[i + k]) * 3 + a]);
+      const [a, b, c] = [p(0), p(1), p(2)], sub = (u, v) => u.map((x, j) => x - v[j]), l2 = v => v.reduce((s, x) => s + x * x, 0);
+      const ab = sub(b, a), ac = sub(c, a), bc = sub(c, b), maxE2 = Math.max(l2(ab), l2(ac), l2(bc));
+      const cr = [ab[1]*ac[2]-ab[2]*ac[1], ab[2]*ac[0]-ab[0]*ac[2], ab[0]*ac[1]-ab[1]*ac[0]];
+      if (maxE2 > 1.0001) assert.ok(Math.sqrt(l2(cr)) / 2 >= 0.02 * maxE2 * 0.95, 'needle sliver kept');
+    }
+  }
+});

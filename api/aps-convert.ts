@@ -178,7 +178,7 @@ async function cacheState(urn: string): Promise<CacheState> {
             ...((t.motion?.policy === 'component-border-v1' || t.motion?.policy === 'merged-light-v2') && /^runs\/[a-zA-Z0-9-]+\/(?:motion|light)?\d+\.xkt$/.test(t.motion.n) && Number.isFinite(t.motion.byteLength) && t.motion.byteLength > 0
               ? { motion: { url: await r2PresignGet(`${dir}/xkt/${t.motion.n}`), byteLength: t.motion.byteLength, policy: t.motion.policy, members: t.motion.members } } : {}),
             // Whole-site level: one merged file per tile, always resident in the viewer.
-            ...(t.far?.policy === 'merged-far-v4' && /^runs\/[a-zA-Z0-9-]+\/far\d+\.xkt$/.test(t.far.n) && Number.isFinite(t.far.byteLength) && t.far.byteLength > 0
+            ...(/^merged-far-v[45]$/.test(t.far?.policy ?? '') && !!t.far && /^runs\/[a-zA-Z0-9-]+\/far\d+\.xkt$/.test(t.far.n) && Number.isFinite(t.far.byteLength) && t.far.byteLength > 0
               ? { far: { url: await r2PresignGet(`${dir}/xkt/${t.far.n}`), byteLength: t.far.byteLength, policy: t.far.policy, members: t.far.members } } : {}) })))
           : undefined;
         // 지형 항상로드 베이스.

@@ -79,7 +79,7 @@ const LIGHT_TINT = [1, 0.55, 0.15];
 const LIGHT_BACKGROUND = [0.78, 0.84, 0.9];
 const FAR_TINT = [0.6, 0.4, 1];
 /** Whole-site (far) level budget, separate from the near-camera structure cap. */
-const FAR_BUDGET = 384 * 1048576; // far v4 ≈ 140MB stored for 1,073 tiles; headroom for larger models
+const FAR_BUDGET = 512 * 1048576; // far v4: 318MB decoded for 717 tiles → ≈475MB for all 1,073
 /** Downloaded-file LRU (encoded bytes, JS heap) for revisits; on top of the structure cap. */
 const TILE_BYTE_CACHE = 128 * 1048576;
 // maxTiles was 120 while light files kept ~40 draw layers each; merged light files have 2–6, so the

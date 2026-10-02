@@ -24,7 +24,9 @@ export const LOD_PROFILES = {
   // error in metres and Prune (meshoptimizer ≥0.21), so parts smaller than the error disappear and the rest
   // collapse together. 0.25 m ≈ one pixel at ~500 m on a 1920 px, 60° view; light/detail replace it nearer.
   // A mesh always keeps at least its largest island.
-  far: { policy: 'merged-far-v4', mode: 'mesh', ratio: 0.02, errorMeters: 0.25, relativeError: 0.03, minIslandMeters: 1, lockBorder: false },
+  // v5: drop needle slivers (area < 2% of longest edge², longest edge > 1 m) that collapsed thin parts
+  // (masts, rails) leave behind; flat-shaded they flashed white.
+  far: { policy: 'merged-far-v5', mode: 'mesh', sliverRatio: 0.02, sliverMinEdge: 1, ratio: 0.02, errorMeters: 0.25, relativeError: 0.03, minIslandMeters: 1, lockBorder: false },
 };
 
 const SLOTS = 29, HEAD = 4 + SLOTS * 8;
@@ -129,6 +131,23 @@ function simplifyWholeMesh(pos, indices, profile) {
   } catch { return null; }
 }
 
+/** Remove long needle triangles; keeps the input when every triangle would go. */
+function dropSlivers(pos, tri, profile) {
+  if (!profile.sliverRatio) return tri;
+  const out = [];
+  for (let i = 0; i < tri.length; i += 3) {
+    const [a, b, c] = [tri[i], tri[i + 1], tri[i + 2]].map(v => [pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]]);
+    const ab = [0, 1, 2].map(k => b[k] - a[k]), ac = [0, 1, 2].map(k => c[k] - a[k]), bc = [0, 1, 2].map(k => c[k] - b[k]);
+    const len2 = v => v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+    const maxE2 = Math.max(len2(ab), len2(ac), len2(bc));
+    const cross = [ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]];
+    const area = Math.sqrt(len2(cross)) / 2;
+    if (maxE2 > profile.sliverMinEdge ** 2 && area < profile.sliverRatio * maxE2) continue;
+    out.push(tri[i], tri[i + 1], tri[i + 2]);
+  }
+  return out.length ? out : tri;
+}
+
 /**
  * @param {Buffer|Uint8Array} input decoded (not gzip) XKT v12
  * @param {'light'|'far'} profileName
@@ -211,7 +230,7 @@ export async function buildMergedLod(input, profileName) {
       remap[v] = next;
     }
     const welded = Array.from(mesh.tri, v => remap[v]);
-    const chosen = profile.mode === 'mesh' ? simplifyWholeMesh(wp, welded, profile) ?? await simplifyIslands(wp, welded, profile)
+    const chosen = profile.mode === 'mesh' ? dropSlivers(wp, simplifyWholeMesh(wp, welded, profile) ?? await simplifyIslands(wp, welded, profile), profile)
       : await simplifyIslands(wp, welded, profile);
     // Compact to the referenced source vertices (first occurrence of each welded vertex).
     const map = new Map(), world = [], uv = [];
