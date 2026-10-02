@@ -21,6 +21,7 @@ import { NavigationQuality } from '../viewer/NavigationQuality';
 import { keepViewerPresent } from '../viewer/ViewerPresence';
 import { rankTileRegion, regionNeedsRefresh, safeDollyFactor } from '../viewer/TileRegion';
 import { inTileView, prioritizeTileView, prioritizeCameraView, viewPlanes } from '../viewer/TileView';
+import { ByteCache } from '../viewer/ByteCache';
 
 /** 변환기가 구운 카메라 초점 박스(회전 전 실좌표). 이상치 제외한 중심/반경. */
 type Focus = { center: [number, number, number]; half: [number, number, number] };
@@ -75,6 +76,8 @@ function dollyToward(viewer: Viewer, target: number[], factor: number): void {
  * Downloads, not parsing, were the bottleneck (240s download vs 7.7s parse for 172 tiles at 2 slots);
  * model construction stays serialized by ModelLoadQueue. */
 const LIGHT_TINT = [1, 0.55, 0.15];
+/** Downloaded-file LRU (encoded bytes, JS heap) for revisits; on top of the structure cap. */
+const TILE_BYTE_CACHE = 192 * 1048576;
 const STRUCTURE_LIMITS = { maxTiles: 120, maxEncodedBytes: 640 * 1048576, concurrency: 4 };
 
 function flyToFramed(viewer: Viewer, box: number[]): void {
@@ -867,6 +870,7 @@ export function ThreeDTest() {
       mode: completeRegion ? 'fixed-complete-region' : 'bounded', stopped: loadingStopped,
       motionLod: { readyTiles: overviewReady.size, active: motionActive, overviewTiles: overviewReady.size, detailedTiles: detailReady.size, policy: 'component-border-v1' },
       modelLoadTiming: { count: parseCount, totalMs: parseTotalMs, maxMs: parseMaxMs },
+      byteCache: { hits: cacheHits, bytes: byteCache.size, maxBytes: TILE_BYTE_CACHE },
       downloadTiming: { count: downloadCount, totalMs: downloadTotalMs, maxMs: downloadMaxMs, maxConcurrentLoads: STRUCTURE_LIMITS.concurrency + 1 },
       renderCoverage: { inViewCount, culledCount, policy: 'padded-side-planes-decoded-bounds' },
       focus: selectedRegion,
@@ -878,17 +882,25 @@ export function ThreeDTest() {
     });
     const loadGate = new NavigationLoadGate();
     const modelQueue = new ModelLoadQueue();
+    // Recently downloaded files stay in memory (bounded) so revisiting a view skips the network.
+    const byteCache = new ByteCache(TILE_BYTE_CACHE);
+    let cacheHits = 0;
     const loadRepresentation = async (signal: AbortSignal, id: string, url: string, expectedMembers?: number, account?: (bytes: number) => boolean) => {
         const downloadStarted = performance.now();
-        const response = await fetch(url, { signal });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const declaredBytes = Number(response.headers.get('content-length'));
-        if (id.endsWith('-detail') && declaredBytes > 128 * 1048576) {
-          await response.body?.cancel();
-          throw new Error('타일 크기 예산 초과');
+        let xkt = byteCache.get(url);
+        if (xkt) cacheHits++;
+        else {
+          const response = await fetch(url, { signal });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const declaredBytes = Number(response.headers.get('content-length'));
+          if (id.endsWith('-detail') && declaredBytes > 128 * 1048576) {
+            await response.body?.cancel();
+            throw new Error('타일 크기 예산 초과');
+          }
+          xkt = await response.arrayBuffer();
+          if (signal.aborted || !active) throw new Error('cancelled');
+          byteCache.set(url, xkt);
         }
-        const xkt = await response.arrayBuffer();
-        if (signal.aborted || !active) throw new Error('cancelled');
         if (id.endsWith('-detail') && xkt.byteLength > 128 * 1048576) throw new Error('타일 크기 예산 초과');
         if (account && !account(xkt.byteLength)) throw new Error('타일 크기 예산 초과');
         const downloadMs = performance.now() - downloadStarted;
@@ -1133,6 +1145,7 @@ export function ThreeDTest() {
       motionQuality.dispose();
       loadGate.dispose();
       modelQueue.dispose();
+      byteCache.clear();
       navigationCanvas.removeEventListener('pointerdown', holdLoading);
       window.removeEventListener('pointerup', releaseLoading);
       window.removeEventListener('pointercancel', releaseLoading);

@@ -578,3 +578,10 @@ test('a small rotation does not swap a resident tile for one that just crossed i
  const off=[{id:'gone',worldAabb:[5000,-10,-510,5020,10,-490]},...tiles];
  assert.equal(prioritizeCameraView(off,identity4,perspective,[0,0,0],new Set(['gone'])).map(t=>t.id).at(-1),'gone');
 });
+const { ByteCache } = compile('src/viewer/ByteCache.ts');
+test('byte cache keeps recent tile files within its byte bound (LRU)', () => {
+ const c=new ByteCache(25),buf=n=>new ArrayBuffer(n);
+ c.set('a',buf(10));c.set('b',buf(10));c.get('a');c.set('c',buf(10));
+ assert.ok(c.get('a')&&c.get('c'));assert.equal(c.get('b'),undefined);assert.equal(c.size,20);
+ c.set('huge',buf(30));assert.equal(c.get('huge'),undefined);assert.equal(c.size,20);
+});
