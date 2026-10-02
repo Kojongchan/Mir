@@ -32,9 +32,11 @@
 - **뷰어 역할 다운로드 UI 통일(D20)**: ACC 파일관리자 목록 메뉴는 뷰어에게 다운로드를 숨기지만 미리보기 안의
   링크(Office 미리보기 "원본 다운로드", 미지원 형식 안내 "다운로드", 단독 파일뷰어 상단 "다운로드")는 항상 보였음
   → 실무자 이상만(`canDownload`). 이슈의 ACC 관련자료 미리보기도 동일. (소프트 차단 — 서명 URL 자체는 그대로)
-- **확인 필요(결정 충돌)**: OfficeViewer 가 문서 서명 URL을 Microsoft Office Online(view.officeapps.live.com)에
-  넘김 → D10("기밀 도면이 MS/Google 서버로 전송되므로 외부 임베드 비채택")과 충돌. 이후 결정 변경이면 D10 갱신 필요,
-  아니면 Office 는 다운로드/서버변환으로 되돌려야 함. 임의 변경하지 않음.
+- **Office 미리보기 Microsoft 제거(사용자 승인, D10 복귀)**: OfficeViewer 가 문서 서명 URL을 Office Online 에
+  넘기던 것을 **브라우저 내 렌더**로 교체 — docx=docx-preview(페이지·표·이미지), pptx=pptx-preview(슬라이드 목록,
+  열 때만 로드 ≈400KB gzip), xlsx/xls/xlsm=자체 시트 뷰어(워커). 구형 doc/ppt 는 다운로드 안내(서버 변환은 후속).
+  ACC 문서는 PDF 처럼 /api/aps-file 바이트 프록시(blob)로. 렌더 결과에서 script/iframe/on* 제거, 링크는
+  http(s)/mailto 만. 헤드리스 Chromium 으로 docx(한글·표·javascript: 링크 제거)·pptx(2장) 렌더 확인.
 미해결: 2-legged 뷰어 토큰은 앱 전체 권한이라 URN 을 아는 다른 프로젝트 모델 열람 자체는 서버 프록시 없이는 못 막음.
 
 ---

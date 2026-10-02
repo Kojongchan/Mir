@@ -476,16 +476,8 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
       const { data } = await supabase.auth.getSession();
       const tok = data.session?.access_token ?? '';
       const base = `/api/aps-file?project=${encodeURIComponent(project)}&item=${encodeURIComponent(it.id)}`;
-      if (kind === 'office') {
-        // Office Online — 공개 Autodesk 서명 URL(파일명 포함, 우리 토큰 미노출).
-        const res = await fetch(`${base}&mode=signed&name=${encodeURIComponent(it.name)}`, {
-          headers: { authorization: `Bearer ${tok}` },
-        });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok || !body.url) throw new Error(body.error ?? `서명 URL 실패(${res.status})`);
-        clearDoc();
-        setDocView({ url: body.url as string, name: it.name, kind });
-      } else if (kind === 'video' || kind === 'audio' || kind === 'unsupported') {
+      // Office documents render in the browser (no Microsoft), so they take the byte proxy like PDFs.
+      if (kind === 'video' || kind === 'audio' || kind === 'unsupported') {
         // 미디어/대용량/다운로드 — 서명 URL로 직접(토큰은 쿼리로).
         clearDoc();
         setDocView({ url: `${base}&mode=redirect&token=${encodeURIComponent(tok)}`, name: it.name, kind });

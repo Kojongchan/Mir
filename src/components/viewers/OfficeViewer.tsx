@@ -1,34 +1,38 @@
-import type { FileRecord } from '../../lib/files';
+import { lazy, Suspense } from 'react';
+import { extensionOf, type FileRecord } from '../../lib/files';
+import { DownloadFallback } from './DownloadFallback';
+import { SheetViewer } from './SheetViewer';
+
+// Rendered entirely in the browser: document bytes never go to Microsoft/Google (D10).
+const DocxViewer = lazy(() => import('./DocxViewer').then(m => ({ default: m.DocxViewer })));
+const PptxViewer = lazy(() => import('./PptxViewer').then(m => ({ default: m.PptxViewer })));
 
 /**
- * Office 문서(워드/엑셀/파워포인트) 미리보기 — Microsoft Office Online 전체 뷰어.
- * ACC 내장 뷰어와 동일하게 view.aspx(풀 툴바: 슬라이드쇼·확대·시트 탐색 등)를
- * 그 자리에 인라인으로 띄운다(view.aspx 는 X-Frame-Options 가 없어 임베드 가능).
- *
- * Office Online 서버가 `url` 을 직접 가져가므로 `url` 은 **공개 접근 가능한 절대
- * URL**(우리 세션 토큰 미포함)이어야 한다 — ACC=Autodesk 단기 서명 URL,
- * Supabase=서명 URL.
+ * Office 문서(워드/엑셀/파워포인트) 미리보기 — 브라우저 내 렌더(외부 서버 전송 없음).
+ * docx=docx-preview, pptx=pptx-preview, xlsx/xls/xlsm=자체 시트 뷰어(워커 격리).
+ * 구형 바이너리(doc/ppt)는 브라우저 라이브러리가 없어 다운로드 안내(실무자 이상).
+ * `url` 은 blob/동일 출처 URL(ACC 는 /api/aps-file 바이트 프록시)이어야 한다.
  */
-/** canDownload=false (viewer role, D20) hides the original-file link. */
 export function OfficeViewer({ url, file, canDownload = true }: { url: string; file: FileRecord; canDownload?: boolean }) {
-  const enc = encodeURIComponent(url);
-  const view = `https://view.officeapps.live.com/op/view.aspx?src=${enc}`;
+  const ext = extensionOf(file.name);
+  const body = (() => {
+    switch (ext) {
+      case 'docx': return <DocxViewer url={url} file={file} />;
+      case 'pptx': return <PptxViewer url={url} file={file} />;
+      case 'xlsx': case 'xls': case 'xlsm': return <SheetViewer url={url} file={file} />;
+      default: return <DownloadFallback url={url} file={file} canDownload={canDownload} />;
+    }
+  })();
   return (
     <div className="doc-stage" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <iframe
-        title={file.name}
-        src={view}
-        style={{ flex: 1, width: '100%', border: 0 }}
-        allowFullScreen
-      />
-      <div
-        className="muted"
-        style={{ fontSize: 12, padding: '5px 10px', borderTop: '1px solid var(--border)', display: 'flex', gap: 14, flexWrap: 'wrap' }}
-      >
-        <span>Microsoft Office Online</span>
-        <a href={view} target="_blank" rel="noopener noreferrer">↗ 새 탭에서 열기</a>
-        {canDownload && <a href={url} download={file.name}>⬇ 원본 다운로드</a>}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+        <Suspense fallback={<p className="muted doc-loading">뷰어 불러오는 중…</p>}>{body}</Suspense>
       </div>
+      {canDownload && ext !== 'doc' && ext !== 'ppt' && (
+        <div className="muted" style={{ fontSize: 12, padding: '5px 10px', borderTop: '1px solid var(--border)' }}>
+          <a href={url} download={file.name}>⬇ 원본 다운로드</a>
+        </div>
+      )}
     </div>
   );
 }
