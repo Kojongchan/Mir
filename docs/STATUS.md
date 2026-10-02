@@ -110,6 +110,17 @@ run6: 후보 1073·경량 90/120(75%) 확인, 주황 화질 OK, 위치 5m 이내
 제안(승인 대기): 내부 타일 병합(단일 origin)+인스턴스 펼침+섬 단위 감량으로 경량 재생성(395개 포함),
 그리고 전 구간 항상 상주하는 '원경' 단계(더 가벼움) 추가 → 거리 제한 없이 전체 표시, 가까운 곳만 경량/원본으로 교체.
 
+### 같은 날 — 3단계 LOD 구현 (사용자 전면 승인)
+- `scripts/tile-lod-merge.mjs` buildMergedLod(xkt, 'light'|'far'): XKT v12 내부 타일 전부 → **1개 타일**(단일 origin,
+  합집합 박스 재양자화), 재사용 지오메트리 펼침(행렬 적용), 섬 단위 meshopt(LockBorder) 감량, 법선/엣지 제거.
+  엔티티·메시 순서·재질·텍스처 테이블 보존. light: 비율0.2/오차0.1%, far: 비율0.05/오차1%/0.25m 미만 섬 제거
+  (메시당 최대 섬은 항상 유지). 헤드리스 Chromium + 실제 xeokit 로드로 객체 수·위치 일치 확인.
+- `scripts/build-lod-cache.mjs` + 워크플로 `diag_only=lod-cache`, `lod_profile`, `lod_add_mb`: 100타일마다 manifest
+  If-Match 게시, 교체된 옛 경량 파일은 게시 후 삭제(원본 불변), 감량 무의미/실패 타일은 lodTried 표시.
+- API: tile.motion(merged-light-v2) / tile.far(merged-far-v1) presign.
+- 뷰어: 원경 스트림(FAR_BUDGET 640MB, 전 타일, 화면 우선) 항상 상주, 경량/원본이 올라온 타일만 원경 숨김.
+  원경 있으면 근거리 상한 512MB. "경량 표시" 토글: 경량 주황 / 원경 보라. 상태줄 "원경 a/b".
+
 
 ## 2026-09-16 — 실제 크기 확인 뒤 타일 후보 보충 누락 수정
 

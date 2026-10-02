@@ -21,9 +21,11 @@ export function motionTileVisibility(inView: boolean, moving: boolean, ready: bo
   return { detailCulled: !inView || (moving && ready), proxyCulled: !inView || !moving || !ready };
 }
 
+/** Light pairs with explicit coverage metadata: original motion pairs and merged-tile v2 (one draw layer). */
+export const OVERVIEW_POLICIES = new Set(['component-border-v1', 'merged-light-v2']);
 /** Overview-first is available only for generated assets with explicit coverage metadata. */
 export function canUseOverview(motion: { policy: string; byteLength: number; members?: number } | undefined, detailBytes?: number): boolean {
-  return !!motion && motion.policy === 'component-border-v1' && Number.isInteger(motion.members) && motion.members! > 0 &&
+  return !!motion && OVERVIEW_POLICIES.has(motion.policy) && Number.isInteger(motion.members) && motion.members! > 0 &&
     Number.isFinite(motion.byteLength) && motion.byteLength > 0 && motion.byteLength <= 128 * 1048576 && motion.byteLength < (detailBytes ?? Infinity);
 }
 export function needsDetail(eye: ArrayLike<number>, box: ArrayLike<number>, distance = 150): boolean {

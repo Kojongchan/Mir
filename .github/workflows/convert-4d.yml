@@ -1,5 +1,5 @@
 name: 4D 모델 변환(SVF→GLB)
-run-name: ${{ github.event.inputs.diag_only == 'compact-xkt' && 'R2 XKT storage compaction' || github.event.inputs.diag_only == 'motion-cache' && 'R2 model motion cache' || '4D model conversion' }}
+run-name: ${{ github.event.inputs.diag_only == 'compact-xkt' && 'R2 XKT storage compaction' || github.event.inputs.diag_only == 'motion-cache' && 'R2 model motion cache' || github.event.inputs.diag_only == 'lod-cache' && 'R2 model LOD cache' || '4D model conversion' }}
 
 # 4D 공정관리 자체 뷰어용: ACC 모델(SVF)을 glTF/GLB 로 변환해 Supabase Storage 에
 # 올린다. 대형 모델 변환은 Vercel 서버리스 한도를 넘으므로 여기(러너: 7GB/14GB/6h)서
@@ -54,6 +54,14 @@ on:
         description: "'1'이면 인스턴싱 측정만(변환/업로드 없음). tiles=1 과 함께 사용. 빠른 진단"
         required: false
         default: ''
+      lod_profile:
+        description: "diag_only=lod-cache 일 때 'light'(경량 재생성) 또는 'far'(원경, 전 타일)"
+        required: false
+        default: 'light'
+      lod_add_mb:
+        description: "diag_only=lod-cache 1회 최대 추가 용량(MB, 기본 1024)"
+        required: false
+        default: '1024'
       instance:
         description: "'1'이면 반복 부재를 인스턴싱(항상로드 구조물 뼈대 1벌+행렬). 원본 형상·타일 경량화"
         required: false
@@ -148,8 +156,35 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: node "$RUNNER_TEMP/motion-cache/build-motion-cache.mjs"
+  lod-cache:
+    if: github.event.inputs.diag_only == 'lod-cache'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare cache-only runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/lod-cache"
+          cp scripts/build-lod-cache.mjs scripts/tile-lod-merge.mjs scripts/xkt-transfer.mjs scripts/storage-budget.mjs "$RUNNER_TEMP/lod-cache/"
+          npm install --prefix "$RUNNER_TEMP/lod-cache" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 meshoptimizer@0.18.1
+      - name: Generate merged LOD files from existing cache
+        env:
+          MODEL_CACHE_PREFIX: ${{ github.event.inputs.item }}
+          LOD_PROFILE: ${{ github.event.inputs.lod_profile }}
+          LOD_ADD_MB: ${{ github.event.inputs.lod_add_mb }}
+          LOD_MINUTES: '100'
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: node "$RUNNER_TEMP/lod-cache/build-lod-cache.mjs"
   convert:
-    if: github.event.inputs.diag_only != 'compact-xkt' && github.event.inputs.diag_only != 'motion-cache'
+    if: github.event.inputs.diag_only != 'compact-xkt' && github.event.inputs.diag_only != 'motion-cache' && github.event.inputs.diag_only != 'lod-cache'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:

@@ -137,8 +137,8 @@ async function r2TotalSize(): Promise<number> {
 }
 
 type Focus = { center: [number, number, number]; half: [number, number, number] };
-type MotionTile = { url: string; byteLength: number; policy: 'component-border-v1'; members?: number };
-type Tile = { url: string; aabb: number[]; byteLength?: number; motion?: MotionTile };
+type MotionTile = { url: string; byteLength: number; policy: string; members?: number };
+type Tile = { url: string; aabb: number[]; byteLength?: number; motion?: MotionTile; far?: MotionTile };
 type CacheState =
   | { ready: true; xkt: true; urls: string[]; navUrls?: string[]; tiles?: Tile[]; baseUrls?: string[]; instUrls?: string[]; lod1Url?: string; focus?: Focus }
   | { ready: true; url: string; focus?: Focus }
@@ -166,7 +166,7 @@ async function cacheState(urn: string): Promise<CacheState> {
   const manifestText = await r2GetText(`${dir}/xkt/manifest.json`);
   if (manifestText) {
     try {
-      const { xktFiles, navFiles, lod1, tiles, base, inst, focus: manifestFocus } = JSON.parse(manifestText) as { xktFiles: string[]; navFiles?: string[]; lod1?: string | null; tiles?: { n: string; aabb: number[]; byteLength?: number; motion?: { n: string; byteLength: number; policy: string; members?: number } }[]; base?: string[]; inst?: string[]; focus?: Focus | null };
+      const { xktFiles, navFiles, lod1, tiles, base, inst, focus: manifestFocus } = JSON.parse(manifestText) as { xktFiles: string[]; navFiles?: string[]; lod1?: string | null; tiles?: { n: string; aabb: number[]; byteLength?: number; motion?: { n: string; byteLength: number; policy: string; members?: number }; far?: { n: string; byteLength: number; policy: string; members?: number } }[]; base?: string[]; inst?: string[]; focus?: Focus | null };
       if (Array.isArray(xktFiles) && xktFiles.length > 0) {
         const urls = await Promise.all(xktFiles.map((f) => r2PresignGet(`${dir}/xkt/${f}`)));
         const navUrls = Array.isArray(navFiles) && navFiles.length > 0
@@ -175,8 +175,11 @@ async function cacheState(urn: string): Promise<CacheState> {
         // 타일(뷰 종속 스트리밍): 각 타일 presigned URL + AABB(뷰어 컬링용).
         const tileList = Array.isArray(tiles) && tiles.length > 0
           ? await Promise.all(tiles.map(async (t) => ({ url: await r2PresignGet(`${dir}/xkt/${t.n}`), aabb: t.aabb, byteLength: t.byteLength,
-            ...(t.motion?.policy === 'component-border-v1' && /^runs\/[a-zA-Z0-9-]+\/(?:motion)?\d+\.xkt$/.test(t.motion.n) && Number.isFinite(t.motion.byteLength) && t.motion.byteLength > 0
-              ? { motion: { url: await r2PresignGet(`${dir}/xkt/${t.motion.n}`), byteLength: t.motion.byteLength, policy: 'component-border-v1' as const, members: t.motion.members } } : {}) })))
+            ...((t.motion?.policy === 'component-border-v1' || t.motion?.policy === 'merged-light-v2') && /^runs\/[a-zA-Z0-9-]+\/(?:motion|light)?\d+\.xkt$/.test(t.motion.n) && Number.isFinite(t.motion.byteLength) && t.motion.byteLength > 0
+              ? { motion: { url: await r2PresignGet(`${dir}/xkt/${t.motion.n}`), byteLength: t.motion.byteLength, policy: t.motion.policy, members: t.motion.members } } : {}),
+            // Whole-site level: one merged file per tile, always resident in the viewer.
+            ...(t.far?.policy === 'merged-far-v1' && /^runs\/[a-zA-Z0-9-]+\/far\d+\.xkt$/.test(t.far.n) && Number.isFinite(t.far.byteLength) && t.far.byteLength > 0
+              ? { far: { url: await r2PresignGet(`${dir}/xkt/${t.far.n}`), byteLength: t.far.byteLength, policy: t.far.policy, members: t.far.members } } : {}) })))
           : undefined;
         // 지형 항상로드 베이스.
         const baseUrls = Array.isArray(base) && base.length > 0

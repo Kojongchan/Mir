@@ -76,8 +76,11 @@ function dollyToward(viewer: Viewer, target: number[], factor: number): void {
  * Downloads, not parsing, were the bottleneck (240s download vs 7.7s parse for 172 tiles at 2 slots);
  * model construction stays serialized by ModelLoadQueue. */
 const LIGHT_TINT = [1, 0.55, 0.15];
+const FAR_TINT = [0.6, 0.4, 1];
+/** Whole-site (far) level budget, separate from the near-camera structure cap. */
+const FAR_BUDGET = 640 * 1048576;
 /** Downloaded-file LRU (encoded bytes, JS heap) for revisits; on top of the structure cap. */
-const TILE_BYTE_CACHE = 192 * 1048576;
+const TILE_BYTE_CACHE = 128 * 1048576;
 const STRUCTURE_LIMITS = { maxTiles: 120, maxEncodedBytes: 640 * 1048576, concurrency: 4 };
 
 function flyToFramed(viewer: Viewer, box: number[]): void {
@@ -764,7 +767,7 @@ export function ThreeDTest() {
 
   /** Original tiles remain visible during navigation. Loading has explicit count/encoded-byte budgets.
    * This is a bounded working view, not a full-scene LOD solution. */
-  const mountTiles = useCallback((tiles: { url: string; aabb: number[]; byteLength?: number; motion?: { url: string; byteLength: number; policy: string; members?: number } }[], baseUrls: string[] | undefined, instUrls: string[] | undefined, _lod1Url: string | undefined, label: string, focus?: Focus) => {
+  const mountTiles = useCallback((tiles: { url: string; aabb: number[]; byteLength?: number; motion?: { url: string; byteLength: number; policy: string; members?: number }; far?: { url: string; byteLength: number; policy: string; members?: number } }[], baseUrls: string[] | undefined, instUrls: string[] | undefined, _lod1Url: string | undefined, label: string, focus?: Focus) => {
     const viewer = viewerRef.current;
     const loader = xktLoaderRef.current;
     if (!viewer || !loader || !tiles.length) return;
@@ -818,17 +821,23 @@ export function ThreeDTest() {
       // The structure stream loads the light pair first when one exists, so budget it at that size;
       // detail refinement has its own stream sized by detailByteLength.
       return { id: `tile${t.manifestIndex}`, url: t.url, byteLength: canUseOverview(t.motion, t.byteLength) ? t.motion!.byteLength : t.byteLength,
-        detailByteLength: t.byteLength, motion: t.motion,
+        detailByteLength: t.byteLength, motion: t.motion, far: t.far,
         sourceAabb: [...t.aabb],
         worldAabb: [ax, az, -by, bx, bz, -ay],
         cx: (ax + bx) / 2, cy: (az + bz) / 2, cz: -(ay + by) / 2,
         r: Math.hypot(bx - ax, by - ay, bz - az) / 2 };
     });
+    // With a resident whole-site level the near-camera cap shrinks so total heap stays near ~2GB.
+    const structureLimits = T.some(t => t.far) ? { ...STRUCTURE_LIMITS, maxEncodedBytes: 512 * 1048576 } : STRUCTURE_LIMITS;
     let regionCandidates: typeof T = [];
     let viewDirty = true;
     let inViewCount = 0, culledCount = 0;
     let motionActive = false;
     const overviewReady = new Set<string>();
+    // Tiles whose light or detail representation is loaded: their whole-site (far) model is hidden.
+    const mainReady = new Set<string>();
+    const farReady = new Set<string>();
+    let farStats = { loaded: 0, total: 0, bytes: 0 };
     const detailReady = new Set<string>();
     let detailWanted = new Set<string>();
     const motionQuality = new NavigationQuality({ delayMs: 900,
@@ -849,6 +858,8 @@ export function ThreeDTest() {
       viewDirty = false;
       inViewCount = 0; culledCount = 0;
       for (const tile of T) {
+        const far = models[`${tile.id}-far`];
+        if (far && farReady.has(tile.id)) setCulled(far, mainReady.has(tile.id) || !inTileView(far.aabb, planes));
         const model = models[tile.id];
         if (!model) continue;
         const detail = models[`${tile.id}-detail`];
@@ -871,6 +882,7 @@ export function ThreeDTest() {
       motionLod: { readyTiles: overviewReady.size, active: motionActive, overviewTiles: overviewReady.size, detailedTiles: detailReady.size, policy: 'component-border-v1' },
       modelLoadTiming: { count: parseCount, totalMs: parseTotalMs, maxMs: parseMaxMs },
       byteCache: { hits: cacheHits, bytes: byteCache.size, maxBytes: TILE_BYTE_CACHE },
+      farLevel: { available: farTiles.length, loaded: farStats.loaded, encodedBytes: farStats.bytes, budget: FAR_BUDGET, shown: [...farReady].filter(id => !mainReady.has(id)).length },
       downloadTiming: { count: downloadCount, totalMs: downloadTotalMs, maxMs: downloadMaxMs, maxConcurrentLoads: STRUCTURE_LIMITS.concurrency + 1 },
       renderCoverage: { inViewCount, culledCount, policy: 'padded-side-planes-decoded-bounds' },
       focus: selectedRegion,
@@ -928,7 +940,8 @@ export function ThreeDTest() {
             signal.addEventListener('abort', abort, { once: true });
             try {
               const parseStarted = performance.now();
-              const model = loader.load({ id, xkt, edges: false, rotation: [-90, 0, 0], globalizeObjectIds: true, culled: id.endsWith('-detail') } as unknown as Parameters<typeof loader.load>[0]);
+              const model = loader.load({ id, xkt, edges: false, rotation: [-90, 0, 0], globalizeObjectIds: true,
+                culled: id.endsWith('-detail') || (id.endsWith('-far') && mainReady.has(id.slice(0, -4))) } as unknown as Parameters<typeof loader.load>[0]);
               model.on('loaded', () => {
                 if (expectedMembers !== undefined && Object.keys(model.objects).length !== expectedMembers) { model.destroy(); finish(new Error('경량 객체 수 불일치')); return; }
                 if (active && !signal.aborted) {
@@ -948,7 +961,7 @@ export function ThreeDTest() {
       // Overlap downloads with the current model load, but serialize GPU construction.
       // A few end-to-end slots bound prefetched buffers even during a long held drag.
       // Resident set is capped in every mode: lowest-priority tiles (camera ranking) are unloaded first.
-      ...STRUCTURE_LIMITS,
+      ...structureLimits,
       // Swap, not pre-evict: tiles leaving the view stay drawn until replacements have loaded.
       replaceAfterLoad: true,
       load: async (tile, signal) => {
@@ -957,7 +970,7 @@ export function ThreeDTest() {
           try {
             await loadRepresentation(signal, tile.id, motion.url, motion.members, bytes => bytes === motion.byteLength && stream.accountBytes(tile.id, bytes));
             if (signal.aborted || !active) throw new Error('cancelled');
-            overviewReady.add(tile.id); viewDirty = true;
+            overviewReady.add(tile.id); mainReady.add(tile.id); viewDirty = true;
             if (lightTintOnRef.current) (models[tile.id] as unknown as { colorize: number[] | null }).colorize = LIGHT_TINT;
             return;
           } catch (error) {
@@ -966,9 +979,11 @@ export function ThreeDTest() {
           }
         }
         await loadRepresentation(signal, tile.id, tile.url, undefined, bytes => stream.accountBytes(tile.id, bytes));
+        if (signal.aborted || !active) throw new Error('cancelled');
+        mainReady.add(tile.id); viewDirty = true;
       },
       unload: tile => {
-        overviewReady.delete(tile.id); detailReady.delete(tile.id);
+        overviewReady.delete(tile.id); detailReady.delete(tile.id); mainReady.delete(tile.id); viewDirty = true;
         models[`${tile.id}-detail`]?.destroy(); models[tile.id]?.destroy();
       },
       onChange: stats => {
@@ -981,7 +996,7 @@ export function ThreeDTest() {
         } else setStatus(!stats.total ? '현재 위치에 구조물 후보가 없습니다. 위치를 이동한 뒤 현재 위치 불러오기를 눌러 주세요.' : stats.failed ? `일부 구간 로드 실패 ${stats.failed}개 — 모델을 다시 열어 주세요.` :
           stats.loaded < stats.selected ? (stats.loading ? `구조물 로딩… ${stats.loaded}/${stats.selected}` : '표시 용량 제한으로 일부 구간이 미표시 상태입니다.') :
           limited ? `일부 표시: 후보 ${stats.total}개 중 ${stats.loaded}개 로드 · 전체 구간 아님` : '주변 구조물 표시 완료 · 가까운 구간 상세화');
-        setDbg(`타일 ${stats.loaded}/${stats.selected} · 표시 ${stats.resident} · 후보 ${stats.total} · 다운로드 중 ${stats.loading} · 실패 ${stats.failed} · 경량 ${overviewReady.size} · 상세화 ${detailReady.size} · 파일 크기 예산 사용 ≈${Math.round(stats.encodedBytes / 1048576)}MB (GPU 메모리 아님)`);
+        setDbg(`원경 ${farStats.loaded}/${farTiles.length} · 타일 ${stats.loaded}/${stats.selected} · 표시 ${stats.resident} · 후보 ${stats.total} · 다운로드 중 ${stats.loading} · 실패 ${stats.failed} · 경량 ${overviewReady.size} · 상세화 ${detailReady.size} · 파일 크기 예산 사용 ≈${Math.round(stats.encodedBytes / 1048576)}MB (GPU 메모리 아님)`);
       },
     });
     const detailStream = new TileStream<typeof T[number]>({
@@ -1001,6 +1016,22 @@ export function ThreeDTest() {
       },
       onChange: () => {},
     });
+    // Whole-site level: every tile's merged far file, kept resident (own byte budget) so the full site is
+    // always drawn; light/detail replace it tile by tile near the camera. Loads nearest-visible first.
+    const farTiles = T.filter(t => t.far && Number.isFinite(t.far.byteLength) && t.far.byteLength > 0)
+      .map(t => ({ ...t, byteLength: t.far!.byteLength }));
+    const farStream = new TileStream<typeof farTiles[number]>({
+      concurrency: 2, maxTiles: Number.POSITIVE_INFINITY, maxEncodedBytes: FAR_BUDGET, replaceAfterLoad: true,
+      load: async (tile, signal) => {
+        await loadRepresentation(signal, `${tile.id}-far`, tile.far!.url, undefined, bytes => farStream.accountBytes(tile.id, bytes));
+        if (signal.aborted || !active) throw new Error('cancelled');
+        farReady.add(tile.id); viewDirty = true;
+        if (lightTintOnRef.current) (models[`${tile.id}-far`] as unknown as { colorize: number[] | null }).colorize = FAR_TINT;
+      },
+      unload: tile => { farReady.delete(tile.id); models[`${tile.id}-far`]?.destroy(); viewDirty = true; },
+      onChange: stats => { farStats = { loaded: stats.loaded, total: stats.total, bytes: stats.encodedBytes }; },
+    });
+    const prioritizeFar = () => farStream.prioritize(prioritizeCameraView(farTiles, viewer.camera.viewMatrix, viewer.camera.projMatrix, viewer.camera.eye).map(t => t.id));
     const refineView = () => {
       const eye = Array.from(viewer.camera.eye);
       const planes = currentPlanes();
@@ -1072,6 +1103,10 @@ export function ThreeDTest() {
         const model = models[id] as unknown as { colorize: number[] | null } | undefined;
         if (model) model.colorize = on ? LIGHT_TINT : null;
       }
+      for (const id of farReady) {
+        const model = models[`${id}-far`] as unknown as { colorize: number[] | null } | undefined;
+        if (model) model.colorize = on ? FAR_TINT : null;
+      }
       viewer.scene.render(true);
     };
     structureFitRef.current = () => {
@@ -1088,6 +1123,7 @@ export function ThreeDTest() {
         setCoverageMode('paused');
         stream.stopLoading();
         detailStream.stopLoading();
+        farStream.stopLoading();
         return;
       }
       if (mode === 'complete') {
@@ -1096,15 +1132,16 @@ export function ThreeDTest() {
         completeRegion = true;
         loadingStopped = false;
         setCoverageMode('complete');
-        stream.setLimits(STRUCTURE_LIMITS);
+        stream.setLimits(structureLimits);
         stream.setPaused(false);
         detailStream.setPaused(false);
+        farStream.setPaused(false);
         return;
       }
       completeRegion = false;
       loadingStopped = false;
       setCoverageMode('bounded');
-      stream.setLimits(STRUCTURE_LIMITS);
+      stream.setLimits(structureLimits);
       recompute();
       stream.setPaused(false);
       detailStream.setPaused(false);
@@ -1119,6 +1156,7 @@ export function ThreeDTest() {
       loadGate.setPaused(true);
       stream.setPaused(true);
       detailStream.setPaused(true);
+      farStream.setPaused(true);
       clearTimeout(settle);
       settle = setTimeout(() => {
         if (!active) return;
@@ -1126,8 +1164,9 @@ export function ThreeDTest() {
         const distance = Math.hypot(...Array.from(viewer.camera.eye).map((n, i) => n - center[i]));
         if (selectedRegion && regionNeedsRefresh(selectedRegion, center, distance)) recompute();
         prioritizeCurrentView();
+        prioritizeFar();
         loadGate.setPaused(false);
-        if (!loadingStopped && !pointerHeld) { stream.setPaused(false); detailStream.setPaused(false); refineView(); }
+        if (!loadingStopped && !pointerHeld) { stream.setPaused(false); detailStream.setPaused(false); farStream.setPaused(false); refineView(); }
       }, 900);
     };
     const sub = viewer.camera.on('matrix', pauseForNavigation);
@@ -1167,11 +1206,13 @@ export function ThreeDTest() {
       baseControllers.forEach(c => c.abort());
       clearInterval(refinementTimer);
       detailStream.dispose();
+      farStream.dispose();
       stream.dispose();
     };
     // Structures in view start immediately instead of waiting for the whole terrain (≈243MB).
     // Framing uses the focus or structure bounds; terrain fills in underneath afterwards.
     frameOnce(); recompute(true); completeRegion = true; setCoverageMode('complete');
+    farStream.select(prioritizeCameraView(farTiles, viewer.camera.viewMatrix, viewer.camera.projMatrix, viewer.camera.eye));
     // Sequential base loading avoids firing all texture decoders at once.
     void (async () => {
       try {
@@ -1231,7 +1272,7 @@ export function ThreeDTest() {
         xkt?: boolean;
         urls?: string[];
         navUrls?: string[];
-        tiles?: { url: string; aabb: number[]; byteLength?: number; motion?: { url: string; byteLength: number; policy: string; members?: number } }[];
+        tiles?: { url: string; aabb: number[]; byteLength?: number; motion?: { url: string; byteLength: number; policy: string; members?: number }; far?: { url: string; byteLength: number; policy: string; members?: number } }[];
         baseUrls?: string[];
         instUrls?: string[];
         lod1Url?: string;
