@@ -1,3 +1,4 @@
+import { useEscapeKey } from '../../lib/useEscapeKey';
 import { useEffect, useState } from 'react';
 import { listActivity, type ActivityEntry } from '../../lib/cde';
 
@@ -24,6 +25,7 @@ function describe(a: ActivityEntry): string {
 
 /** Modal showing the project's recent CDE activity (audit trail), newest first. */
 export function ActivityLog({ projectId, onClose }: { projectId: string; onClose: () => void }) {
+  useEscapeKey(onClose);
   const [entries, setEntries] = useState<ActivityEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,7 +37,7 @@ export function ActivityLog({ projectId, onClose }: { projectId: string; onClose
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>활동 로그</h3>
           <span className="muted">최근 활동 (최신순)</span>

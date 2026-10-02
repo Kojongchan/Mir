@@ -1,3 +1,4 @@
+import { useEscapeKey } from '../lib/useEscapeKey';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { IfcViewer, ElementMeta } from '../viewer/IfcViewer';
 import {
@@ -771,10 +772,11 @@ function ClashIssueModal({
   }, []);
 
   const toggle = (i: number) => setPicked((p) => p.map((v, j) => (j === i ? !v : v)));
+  useEscapeKey(onCancel);
 
   return (
     <div className="modal-backdrop" onClick={onCancel}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>간섭 → 이슈 생성</h3>
           <span className="muted">내용 작성 + 첨부할 각도를 선택하세요. 담당자·마감 지정 시 알림(S30).</span>

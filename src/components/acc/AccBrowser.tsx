@@ -30,6 +30,7 @@ import { DownloadFallback } from '../viewers/DownloadFallback';
 import { PdfViewer } from '../viewers/PdfViewer';
 import { SheetViewer } from '../viewers/SheetViewer';
 import { OfficeViewer } from '../viewers/OfficeViewer';
+import { useEscapeKey } from '../../lib/useEscapeKey';
 
 const fakeFile = (name: string) => ({ name, size_bytes: null, mime_type: null }) as unknown as FileRecord;
 const fmtDate = (s?: string | null) =>
@@ -120,8 +121,11 @@ export function AccBrowser({
   const [busy, setBusy] = useState(false);
 
   const [docView, setDocView] = useState<{ url: string; name: string; kind: ViewerKind } | null>(null);
-  const [versionsFor, setVersionsFor] = useState<{ item: AccItem; list: AccVersion[] } | null>(null);
+  const [versionsFor, setVersionsFor] = useState<{ item: AccItem; list: AccVersion[]; loading: boolean; error?: string } | null>(null);
   const [moveFor, setMoveFor] = useState<AccItem | null>(null);
+  // Move needs an explicit confirm: picking a folder only selects it (a misclick used to move at once).
+  const [moveTarget, setMoveTarget] = useState<{ id: string; name: string } | null>(null);
+  useEscapeKey(() => { setVersionsFor(null); setMoveFor(null); }, !!versionsFor || !!moveFor);
   const [versionTarget, setVersionTarget] = useState<AccItem | null>(null);
   const docBlobRef = useRef<string | null>(null);
   const uploadInput = useRef<HTMLInputElement>(null);
@@ -420,6 +424,7 @@ export function AccBrowser({
   const doMove = async (dest: string) => {
     const it = moveFor;
     setMoveFor(null);
+    setMoveTarget(null);
     if (!it) return;
     setBusy(true);
     try {
@@ -431,11 +436,15 @@ export function AccBrowser({
   };
   const openVersions = async (it: AccItem) => {
     setMenuFor(null);
-    setVersionsFor({ item: it, list: [] });
+    setVersionsFor({ item: it, list: [], loading: true });
     try {
       const list = await accItemVersions(accProject, it.id);
-      setVersionsFor({ item: it, list });
-    } catch (e) { setStatus(`버전 조회 실패: ${(e as Error).message}`); }
+      setVersionsFor(v => (v?.item.id === it.id ? { item: it, list, loading: false } : v));
+    } catch (e) {
+      const error = (e as Error).message;
+      setVersionsFor(v => (v?.item.id === it.id ? { item: it, list: [], loading: false, error } : v));
+      setStatus(`버전 조회 실패: ${error}`);
+    }
   };
 
   // ---- 선택 ----
@@ -620,7 +629,7 @@ export function AccBrowser({
                           {canEdit && <button onClick={() => startVersionUpload(it)}>새 버전 올리기</button>}
                           {canEdit && <button onClick={() => onDownload([it])}>다운로드</button>}
                           {canEdit && <button onClick={() => onRename(it)}>이름 변경</button>}
-                          {canEdit && <button onClick={() => { setMenuFor(null); setMoveFor(it); }}>이동</button>}
+                          {canEdit && <button onClick={() => { setMenuFor(null); setMoveTarget(null); setMoveFor(it); }}>이동</button>}
                           {canEdit && <button className="danger" onClick={() => onDelete([it])}>삭제</button>}
                         </div>
                       )}
@@ -652,7 +661,7 @@ export function AccBrowser({
       {/* 버전 이력 */}
       {versionsFor && (
         <div className="acc-modal-back" onClick={() => setVersionsFor(null)}>
-          <div className="acc-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="acc-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
             <div className="acc-modal-head">📑 버전 이력 — {versionsFor.item.name}<div className="spacer" />
               {canEdit && (
                 <button className="primary" disabled={progress != null || busy} onClick={() => startVersionUpload(versionsFor.item)}>＋ 새 버전 올리기</button>
@@ -660,7 +669,9 @@ export function AccBrowser({
               <button onClick={() => setVersionsFor(null)}>✕</button>
             </div>
             <ul className="acc-ver-list">
-              {versionsFor.list.length === 0 && <li className="muted">불러오는 중…</li>}
+              {versionsFor.loading && <li className="muted">불러오는 중…</li>}
+              {!versionsFor.loading && versionsFor.error && <li className="muted">버전 조회 실패: {versionsFor.error}</li>}
+              {!versionsFor.loading && !versionsFor.error && versionsFor.list.length === 0 && <li className="muted">버전 정보가 없습니다.</li>}
               {versionsFor.list.map((v) => (
                 <li key={v.id}>
                   <strong>v{v.versionNumber ?? '?'}</strong>
@@ -676,18 +687,26 @@ export function AccBrowser({
       {/* 이동 대상 선택 */}
       {moveFor && (
         <div className="acc-modal-back" onClick={() => setMoveFor(null)}>
-          <div className="acc-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="acc-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
             <div className="acc-modal-head">↦ 이동 — {moveFor.name}<div className="spacer" /><button onClick={() => setMoveFor(null)}>✕</button></div>
             <p className="muted" style={{ margin: '4px 0' }}>대상 폴더 선택 (ACC 환경에 따라 미지원일 수 있음)</p>
             <ul className="acc-move-list">
               {flattenFolders(roots).map((f) => (
                 <li key={f.id}>
-                  <button style={{ paddingLeft: 8 + f.depth * 14 }} disabled={f.id === selId} onClick={() => doMove(f.id)}>
+                  <button style={{ paddingLeft: 8 + f.depth * 14 }} disabled={f.id === selId}
+                    aria-pressed={moveTarget?.id === f.id} className={moveTarget?.id === f.id ? 'is-selected' : undefined}
+                    onClick={() => setMoveTarget({ id: f.id, name: f.name })}>
                     📁 {f.name}
                   </button>
                 </li>
               ))}
             </ul>
+            <div className="acc-move-foot">
+              <span className="muted">{moveTarget ? `대상: ${moveTarget.name}` : '대상 폴더를 선택하세요'}</span>
+              <div className="spacer" />
+              <button onClick={() => setMoveFor(null)}>취소</button>
+              <button className="primary" disabled={!moveTarget || busy} onClick={() => moveTarget && doMove(moveTarget.id)}>이동</button>
+            </div>
           </div>
         </div>
       )}

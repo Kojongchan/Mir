@@ -2842,6 +2842,16 @@ button.danger:hover:not(:disabled) {
   font-weight: 600;
   margin-bottom: 8px;
 }
+.acc-move-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.acc-move-list button.is-selected {
+  background: var(--accent-soft, rgba(37, 99, 235, 0.12));
+  font-weight: 600;
+}
 .acc-ver-list,
 .acc-move-list {
   list-style: none;

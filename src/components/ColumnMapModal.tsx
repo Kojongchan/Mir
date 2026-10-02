@@ -1,3 +1,4 @@
+import { useEscapeKey } from '../lib/useEscapeKey';
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { COLUMN_ROLES, type ColumnMap, type CsvDoc } from '../lib/schedule';
@@ -14,6 +15,7 @@ interface Props {
  * 비용·동기화 ID·개요)에 어떤 열을 쓸지 선택하게 한다.
  */
 export function ColumnMapModal({ doc, onConfirm, onCancel }: Props) {
+  useEscapeKey(onCancel);
   const [map, setMap] = useState<ColumnMap>(doc.guess);
 
   const setRole = (role: keyof ColumnMap, value: number) =>
@@ -24,7 +26,7 @@ export function ColumnMapModal({ doc, onConfirm, onCancel }: Props) {
 
   return createPortal(
     <div className="modal-backdrop" onClick={onCancel}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+      <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>CSV 가져오기 — 열 매핑</h3>
           <span className="muted">
