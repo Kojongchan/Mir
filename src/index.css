@@ -4487,6 +4487,70 @@ button.issue-block__h,
   color: var(--accent);
   font-weight: 600;
 }
+/* 파일 선택 창: 고정 크기(내용에 따라 크기 변동 없음) + 목록만 스크롤 + 제목줄 드래그 이동 */
+.acc-picker-back {
+  position: fixed;
+  z-index: 1000;
+}
+.acc-modal.acc-picker {
+  width: min(640px, 94vw);
+  height: min(600px, 84vh);
+  max-height: none;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.acc-picker-head {
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+.acc-picker-head button {
+  cursor: pointer;
+}
+.acc-picker-crumbs {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  white-space: nowrap;
+  min-height: 30px;
+  padding: 4px 2px;
+  scrollbar-width: thin;
+}
+.acc-picker-crumbs button[aria-current='page'] {
+  color: var(--text);
+  font-weight: 600;
+}
+.acc-picker-filter {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+}
+.acc-picker .acc-picker-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+.acc-picker-row:disabled {
+  cursor: default;
+}
+.acc-picker-row.is-disabled {
+  opacity: 0.45;
+}
+.acc-picker-status {
+  min-height: 18px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+@media (max-width: 640px) {
+  .acc-modal.acc-picker {
+    width: 100vw;
+    height: 86vh;
+  }
+}
 
 /* ---- 알림 종 (상단바) ---- */
 .notif {
