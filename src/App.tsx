@@ -2,6 +2,7 @@ import { lazy, Suspense, type ComponentType, type ReactElement } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { UiIconSprite } from './components/icons/UiIcon';
+import { DialogHost } from './components/DialogHost';
 // 셸/경량 페이지는 즉시 로드(첫 진입 지연 최소화).
 import { Login } from './pages/Login';
 import { ProjectSelect } from './pages/ProjectSelect';
@@ -70,6 +71,7 @@ export default function App() {
   return (
     <AuthProvider>
       <UiIconSprite />
+      <DialogHost />
       <BrowserRouter>
         <Suspense fallback={<RouteFallback />}>
         <Routes>

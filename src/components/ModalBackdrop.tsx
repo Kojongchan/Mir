@@ -1,5 +1,6 @@
 import { useRef, type ReactNode } from 'react';
 import { useEscapeKey } from '../lib/useEscapeKey';
+import { confirmDialog } from '../lib/dialogs';
 
 /**
  * Dialog backdrop: closes on Escape or a click that both starts and ends on the backdrop.
@@ -10,20 +11,25 @@ import { useEscapeKey } from '../lib/useEscapeKey';
  */
 export function ModalBackdrop({ onClose, confirmClose, className = 'modal-backdrop', children }: {
   onClose: () => void;
-  confirmClose?: () => boolean;
+  confirmClose?: () => boolean | Promise<boolean>;
   className?: string;
   children: ReactNode;
 }) {
   const pressed = useRef(false);
-  const dismiss = () => { if (!confirmClose || confirmClose()) onClose(); };
-  useEscapeKey(dismiss);
+  const asking = useRef(false);
+  const dismiss = async () => {
+    if (asking.current) return;
+    asking.current = true;
+    try { if (!confirmClose || await confirmClose()) onClose(); } finally { asking.current = false; }
+  };
+  useEscapeKey(() => void dismiss());
   return (
     <div className={className}
       onPointerDown={(e) => { pressed.current = e.target === e.currentTarget; }}
       onClick={(e) => {
         const fromBackdrop = pressed.current && e.target === e.currentTarget;
         pressed.current = false;
-        if (fromBackdrop) dismiss();
+        if (fromBackdrop) void dismiss();
       }}>
       {children}
     </div>
@@ -31,5 +37,5 @@ export function ModalBackdrop({ onClose, confirmClose, className = 'modal-backdr
 }
 
 /** confirmClose helper: ask only when there is unsaved input. */
-export const confirmDiscard = (dirty: boolean) => () =>
-  !dirty || window.confirm('작성 중인 내용이 저장되지 않았습니다. 닫을까요?');
+export const confirmDiscard = (dirty: boolean) => async () =>
+  !dirty || confirmDialog('작성 중인 내용이 저장되지 않았습니다. 닫을까요?', { confirmLabel: '닫기', danger: true });
