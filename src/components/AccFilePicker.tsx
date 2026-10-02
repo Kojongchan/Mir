@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { accFetch, uploadToAcc, isAccModel, type AccItem, type AccNamed } from '../lib/aps';
 import { recordAccUpload } from '../lib/cde';
 import { getProjectAcc } from '../lib/api';
+import { ModalBackdrop } from './ModalBackdrop';
 
 export interface PickedAccFile {
   accProjectId: string;
@@ -130,13 +131,6 @@ export function AccFilePicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
-  // Esc closes the window.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   // Keep the deepest breadcrumb visible.
   useEffect(() => {
     const el = crumbsRef.current;
@@ -212,7 +206,7 @@ export function AccFilePicker({
   const shownItems = useMemo(() => (q ? items.filter(it => it.name.toLowerCase().includes(q)) : items), [items, q]);
 
   return createPortal(
-    <div className="acc-modal-back acc-picker-back" onClick={onClose}>
+    <ModalBackdrop className="acc-modal-back acc-picker-back" onClose={onClose}>
       <div
         ref={boxRef}
         className="acc-modal acc-picker"
@@ -287,7 +281,7 @@ export function AccFilePicker({
 
         <div className="muted acc-picker-status" aria-live="polite">{status}</div>
       </div>
-    </div>,
+    </ModalBackdrop>,
     document.body,
   );
 }
