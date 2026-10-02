@@ -1,5 +1,6 @@
 import { lazy, Suspense, type ComponentType, type ReactElement } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { UiIconSprite } from './components/icons/UiIcon';
 // 셸/경량 페이지는 즉시 로드(첫 진입 지연 최소화).
@@ -64,11 +65,18 @@ function AdminOnly({ children }: { children: ReactElement }) {
   return children;
 }
 
+/** App-wide boundary that clears itself when the route changes. */
+function RouteBoundary({ children }: { children: ReactElement }) {
+  const { pathname } = useLocation();
+  return <ErrorBoundary resetKey={pathname}>{children}</ErrorBoundary>;
+}
+
 export default function App() {
   return (
     <AuthProvider>
       <UiIconSprite />
       <BrowserRouter>
+        <RouteBoundary>
         <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/login" element={<Login />} />
@@ -136,6 +144,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         </Suspense>
+        </RouteBoundary>
       </BrowserRouter>
     </AuthProvider>
   );

@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Outlet, useNavigate, useParams } from 'react-router-dom';
+import { Suspense, useEffect, useState } from 'react';
+import { Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import { BrandLogo } from '../components/BrandLogo';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { ProjectNav } from '../components/ProjectNav';
@@ -21,6 +22,7 @@ const RAIL_KEY = 'mir.sidebar.collapsed';
  */
 export function ProjectShell() {
   const { projectId = '' } = useParams();
+  const { pathname } = useLocation();
   const navigate = useNavigate();
   const [project, setProject] = useState<Project | null>(null);
   const [collapsed, setCollapsed] = useState<boolean>(
@@ -75,7 +77,12 @@ export function ProjectShell() {
       <div className="portal-body" data-sidebar={collapsed ? 'collapsed' : 'expanded'}>
         <ProjectNav />
         <main className="portal-main">
-          <Outlet context={{ project }} />
+          {/* A failing or still-loading module keeps the shell (menu, header) usable. */}
+          <ErrorBoundary resetKey={pathname} compact>
+            <Suspense fallback={<div className="route-loading" aria-busy="true"><div className="skeleton skeleton--block" style={{ height: 40, maxWidth: 320 }} /></div>}>
+              <Outlet context={{ project }} />
+            </Suspense>
+          </ErrorBoundary>
         </main>
       </div>
 
