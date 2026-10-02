@@ -1,5 +1,5 @@
 import { motionPairMatches, canUseOverview, needsDetail } from '../viewer/MotionTile';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { Viewer, GLTFLoaderPlugin, XKTLoaderPlugin, NavCubePlugin } from '@xeokit/xeokit-sdk';
 import * as XeokitSDK from '@xeokit/xeokit-sdk';
@@ -22,6 +22,7 @@ import { keepViewerPresent } from '../viewer/ViewerPresence';
 import { rankTileRegion, regionNeedsRefresh, safeDollyFactor } from '../viewer/TileRegion';
 import { inTileView, prioritizeTileView, prioritizeCameraView, viewPlanes } from '../viewer/TileView';
 import { ByteCache } from '../viewer/ByteCache';
+import { useEscapeKey } from '../lib/useEscapeKey';
 
 /** 변환기가 구운 카메라 초점 박스(회전 전 실좌표). 이상치 제외한 중심/반경. */
 type Focus = { center: [number, number, number]; half: [number, number, number] };
@@ -170,6 +171,7 @@ export function ThreeDTest() {
   const [dragOver, setDragOver] = useState(false);
   const [bgDark, setBgDark] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const glbInputRef = useRef<HTMLInputElement>(null);
   const [lastFile, setLastFile] = useState<PickedAccFile | null>(null);
   const [initializationError, setInitializationError] = useState(false);
 
@@ -1443,13 +1445,13 @@ export function ThreeDTest() {
         <UiIcon name="cube" size={16} />
         <span>
           <strong>3D뷰 (신규 테스트)</strong> — 엔진 <strong>xeokit</strong>(더블프리시전).
-          <strong>ACC 모델(rvt·nwd·dwg·ifc)</strong>을 선택하면 검증된 변환 파이프라인이 GLB로 변환
-          (캐시)해 로드합니다. 첫 변환만 대기, 이후 모든 사용자는 즉시.
+          <strong>ACC 모델(rvt·nwd·dwg·ifc)</strong>을 선택하면 서버에서 타일로 변환(캐시)해
+          화면에 보이는 곳부터 스트리밍합니다. 첫 변환만 대기, 이후 모든 사용자는 즉시.
         </span>
       </div>
 
       <div className="threed-test__viewer">
-        <div className="viewer-bar">
+        <div className="viewer-bar threed-test__bar">
           <button className="btn btn--sm btn--primary" onClick={() => setPickerOpen(true)} disabled={busy}>
             <UiIcon name="folder" size={14} /> ACC에서 열기
           </button>
@@ -1477,61 +1479,66 @@ export function ThreeDTest() {
           >
             배경 {bgDark ? '밝게' : '어둡게'}
           </button>
-          <button
-            className="btn btn--sm"
-            onClick={() => lastFile && void openFromAcc(lastFile, true)}
-            disabled={busy || !lastFile}
-            title="기존 모델을 유지하며 변환 요청(운영 설정에서 활성화된 경우만)"
-          >
-            재변환
-          </button>
-          <label className="btn btn--sm threed-test__open" title="이미 변환된 .glb 눈확인">
-            .glb
-            <input type="file" accept=".glb,.gltf" onChange={onLocalInput} hidden />
-          </label>
-          {regionMode && <button className="btn btn--sm" disabled={coverageMode !== 'bounded'} onClick={() => refreshRegionRef.current?.()} title="구간 이동 시 자동 갱신됩니다. 누르면 현재 위치에서 즉시 다시 선택합니다.">현재 위치 불러오기</button>}
           {regionMode && <>
-            {coverageMode === 'bounded'
-              ? <button className="btn btn--sm" title="현재 위치의 후보 파일을 화면 우선순위로 순차 로드합니다. 메모리 상한을 넘으면 화면 밖·먼 타일부터 내립니다." onClick={() => coverageActionRef.current?.('complete')}>현재 구간 전체 로드</button>
-              : <>
-                <span className="muted">구간 고정 · 메모리 상한 적용</span>
-                <button className="btn btn--sm" onClick={() => coverageActionRef.current?.(coverageMode === 'paused' ? 'complete' : 'paused')}>{coverageMode === 'paused' ? '구간 로딩 계속' : '구간 로딩 중지'}</button>
-                <button className="btn btn--sm" onClick={() => coverageActionRef.current?.('bounded')}>기본 보기 복귀</button>
-              </>}
-            <button className="btn btn--sm" disabled={sampleBusy} title="부재를 클릭한 뒤 누르면 가까운 구조물 파일 하나(최대 32MiB)와 진단 정보를 ZIP으로 저장합니다. 기존 파일을 다시 다운로드합니다." onClick={() => void sampleExportRef.current?.()}>{sampleBusy ? '검증 파일 준비 중' : '검증 구간 저장'}</button>
             <button className="btn btn--sm" onClick={() => structureFitRef.current?.()}>구조물 맞춤</button>
-            <button className={`btn btn--sm${lightTint ? ' btn--primary' : ''}`} title="경량(이동·원경용) 타일을 주황색으로 표시해 원본 타일과 구분합니다. 확인용입니다."
-              onClick={() => { const on = !lightTint; setLightTint(on); lightTintOnRef.current = on; lightTintRef.current?.(on); }}>경량 표시</button>
             <button className="btn btn--sm" onClick={() => {
               const hidden = !terrainHidden;
               setTerrainHidden(hidden);
               const models = viewerRef.current?.scene.models ?? {};
               for (const [id, model] of Object.entries(models)) if (/^base\d+$/.test(id)) model.visible = !hidden;
             }}>{terrainHidden ? '지형 표시' : '지형 숨김'}</button>
+            {coverageMode !== 'bounded' && <>
+              <span className="threed-test__chip" title="현재 구간 파일을 메모리 상한 안에서 계속 로드하는 모드입니다.">
+                구간 고정{coverageMode === 'paused' ? ' · 일시정지' : ''}
+              </span>
+              <button className="btn btn--sm" onClick={() => coverageActionRef.current?.('bounded')}>기본 보기 복귀</button>
+            </>}
           </>}
-          <button className="btn btn--sm" disabled={!modelName} onClick={() => {
-            const report = reportRef.current?.();
-            if (!report) return;
-            const url = URL.createObjectURL(new Blob([JSON.stringify({ ...report as object, streaming: dbg }, null, 2)], { type: 'application/json' }));
-            const a = document.createElement('a'); a.href = url; a.download = 'viewer-diagnostics.json'; a.click();
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
-          }}>진단 저장</button>
+          {/* Diagnostics and admin tools stay one click away instead of crowding the view controls. */}
+          <ToolMenu label="진단 도구">
+            <div className="report-menu__title">모델</div>
+            <MenuItem label="재변환" desc="기존 모델을 유지하며 변환 요청(운영 설정에서 활성화된 경우만)"
+              disabled={busy || !lastFile} onClick={() => lastFile && void openFromAcc(lastFile, true)} />
+            <MenuItem label=".glb 파일 열기" desc="이미 변환된 .glb 를 눈으로 확인" onClick={() => glbInputRef.current?.click()} />
+            <MenuItem label="진단 저장" desc="viewer-diagnostics.json 다운로드" disabled={!modelName} onClick={() => {
+              const report = reportRef.current?.();
+              if (!report) return;
+              const url = URL.createObjectURL(new Blob([JSON.stringify({ ...report as object, streaming: dbg }, null, 2)], { type: 'application/json' }));
+              const a = document.createElement('a'); a.href = url; a.download = 'viewer-diagnostics.json'; a.click();
+              setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }} />
+            {regionMode && <>
+              <div className="report-menu__title">구간 로딩</div>
+              <MenuItem label="현재 위치 불러오기" desc="구간 이동 시 자동 갱신됩니다. 누르면 현재 위치에서 즉시 다시 선택합니다."
+                disabled={coverageMode !== 'bounded'} onClick={() => refreshRegionRef.current?.()} />
+              {coverageMode === 'bounded'
+                ? <MenuItem label="현재 구간 전체 로드" desc="후보 파일을 화면 우선순위로 순차 로드 · 메모리 상한을 넘으면 화면 밖·먼 타일부터 내림"
+                    onClick={() => coverageActionRef.current?.('complete')} />
+                : <MenuItem label={coverageMode === 'paused' ? '구간 로딩 계속' : '구간 로딩 중지'}
+                    onClick={() => coverageActionRef.current?.(coverageMode === 'paused' ? 'complete' : 'paused')} />}
+              <MenuItem label={lightTint ? '경량 표시 끄기' : '경량 표시'} desc="경량(이동·원경용) 타일을 주황색으로 표시해 원본과 구분"
+                onClick={() => { const on = !lightTint; setLightTint(on); lightTintOnRef.current = on; lightTintRef.current?.(on); }} />
+              <MenuItem label={sampleBusy ? '검증 파일 준비 중' : '검증 구간 저장'} desc="부재를 클릭한 뒤 누르면 가까운 구조물 파일 하나(최대 32MiB)와 진단 정보를 ZIP으로 저장"
+                disabled={sampleBusy} onClick={() => void sampleExportRef.current?.()} />
+            </>}
+            {canManage && <>
+              <div className="report-menu__title">관리자</div>
+              <MenuItem label={inventoryBusy ? '저장소 점검 중' : '저장소 용량 점검'} disabled={inventoryBusy} onClick={() => void downloadStorageInventory()} />
+              <MenuItem label={storageBusy ? '저장소 압축 중' : '저장소 압축 실행'} desc="활성 XKT를 원본과 동일한 내용으로 압축해 같은 위치에 교체"
+                disabled={storageBusy} onClick={() => void startStorageCompaction()} />
+              <MenuItem label="경량 파일 생성" disabled={!lastFile?.accUrn || motionJobBusy} onClick={() => void startMotionCache()} />
+              <MenuItem label="경량 생성 상태 확인" onClick={() => void checkMotionCache()} />
+            </>}
+          </ToolMenu>
+          <input ref={glbInputRef} type="file" accept=".glb,.gltf" onChange={onLocalInput} hidden />
           <div className="spacer" />
-          {modelName && !busy && <span className="muted">{modelName}</span>}
-          {status && <span className="muted">{status}</span>}
+          {modelName && !busy && <span className="muted" title={modelName}>{modelName}</span>}
+          {status && <span className="muted" title={status}>{status}</span>}
         </div>
 
-        {canManage && <div style={{ display: 'flex', gap: 8, padding: '4px 12px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <button className="btn btn--sm" disabled={inventoryBusy} onClick={() => void downloadStorageInventory()}>
-            {inventoryBusy ? '저장소 점검 중' : '저장소 용량 점검'}
-          </button>
-          <button className="btn btn--sm btn--primary" disabled={storageBusy} onClick={() => void startStorageCompaction()} title="활성 XKT를 원본과 동일한 내용으로 압축하여 같은 위치에 교체합니다. 완료 후 사용량을 다시 확인합니다.">
-            {storageBusy ? '저장소 압축 중' : '저장소 압축 실행'}
-          </button>
-          <button className="btn btn--sm" disabled={!lastFile?.accUrn || motionJobBusy} onClick={() => void startMotionCache()}>경량 파일 생성</button>
-          <button className="btn btn--sm" onClick={() => void checkMotionCache()}>경량 생성 상태 확인</button>
-          {motionJob && <span role="status" style={{ fontSize: 12 }}>{motionJob}</span>}
-          {storageNotice && <span role="status" style={{ fontSize: 12 }}>{storageNotice}</span>}
+        {(motionJob || storageNotice) && <div className="threed-test__notices" role="status">
+          {motionJob && <span>{motionJob}</span>}
+          {storageNotice && <span>{storageNotice}</span>}
         </div>}
         <div
           className={`threed-test__viewport${dragOver ? ' is-dragover' : ''}`}
@@ -1653,3 +1660,38 @@ export function ThreeDTest() {
 }
 
 export default ThreeDTest;
+
+/** Toolbar dropdown: closes on an item click, an outside press or Escape. */
+function ToolMenu({ label, children }: { label: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEscapeKey(() => setOpen(false), open);
+  useEffect(() => {
+    if (!open) return;
+    const down = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('pointerdown', down);
+    return () => document.removeEventListener('pointerdown', down);
+  }, [open]);
+  return (
+    <div className="report-menu" ref={root}>
+      <button className={`btn btn--sm${open ? ' btn--primary' : ''}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        {label} ▾
+      </button>
+      {open && (
+        <div className="report-menu__pop threed-test__menu" role="menu"
+          onClick={(e) => { if ((e.target as HTMLElement).closest('button')) setOpen(false); }}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MenuItem({ label, desc, disabled, onClick }: { label: string; desc?: string; disabled?: boolean; onClick: () => void }) {
+  return (
+    <button type="button" role="menuitem" className="report-menu__item" disabled={disabled} onClick={onClick}>
+      <span>{label}</span>
+      {desc && <span className="muted">{desc}</span>}
+    </button>
+  );
+}

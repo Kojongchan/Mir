@@ -3238,11 +3238,55 @@ button.danger:hover:not(:disabled) {
   display: flex;
   flex-direction: column;
 }
-.threed-test__open {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  cursor: pointer;
+.threed-test__bar {
+  flex-wrap: wrap;
+  row-gap: 6px;
+  gap: 8px;
+}
+.threed-test__bar .muted {
+  min-width: 0;
+  max-width: 40%;
+}
+.threed-test__menu {
+  min-width: 300px;
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+}
+.threed-test__bar .threed-test__menu .muted {
+  max-width: none;
+  white-space: normal;
+  overflow: visible;
+}
+.threed-test__menu .report-menu__title:not(:first-child) {
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.report-menu__item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.report-menu__item:disabled:hover,
+.report-menu__item:disabled:hover .muted {
+  background: transparent;
+  color: inherit;
+}
+.threed-test__chip {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-warning) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 55%, transparent);
+  white-space: nowrap;
+}
+.threed-test__notices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 4px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
 }
 .threed-test__viewport {
   position: relative;
