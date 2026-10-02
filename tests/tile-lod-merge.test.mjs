@@ -80,3 +80,11 @@ test('identical texture sets collapse so textured meshes share one draw layer', 
   assert.deepEqual([...arr(after[10], Int32Array)], [0, -1, -1, -1, -1]);
   assert.deepEqual([...arr(after[23], Int32Array)], [0, 0, -1]);
 });
+
+test('far simplifies whole meshes: a dense plane collapses to a handful of triangles, every mesh keeps geometry', async () => {
+  const r = await buildMergedLod(fixture(), 'far');
+  // Plane 800 → its 2% target (16); the two 1 m cubes stay whole (12 each).
+  assert.ok(r.triangles <= 16 + 2 * 12, `triangles ${r.triangles}`);
+  const after = tables(r.bytes), ip = arr(after[19], Uint32Array), indices = arr(after[8], Uint32Array);
+  for (let m = 0; m < ip.length; m++) assert.ok((m + 1 < ip.length ? ip[m + 1] : indices.length) - ip[m] >= 3);
+});

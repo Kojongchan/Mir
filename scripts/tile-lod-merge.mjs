@@ -19,10 +19,12 @@ export const LOD_PROFILES = {
   // Light: near-identical shape for mid-range and motion (same limits as the motion pairs).
   light: { policy: 'merged-light-v2', ratio: 0.2, relativeError: 0.001, minIslandMeters: 0, lockBorder: true },
   // Far: always-resident whole-site level, so the whole site must stay near a GPU-friendly triangle count.
-  // v2 (1% error, borders locked, 0.25 m parts) kept ~1/3 of detail triangles — far too heavy. v3 frees
-  // open borders and allows 3% of a part's own size; parts under 1 m are dropped (a mesh always keeps its
-  // largest island). Only shown beyond the light/detail ring.
-  far: { policy: 'merged-far-v3', ratio: 0.03, relativeError: 0.03, minIslandMeters: 1, lockBorder: false },
+  // Per-island simplification (v2/v3) kept 25–50% of triangles: thousands of small separate parts
+  // (<32 triangles each) cannot be simplified one by one. v4 simplifies each whole mesh with an absolute
+  // error in metres and Prune (meshoptimizer ≥0.21), so parts smaller than the error disappear and the rest
+  // collapse together. 0.25 m ≈ one pixel at ~500 m on a 1920 px, 60° view; light/detail replace it nearer.
+  // A mesh always keeps at least its largest island.
+  far: { policy: 'merged-far-v4', mode: 'mesh', ratio: 0.02, errorMeters: 0.25, relativeError: 0.03, minIslandMeters: 1, lockBorder: false },
 };
 
 const SLOTS = 29, HEAD = 4 + SLOTS * 8;
@@ -113,6 +115,20 @@ async function simplifyIslands(pos, indices, profile) {
   return out;
 }
 
+/** Whole-mesh simplification with an absolute error (metres) and pruning of sub-error parts.
+ * Returns null when unavailable or when everything would be pruned (caller keeps the largest island). */
+function simplifyWholeMesh(pos, indices, profile) {
+  if (typeof MeshoptSimplifier.simplifyPrune !== 'function' || indices.length < 3) return null;
+  const b = [Infinity, Infinity, Infinity];
+  for (let i = 0; i < pos.length; i++) b[i % 3] = Math.min(b[i % 3], pos[i]);
+  const local = Float32Array.from(pos, (v, i) => v - b[i % 3]); // localize: survey coordinates lose float precision
+  const target = Math.max(3, Math.floor(indices.length * profile.ratio / 3) * 3);
+  try {
+    const [result] = MeshoptSimplifier.simplify(Uint32Array.from(indices), local, 3, target, profile.errorMeters, ['ErrorAbsolute', 'Prune']);
+    return result.length >= 3 && result.length % 3 === 0 ? Array.from(result) : null;
+  } catch { return null; }
+}
+
 /**
  * @param {Buffer|Uint8Array} input decoded (not gzip) XKT v12
  * @param {'light'|'far'} profileName
@@ -194,7 +210,9 @@ export async function buildMergedLod(input, profileName) {
       if (next === undefined) { next = reps.length; keys.set(key, next); reps.push(v); wp.push(mesh.world[v * 3], mesh.world[v * 3 + 1], mesh.world[v * 3 + 2]); }
       remap[v] = next;
     }
-    const chosen = await simplifyIslands(wp, Array.from(mesh.tri, v => remap[v]), profile);
+    const welded = Array.from(mesh.tri, v => remap[v]);
+    const chosen = profile.mode === 'mesh' ? simplifyWholeMesh(wp, welded, profile) ?? await simplifyIslands(wp, welded, profile)
+      : await simplifyIslands(wp, welded, profile);
     // Compact to the referenced source vertices (first occurrence of each welded vertex).
     const map = new Map(), world = [], uv = [];
     const tri = Uint32Array.from(chosen, w => {
