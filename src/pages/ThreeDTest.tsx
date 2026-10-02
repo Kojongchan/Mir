@@ -78,10 +78,12 @@ function dollyToward(viewer: Viewer, target: number[], factor: number): void {
 const LIGHT_TINT = [1, 0.55, 0.15];
 const FAR_TINT = [0.6, 0.4, 1];
 /** Whole-site (far) level budget, separate from the near-camera structure cap. */
-const FAR_BUDGET = 640 * 1048576;
+const FAR_BUDGET = 384 * 1048576; // far v4 ≈ 140MB stored for 1,073 tiles; headroom for larger models
 /** Downloaded-file LRU (encoded bytes, JS heap) for revisits; on top of the structure cap. */
 const TILE_BYTE_CACHE = 128 * 1048576;
-const STRUCTURE_LIMITS = { maxTiles: 120, maxEncodedBytes: 640 * 1048576, concurrency: 4 };
+// maxTiles was 120 while light files kept ~40 draw layers each; merged light files have 2–6, so the
+// byte cap (not the count) bounds the near-camera set again.
+const STRUCTURE_LIMITS = { maxTiles: 300, maxEncodedBytes: 640 * 1048576, concurrency: 4 };
 
 function flyToFramed(viewer: Viewer, box: number[]): void {
   const dx = box[3] - box[0], dy = box[4] - box[1], dz = box[5] - box[2];
