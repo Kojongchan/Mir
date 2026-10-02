@@ -2,6 +2,29 @@
 
 > 매 세션 종료 시 이 파일을 갱신하세요. 새 세션은 여기부터 읽습니다.
 
+
+## 2026-10-02 — 플랫폼 보안·안정성 점검 (`feature/platform-hardening`, main 기준)
+사용자: "플랫폼 전반 개선 전부 승인". 3D 스트리밍(`feature/3d-streaming-stability`)과 분리해 main에서 분기.
+- **의존성**: react-router-dom 7.18.4(오픈 리다이렉트·XSS 권고), @xmldom/xmldom 패치(audit fix).
+  xlsx 0.18.5는 npm에 패치 없음(패치본은 cdn.sheetjs.com, 네트워크 차단) → **엑셀 해석을 Web Worker로 격리**
+  (20초 타임아웃·문자열만 반환·미리보기 5,000행×200열 상한). 헤드리스 Chromium으로 빌드 워커 동작 확인.
+- **API 인증 fail-closed**: aps-acc/aps-file/aps-token/aps-derivative-info/aps-upload/aps-item 이 Supabase env
+  미설정 시 로그인 검사를 **건너뛰던** 구조 → 503 거부.
+- **ACC 쓰기 범위**(`api/_accAuth.ts`): 업로드·이름변경·삭제·이동이 실무자 역할만 보고 대상 ACC 프로젝트를
+  검사하지 않아 A 프로젝트 실무자가 B 프로젝트 ACC 폴더에 쓸 수 있었음 → 비시스템관리자는
+  `projects.acc_project_id`(해당 MIR 프로젝트 고정 ACC)만.
+- **ACC 읽기 범위**: 폴더 탐색·서명 다운로드가 로그인만 확인 → 비시스템관리자는 본인 멤버 프로젝트에 고정된
+  ACC 프로젝트만. 허브/프로젝트 목록도 같은 범위로 필터(고정 이름 표시는 유지).
+- **APS 뷰어 토큰**: 모든 로그인 브라우저에 `data:read viewables:read` 발급 → data:read 로 앱이 보는 모든 ACC 원본
+  목록·다운로드 가능(뷰어 다운로드 금지 D20 우회). 실 APS 검증 불가해 기본값 유지, **`APS_VIEWER_SCOPE=viewables:read`**
+  환경변수로 축소 가능하게 함 → 미리보기 배포에서 ACC 모델 열림 확인 후 운영 적용 권장(미해결).
+- **보안 헤더**(vercel.json): nosniff, Referrer-Policy, X-Frame-Options SAMEORIGIN, Permissions-Policy.
+- **에러 바운더리**: 없었음(렌더 오류·배포 후 옛 청크 → 흰 화면). 앱 전체 + 프로젝트 셸 Outlet 에 추가,
+  옛 청크면 1회 자동 새로고침(1분 1회 제한), 메뉴 이동 시 복구. 셸 내부 지연 로드도 셸 유지(Suspense).
+- **CI**: `npm test`(node --test tests/*.test.mjs) 추가·CI 단계 연결. 테스트: ACC 인가 6, 청크 판별 1 등.
+- 점검 결과 양호: 34개 테이블 전부 RLS, `using(true)` 없음, SECURITY DEFINER 함수 search_path 고정.
+미해결: 2-legged 뷰어 토큰은 앱 전체 권한이라 URN 을 아는 다른 프로젝트 모델 열람 자체는 서버 프록시 없이는 못 막음.
+
 ---
 ## 📋 F2 — 협업·이슈 고도화(타입 분화·3뷰·뷰포인트·출력·현장등록) (2026-07-10)
 > branch `claude/issue-collaboration-upgrade-o4uzc0`. typecheck·build 통과.
