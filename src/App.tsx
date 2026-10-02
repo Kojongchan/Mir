@@ -52,8 +52,8 @@ function Protected({ children }: { children: ReactElement }) {
 }
 
 function AdminOnly({ children }: { children: ReactElement }) {
-  const { session, profile, loading } = useAuth();
-  if (loading || (session && !profile)) {
+  const { session, profile, loading, profileLoading } = useAuth();
+  if (loading || (session && !profile && profileLoading)) {
     return (
       <div className="auth-screen">
         <p className="muted">권한 확인 중…</p>

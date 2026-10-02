@@ -13,6 +13,8 @@ interface AuthContextValue {
   session: Session | null;
   profile: Profile | null;
   loading: boolean;
+  /** True while the signed-in user's profile is being fetched (false once it loaded or failed). */
+  profileLoading: boolean;
   signIn: (username: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
@@ -22,7 +24,13 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
+  // User id whose profile fetch has finished (successfully or not).
+  const [profileFor, setProfileFor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Token refreshes replace the session object hourly; refetch the profile only when the user changes.
+  const userId = session?.user.id ?? null;
+  // Derived, so the first render after sign-in already counts as loading (no redirect race).
+  const profileLoading = !!userId && profileFor !== userId;
 
   useEffect(() => {
     // Without real keys the client points at a placeholder host; skip the
@@ -42,20 +50,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!session) {
+    if (!userId) {
       setProfile(null);
+      setProfileFor(null);
       return;
     }
+    let cancelled = false;
     supabase
       .from('profiles')
       .select('id, username, full_name, is_admin')
-      .eq('id', session.user.id)
-      .single()
+      .eq('id', userId)
+      .maybeSingle()
       .then(
-        ({ data }) => setProfile((data as Profile) ?? null),
-        () => setProfile(null),
-      );
-  }, [session]);
+        ({ data }) => { if (!cancelled) setProfile((data as Profile) ?? null); },
+        () => { if (!cancelled) setProfile(null); },
+      )
+      // A failed or missing profile must end the wait (admin routes previously spun forever).
+      .then(() => { if (!cancelled) setProfileFor(userId); });
+    return () => { cancelled = true; };
+  }, [userId]);
 
   const signIn = async (username: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({
@@ -70,7 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ session, profile, loading, signIn, signOut }}>
+    <AuthContext.Provider value={{ session, profile, loading, profileLoading, signIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );
