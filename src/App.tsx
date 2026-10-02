@@ -8,7 +8,6 @@ import { DialogHost } from './components/DialogHost';
 import { Login } from './pages/Login';
 import { ProjectSelect } from './pages/ProjectSelect';
 import { ProjectShell } from './pages/ProjectShell';
-import { Dashboard } from './pages/Dashboard';
 import { Schedule } from './pages/Schedule';
 import { DailyLogs } from './pages/DailyLogs';
 import { Issues } from './pages/Issues';
@@ -21,6 +20,8 @@ import { ProjectMembers } from './pages/ProjectMembers';
 // 페이지는 지연 로드해 초기 번들에서 분리한다. named export → default 로 감싼다.
 const named = <T extends string>(p: Promise<Record<T, ComponentType<any>>>, key: T) =>
   p.then((m) => ({ default: m[key] }));
+// 사업개요는 차트(recharts ≈360KB)를 안고 있어 로그인·프로젝트 선택 화면 번들에서 분리.
+const Dashboard = lazy(() => named(import('./pages/Dashboard'), 'Dashboard'));
 const DocumentManager = lazy(() => named(import('./pages/DocumentManager'), 'DocumentManager'));
 const Drawings = lazy(() => named(import('./pages/Drawings'), 'Drawings'));
 const Quantities = lazy(() => named(import('./pages/Quantities'), 'Quantities'));

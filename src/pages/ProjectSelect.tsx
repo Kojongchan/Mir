@@ -20,6 +20,10 @@ export function ProjectSelect() {
       .then(setProjects)
       .catch((e) => setError((e as Error).message))
       .finally(() => setLoading(false));
+    // The next screen is the project dashboard (lazy, with charts): fetch it while the user picks.
+    const prefetch = () => void import('./Dashboard');
+    const w = window as Window & { requestIdleCallback?: (cb: () => void) => number };
+    if (w.requestIdleCallback) w.requestIdleCallback(prefetch); else setTimeout(prefetch, 1500);
   }, []);
 
   return (

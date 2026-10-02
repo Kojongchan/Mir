@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { accFileBlobUrl, accFileRedirectUrl, accFileSignedUrl, isAccModel } from '../lib/aps';
 import { viewerKindFor, type ViewerKind, type FileRecord } from '../lib/files';
@@ -8,9 +8,13 @@ import { VideoViewer } from './viewers/VideoViewer';
 import { AudioViewer } from './viewers/AudioViewer';
 import { TextViewer } from './viewers/TextViewer';
 import { DownloadFallback } from './viewers/DownloadFallback';
-import { PdfViewer } from './viewers/PdfViewer';
-import { SheetViewer } from './viewers/SheetViewer';
-import { OfficeViewer } from './viewers/OfficeViewer';
+import { useEscapeKey } from '../lib/useEscapeKey';
+
+// Heavy viewers load on demand: the issues page imports this preview, and a static pdfjs import
+// put 350 KB of PDF code into the first page load of the whole app (login included).
+const PdfViewer = lazy(() => import('./viewers/PdfViewer').then((m) => ({ default: m.PdfViewer })));
+const SheetViewer = lazy(() => import('./viewers/SheetViewer').then((m) => ({ default: m.SheetViewer })));
+const OfficeViewer = lazy(() => import('./viewers/OfficeViewer').then((m) => ({ default: m.OfficeViewer })));
 
 const fakeFile = (name: string) => ({ name, size_bytes: null, mime_type: null }) as unknown as FileRecord;
 
@@ -75,6 +79,8 @@ export function AccFilePreview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accProject, itemId]);
 
+  useEscapeKey(onClose);
+
   const renderDoc = () => {
     if (!view) return null;
     const f = fakeFile(name);
@@ -107,7 +113,7 @@ export function AccFilePreview({
         ) : status ? (
           <div className="muted" style={{ padding: 24 }}>{status}</div>
         ) : (
-          renderDoc()
+          <Suspense fallback={<div className="muted" style={{ padding: 24 }}>뷰어 불러오는 중…</div>}>{renderDoc()}</Suspense>
         )}
       </div>
     </div>,
