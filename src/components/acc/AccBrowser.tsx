@@ -31,6 +31,7 @@ import { PdfViewer } from '../viewers/PdfViewer';
 import { SheetViewer } from '../viewers/SheetViewer';
 import { OfficeViewer } from '../viewers/OfficeViewer';
 import { ModalBackdrop } from '../ModalBackdrop';
+import { useEscapeKey } from '../../lib/useEscapeKey';
 import { confirmDialog, promptDialog } from '../../lib/dialogs';
 
 const fakeFile = (name: string) => ({ name, size_bytes: null, mime_type: null }) as unknown as FileRecord;
@@ -137,6 +138,7 @@ export function AccBrowser({
     }
     setDocView(null);
   };
+  useEscapeKey(clearDoc, !!docView);
 
   useEffect(() => {
     let cancelled = false;
