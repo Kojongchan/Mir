@@ -63,7 +63,9 @@ export default async function handler(req: Request): Promise<Response> {
   if (!APS_CLIENT_ID || !APS_CLIENT_SECRET) return json({ error: 'APS 환경변수 미설정' }, 500);
 
   // 로그인한 MIR 사용자만.
-  if (SUPABASE_URL && SERVICE_ROLE) {
+  // Fail closed: a missing Supabase configuration must not skip the login check.
+  if (!SUPABASE_URL || !SERVICE_ROLE) return json({ error: '서버 인증 설정이 없어 요청을 거부했습니다.' }, 503);
+  {
     const bearer = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
     if (!bearer) return json({ error: 'missing bearer token' }, 401);
     const supa = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });

@@ -40,7 +40,9 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   // 로그인한 MIR SMART 사용자만 토큰을 받을 수 있게 게이트(앱이 접근을 브로커).
-  if (SUPABASE_URL && SERVICE_ROLE) {
+  // Fail closed: a missing Supabase configuration must not skip the login check.
+  if (!SUPABASE_URL || !SERVICE_ROLE) return json({ error: '서버 인증 설정이 없어 요청을 거부했습니다.' }, 503);
+  {
     const bearer = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
     if (!bearer) return json({ error: 'missing bearer token' }, 401);
     const supa = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });

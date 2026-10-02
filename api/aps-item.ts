@@ -15,14 +15,12 @@
 //
 // Required env: APS_CLIENT_ID / APS_CLIENT_SECRET + SUPABASE_URL / SERVICE_ROLE.
 // =====================================================================
-import { createClient } from '@supabase/supabase-js';
+import { authorizeAccWrite } from './_accAuth';
 
 export const config = { runtime: 'edge' };
 
 const APS_CLIENT_ID = process.env.APS_CLIENT_ID;
 const APS_CLIENT_SECRET = process.env.APS_CLIENT_SECRET;
-const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
-const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const APS = 'https://developer.api.autodesk.com';
 
 const VND = { 'content-type': 'application/vnd.api+json', accept: 'application/vnd.api+json' };
@@ -65,25 +63,8 @@ export default async function handler(req: Request): Promise<Response> {
   if (!project || !item) return json({ error: 'project/item 필요' }, 400);
 
   // 로그인 + 실무자(editor) 이상(RBAC, 0023).
-  if (SUPABASE_URL && SERVICE_ROLE) {
-    const bearer = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
-    if (!bearer) return json({ error: 'missing bearer token' }, 401);
-    const supa = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
-    const { data, error } = await supa.auth.getUser(bearer);
-    if (error || !data?.user) return json({ error: 'invalid session' }, 401);
-    const { data: prof } = await supa.from('profiles').select('is_admin').eq('id', data.user.id).single();
-    let allowed = !!prof?.is_admin;
-    if (!allowed && mirProject) {
-      const { data: mem } = await supa
-        .from('project_members')
-        .select('role')
-        .eq('project_id', mirProject)
-        .eq('user_id', data.user.id)
-        .maybeSingle();
-      allowed = mem?.role === 'editor' || mem?.role === 'admin';
-    }
-    if (!allowed) return json({ error: '권한이 없습니다(실무자 이상).' }, 403);
-  }
+  const auth = await authorizeAccWrite(req, mirProject, project);
+  if (!auth.ok) return json({ error: auth.error }, auth.status);
 
   try {
     const token = await mintToken();
