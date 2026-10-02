@@ -1,4 +1,4 @@
-import { useEscapeKey } from '../lib/useEscapeKey';
+import { ModalBackdrop } from './ModalBackdrop';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { IfcViewer, ElementMeta } from '../viewer/IfcViewer';
 import {
@@ -772,10 +772,9 @@ function ClashIssueModal({
   }, []);
 
   const toggle = (i: number) => setPicked((p) => p.map((v, j) => (j === i ? !v : v)));
-  useEscapeKey(onCancel);
 
   return (
-    <div className="modal-backdrop" onClick={onCancel}>
+    <ModalBackdrop onClose={onCancel}>
       <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>간섭 → 이슈 생성</h3>
@@ -856,7 +855,7 @@ function ClashIssueModal({
           </button>
         </div>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 }
 

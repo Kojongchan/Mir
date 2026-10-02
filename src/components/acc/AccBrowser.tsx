@@ -30,7 +30,7 @@ import { DownloadFallback } from '../viewers/DownloadFallback';
 import { PdfViewer } from '../viewers/PdfViewer';
 import { SheetViewer } from '../viewers/SheetViewer';
 import { OfficeViewer } from '../viewers/OfficeViewer';
-import { useEscapeKey } from '../../lib/useEscapeKey';
+import { ModalBackdrop } from '../ModalBackdrop';
 
 const fakeFile = (name: string) => ({ name, size_bytes: null, mime_type: null }) as unknown as FileRecord;
 const fmtDate = (s?: string | null) =>
@@ -125,7 +125,6 @@ export function AccBrowser({
   const [moveFor, setMoveFor] = useState<AccItem | null>(null);
   // Move needs an explicit confirm: picking a folder only selects it (a misclick used to move at once).
   const [moveTarget, setMoveTarget] = useState<{ id: string; name: string } | null>(null);
-  useEscapeKey(() => { setVersionsFor(null); setMoveFor(null); }, !!versionsFor || !!moveFor);
   const [versionTarget, setVersionTarget] = useState<AccItem | null>(null);
   const docBlobRef = useRef<string | null>(null);
   const uploadInput = useRef<HTMLInputElement>(null);
@@ -660,7 +659,7 @@ export function AccBrowser({
 
       {/* 버전 이력 */}
       {versionsFor && (
-        <div className="acc-modal-back" onClick={() => setVersionsFor(null)}>
+        <ModalBackdrop className="acc-modal-back" onClose={() => setVersionsFor(null)}>
           <div className="acc-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
             <div className="acc-modal-head">📑 버전 이력 — {versionsFor.item.name}<div className="spacer" />
               {canEdit && (
@@ -681,12 +680,12 @@ export function AccBrowser({
               ))}
             </ul>
           </div>
-        </div>
+        </ModalBackdrop>
       )}
 
       {/* 이동 대상 선택 */}
       {moveFor && (
-        <div className="acc-modal-back" onClick={() => setMoveFor(null)}>
+        <ModalBackdrop className="acc-modal-back" onClose={() => setMoveFor(null)}>
           <div className="acc-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
             <div className="acc-modal-head">↦ 이동 — {moveFor.name}<div className="spacer" /><button onClick={() => setMoveFor(null)}>✕</button></div>
             <p className="muted" style={{ margin: '4px 0' }}>대상 폴더 선택 (ACC 환경에 따라 미지원일 수 있음)</p>
@@ -708,7 +707,7 @@ export function AccBrowser({
               <button className="primary" disabled={!moveTarget || busy} onClick={() => moveTarget && doMove(moveTarget.id)}>이동</button>
             </div>
           </div>
-        </div>
+        </ModalBackdrop>
       )}
     </div>
   );

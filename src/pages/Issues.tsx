@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
+import { ModalBackdrop, confirmDiscard } from '../components/ModalBackdrop';
 import { errMessage } from '../lib/errors';
 import { useAuth } from '../auth/AuthProvider';
 import {
@@ -368,7 +369,7 @@ export function Issues() {
       </div>
 
       {showForm && (
-        <div className="modal-backdrop" onClick={() => setShowForm(false)}>
+        <ModalBackdrop onClose={() => setShowForm(false)} confirmClose={confirmDiscard(!!(form.title.trim() || form.description.trim()))}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head" style={{ display: 'flex', alignItems: 'center' }}>
               <h3 className="ic" style={{ flex: 1, margin: 0 }}><UiIcon name="plus" size={16} /> 새 이슈</h3>
@@ -434,7 +435,7 @@ export function Issues() {
               <button className="primary" onClick={onCreate}>등록</button>
             </div>
           </div>
-        </div>
+        </ModalBackdrop>
       )}
 
       {/* 툴바 1행 — 뷰 전환 · 검색 · 정렬 */}
@@ -588,7 +589,7 @@ export function Issues() {
 
       {/* 칸반/핀 뷰의 상세 = 모달(리스트 뷰는 기존 행 펼침 유지) */}
       {view !== 'list' && openIssueObj && (
-        <div className="modal-backdrop" onClick={() => setOpenId(null)}>
+        <ModalBackdrop onClose={() => setOpenId(null)}>
           <div className="modal modal--wide" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <TypeBadge type={openIssueObj.type} />
@@ -597,7 +598,7 @@ export function Issues() {
             </div>
             <div className="modal-body">{detail(openIssueObj)}</div>
           </div>
-        </div>
+        </ModalBackdrop>
       )}
 
       {catManageOpen && (
@@ -1639,7 +1640,7 @@ function MarkupEditor({
   ];
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <ModalBackdrop onClose={onClose} confirmClose={confirmDiscard(shapes !== viewpoint.markup)}>
       <div className="modal modal--wide" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <h3 className="ic" style={{ flex: 1, margin: 0 }}><UiIcon name="edit" size={16} /> 마크업 — {viewpoint.title || '뷰포인트'}</h3>
@@ -1701,7 +1702,7 @@ function MarkupEditor({
           </button>
         </div>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 }
 
@@ -1760,7 +1761,7 @@ function CategoryManager({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <ModalBackdrop onClose={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head" style={{ display: 'flex', alignItems: 'center' }}>
           <h3 className="ic" style={{ flex: 1, margin: 0 }}><UiIcon name="settings" size={16} /> 이슈 항목 관리</h3>
@@ -1808,7 +1809,7 @@ function CategoryManager({
           <button onClick={onClose}>닫기</button>
         </div>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 }
 

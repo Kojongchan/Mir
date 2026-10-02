@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ApsMatchRule } from '../lib/apsScheduleMapping';
+import { ModalBackdrop, confirmDiscard } from './ModalBackdrop';
 
 let seq = 0;
 const newRule = (): ApsMatchRule => ({
@@ -32,16 +33,17 @@ export function ApsRuleEditor({
   onApply: (rules: ApsMatchRule[]) => void;
   onClose: () => void;
 }) {
-  const [rules, setRules] = useState<ApsMatchRule[]>(
+  const [rules, setRules] = useState<ApsMatchRule[]>(() =>
     initialRules.length ? initialRules : [newRule()],
   );
+  const [pristine] = useState(rules); // any edit replaces the array
 
   const patch = (id: string, p: Partial<ApsMatchRule>) =>
     setRules((rs) => rs.map((r) => (r.id === id ? { ...r, ...p } : r)));
   const remove = (id: string) => setRules((rs) => rs.filter((r) => r.id !== id));
 
   return createPortal(
-    <div className="modal-backdrop" onClick={onClose}>
+    <ModalBackdrop onClose={onClose} confirmClose={confirmDiscard(rules !== pristine)}>
       <div className="modal" style={{ width: 720, maxWidth: '94vw' }} onClick={(e) => e.stopPropagation()}>
         <h3 style={{ margin: '0 0 4px' }}>4D 매칭 — 규칙 편집기</h3>
         <p className="muted" style={{ margin: '0 0 12px', fontSize: 12 }}>
@@ -115,7 +117,7 @@ export function ApsRuleEditor({
           </button>
         </div>
       </div>
-    </div>,
+    </ModalBackdrop>,
     document.body,
   );
 }

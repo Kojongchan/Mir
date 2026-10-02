@@ -1,4 +1,4 @@
-import { useEscapeKey } from '../../lib/useEscapeKey';
+import { ModalBackdrop } from '../ModalBackdrop';
 import { useEffect, useState } from 'react';
 import { listActivity, type ActivityEntry } from '../../lib/cde';
 
@@ -25,7 +25,6 @@ function describe(a: ActivityEntry): string {
 
 /** Modal showing the project's recent CDE activity (audit trail), newest first. */
 export function ActivityLog({ projectId, onClose }: { projectId: string; onClose: () => void }) {
-  useEscapeKey(onClose);
   const [entries, setEntries] = useState<ActivityEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,7 +35,7 @@ export function ActivityLog({ projectId, onClose }: { projectId: string; onClose
   }, [projectId]);
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <ModalBackdrop onClose={onClose}>
       <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>활동 로그</h3>
@@ -63,6 +62,6 @@ export function ActivityLog({ projectId, onClose }: { projectId: string; onClose
           <button onClick={onClose}>닫기</button>
         </div>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 }

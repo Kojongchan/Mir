@@ -1,4 +1,4 @@
-import { useEscapeKey } from '../../lib/useEscapeKey';
+import { ModalBackdrop } from '../ModalBackdrop';
 import { useEffect, useState } from 'react';
 import {
   listVersions,
@@ -13,7 +13,6 @@ import {
  * fresh short-lived signed URL so any historical version can be downloaded.
  */
 export function VersionHistory({ file, onClose }: { file: CdeFile; onClose: () => void }) {
-  useEscapeKey(onClose);
   const [versions, setVersions] = useState<FileVersion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,7 +32,7 @@ export function VersionHistory({ file, onClose }: { file: CdeFile; onClose: () =
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <ModalBackdrop onClose={onClose}>
       <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <h3>버전 이력</h3>
@@ -77,6 +76,6 @@ export function VersionHistory({ file, onClose }: { file: CdeFile; onClose: () =
           <button onClick={onClose}>닫기</button>
         </div>
       </div>
-    </div>
+    </ModalBackdrop>
   );
 }

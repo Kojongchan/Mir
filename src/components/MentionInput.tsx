@@ -114,6 +114,7 @@ export function MentionInput({ value, onChange, members, onMentionsChange, onEnt
         return;
       }
       if (e.key === 'Escape') {
+        e.preventDefault(); // close the suggestions only, not the dialog around the input
         setActive(false);
         return;
       }
