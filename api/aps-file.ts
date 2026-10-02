@@ -10,14 +10,12 @@
 //
 // Required env: APS_CLIENT_ID / APS_CLIENT_SECRET (+ Supabase 검증).
 // =====================================================================
-import { createClient } from '@supabase/supabase-js';
+import { accReadScope, inScope } from './_accAuth';
 
 export const config = { runtime: 'edge' };
 
 const APS_CLIENT_ID = process.env.APS_CLIENT_ID;
 const APS_CLIENT_SECRET = process.env.APS_CLIENT_SECRET;
-const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
-const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const APS = 'https://developer.api.autodesk.com';
 
 const CT: Record<string, string> = {
@@ -61,26 +59,15 @@ async function mintToken(): Promise<string> {
 export default async function handler(req: Request): Promise<Response> {
   if (!APS_CLIENT_ID || !APS_CLIENT_SECRET) return err('APS 환경변수 미설정', 500);
 
-  // 로그인한 MIR 사용자만.
-  // Fail closed: a missing Supabase configuration must not skip the login check.
-  if (!SUPABASE_URL || !SERVICE_ROLE) return err('서버 인증 설정이 없어 요청을 거부했습니다.', 503);
-  {
-    const url = new URL(req.url);
-    const bearer =
-      (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '') ||
-      url.searchParams.get('token') || // 미디어 태그(src)는 헤더를 못 보내므로 쿼리 허용
-      '';
-    if (!bearer) return err('missing token', 401);
-    const supa = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
-    const { data, error } = await supa.auth.getUser(bearer);
-    if (error || !data?.user) return err('invalid session', 401);
-  }
-
+  // Logged-in MIR users, and only for ACC projects pinned on their own MIR projects.
+  const scope = await accReadScope(req, true); // media tags (src) cannot send headers → query token allowed
+  if (!scope.ok) return err(scope.error, scope.status);
   const url = new URL(req.url);
   const project = url.searchParams.get('project') ?? '';
   const item = url.searchParams.get('item') ?? '';
   const mode = url.searchParams.get('mode') ?? 'proxy';
   if (!project || !item) return err('project/item 필요', 400);
+  if (!scope.admin && !inScope(scope.projects, project)) return err('이 프로젝트의 파일이 아닙니다.', 403);
 
   try {
     const token = await mintToken();

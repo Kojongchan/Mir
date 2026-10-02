@@ -13,14 +13,12 @@
 //
 // Required env: APS_CLIENT_ID / APS_CLIENT_SECRET (+ Supabase 검증용).
 // =====================================================================
-import { createClient } from '@supabase/supabase-js';
+import { accReadScope, inScope } from './_accAuth';
 
 export const config = { runtime: 'edge' };
 
 const APS_CLIENT_ID = process.env.APS_CLIENT_ID;
 const APS_CLIENT_SECRET = process.env.APS_CLIENT_SECRET;
-const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
-const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const APS = 'https://developer.api.autodesk.com';
 
 function json(body: unknown, status = 200): Response {
@@ -62,33 +60,31 @@ async function dm(path: string, token: string): Promise<any> {
 export default async function handler(req: Request): Promise<Response> {
   if (!APS_CLIENT_ID || !APS_CLIENT_SECRET) return json({ error: 'APS 환경변수 미설정' }, 500);
 
-  // 로그인한 MIR 사용자만.
-  // Fail closed: a missing Supabase configuration must not skip the login check.
-  if (!SUPABASE_URL || !SERVICE_ROLE) return json({ error: '서버 인증 설정이 없어 요청을 거부했습니다.' }, 503);
-  {
-    const bearer = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
-    if (!bearer) return json({ error: 'missing bearer token' }, 401);
-    const supa = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
-    const { data, error } = await supa.auth.getUser(bearer);
-    if (error || !data?.user) return json({ error: 'invalid session' }, 401);
-  }
-
+  // Logged-in MIR users; non-system-admins only see ACC hubs/projects pinned on their MIR projects.
+  const scope = await accReadScope(req);
+  if (!scope.ok) return json({ error: scope.error }, scope.status);
   const url = new URL(req.url);
   const action = url.searchParams.get('action');
   const hub = url.searchParams.get('hub') ?? '';
   const project = url.searchParams.get('project') ?? '';
   const folder = url.searchParams.get('folder') ?? '';
 
+  // Every action except the hub/project lists (filtered below) works inside one ACC project.
+  if (!scope.admin && action !== 'hubs' && action !== 'projects' && !inScope(scope.projects, project))
+    return json({ error: '이 프로젝트의 ACC 폴더가 아닙니다.' }, 403);
+
   try {
     const token = await mintToken();
 
     if (action === 'hubs') {
       const d = await dm('/project/v1/hubs', token);
-      return json({ hubs: (d.data ?? []).map((h: any) => ({ id: h.id, name: h.attributes?.name })) });
+      return json({ hubs: (d.data ?? []).filter((h: any) => scope.admin || inScope(scope.hubs, h.id))
+        .map((h: any) => ({ id: h.id, name: h.attributes?.name })) });
     }
     if (action === 'projects') {
       const d = await dm(`/project/v1/hubs/${encodeURIComponent(hub)}/projects`, token);
-      return json({ projects: (d.data ?? []).map((p: any) => ({ id: p.id, name: p.attributes?.name })) });
+      return json({ projects: (d.data ?? []).filter((p: any) => scope.admin || inScope(scope.projects, p.id))
+        .map((p: any) => ({ id: p.id, name: p.attributes?.name })) });
     }
     if (action === 'topFolders') {
       const d = await dm(

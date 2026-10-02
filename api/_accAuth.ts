@@ -30,3 +30,32 @@ export async function authorizeAccWrite(req: Request, mirProject: unknown, accPr
     return { ok: false, status: 403, error: '이 프로젝트에 연결된 ACC 프로젝트가 아닙니다.' };
   return { ok: true };
 }
+
+/**
+ * Read scope for ACC browse/download endpoints. System admins see everything (they pin projects);
+ * everyone else only the ACC hubs/projects pinned on MIR projects they are a member of.
+ * `allowQueryToken` covers media tags that cannot send headers (aps-file).
+ */
+export async function accReadScope(req: Request, allowQueryToken = false):
+  Promise<{ ok: true; admin: boolean; hubs: Set<string>; projects: Set<string> } | { ok: false; status: number; error: string }> {
+  const url = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
+  const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceRole) return { ok: false, status: 503, error: '서버 인증 설정이 없어 요청을 거부했습니다.' };
+  const bearer = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '') ||
+    (allowQueryToken ? new URL(req.url).searchParams.get('token') ?? '' : '');
+  if (!bearer) return { ok: false, status: 401, error: 'missing token' };
+  const supa = createClient(url, serviceRole, { auth: { persistSession: false } });
+  const { data, error } = await supa.auth.getUser(bearer);
+  if (error || !data?.user) return { ok: false, status: 401, error: 'invalid session' };
+  const { data: prof } = await supa.from('profiles').select('is_admin').eq('id', data.user.id).maybeSingle();
+  if (prof?.is_admin) return { ok: true, admin: true, hubs: new Set(), projects: new Set() };
+  const { data: mems } = await supa.from('project_members').select('project_id').eq('user_id', data.user.id);
+  const ids = (mems ?? []).map((m: { project_id: string }) => m.project_id);
+  const { data: projs } = ids.length
+    ? await supa.from('projects').select('acc_hub_id, acc_project_id').in('id', ids)
+    : { data: [] as { acc_hub_id: string | null; acc_project_id: string | null }[] };
+  const hubs = new Set<string>(), projects = new Set<string>();
+  for (const p of projs ?? []) { if (p.acc_hub_id) hubs.add(accId(p.acc_hub_id)); if (p.acc_project_id) projects.add(accId(p.acc_project_id)); }
+  return { ok: true, admin: false, hubs, projects };
+}
+export const inScope = (set: Set<string>, id: string | null | undefined) => set.has(accId(id));
