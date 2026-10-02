@@ -11,7 +11,8 @@ import { encodeXktTransfer } from './xkt-transfer.mjs';
 import { checkStorageBudget } from './storage-budget.mjs';
 
 const env = process.env, profileName = env.LOD_PROFILE || 'light', profile = LOD_PROFILES[profileName];
-if (!profile) throw Error(`Unknown LOD_PROFILE ${profileName}`);
+const inspectOnly = profileName === 'inspect';
+if (!profile && !inspectOnly) throw Error(`Unknown LOD_PROFILE ${profileName}`);
 let prefix = env.MODEL_CACHE_PREFIX;
 if (!/^[A-Za-z0-9]{1,40}$/.test(prefix ?? '')) throw Error('Invalid cache identifier');
 const maxAdd = Math.min(Math.max(Number(env.LOD_ADD_MB || 1024), 16), 4096) * 1048576;
@@ -41,6 +42,28 @@ const manifest = JSON.parse(source.bytes);
 let etag = source.etag;
 if (!Array.isArray(manifest.tiles) || !manifest.tiles.length || manifest.inst?.length) throw Error('Unsupported manifest');
 manifest.chunkInfo ??= {};
+if (inspectOnly) {
+  // Read-only: texture usage per tile (VBO layers are per texture set), sampled evenly across the site.
+  const count = Math.min(Math.max(Number(env.LOD_ADD_MB || 40), 1), 200), step = Math.max(1, Math.floor(manifest.tiles.length / count));
+  const total = { tiles: 0, meshes: 0, texturedMeshes: 0, tri: 0, texturedTri: 0, textures: 0, sets: 0, kinds: {} };
+  for (let i = 0; i < manifest.tiles.length && total.tiles < count; i += step) {
+    const b = (await get(`${prefix}/xkt/${manifest.tiles[i].n}`)).bytes;
+    if (b.readUInt32LE(0) !== 12) { console.log(`tile ${i}: version ${b.readUInt32LE(0)}`); continue; }
+    const t = s => { const o = b.readUInt32LE(4 + s * 8), n = b.readUInt32LE(8 + s * 8); return Uint8Array.prototype.slice.call(b, o, o + n).buffer; };
+    const attrs = new Uint16Array(t(3)), sets = new Int32Array(t(10)), meshSet = new Int32Array(t(23)), mg = new Uint32Array(t(21));
+    const ip = new Uint32Array(t(19)), nIdx = new Uint32Array(t(8)).length;
+    const triOf = g => ((g + 1 < ip.length ? ip[g + 1] : nIdx) - ip[g]) / 3;
+    let texturedMeshes = 0, tri = 0, texturedTri = 0;
+    meshSet.forEach((set, m) => { const n = triOf(mg[m]); tri += n; if (set >= 0) { texturedMeshes++; texturedTri += n; } });
+    const kinds = {};
+    for (let k = 0; k < attrs.length; k += 9) { const key = `${attrs[k] ? 'compressed' : ['jpeg', 'png', 'gif'][attrs[k + 1]] ?? attrs[k + 1]} ${attrs[k + 2]}x${attrs[k + 3]}`; kinds[key] = (kinds[key] ?? 0) + 1; total.kinds[key] = (total.kinds[key] ?? 0) + 1; }
+    console.log(`tile ${i}: meshes ${meshSet.length}, textured ${texturedMeshes}, tri ${tri}, texturedTri ${texturedTri}, textures ${attrs.length / 9}, sets ${sets.length / 5}, usedSets ${new Set([...meshSet].filter(v => v >= 0)).size}`, JSON.stringify(kinds));
+    Object.assign(total, { tiles: total.tiles + 1, meshes: total.meshes + meshSet.length, texturedMeshes: total.texturedMeshes + texturedMeshes,
+      tri: total.tri + tri, texturedTri: total.texturedTri + texturedTri, textures: total.textures + attrs.length / 9, sets: total.sets + sets.length / 5 });
+  }
+  console.log('TOTAL', JSON.stringify(total));
+  process.exit(0);
+}
 const generation = `runs/${randomUUID()}`;
 const field = profileName === 'far' ? 'far' : 'motion';
 const done = t => t[field]?.policy === profile.policy || t.lodTried?.[profileName] === profile.policy;

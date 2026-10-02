@@ -55,7 +55,7 @@ on:
         required: false
         default: ''
       lod_profile:
-        description: "diag_only=lod-cache 일 때 'light'(경량 재생성) 또는 'far'(원경, 전 타일)"
+        description: "diag_only=lod-cache 일 때 'light'(경량 재생성), 'far'(원경, 전 타일), 'inspect'(읽기 전용 텍스처 점검)"
         required: false
         default: 'light'
       lod_add_mb:
