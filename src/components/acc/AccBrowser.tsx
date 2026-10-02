@@ -4,6 +4,7 @@ import {
   accFetch,
   accFileBlobUrl,
   accFileRedirectUrl,
+  accFileSignedUrl,
   accItemVersions,
   deleteAccItem,
   downloadAccItem,
@@ -308,8 +309,11 @@ export function AccBrowser({
   const openDocument = async (it: AccItem, kind: ViewerKind) => {
     setStatus(`${it.name} 여는 중…`);
     try {
-      // Office documents render in the browser (no Microsoft), so they take the byte proxy like PDFs.
-      if (kind === 'video' || kind === 'audio' || kind === 'unsupported') {
+      if (kind === 'office') {
+        // Office Online — 공개 Autodesk 서명 URL(파일명 포함). blob 아님.
+        clearDoc();
+        setDocView({ url: await accFileSignedUrl(accProject, it.id, it.name), name: it.name, kind });
+      } else if (kind === 'video' || kind === 'audio' || kind === 'unsupported') {
         clearDoc();
         setDocView({ url: await accFileRedirectUrl(accProject, it.id), name: it.name, kind });
       } else {

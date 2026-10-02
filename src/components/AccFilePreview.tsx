@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { accFileBlobUrl, accFileRedirectUrl, isAccModel } from '../lib/aps';
+import { accFileBlobUrl, accFileRedirectUrl, accFileSignedUrl, isAccModel } from '../lib/aps';
 import { viewerKindFor, type ViewerKind, type FileRecord } from '../lib/files';
 import { ApsMiniViewer } from './ApsMiniViewer';
 import { ImageViewer } from './viewers/ImageViewer';
@@ -55,8 +55,8 @@ export function AccFilePreview({
       }
       try {
         let url: string;
-        // Office documents render in the browser (no Microsoft), so they take the byte proxy like PDFs.
-        if (kind === 'video' || kind === 'audio' || kind === 'unsupported') url = await accFileRedirectUrl(accProject, itemId);
+        if (kind === 'office') url = await accFileSignedUrl(accProject, itemId, name);
+        else if (kind === 'video' || kind === 'audio' || kind === 'unsupported') url = await accFileRedirectUrl(accProject, itemId);
         else {
           url = await accFileBlobUrl(accProject, itemId);
           blobRef.current = url;

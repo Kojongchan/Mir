@@ -119,7 +119,7 @@ export type ViewerKind =
 const IMAGE_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg']);
 const VIDEO_EXT = new Set(['mp4', 'webm', 'ogv', 'ogg', 'mov']);
 const AUDIO_EXT = new Set(['mp3', 'wav', 'm4a', 'aac', 'flac']);
-// Office 포맷(워드/엑셀/파워포인트, 레거시 포함) = 브라우저 내 렌더(OfficeViewer, 외부 전송 없음 — D10).
+// Office 포맷(워드/엑셀/파워포인트, 레거시 포함) = Office Online 임베드로 고화질 렌더.
 const OFFICE_EXT = new Set(['doc', 'docx', 'ppt', 'pptx', 'xls', 'xlsx', 'xlsm']);
 const TEXT_EXT = new Set(['txt', 'md', 'json', 'csv', 'log', 'xml', 'yml', 'yaml']);
 
@@ -131,7 +131,7 @@ export function extensionOf(name: string): string {
 
 /**
  * Decide which viewer to use. Extension is the primary signal (most reliable
- * across browsers); MIME is a secondary hint. Office 포맷은 브라우저 내 렌더,
+ * across browsers); MIME is a secondary hint. Office 포맷은 Office Online,
  * csv 는 표 뷰어, 나머지 미지원(avi, hwp …)은 다운로드 폴백 — never a dead end.
  */
 export function viewerKindFor(name: string, mime?: string | null): ViewerKind {
