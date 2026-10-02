@@ -1,10 +1,24 @@
 import { useEffect, useMemo, useState } from 'react';
-import * as XLSX from 'xlsx';
 import type { FileRecord } from '../../lib/files';
+import type { SheetData } from '../../workers/sheetParse.worker';
 
-interface Sheet {
-  name: string;
-  rows: string[][];
+type Sheet = SheetData;
+
+/** Rendering caps: a 100k-row sheet as one HTML table freezes the tab. */
+const MAX_ROWS = 5000, MAX_COLS = 200, PARSE_TIMEOUT_MS = 20000;
+
+/** Parse in an isolated worker with a hard timeout (see sheetParse.worker.ts). */
+function parseInWorker(buf: ArrayBuffer): Promise<Sheet[]> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('../../workers/sheetParse.worker.ts', import.meta.url), { type: 'module' });
+    const timer = setTimeout(() => { worker.terminate(); reject(new Error('파일 해석 시간이 초과되었습니다')); }, PARSE_TIMEOUT_MS);
+    worker.onmessage = (e: MessageEvent<{ ok: boolean; sheets?: Sheet[]; error?: string }>) => {
+      clearTimeout(timer); worker.terminate();
+      if (e.data.ok && e.data.sheets) resolve(e.data.sheets); else reject(new Error(e.data.error || '해석 실패'));
+    };
+    worker.onerror = e => { clearTimeout(timer); worker.terminate(); reject(new Error(e.message || '해석 실패')); };
+    worker.postMessage({ buf, maxRows: MAX_ROWS, maxCols: MAX_COLS }, [buf]);
+  });
 }
 
 /**
@@ -14,9 +28,9 @@ interface Sheet {
  * SECURITY NOTE: the npm `xlsx` package is pinned at 0.18.5 (the latest the
  * registry serves) which carries known prototype-pollution / ReDoS advisories.
  * The patched build (>= 0.20.x) ships only from cdn.sheetjs.com, which the
- * current network policy blocks. Files here are uploaded by authenticated
- * project members (RLS-gated), which bounds exposure — but upgrade to the CDN
- * build once the policy allows it. See docs/STATUS.md (S13).
+ * current network policy blocks. Parsing therefore runs in a dedicated worker
+ * with a timeout, and only plain strings cross back to the page. Upgrade to the
+ * CDN build once the policy allows it.
  */
 export function SheetViewer({ url }: { url: string; file: FileRecord }) {
   const [sheets, setSheets] = useState<Sheet[] | null>(null);
@@ -32,15 +46,7 @@ export function SheetViewer({ url }: { url: string; file: FileRecord }) {
         const res = await fetch(url);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const buf = await res.arrayBuffer();
-        const wb = XLSX.read(buf, { type: 'array' });
-        const parsed: Sheet[] = wb.SheetNames.map((name) => ({
-          name,
-          rows: XLSX.utils.sheet_to_json<string[]>(wb.Sheets[name], {
-            header: 1,
-            raw: false,
-            defval: '',
-          }),
-        }));
+        const parsed = await parseInWorker(buf);
         if (!cancelled) {
           setSheets(parsed);
           setActive(0);
@@ -87,6 +93,13 @@ export function SheetViewer({ url }: { url: string; file: FileRecord }) {
           </tbody>
         </table>
         {current && current.rows.length === 0 && <p className="muted">빈 시트입니다.</p>}
+        {current && (current.truncatedRows > 0 || current.truncatedCols > 0) && (
+          <p className="muted">
+            미리보기는 {MAX_ROWS.toLocaleString()}행 × {MAX_COLS}열까지만 표시합니다
+            {current.truncatedRows > 0 ? ` (행 ${current.truncatedRows.toLocaleString()}개 생략)` : ''}
+            {current.truncatedCols > 0 ? ` (열 ${current.truncatedCols}개 생략)` : ''}. 전체는 파일을 내려받아 확인하세요.
+          </p>
+        )}
       </div>
     </div>
   );
