@@ -78,6 +78,8 @@ function dollyToward(viewer: Viewer, target: number[], factor: number): void {
 const LIGHT_TINT = [1, 0.55, 0.15];
 const LIGHT_BACKGROUND = [0.78, 0.84, 0.9];
 const FAR_TINT = [0.6, 0.4, 1];
+/** Far level simplification error (scripts/tile-lod-merge.mjs far profile errorMeters). */
+const FAR_ERROR_METERS = 0.25;
 /** Whole-site (far) level budget, separate from the near-camera structure cap. */
 const FAR_BUDGET = 512 * 1048576; // far v4: 318MB decoded for 717 tiles → ≈475MB for all 1,073
 /** Downloaded-file LRU (encoded bytes, JS heap) for revisits; on top of the structure cap. */
@@ -862,9 +864,16 @@ export function ThreeDTest() {
       const planes = currentPlanes();
       viewDirty = false;
       inViewCount = 0; culledCount = 0;
+      // The far level is an approximation: draw it only where its error is under one screen pixel.
+      // Nearer, it stays loaded but hidden, and only light/detail (real shapes) are shown.
+      const eye = viewer.camera.eye;
+      const fov = (viewer.camera.perspective.fov || 60) * Math.PI / 180;
+      const farMinDistance = FAR_ERROR_METERS * ((viewer.scene.canvas as unknown as { canvas: HTMLCanvasElement }).canvas.clientHeight || 900) / (2 * Math.tan(fov / 2));
+      const eyeGap = (box: ArrayLike<number>) => Math.hypot(...[0, 1, 2].map(i => Math.max(box[i] - eye[i], 0, eye[i] - box[i + 3])));
       for (const tile of T) {
         const far = models[`${tile.id}-far`];
-        if (far && farReady.has(tile.id)) setCulled(far, mainReady.has(tile.id) || !inTileView(far.aabb, planes));
+        if (far && farReady.has(tile.id))
+          setCulled(far, mainReady.has(tile.id) || !inTileView(far.aabb, planes) || eyeGap(far.aabb) < farMinDistance);
         const model = models[tile.id];
         if (!model) continue;
         const detail = models[`${tile.id}-detail`];
