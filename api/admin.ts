@@ -117,6 +117,20 @@ export default async function handler(req: Request): Promise<Response> {
       .maybeSingle();
     return !!data;
   }
+  // Credential changes (password / login id) by a project admin are limited to accounts that belong
+  // only to projects the caller administers. Otherwise a project admin could add another project's
+  // admin as a member, reset that password and take over the other project.
+  async function credentialsInScope(userId: string): Promise<boolean> {
+    if (isSystemAdmin || userId === callerId) return true;
+    if (!(await targetInScope(userId))) return false;
+    const { data: theirs } = await admin.from('project_members').select('project_id').eq('user_id', userId);
+    const projectIds = [...new Set((theirs ?? []).map((m: { project_id: string }) => m.project_id))];
+    if (!projectIds.length) return false;
+    const { data: mine } = await admin.from('project_members').select('project_id')
+      .eq('user_id', callerId).eq('role', 'admin').in('project_id', projectIds);
+    return (mine ?? []).length === projectIds.length;
+  }
+  const CREDENTIALS_OUT_OF_SCOPE = '다른 프로젝트에도 소속된 계정입니다. 비밀번호·아이디 변경은 시스템 관리자에게 요청하세요.';
   const SYSADMIN_LOCKED = '다른 시스템 관리자 계정은 앱에서 변경할 수 없습니다. Supabase에서 관리하세요.';
   const OUT_OF_SCOPE = '이 프로젝트의 멤버만 관리할 수 있습니다.';
 
@@ -167,6 +181,7 @@ export default async function handler(req: Request): Promise<Response> {
       if (!username) return json({ error: '새 아이디를 입력하세요.' }, 400);
       if (userId !== callerId && (await targetIsSystemAdmin(userId))) return json({ error: SYSADMIN_LOCKED }, 403);
       if (!(await targetInScope(userId))) return json({ error: OUT_OF_SCOPE }, 403);
+      if (!(await credentialsInScope(userId))) return json({ error: CREDENTIALS_OUT_OF_SCOPE }, 403);
 
       // The login username also drives the internal auth e-mail (D4), so
       // both must change together. Guard against collisions up-front: the
@@ -206,6 +221,7 @@ export default async function handler(req: Request): Promise<Response> {
       if (password.length < 6) return json({ error: '비밀번호는 6자 이상이어야 합니다.' }, 400);
       if (userId !== callerId && (await targetIsSystemAdmin(userId))) return json({ error: SYSADMIN_LOCKED }, 403);
       if (!(await targetInScope(userId))) return json({ error: OUT_OF_SCOPE }, 403);
+      if (!(await credentialsInScope(userId))) return json({ error: CREDENTIALS_OUT_OF_SCOPE }, 403);
       const { error } = await admin.auth.admin.updateUserById(userId, { password });
       if (error) return json({ error: error.message }, 400);
       return json({ ok: true });
