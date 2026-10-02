@@ -33,29 +33,29 @@ export function prioritizeTileView<T extends { worldAabb: number[] }>(tiles: T[]
     .map(x => x.tile);
 }
 
-/** Loading-only priority by apparent size on screen (box diagonal / eye-to-box gap), like
- * screen-space error: a near structure at the screen edge outranks a distant one in the centre.
- * The side-plane frustum is unbounded in depth, so a centre-first band would queue every far tile
- * along the view axis ahead of the visible foreground. Centre and on-screen only weight the size.
- * Off-screen tiles follow by eye distance. Eye-to-box distance does not depend on the orbit pivot.
- * Keep every candidate, including long geometry crossing the frustum.
+/** Loading-only priority: visible tiles nearest the eye first (centre ×2, on screen ×1, padded rim ×0.25),
+ * then off-screen tiles by distance. Like screen-space error with a constant coarse-level error, the score is
+ * weight / distance. Tile size is deliberately ignored: the partition splits by triangle count, so dense
+ * places (tunnel portals, stations) become many small tiles, and a size term always queued them last.
+ * The resident whole-site far level covers distant structures meanwhile. The side-plane frustum is unbounded
+ * in depth, so a centre-first band alone would queue every far tile on the view axis ahead of the foreground.
  * `resident` tiles that are still visible get a ×RESIDENT_STICKINESS bonus: with a full budget, a small
  * rotation (e.g. a tile crossing the centre band, ×2) must not swap loaded tiles out and back in.
  */
 export const RESIDENT_STICKINESS = 2.5;
+/** Distance floor (m): tiles within this range of the eye rank by view weight rather than raw distance. */
+const NEAR_FLOOR = 10;
 export function prioritizeCameraView<T extends { worldAabb: number[]; id?: string }>(tiles: T[], view: ArrayLike<number>, projection: ArrayLike<number>, eye: ArrayLike<number>, resident?: ReadonlySet<string>): T[] {
   const padded = viewPlanes(view, projection, 0.2, true), screen = viewPlanes(view, projection, 0, true), center = viewPlanes(view, projection, -0.65, true);
   const finite = (box: number[]) => box.length === 6 && [...box, ...Array.from(eye)].every(Number.isFinite);
   const gap = (box: number[]) => finite(box)
     ? Math.hypot(...[0,1,2].map(i => Math.max(box[i] - eye[i], 0, eye[i] - box[i+3]))) : Infinity;
-  const diagonal = (box: number[]) => finite(box) ? Math.hypot(box[3] - box[0], box[4] - box[1], box[5] - box[2]) : 0;
   return tiles.map((tile,index) => {
-    const box = tile.worldAabb, distance = gap(box), size = diagonal(box);
+    const box = tile.worldAabb, distance = gap(box);
     const weight = !inTileView(box, padded) ? 0 : inTileView(box, center) ? 2 : inTileView(box, screen) ? 1 : 0.25;
-    // The size term keeps eye-containing tiles finite: they all share the top score.
     const sticky = weight && tile.id !== undefined && resident?.has(tile.id) ? RESIDENT_STICKINESS : 1;
-    const apparent = weight && Number.isFinite(distance) ? sticky * weight * size / (distance + 0.1 * size + 1e-9) : 0;
-    return { tile, index, visible: weight > 0, apparent, distance };
-  }).sort((a,b) => Number(b.visible) - Number(a.visible) || b.apparent - a.apparent || a.distance - b.distance || a.index - b.index)
+    const score = weight && Number.isFinite(distance) ? sticky * weight / (distance + NEAR_FLOOR) : 0;
+    return { tile, index, visible: weight > 0, score, distance };
+  }).sort((a,b) => Number(b.visible) - Number(a.visible) || b.score - a.score || a.distance - b.distance || a.index - b.index)
     .map(v=>v.tile);
 }

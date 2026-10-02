@@ -487,7 +487,7 @@ test('two pipeline slots download ahead while one model loads, retaining complet
 });
 
 const { prioritizeCameraView } = compile('src/viewer/TileView.ts');
-test('apparent size ranks long crossing geometry first and keeps every candidate', () => {
+test('visible tiles rank by view weight over distance and every candidate is kept', () => {
  const tiles = [
   {id:'edge',worldAabb:[.7,0,0,.8,.1,.1]},
   {id:'far-center',worldAabb:[0,0,8,.1,.1,9]},
@@ -496,8 +496,7 @@ test('apparent size ranks long crossing geometry first and keeps every candidate
   {id:'offscreen',worldAabb:[3,0,0,4,1,1]},
  ];
  const ordered=prioritizeCameraView(tiles,identity4,identity4,[0,0,0]);
- // Identity projection has no perspective: far-center (1.0 deep) is apparently larger than edge.
- assert.deepEqual(ordered.map(t=>t.id),['crossing','near-center','far-center','edge','offscreen']);
+ assert.deepEqual(ordered.map(t=>t.id),['near-center','crossing','far-center','edge','offscreen']);
  assert.equal(new Set(ordered).size,tiles.length);
  assert.equal(tiles[0].id,'edge');
 });
@@ -584,4 +583,19 @@ test('byte cache keeps recent tile files within its byte bound (LRU)', () => {
  c.set('a',buf(10));c.set('b',buf(10));c.get('a');c.set('c',buf(10));
  assert.ok(c.get('a')&&c.get('c'));assert.equal(c.get('b'),undefined);assert.equal(c.size,20);
  c.set('huge',buf(30));assert.equal(c.get('huge'),undefined);assert.equal(c.size,20);
+});
+test('model queue admits lower priority numbers first and keeps FIFO within a priority', async () => {
+ const { ModelLoadQueue: Q } = compile('src/viewer/ModelLoadQueue.ts');
+ const q=new Q(),order=[],c=new AbortController();
+ const first=await q.acquire(c.signal,1);
+ const wait=(name,p)=>q.acquire(c.signal,p).then(release=>{order.push(name);release();});
+ const all=Promise.all([wait('detail',2),wait('light-a',1),wait('far',0),wait('light-b',1)]);
+ first();await all;
+ assert.deepEqual(order,['far','light-a','light-b','detail']);q.dispose();
+});
+test('a small dense tile near the camera loads before a large sparse tile further away', () => {
+ const n=1,f=10000,perspective=[1,0,0,0, 0,1,0,0, 0,0,(f+n)/(n-f),-1, 0,0,2*f*n/(n-f),0];
+ // Tunnel portal: small box (dense geometry split by triangle count) 120 m ahead; long track tile 300 m ahead.
+ const tiles=[{id:'track',worldAabb:[-20,-5,-1300,20,5,-300]},{id:'portal',worldAabb:[-15,-10,-140,15,10,-120]}];
+ assert.deepEqual(prioritizeCameraView(tiles,identity4,perspective,[0,0,0]).map(t=>t.id),['portal','track']);
 });

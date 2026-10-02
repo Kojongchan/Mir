@@ -76,6 +76,7 @@ function dollyToward(viewer: Viewer, target: number[], factor: number): void {
  * Downloads, not parsing, were the bottleneck (240s download vs 7.7s parse for 172 tiles at 2 slots);
  * model construction stays serialized by ModelLoadQueue. */
 const LIGHT_TINT = [1, 0.55, 0.15];
+const LIGHT_BACKGROUND = [0.78, 0.84, 0.9];
 const FAR_TINT = [0.6, 0.4, 1];
 /** Whole-site (far) level budget, separate from the near-camera structure cap. */
 const FAR_BUDGET = 384 * 1048576; // far v4 ≈ 140MB stored for 1,073 tiles; headroom for larger models
@@ -292,7 +293,9 @@ export function ThreeDTest() {
       canvasElement: canvasRef.current,
       transparent: false,
       antialias: false, // Avoid multisample framebuffer cost for dense integrated scenes.
-      backgroundColor: [1, 1, 1],
+      // Sky tone, not white: where the terrain surface is cut (e.g. tunnel portals) the background shows
+      // through, and pure white read as a "white blob" of missing model.
+      backgroundColor: LIGHT_BACKGROUND,
       // DTX(데이터텍스처) 모드 — 대용량 메시를 지오메트리 텍스처로 압축 저장해 GPU 메모리를
       // 급감시킨다. 통합모델 XKT 는 2억+ 정점이라 VBO 로는 GPU 초과 → dtx 필수. (dtx 는 선/점
       // 프리미티브는 안 그리지만, XKT(비-DWG)는 순수 메시라 무관. DWG 선형은 GLB+VBO 경로라
@@ -630,7 +633,7 @@ export function ThreeDTest() {
     if (viewer) {
       (viewer.scene.canvas as unknown as { backgroundColor: number[] }).backgroundColor = bgDark
         ? [0.13, 0.14, 0.16]
-        : [1, 1, 1];
+        : LIGHT_BACKGROUND;
     }
   }, [bgDark]);
 
@@ -919,7 +922,8 @@ export function ThreeDTest() {
         if (account && !account(xkt.byteLength)) throw new Error('타일 크기 예산 초과');
         const downloadMs = performance.now() - downloadStarted;
         downloadCount++; downloadTotalMs += downloadMs; downloadMaxMs = Math.max(downloadMaxMs, downloadMs);
-        const releaseModel = await modelQueue.acquire(signal);
+        // The far level is tiny per tile and fills the whole site, so it parses ahead of light/detail.
+        const releaseModel = await modelQueue.acquire(signal, id.endsWith('-far') ? 0 : id.endsWith('-detail') ? 2 : 1);
         try {
           await loadGate.wait(signal);
           // Draw a frame and let pending input run before each non-preemptible SDK parse, so a burst
@@ -998,7 +1002,7 @@ export function ThreeDTest() {
         } else setStatus(!stats.total ? '현재 위치에 구조물 후보가 없습니다. 위치를 이동한 뒤 현재 위치 불러오기를 눌러 주세요.' : stats.failed ? `일부 구간 로드 실패 ${stats.failed}개 — 모델을 다시 열어 주세요.` :
           stats.loaded < stats.selected ? (stats.loading ? `구조물 로딩… ${stats.loaded}/${stats.selected}` : '표시 용량 제한으로 일부 구간이 미표시 상태입니다.') :
           limited ? `일부 표시: 후보 ${stats.total}개 중 ${stats.loaded}개 로드 · 전체 구간 아님` : '주변 구조물 표시 완료 · 가까운 구간 상세화');
-        setDbg(`원경 ${farStats.loaded}/${farTiles.length} · 타일 ${stats.loaded}/${stats.selected} · 표시 ${stats.resident} · 후보 ${stats.total} · 다운로드 중 ${stats.loading} · 실패 ${stats.failed} · 경량 ${overviewReady.size} · 상세화 ${detailReady.size} · 파일 크기 예산 사용 ≈${Math.round(stats.encodedBytes / 1048576)}MB (GPU 메모리 아님)`);
+        setDbg(`원경 ${farStats.loaded}/${farTiles.length}(${Math.round(farStats.bytes / 1048576)}MB) · 타일 ${stats.loaded}/${stats.selected} · 표시 ${stats.resident} · 후보 ${stats.total} · 다운로드 중 ${stats.loading} · 실패 ${stats.failed} · 경량 ${overviewReady.size} · 상세화 ${detailReady.size} · 파일 크기 예산 사용 ≈${Math.round(stats.encodedBytes / 1048576)}MB (GPU 메모리 아님)`);
       },
     });
     const detailStream = new TileStream<typeof T[number]>({
@@ -1023,7 +1027,7 @@ export function ThreeDTest() {
     const farTiles = T.filter(t => t.far && Number.isFinite(t.far.byteLength) && t.far.byteLength > 0)
       .map(t => ({ ...t, byteLength: t.far!.byteLength }));
     const farStream = new TileStream<typeof farTiles[number]>({
-      concurrency: 2, maxTiles: Number.POSITIVE_INFINITY, maxEncodedBytes: FAR_BUDGET, replaceAfterLoad: true,
+      concurrency: 6, maxTiles: Number.POSITIVE_INFINITY, maxEncodedBytes: FAR_BUDGET, replaceAfterLoad: true,
       load: async (tile, signal) => {
         await loadRepresentation(signal, `${tile.id}-far`, tile.far!.url, undefined, bytes => farStream.accountBytes(tile.id, bytes));
         if (signal.aborted || !active) throw new Error('cancelled');
@@ -1462,7 +1466,7 @@ export function ThreeDTest() {
             onClick={() => setBgDark((v) => !v)}
             title="배경 밝기 전환 — CAD의 흰색(색상7) 선형은 어두운 배경에서 보입니다."
           >
-            배경 {bgDark ? '흰색' : '어둡게'}
+            배경 {bgDark ? '밝게' : '어둡게'}
           </button>
           <button
             className="btn btn--sm"
