@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 import { listProjects, type Project } from '../lib/api';
+import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { BrandLogo } from '../components/BrandLogo';
 import { ROLE_LABEL } from '../auth/useProjectRole';
@@ -28,6 +29,7 @@ type Tab = 'projects' | 'users' | 'members';
 export function Admin({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate();
   const { profile } = useAuth();
+  useDocumentTitle(!embedded && '시스템 관리');
   const [tab, setTab] = useState<Tab>('projects');
   const [projects, setProjects] = useState<Project[]>([]);
   const [users, setUsers] = useState<ProfileRow[]>([]);

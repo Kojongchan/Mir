@@ -30,7 +30,11 @@ export function ProjectShell() {
   );
 
   useEffect(() => {
-    getProject(projectId).then(setProject);
+    // Switching projects: drop the previous name at once and ignore its late response.
+    let alive = true;
+    setProject(null);
+    getProject(projectId).then((p) => { if (alive) setProject(p); });
+    return () => { alive = false; };
   }, [projectId]);
 
   const toggleRail = () => {
@@ -75,7 +79,7 @@ export function ProjectShell() {
       </header>
 
       <div className="portal-body" data-sidebar={collapsed ? 'collapsed' : 'expanded'}>
-        <ProjectNav />
+        <ProjectNav projectName={project?.name} />
         <main className="portal-main">
           {/* A failing or still-loading module keeps the shell (menu, header) usable. */}
           <ErrorBoundary resetKey={pathname} compact>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
 import { listProjects, type Project } from '../lib/api';
+import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { useAuth } from '../auth/AuthProvider';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { BrandLogo } from '../components/BrandLogo';
@@ -9,6 +10,7 @@ import { BrandLogo } from '../components/BrandLogo';
 export function ProjectSelect() {
   const navigate = useNavigate();
   const { profile, signOut } = useAuth();
+  useDocumentTitle('프로젝트 선택');
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

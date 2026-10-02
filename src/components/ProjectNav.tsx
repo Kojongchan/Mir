@@ -1,6 +1,7 @@
-import { NavLink, useParams } from 'react-router-dom';
+import { NavLink, useLocation, useParams } from 'react-router-dom';
 import { useProjectRole } from '../auth/useProjectRole';
 import { Icon, type IconName } from './icons/Icon';
+import { useDocumentTitle } from '../lib/useDocumentTitle';
 
 interface Item {
   to: string;
@@ -14,8 +15,9 @@ interface Item {
 /** Left module rail for the project portal (PMIS-style navigation).
  *  U-Shell: 라이트 톤 + 커스텀 도메인 아이콘(레드닷·currentColor). 활성 항목은
  *  aria-current="page" + brand 강조. collapse 시 라벨은 CSS 로 숨김(aria-label 유지). */
-export function ProjectNav() {
+export function ProjectNav({ projectName }: { projectName?: string }) {
   const { projectId = '' } = useParams();
+  const { pathname } = useLocation();
   const { canManage } = useProjectRole(projectId);
   const base = `/project/${projectId}`;
 
@@ -35,6 +37,11 @@ export function ProjectNav() {
     { to: `${base}/docs`, icon: 'files', label: '자료 관리' },
     { to: `${base}/members`, icon: 'members', label: '구성원·권한', manageOnly: true },
   ];
+  // Tab title = current module + project; the longest matching menu path wins.
+  const current = items
+    .filter((it) => pathname === it.to || (!it.end && pathname.startsWith(`${it.to}/`)))
+    .sort((a, b) => b.to.length - a.to.length)[0];
+  useDocumentTitle(current?.label, projectName);
 
   return (
     <nav className="app-sidebar" aria-label="메인 네비게이션">

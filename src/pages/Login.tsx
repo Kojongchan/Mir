@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 import { isSupabaseConfigured } from '../lib/supabase';
+import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { BrandLogo } from '../components/BrandLogo';
 
 export function Login() {
   const { signIn } = useAuth();
+  useDocumentTitle('로그인');
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');

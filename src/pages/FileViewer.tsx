@@ -17,6 +17,7 @@ import { VideoViewer } from '../components/viewers/VideoViewer';
 import { AudioViewer } from '../components/viewers/AudioViewer';
 import { TextViewer } from '../components/viewers/TextViewer';
 import { DownloadFallback } from '../components/viewers/DownloadFallback';
+import { useDocumentTitle } from '../lib/useDocumentTitle';
 
 const PdfViewer = lazy(() =>
   import('../components/viewers/PdfViewer').then((m) => ({ default: m.PdfViewer })),
@@ -42,6 +43,7 @@ type State =
 export function FileViewer() {
   const { fileId = '' } = useParams();
   const [state, setState] = useState<State>({ phase: 'loading' });
+  useDocumentTitle(state.phase === 'ready' ? state.file.name : '미리보기');
   // Viewer role (D20): preview only, no download links. Hidden until the role is known.
   const role = useProjectRole(state.phase === 'ready' ? state.file.project_id : undefined);
   const canDownload = !role.loading && role.canEdit;
