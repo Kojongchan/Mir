@@ -1638,6 +1638,9 @@ export function ThreeDTest() {
         <AccFilePicker
           projectId={projectId}
           canEdit={canEdit}
+          title="3D 모델 열기"
+          actionLabel="열기"
+          accept={isAccModel}
           onClose={() => setPickerOpen(false)}
           onPick={(f) => {
             setPickerOpen(false);
