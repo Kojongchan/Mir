@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import type { MarkupShape, RedlineColor } from '../lib/viewpoints';
+import { promptDialog } from '../lib/dialogs';
 
 export type MarkupTool = 'select' | 'line' | 'rect' | 'arrow' | 'text';
 
@@ -52,8 +53,10 @@ export function MarkupOverlay({ shapes, onChange, active, tool, color, selected,
       return;
     }
     if (tool === 'text') {
-      const text = window.prompt('주석 텍스트');
-      if (text?.trim()) onChange([...shapes, { kind: 'text', x1: p.x, y1: p.y, text: text.trim(), color }]);
+      // The dialog is modal, so `shapes` cannot change while it is open.
+      void promptDialog('주석 텍스트').then((text) => {
+        if (text?.trim()) onChange([...shapes, { kind: 'text', x1: p.x, y1: p.y, text: text.trim(), color }]);
+      });
       return;
     }
     drawing.current = true;

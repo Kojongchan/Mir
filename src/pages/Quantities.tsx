@@ -16,6 +16,7 @@ import {
   type QtyResult,
   type QtyUnitMode,
 } from '../lib/quantities';
+import { confirmDialog } from '../lib/dialogs';
 
 /**
  * 5D 물량 산출(QTO) — BIM 요소 물량을 공종/카테고리별로 집계하고 기성내역과
@@ -147,10 +148,9 @@ export function Quantities() {
   const proposeBilling = async () => {
     if (!result || result.categories.length === 0) return;
     if (
-      !window.confirm(
+      !(await confirmDialog(
         `공종 ${result.categories.length}개를 기성내역 행으로 제안합니다.\n` +
-          `(공종명에 산출 물량을 함께 기입 · 금액은 0원으로 추가 → 기성내역에서 단가/금액 입력)\n계속할까요?`,
-      )
+          `(공종명에 산출 물량을 함께 기입 · 금액은 0원으로 추가 → 기성내역에서 단가/금액 입력)\n계속할까요?`))
     )
       return;
     setProposing(true);

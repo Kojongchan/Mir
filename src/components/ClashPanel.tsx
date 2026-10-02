@@ -32,6 +32,7 @@ import { createIssue, ISSUE_PRIORITIES, PRIORITY_LABEL, type IssuePriority } fro
 import { listProjectMembers, type ProjectMember } from '../lib/members';
 import { uploadAttachment } from '../lib/attachments';
 import { useAuth } from '../auth/AuthProvider';
+import { confirmDialog, promptDialog } from '../lib/dialogs';
 
 interface Props {
   viewer: IfcViewer | null;
@@ -281,7 +282,7 @@ export function ClashPanel({ viewer, projectId, modelIdMap, onClose }: Props) {
 
   const onSave = async () => {
     if (rows.length === 0) return;
-    const name = window.prompt('저장할 검사 이름', `간섭검사 ${new Date().toLocaleString()}`);
+    const name = await promptDialog('저장할 검사 이름', `간섭검사 ${new Date().toLocaleString()}`);
     if (!name) return;
     try {
       const id = await saveClashTest({
@@ -325,7 +326,7 @@ export function ClashPanel({ viewer, projectId, modelIdMap, onClose }: Props) {
   const onDelete = async () => {
     if (!selTest) return;
     const t = tests.find((x) => x.id === selTest);
-    if (!window.confirm(`"${t?.name ?? selTest}" 검사를 삭제할까요?`)) return;
+    if (!(await confirmDialog(`"${t?.name ?? selTest}" 검사를 삭제할까요?`, { confirmLabel: '삭제', danger: true }))) return;
     try {
       await deleteClashTest(selTest);
       setSelTest('');

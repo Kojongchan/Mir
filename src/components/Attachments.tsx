@@ -9,6 +9,7 @@ import {
   type Attachment,
 } from '../lib/attachments';
 import { errMessage } from '../lib/errors';
+import { confirmDialog } from '../lib/dialogs';
 
 interface Props {
   projectId: string;
@@ -68,7 +69,7 @@ export function Attachments({ projectId, targetType, targetId, canEdit, label = 
   };
 
   const onDelete = async (a: Attachment) => {
-    if (!window.confirm(`'${a.name}' 첨부를 삭제할까요?`)) return;
+    if (!(await confirmDialog(`'${a.name}' 첨부를 삭제할까요?`, { confirmLabel: '삭제', danger: true }))) return;
     try {
       await deleteAttachment(a);
       await load();

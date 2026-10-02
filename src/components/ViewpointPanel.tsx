@@ -12,6 +12,7 @@ import {
 } from '../lib/viewpoints';
 import { createIssue } from '../lib/issues';
 import { uploadAttachment } from '../lib/attachments';
+import { confirmDialog, promptDialog } from '../lib/dialogs';
 
 interface Props {
   viewer: IfcViewer | null;
@@ -126,7 +127,7 @@ export function ViewpointPanel({
 
   const onSave = async () => {
     if (!viewer) return;
-    const name = window.prompt('뷰포인트 이름', `뷰 ${new Date().toLocaleString()}`);
+    const name = await promptDialog('뷰포인트 이름', `뷰 ${new Date().toLocaleString()}`);
     if (!name?.trim()) return;
     setBusy(true);
     try {
@@ -191,7 +192,7 @@ export function ViewpointPanel({
   };
 
   const onDelete = async (vp: Viewpoint) => {
-    if (!window.confirm(`"${vp.name}" 뷰포인트를 삭제할까요?`)) return;
+    if (!(await confirmDialog(`"${vp.name}" 뷰포인트를 삭제할까요?`, { confirmLabel: '삭제', danger: true }))) return;
     try {
       await deleteViewpoint(vp.id);
       await refresh();
@@ -204,7 +205,7 @@ export function ViewpointPanel({
   // 뷰포인트 → 이슈: 재호출 후 스냅샷에 마크업을 구워 첨부 + viewpoint_id 연결.
   const onMakeIssue = async (vp: Viewpoint) => {
     if (!viewer) return;
-    const title = window.prompt('이슈 제목', vp.name);
+    const title = await promptDialog('이슈 제목', vp.name);
     if (!title?.trim()) return;
     setBusy(true);
     try {

@@ -12,6 +12,7 @@ import {
   type Subcontract,
 } from '../lib/portal';
 import { formatAmount } from '../lib/dashboard';
+import { confirmDialog, toastError } from '../lib/dialogs';
 
 const STATUSES: SubStatus[] = ['active', 'done', 'terminated'];
 
@@ -67,8 +68,13 @@ export function Subcontracts() {
   };
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('이 항목을 삭제할까요?')) return;
-    await deleteSubcontract(id);
+    if (!(await confirmDialog('이 항목을 삭제할까요?', { confirmLabel: '삭제', danger: true }))) return;
+    try {
+      await deleteSubcontract(id);
+    } catch (e) {
+      toastError('삭제 실패', e);
+      return;
+    }
     await refresh();
   };
 

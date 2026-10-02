@@ -17,6 +17,7 @@ import {
   type MemberRow,
   type ProfileRow,
 } from '../lib/admin';
+import { confirmDialog, promptDialog, passwordRule } from '../lib/dialogs';
 
 /**
  * 구성원·권한 — 프로젝트 단위 멤버/역할 관리 (S48).
@@ -96,16 +97,16 @@ export function ProjectMembers() {
     try { await setMemberOrg(projectId, userId, { [field]: next }); } catch (e) { err(e); reload(); }
   };
   const remove = async (userId: string) => {
-    if (!window.confirm('이 프로젝트에서 멤버를 해제할까요? (계정은 유지됩니다)')) return;
+    if (!(await confirmDialog('이 프로젝트에서 멤버를 해제할까요? (계정은 유지됩니다)', { confirmLabel: '해제', danger: true }))) return;
     try { await removeMember(projectId, userId); ok('멤버를 해제했습니다.'); reload(); } catch (e) { err(e); }
   };
   const resetPw = async (u: ProfileRow) => {
-    const pw = window.prompt(`${u.username} 새 비밀번호 (6자 이상)`);
+    const pw = await promptDialog(`${u.username} 새 비밀번호 (6자 이상)`, '', { validate: passwordRule });
     if (!pw) return;
     try { await resetUserPassword(u.id, pw, projectId); ok(`${u.username} 비밀번호를 변경했습니다.`); } catch (e) { err(e); }
   };
   const rename = async (u: ProfileRow) => {
-    const next = window.prompt(`${u.username} 새 로그인 아이디`, u.username);
+    const next = await promptDialog(`${u.username} 새 로그인 아이디`, u.username);
     if (next === null) return;
     const t = next.trim();
     if (!t || t === u.username) return;

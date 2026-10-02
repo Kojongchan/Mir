@@ -14,6 +14,7 @@ import {
   updateBillingItem,
   type BillingItem,
 } from '../lib/portal';
+import { confirmDialog, toastError } from '../lib/dialogs';
 
 /**
  * 기성내역 — billing detail. 도급액 대비 누적 기성/기성률, 월별 기성 추이.
@@ -179,8 +180,13 @@ function BillingItemsSection({ projectId, canEdit }: { projectId: string; canEdi
   };
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('이 공종 행을 삭제할까요?')) return;
-    await deleteBillingItem(id);
+    if (!(await confirmDialog('이 공종 행을 삭제할까요?', { confirmLabel: '삭제', danger: true }))) return;
+    try {
+      await deleteBillingItem(id);
+    } catch (e) {
+      toastError('삭제 실패', e);
+      return;
+    }
     if (editId === id) {
       setEditId(null);
       setForm(EMPTY_ITEM);

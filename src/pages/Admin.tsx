@@ -23,6 +23,7 @@ import {
   type MemberRow,
   type ProfileRow,
 } from '../lib/admin';
+import { confirmDialog, formDialog, promptDialog, passwordRule } from '../lib/dialogs';
 
 type Tab = 'projects' | 'users' | 'members';
 
@@ -150,12 +151,18 @@ function ProjectsTab({
   };
 
   const rename = async (p: Project) => {
-    const newName = window.prompt('프로젝트 이름', p.name);
-    if (newName === null) return;
-    const newCode = window.prompt('코드(공구 번호 등, 비워도 됨)', p.code ?? '');
-    if (newCode === null) return;
+    const v = await formDialog({
+      title: '프로젝트 수정',
+      fields: [
+        { key: 'name', label: '프로젝트 이름', defaultValue: p.name },
+        { key: 'code', label: '코드(공구 번호 등, 비워도 됨)', defaultValue: p.code ?? '' },
+      ],
+      confirmLabel: '저장',
+      validate: (x) => (x.name.trim() ? null : '프로젝트 이름을 입력하세요.'),
+    });
+    if (!v) return;
     try {
-      await updateProject(p.id, { name: newName.trim() || p.name, code: newCode.trim() || null });
+      await updateProject(p.id, { name: v.name.trim() || p.name, code: v.code.trim() || null });
       flash('프로젝트를 수정했습니다.');
       onChange();
     } catch (e) {
@@ -164,7 +171,7 @@ function ProjectsTab({
   };
 
   const remove = async (p: Project) => {
-    if (!window.confirm(`"${p.name}" 프로젝트를 삭제할까요?\n배정·모델 DB행도 함께 삭제됩니다.\n(Storage의 실제 IFC 파일은 수동 삭제 필요)`)) return;
+    if (!(await confirmDialog(`"${p.name}" 프로젝트를 삭제할까요?\n배정·모델 DB행도 함께 삭제됩니다.\n(Storage의 실제 IFC 파일은 수동 삭제 필요)`, { confirmLabel: '삭제', danger: true }))) return;
     try {
       await deleteProject(p.id);
       flash('프로젝트를 삭제했습니다.');
@@ -241,7 +248,7 @@ function UsersTab({
   };
 
   const rename = async (u: ProfileRow) => {
-    const next = window.prompt(`${u.username} 새 로그인 아이디 (한글 가능)`, u.username);
+    const next = await promptDialog(`${u.username} 새 로그인 아이디 (한글 가능)`, u.username);
     if (next === null) return;
     const trimmed = next.trim();
     if (!trimmed || trimmed === u.username) return;
@@ -255,7 +262,7 @@ function UsersTab({
   };
 
   const resetPw = async (u: ProfileRow) => {
-    const pw = window.prompt(`${u.username} 새 비밀번호 (6자 이상)`);
+    const pw = await promptDialog(`${u.username} 새 비밀번호 (6자 이상)`, '', { validate: passwordRule });
     if (!pw) return;
     try {
       await resetUserPassword(u.id, pw);
@@ -266,7 +273,7 @@ function UsersTab({
   };
 
   const remove = async (u: ProfileRow) => {
-    if (!window.confirm(`사용자 "${u.username}" 을(를) 삭제할까요?`)) return;
+    if (!(await confirmDialog(`사용자 "${u.username}" 을(를) 삭제할까요?`, { confirmLabel: '삭제', danger: true }))) return;
     try {
       await deleteUserAccount(u.id);
       flash(`${u.username} 을(를) 삭제했습니다.`);

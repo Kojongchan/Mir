@@ -12,6 +12,7 @@ import {
   type DailyLog,
 } from '../lib/dashboard';
 import { Attachments } from '../components/Attachments';
+import { confirmDialog, toastError } from '../lib/dialogs';
 
 /** 공사일보 — daily site log CRUD. Powers the dashboard 인력/장비/일지 figures. */
 export function DailyLogs() {
@@ -54,8 +55,13 @@ export function DailyLogs() {
   };
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('이 일보를 삭제할까요?')) return;
-    await deleteDailyLog(id);
+    if (!(await confirmDialog('이 일보를 삭제할까요?', { confirmLabel: '삭제', danger: true }))) return;
+    try {
+      await deleteDailyLog(id);
+    } catch (e) {
+      toastError('삭제 실패', e);
+      return;
+    }
     await refresh();
   };
 

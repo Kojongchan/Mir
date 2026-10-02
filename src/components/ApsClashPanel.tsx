@@ -35,6 +35,7 @@ import { listIssueCategories, type IssueCategory } from '../lib/issueCategories'
 import type { ApsMapping } from '../lib/apsMapping';
 import { listProjectMembers, memberLabel, type ProjectMember } from '../lib/members';
 import { useAuth } from '../auth/AuthProvider';
+import { confirmDialog } from '../lib/dialogs';
 
 interface Props {
   viewer: any;
@@ -260,7 +261,7 @@ export function ApsClashPanel({ viewer, model, mapping, projectId, projectName, 
   };
 
   const removeTest = async (testId: string) => {
-    if (!confirm('이 간섭 테스트를 삭제할까요?')) return;
+    if (!(await confirmDialog('이 간섭 테스트를 삭제할까요?', { confirmLabel: '삭제', danger: true }))) return;
     try {
       await deleteClashTest(testId);
       await listClashTests(projectId).then(setTests);

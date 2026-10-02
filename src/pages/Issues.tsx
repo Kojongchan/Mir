@@ -76,6 +76,7 @@ import { addIssueFile, listIssueFiles, removeIssueFile, type IssueFileLink } fro
 import { listAttachments } from '../lib/attachments';
 import { downloadAccItemProgress, isAccModel } from '../lib/aps';
 import { useProjectRole } from '../auth/useProjectRole';
+import { confirmDialog, promptDialog, toastError } from '../lib/dialogs';
 
 type ViewMode = 'list' | 'board' | 'pins';
 type SortMode = 'newest' | 'oldest' | 'due' | 'priority';
@@ -268,8 +269,13 @@ export function Issues() {
   };
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('이 이슈를 삭제할까요?')) return;
-    await deleteIssue(id);
+    if (!(await confirmDialog('이 이슈를 삭제할까요?', { confirmLabel: '삭제', danger: true }))) return;
+    try {
+      await deleteIssue(id);
+    } catch (e) {
+      toastError('삭제 실패', e);
+      return;
+    }
     if (openId === id) setOpenId(null);
     await refresh();
   };
@@ -1036,16 +1042,16 @@ function IssueDetail({
       setPickerOpen(false);
       refreshEvents();
     } catch (e) {
-      alert(`첨부 실패: ${errMessage(e)}`);
+      toastError('첨부 실패', e);
     }
   };
   const onRemoveFile = async (id: string) => {
-    if (!window.confirm('이 첨부 링크를 해제할까요? (자료관리 원본 파일은 유지됩니다)')) return;
+    if (!(await confirmDialog('이 첨부 링크를 해제할까요? (자료관리 원본 파일은 유지됩니다)', { confirmLabel: '해제', danger: true }))) return;
     try {
       await removeIssueFile(id);
       setFiles((fs) => fs.filter((x) => x.id !== id));
     } catch (e) {
-      alert(`해제 실패: ${errMessage(e)}`);
+      toastError('해제 실패', e);
     }
   };
 
@@ -1065,7 +1071,7 @@ function IssueDetail({
       await logIssueEvent(issue.id, issue.project_id, 'file_download', f.name, authorName);
       refreshEvents();
     } catch (e) {
-      alert(`다운로드 실패: ${errMessage(e)}`);
+      toastError('다운로드 실패', e);
     } finally {
       setDls((d) => {
         const n = { ...d };
@@ -1106,19 +1112,19 @@ function IssueDetail({
       }
       setTypeOpen(false);
     } catch (e) {
-      alert(`저장 실패: ${errMessage(e)}`);
+      toastError('저장 실패', e);
     }
   };
 
   const onRemoveViewpoint = async (vp: IssueViewpoint) => {
-    if (!window.confirm('이 뷰포인트를 삭제할까요?')) return;
+    if (!(await confirmDialog('이 뷰포인트를 삭제할까요?', { confirmLabel: '삭제', danger: true }))) return;
     try {
       await removeIssueViewpoint(vp.id);
       setViewpoints((vs) => vs.filter((v) => v.id !== vp.id));
       await logIssueEvent(issue.id, issue.project_id, 'viewpoint_del', vp.title || '뷰포인트', authorName);
       refreshEvents();
     } catch (e) {
-      alert(`삭제 실패: ${errMessage(e)}`);
+      toastError('삭제 실패', e);
     }
   };
 
@@ -1134,7 +1140,7 @@ function IssueDetail({
 
   const onFormDocx = () => {
     exportIssueFormDocx(issue, allIssues, projectName, authorName, catName(issue.category_id)).catch((e) =>
-      alert(`양식 저장 실패: ${errMessage(e)}`),
+      toastError('양식 저장 실패', e),
     );
   };
   const onFormPrint = async () => {
@@ -1142,7 +1148,7 @@ function IssueDetail({
       const atts = await listAttachments('issue', issue.id).catch(() => []);
       await openIssueFormPrint(issue, allIssues, projectName, atts, viewpoints, catName(issue.category_id));
     } catch (e) {
-      alert(`양식 열기 실패: ${errMessage(e)}`);
+      toastError('양식 열기 실패', e);
     }
   };
 
@@ -1179,7 +1185,7 @@ function IssueDetail({
                         onChanged();
                         refreshEvents();
                       } catch (err) {
-                        alert(`항목 변경 실패: ${errMessage(err)}`);
+                        toastError('항목 변경 실패', err);
                       }
                     }}
                   >
@@ -1625,7 +1631,7 @@ function MarkupEditor({
       await updateIssueViewpointMarkup(viewpoint.id, shapes);
       onSaved(shapes);
     } catch (e) {
-      alert(`마크업 저장 실패: ${errMessage(e)}`);
+      toastError('마크업 저장 실패', e);
     } finally {
       setSaving(false);
     }
@@ -1749,14 +1755,14 @@ function CategoryManager({
       setNewName('');
     });
 
-  const onRename = (c: IssueCategory) => {
-    const name = window.prompt('항목 이름 변경', c.name);
+  const onRename = async (c: IssueCategory) => {
+    const name = await promptDialog('항목 이름 변경', c.name);
     if (!name?.trim() || name.trim() === c.name) return;
     void run(() => renameIssueCategory(c.id, name));
   };
 
-  const onRemove = (c: IssueCategory) => {
-    if (!window.confirm(`'${c.name}' 항목을 삭제할까요?\n이 항목의 이슈들은 '미지정'이 됩니다(이슈 자체는 유지).`)) return;
+  const onRemove = async (c: IssueCategory) => {
+    if (!(await confirmDialog(`'${c.name}' 항목을 삭제할까요?\n이 항목의 이슈들은 '미지정'이 됩니다(이슈 자체는 유지).`, { confirmLabel: '삭제', danger: true }))) return;
     void run(() => removeIssueCategory(c.id));
   };
 

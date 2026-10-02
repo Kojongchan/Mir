@@ -15,6 +15,7 @@ import {
 } from '../lib/drawings';
 import { DrawingSheet } from '../components/DrawingSheet';
 import { formatDate } from '../lib/dashboard';
+import { confirmDialog } from '../lib/dialogs';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -89,7 +90,7 @@ export function Drawings() {
   };
 
   const onDelete = async (d: Drawing) => {
-    if (!window.confirm(`"${d.name}" 도면과 핀을 삭제할까요?`)) return;
+    if (!(await confirmDialog(`"${d.name}" 도면과 핀을 삭제할까요?`, { confirmLabel: '삭제', danger: true }))) return;
     try {
       await deleteDrawing(d);
       setList((l) => l.filter((x) => x.id !== d.id));

@@ -42,6 +42,7 @@ import {
 } from '../lib/localSchedule';
 import { useAuth } from '../auth/AuthProvider';
 import { ColumnMapModal } from './ColumnMapModal';
+import { confirmDialog, promptDialog } from '../lib/dialogs';
 
 interface Props {
   viewer: FourDViewer | null;
@@ -290,7 +291,7 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
 
   const onSave = async () => {
     if (!hasSchedule || !projectId) return;
-    const name = window.prompt('저장할 일정 이름', `일정 ${new Date().toLocaleString()}`);
+    const name = await promptDialog('저장할 일정 이름', `일정 ${new Date().toLocaleString()}`);
     if (!name) return;
     setDbBusy(true);
     try {
@@ -450,7 +451,7 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
   const onDelete = async () => {
     if (!savedId) return;
     const meta = saved.find((s) => s.id === savedId);
-    if (!window.confirm(`"${meta?.name ?? savedId}" 일정을 삭제할까요?`)) return;
+    if (!(await confirmDialog(`"${meta?.name ?? savedId}" 일정을 삭제할까요?`, { confirmLabel: '삭제', danger: true }))) return;
     setDbBusy(true);
     try {
       await deleteSchedule(savedId);

@@ -5,6 +5,7 @@ import {
   listApsViewpoints,
   type ApsViewpoint,
 } from '../../lib/apsViewpoints';
+import { confirmDialog, promptDialog } from '../../lib/dialogs';
 
 interface Props {
   /** Autodesk.Viewing.GuiViewer3D 인스턴스(없으면 비활성). */
@@ -80,7 +81,7 @@ export function ApsViewpointPanel({ viewer, projectId, isAdmin, onClose }: Props
 
   const onSave = async () => {
     if (!viewer) return;
-    const name = window.prompt('관측점 이름', `시점 ${new Date().toLocaleString('ko-KR')}`);
+    const name = await promptDialog('관측점 이름', `시점 ${new Date().toLocaleString('ko-KR')}`);
     if (!name?.trim()) return;
     setBusy(true);
     try {
@@ -106,8 +107,8 @@ export function ApsViewpointPanel({ viewer, projectId, isAdmin, onClose }: Props
     }
   };
 
-  const onDelete = (vp: ApsViewpoint) => {
-    if (!window.confirm(`"${vp.name}" 관측점을 삭제할까요?`)) return;
+  const onDelete = async (vp: ApsViewpoint) => {
+    if (!(await confirmDialog(`"${vp.name}" 관측점을 삭제할까요?`, { confirmLabel: '삭제', danger: true }))) return;
     deleteApsViewpoint(projectId, vp.id);
     refresh();
     setStatus('삭제됨');

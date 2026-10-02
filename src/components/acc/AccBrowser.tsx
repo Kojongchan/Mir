@@ -31,6 +31,7 @@ import { PdfViewer } from '../viewers/PdfViewer';
 import { SheetViewer } from '../viewers/SheetViewer';
 import { OfficeViewer } from '../viewers/OfficeViewer';
 import { ModalBackdrop } from '../ModalBackdrop';
+import { confirmDialog, promptDialog } from '../../lib/dialogs';
 
 const fakeFile = (name: string) => ({ name, size_bytes: null, mime_type: null }) as unknown as FileRecord;
 const fmtDate = (s?: string | null) =>
@@ -399,7 +400,7 @@ export function AccBrowser({
   };
   const onRename = async (it: AccItem) => {
     setMenuFor(null);
-    const name = window.prompt('새 이름', it.name);
+    const name = await promptDialog('새 이름', it.name);
     if (!name?.trim() || name.trim() === it.name) return;
     setBusy(true);
     try {
@@ -411,7 +412,7 @@ export function AccBrowser({
   const onDelete = async (its: AccItem[]) => {
     setMenuFor(null);
     if (!its.length) return;
-    if (!window.confirm(`${its.length}개 항목을 삭제(휴지통)할까요?\n${its.map((i) => i.name).join(', ')}`)) return;
+    if (!(await confirmDialog(`${its.length}개 항목을 삭제(휴지통)할까요?\n${its.map((i) => i.name).join(', ')}`, { confirmLabel: '삭제', danger: true }))) return;
     setBusy(true);
     try {
       for (const it of its) await deleteAccItem(accProject, it.id, projectId);

@@ -7,6 +7,7 @@ import { useProjectRole } from '../auth/useProjectRole';
 import { createPost, deletePost, listPosts, type Post } from '../lib/portal';
 import { formatDate } from '../lib/dashboard';
 import { Attachments } from '../components/Attachments';
+import { confirmDialog, toastError } from '../lib/dialogs';
 
 /** 게시판 / 공지 — 프로젝트 공지·알림 글. */
 export function Board() {
@@ -46,8 +47,13 @@ export function Board() {
   };
 
   const onDelete = async (id: string) => {
-    if (!window.confirm('이 게시글을 삭제할까요?')) return;
-    await deletePost(id);
+    if (!(await confirmDialog('이 게시글을 삭제할까요?', { confirmLabel: '삭제', danger: true }))) return;
+    try {
+      await deletePost(id);
+    } catch (e) {
+      toastError('삭제 실패', e);
+      return;
+    }
     await refresh();
   };
 

@@ -31,6 +31,7 @@ import {
   type ModelRecord,
 } from '../lib/api';
 import { listFolders, listProjectFiles, listVersions, type Folder, type FileVersion } from '../lib/cde';
+import { promptDialog } from '../lib/dialogs';
 
 /**
  * 3D 뷰어 모듈의 용도. 모델 풀은 셋이 공유한다(통합모델에 올린 모델이 4D·간섭검토
@@ -691,7 +692,7 @@ export function Workspace({ mode = 'integrated' }: { mode?: ViewerMode } = {}) {
   const selectedModelDbId = selected ? modelIdMap.get(selected.modelID) ?? null : null;
   const onCreateIssueFromSelection = async () => {
     if (!selected) return;
-    const title = window.prompt(`선택 객체(#${selected.expressID})에 연결할 이슈 제목`);
+    const title = await promptDialog(`선택 객체(#${selected.expressID})에 연결할 이슈 제목`);
     if (!title?.trim()) return;
     try {
       await createIssue(
