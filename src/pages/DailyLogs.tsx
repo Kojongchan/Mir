@@ -14,6 +14,8 @@ import {
 import { Attachments } from '../components/Attachments';
 import { confirmDialog, toastError } from '../lib/dialogs';
 
+const PAGE = 60;
+
 /** 공사일보 — daily site log CRUD. Powers the dashboard 인력/장비/일지 figures. */
 export function DailyLogs() {
   const { projectId = '' } = useParams();
@@ -30,11 +32,22 @@ export function DailyLogs() {
     content: '',
   });
 
+  // Newest first, PAGE at a time: older logs used to be unreachable once a project passed 60 logs.
+  const [limit, setLimit] = useState(PAGE);
+  const [loadingMore, setLoadingMore] = useState(false);
+  useEffect(() => { setLimit(PAGE); }, [projectId]);
   useEffect(() => {
-    listDailyLogs(projectId).then(setLogs).catch(() => setLogs([]));
-  }, [projectId]);
+    let alive = true;
+    setLoadingMore(true);
+    listDailyLogs(projectId, limit)
+      .then((l) => { if (alive) setLogs(l); })
+      .catch(() => { if (alive) setLogs([]); })
+      .finally(() => { if (alive) setLoadingMore(false); });
+    return () => { alive = false; };
+  }, [projectId, limit]);
+  const hasMore = logs.length >= limit;
 
-  const refresh = () => listDailyLogs(projectId).then(setLogs).catch(() => setLogs([]));
+  const refresh = () => listDailyLogs(projectId, limit).then(setLogs).catch(() => setLogs([]));
 
   const onAdd = async () => {
     if (!form.log_date) return;
@@ -132,6 +145,13 @@ export function DailyLogs() {
             </tbody>
           </table>
         </div>
+        {hasMore && (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: 10 }}>
+            <button disabled={loadingMore} onClick={() => setLimit((n) => n + PAGE)}>
+              {loadingMore ? '불러오는 중…' : `이전 일보 더 보기 (${logs.length}건 표시 중)`}
+            </button>
+          </div>
+        )}
       </section>
 
       {msg && <p className="muted dash-msg">{msg}</p>}
