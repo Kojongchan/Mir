@@ -17,10 +17,12 @@ import { MeshoptSimplifier } from 'meshoptimizer';
  */
 export const LOD_PROFILES = {
   // Light: near-identical shape for mid-range and motion (same limits as the motion pairs).
-  light: { policy: 'merged-light-v2', ratio: 0.2, relativeError: 0.001, minIslandMeters: 0 },
-  // Far: always-resident whole-site level. 1% of a part's own size is sub-pixel at several hundred
-  // metres; parts smaller than 0.25 m are dropped (kept if they are a mesh's only/largest island).
-  far: { policy: 'merged-far-v2', ratio: 0.05, relativeError: 0.01, minIslandMeters: 0.25 },
+  light: { policy: 'merged-light-v2', ratio: 0.2, relativeError: 0.001, minIslandMeters: 0, lockBorder: true },
+  // Far: always-resident whole-site level, so the whole site must stay near a GPU-friendly triangle count.
+  // v2 (1% error, borders locked, 0.25 m parts) kept ~1/3 of detail triangles — far too heavy. v3 frees
+  // open borders and allows 3% of a part's own size; parts under 1 m are dropped (a mesh always keeps its
+  // largest island). Only shown beyond the light/detail ring.
+  far: { policy: 'merged-far-v3', ratio: 0.03, relativeError: 0.03, minIslandMeters: 1, lockBorder: false },
 };
 
 const SLOTS = 29, HEAD = 4 + SLOTS * 8;
@@ -97,7 +99,7 @@ async function simplifyIslands(pos, indices, profile) {
       const localIdx = Uint32Array.from(e.list, v => remap.get(v));
       try {
         const [result, error] = MeshoptSimplifier.simplify(localIdx, local, 3,
-          Math.max(3, Math.floor(e.list.length * profile.ratio / 3) * 3), profile.relativeError, ['LockBorder']);
+          Math.max(3, Math.floor(e.list.length * profile.ratio / 3) * 3), profile.relativeError, profile.lockBorder ? ['LockBorder'] : []);
         const candidate = Array.from(result, v => ids[v]);
         const c = bounds(candidate);
         const tolerance = a => Math.max(1e-6, Math.min(e.extent * profile.relativeError * 2, (e.b[a % 3 + 3] - e.b[a % 3]) * 0.01 + e.extent * profile.relativeError));
