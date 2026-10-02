@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { UiIconSprite } from './components/icons/UiIcon';
+import { DialogHost } from './components/DialogHost';
 // 셸/경량 페이지는 즉시 로드(첫 진입 지연 최소화).
 import { Login } from './pages/Login';
 import { ProjectSelect } from './pages/ProjectSelect';
@@ -75,6 +76,7 @@ export default function App() {
   return (
     <AuthProvider>
       <UiIconSprite />
+      <DialogHost />
       <BrowserRouter>
         <RouteBoundary>
         <Suspense fallback={<RouteFallback />}>
