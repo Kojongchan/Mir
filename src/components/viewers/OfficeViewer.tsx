@@ -9,7 +9,8 @@ import type { FileRecord } from '../../lib/files';
  * URL**(우리 세션 토큰 미포함)이어야 한다 — ACC=Autodesk 단기 서명 URL,
  * Supabase=서명 URL.
  */
-export function OfficeViewer({ url, file }: { url: string; file: FileRecord }) {
+/** canDownload=false (viewer role, D20) hides the original-file link. */
+export function OfficeViewer({ url, file, canDownload = true }: { url: string; file: FileRecord; canDownload?: boolean }) {
   const enc = encodeURIComponent(url);
   const view = `https://view.officeapps.live.com/op/view.aspx?src=${enc}`;
   return (
@@ -26,7 +27,7 @@ export function OfficeViewer({ url, file }: { url: string; file: FileRecord }) {
       >
         <span>Microsoft Office Online</span>
         <a href={view} target="_blank" rel="noopener noreferrer">↗ 새 탭에서 열기</a>
-        <a href={url} download={file.name}>⬇ 원본 다운로드</a>
+        {canDownload && <a href={url} download={file.name}>⬇ 원본 다운로드</a>}
       </div>
     </div>
   );

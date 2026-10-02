@@ -4,7 +4,7 @@ import { extensionOf, sizeLabel, type FileRecord } from '../../lib/files';
  * Fallback for formats we can't render in the browser today (avi, pptx, doc,
  * hwp, …). Never a dead end: offer a direct download via the signed URL.
  */
-export function DownloadFallback({ url, file }: { url: string; file: FileRecord }) {
+export function DownloadFallback({ url, file, canDownload = true }: { url: string; file: FileRecord; canDownload?: boolean }) {
   const ext = extensionOf(file.name).toUpperCase() || '파일';
   return (
     <div className="doc-stage doc-stage--center">
@@ -17,9 +17,13 @@ export function DownloadFallback({ url, file }: { url: string; file: FileRecord 
           <br />
           (서버 변환은 다음 단계에서 지원 예정)
         </p>
-        <a className="btn-primary" href={url} download={file.name}>
-          다운로드
-        </a>
+        {canDownload ? (
+          <a className="btn-primary" href={url} download={file.name}>
+            다운로드
+          </a>
+        ) : (
+          <p className="muted">다운로드는 실무자 이상 권한에서 가능합니다.</p>
+        )}
       </div>
     </div>
   );

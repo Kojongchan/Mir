@@ -1458,6 +1458,7 @@ function IssueDetail({
           itemId={previewFile.acc_item_id}
           name={previewFile.name}
           urn={previewFile.acc_urn}
+          canDownload={canEdit}
           onClose={() => setPreviewFile(null)}
         />
       )}

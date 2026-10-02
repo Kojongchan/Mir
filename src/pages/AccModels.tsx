@@ -519,11 +519,11 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
       case 'sheet':
         return <SheetViewer url={d.url} file={f} />;
       case 'office':
-        return <OfficeViewer url={d.url} file={f} />;
+        return <OfficeViewer url={d.url} file={f} canDownload={canEdit} />;
       case 'text':
         return <TextViewer url={d.url} file={f} />;
       default:
-        return <DownloadFallback url={d.url} file={f} />;
+        return <DownloadFallback url={d.url} file={f} canDownload={canEdit} />;
     }
   };
 

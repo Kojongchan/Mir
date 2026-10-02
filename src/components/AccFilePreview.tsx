@@ -25,12 +25,15 @@ export function AccFilePreview({
   name,
   urn,
   onClose,
+  canDownload = true,
 }: {
   accProject: string;
   itemId: string;
   name: string;
   urn?: string | null;
   onClose: () => void;
+  /** Viewer role (D20): no download links in the preview. */
+  canDownload?: boolean;
 }) {
   const [view, setView] = useState<{ url: string; kind: ViewerKind } | null>(null);
   const [status, setStatus] = useState('여는 중…');
@@ -81,9 +84,9 @@ export function AccFilePreview({
       case 'video': return <VideoViewer url={view.url} file={f} />;
       case 'audio': return <AudioViewer url={view.url} file={f} />;
       case 'sheet': return <SheetViewer url={view.url} file={f} />;
-      case 'office': return <OfficeViewer url={view.url} file={f} />;
+      case 'office': return <OfficeViewer url={view.url} file={f} canDownload={canDownload} />;
       case 'text': return <TextViewer url={view.url} file={f} />;
-      default: return <DownloadFallback url={view.url} file={f} />;
+      default: return <DownloadFallback url={view.url} file={f} canDownload={canDownload} />;
     }
   };
 

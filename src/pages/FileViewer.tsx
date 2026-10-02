@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import { useProjectRole } from '../auth/useProjectRole';
 import { BrandLogo } from '../components/BrandLogo';
 import { ThemeToggle } from '../components/ThemeToggle';
 import {
@@ -41,6 +42,9 @@ type State =
 export function FileViewer() {
   const { fileId = '' } = useParams();
   const [state, setState] = useState<State>({ phase: 'loading' });
+  // Viewer role (D20): preview only, no download links. Hidden until the role is known.
+  const role = useProjectRole(state.phase === 'ready' ? state.file.project_id : undefined);
+  const canDownload = !role.loading && role.canEdit;
 
   useEffect(() => {
     let cancelled = false;
@@ -79,7 +83,7 @@ export function FileViewer() {
         )}
         <div className="spacer" />
         <ThemeToggle />
-        {state.phase === 'ready' && (
+        {state.phase === 'ready' && canDownload && (
           <a className="doc-viewer-dl" href={state.url} download={state.file.name}>
             다운로드
           </a>
@@ -91,7 +95,7 @@ export function FileViewer() {
         {state.phase === 'error' && <p className="doc-error">{state.message}</p>}
         {state.phase === 'ready' && (
           <Suspense fallback={<p className="muted doc-loading">뷰어 불러오는 중…</p>}>
-            <Dispatch file={state.file} url={state.url} />
+            <Dispatch file={state.file} url={state.url} canDownload={canDownload} />
           </Suspense>
         )}
       </main>
@@ -99,7 +103,7 @@ export function FileViewer() {
   );
 }
 
-function Dispatch({ file, url }: { file: FileRecord; url: string }) {
+function Dispatch({ file, url, canDownload }: { file: FileRecord; url: string; canDownload: boolean }) {
   const kind = viewerKindFor(file.name, file.mime_type);
   switch (kind) {
     case 'image':
@@ -113,10 +117,10 @@ function Dispatch({ file, url }: { file: FileRecord; url: string }) {
     case 'sheet':
       return <SheetViewer file={file} url={url} />;
     case 'office':
-      return <OfficeViewer file={file} url={url} />;
+      return <OfficeViewer file={file} url={url} canDownload={canDownload} />;
     case 'text':
       return <TextViewer file={file} url={url} />;
     default:
-      return <DownloadFallback file={file} url={url} />;
+      return <DownloadFallback file={file} url={url} canDownload={canDownload} />;
   }
 }
