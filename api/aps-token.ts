@@ -24,7 +24,12 @@ const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // 뷰어 + ACC 데이터(파일 트리) 조회용 읽기 권한.
-const SCOPE = 'data:read viewables:read';
+// This token reaches every logged-in browser. `data:read` also lets its holder list and download source
+// files of every ACC project the app can see (bypassing MIR project membership and the viewer role's
+// no-download rule); the Viewer itself only needs `viewables:read`. Set APS_VIEWER_SCOPE=viewables:read
+// once a preview deploy confirms ACC models still open with it.
+const ALLOWED_SCOPES = new Set(['viewables:read', 'data:read viewables:read']);
+const SCOPE = ALLOWED_SCOPES.has(process.env.APS_VIEWER_SCOPE ?? '') ? process.env.APS_VIEWER_SCOPE! : 'data:read viewables:read';
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
