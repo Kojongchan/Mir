@@ -29,7 +29,7 @@ test('overview eligibility rejects missing coverage, inflated assets and unknown
 });
 test('merged light v2 is an accepted overview policy; the far level is not a pair', () => {
  assert.equal(lib.canUseOverview({policy:'merged-light-v2',members:12,byteLength:4000},9000),true);
- assert.equal(lib.canUseOverview({policy:'merged-far-v1',members:12,byteLength:4000},9000),false);
+ assert.equal(lib.canUseOverview({policy:'merged-far-v2',members:12,byteLength:4000},9000),false);
 });
 test('detail admission uses distance to actual box, including long bridges and large coordinates', () => {
  assert.equal(lib.needsDetail([500000,0,0],[499999,-1,-1,510000,1,1]),true);

@@ -123,7 +123,7 @@ for (let i = 0; i < manifest.tiles.length; i++) {
   if (old?.n) delete manifest.chunkInfo[old.n];
   generated++; added += packed.body.length; sinceBatch++;
   console.log(`${profileName} ${generated}; tile ${i + 1}/${manifest.tiles.length}; ${result.sourceTiles} internal tiles → 1; ` +
-    `${result.triangles}/${result.detailTriangles} tri; +${Math.round(added / 1048576)}MiB`);
+    `${result.triangles}/${result.detailTriangles} tri; texture sets ${result.textureSets} → ${result.uniqueTextureSets}; +${Math.round(added / 1048576)}MiB`);
   if (sinceBatch >= 100) { await publish(); sinceBatch = 0; console.log('Progress published'); }
 }
 if (sinceBatch || unchanged || pendingDeletes.length) await publish();

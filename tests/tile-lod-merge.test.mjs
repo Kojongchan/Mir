@@ -7,7 +7,7 @@ const arr = (b, T) => new T(Uint8Array.from(b).buffer);
 const tile0 = [100, 200, 0, 121.845, 221.845, 0], tile1 = [1000, 1000, 10, 1020, 1020, 30];
 
 /** Two internal tiles: a dense plane (non-reused) in tile 0 and one cube reused by two meshes in tile 1. */
-function fixture() {
+function fixture({ textured = false } = {}) {
   const slots = Array.from({ length: 29 }, () => Buffer.alloc(0)), put = (s, T, v) => slots[s] = Buffer.from(T.from(v).buffer);
   slots[0] = Buffer.from('{}'); slots[14] = Buffer.from('[]'); slots[25] = Buffer.from('["plane","cubeA","cubeB"]');
   const pos = [], idx = [];
@@ -25,7 +25,8 @@ function fixture() {
   put(15, Uint32Array, [0, planeVerts]); put(16, Uint32Array, [0, 0]); put(17, Uint32Array, [0, 0]);
   put(18, Uint32Array, [0, 0]); put(19, Uint32Array, [0, planeIdx]); put(20, Uint32Array, [0, 0]);
   put(21, Uint32Array, [0, 1, 1]); put(22, Uint32Array, [0, 0, 16]);
-  put(23, Int32Array, [-1, -1, -1]); put(24, Uint8Array, [120,130,140,255,0,230, 10,20,30,255,0,200, 40,50,60,255,0,200]);
+  put(23, Int32Array, textured ? [0, 1, -1] : [-1, -1, -1]);
+  if (textured) put(10, Int32Array, [0, -1, -1, -1, -1, 0, -1, -1, -1, -1]); // two identical sets, one texture put(24, Uint8Array, [120,130,140,255,0,230, 10,20,30,255,0,200, 40,50,60,255,0,200]);
   put(26, Uint32Array, [0, 1, 2]); put(27, Float64Array, [...tile0, ...tile1]); put(28, Uint32Array, [0, 1]);
   const head = Buffer.alloc(236), out = [head]; head.writeUInt32LE(12); let len = 236;
   slots.forEach((b, s) => { const pad = (8 - len % 8) % 8; out.push(Buffer.alloc(pad)); len += pad; head.writeUInt32LE(len, 4 + s * 8); head.writeUInt32LE(b.length, 8 + s * 8); out.push(b); len += b.length; });
@@ -70,4 +71,12 @@ test('unsupported version is left alone and corrupt tables fail closed', async (
   assert.equal(await buildMergedLod(b, 'light'), null);
   const c = fixture(); c.writeUInt32LE(0x7fffffff, 4 + 4 * 8);
   await assert.rejects(() => buildMergedLod(c, 'light'));
+});
+
+test('identical texture sets collapse so textured meshes share one draw layer', async () => {
+  const r = await buildMergedLod(fixture({ textured: true }), 'light');
+  const after = tables(r.bytes);
+  assert.equal(r.textureSets, 2); assert.equal(r.uniqueTextureSets, 1);
+  assert.deepEqual([...arr(after[10], Int32Array)], [0, -1, -1, -1, -1]);
+  assert.deepEqual([...arr(after[23], Int32Array)], [0, 0, -1]);
 });

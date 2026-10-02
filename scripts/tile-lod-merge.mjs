@@ -8,7 +8,9 @@ import { MeshoptSimplifier } from 'meshoptimizer';
  *   - merges every internal tile into ONE tile (one origin, one positions decode range) → 1–2 layers,
  *   - expands reused (instanced) geometry into per-mesh geometry, so instanced tiles are not skipped,
  *   - simplifies each connected island locally (meshopt, LockBorder) within a relative error,
- *   - drops vertex normals (flat shading) and edges.
+ *   - drops vertex normals (flat shading) and edges,
+ *   - deduplicates identical texture sets: the SDK draws one VBO layer per texture set, and the source
+ *     gives every textured mesh its own set (281 sets for one shared texture in a sampled tile).
  * Entity IDs, entity→mesh order, materials, colours and texture tables are kept, so the
  * decoded object list matches the detail tile. No mesh is removed: when the far profile drops tiny
  * islands, a mesh always keeps its largest island.
@@ -18,7 +20,7 @@ export const LOD_PROFILES = {
   light: { policy: 'merged-light-v2', ratio: 0.2, relativeError: 0.001, minIslandMeters: 0 },
   // Far: always-resident whole-site level. 1% of a part's own size is sub-pixel at several hundred
   // metres; parts smaller than 0.25 m are dropped (kept if they are a mesh's only/largest island).
-  far: { policy: 'merged-far-v1', ratio: 0.05, relativeError: 0.01, minIslandMeters: 0.25 },
+  far: { policy: 'merged-far-v2', ratio: 0.05, relativeError: 0.01, minIslandMeters: 0.25 },
 };
 
 const SLOTS = 29, HEAD = 4 + SLOTS * 8;
@@ -239,10 +241,23 @@ export async function buildMergedLod(input, profileName) {
   result[18] = buf(Uint32Array, ptr.u); result[19] = buf(Uint32Array, ptr.i); result[20] = buf(Uint32Array, ptr.e);
   result[21] = buf(Uint32Array, meshes.map((_, m) => m)); // every mesh owns its geometry: no instancing layers
   result[22] = buf(Uint32Array, meshes.map(() => 0));
+  // Identical texture sets (same 5 texture indices) collapse to one, so meshes share a draw layer.
+  const sets = view(raw[10], Int32Array), meshSet = view(raw[23], Int32Array);
+  if (sets.length % 5 || meshSet.length !== numMeshes) throw new Error('Invalid texture sets');
+  const setIndex = new Map(), uniqueSets = [], remapSet = [];
+  for (let k = 0; k < sets.length; k += 5) {
+    const key = sets.slice(k, k + 5).join(',');
+    if (!setIndex.has(key)) { setIndex.set(key, uniqueSets.length / 5); uniqueSets.push(...sets.slice(k, k + 5)); }
+    remapSet.push(setIndex.get(key));
+  }
+  if ([...meshSet].some(v => v >= remapSet.length)) throw new Error('Invalid mesh texture set');
+  result[10] = buf(Int32Array, uniqueSets);
+  result[23] = buf(Int32Array, Array.from(meshSet, v => (v >= 0 ? remapSet[v] : -1)));
   result[27] = buf(Float64Array, box);
   result[28] = buf(Uint32Array, [0]);
   return { bytes: writeTables(result), members: numEntities, detailTriangles, triangles, sourceTiles: numTiles,
-    reusedGeometries: [...reuse].filter(n => n > 1).length, policy: profile.policy, aabb: box };
+    reusedGeometries: [...reuse].filter(n => n > 1).length, textureSets: sets.length / 5, uniqueTextureSets: uniqueSets.length / 5,
+    policy: profile.policy, aabb: box };
 }
 
 /** Decoded world positions of a merged (single-tile, non-reused) file — for validation and tests. */
