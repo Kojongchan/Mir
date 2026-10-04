@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   countUnread,
   listNotifications,
@@ -13,17 +14,17 @@ export function NotificationBell() {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<AppNotification[]>([]);
-  const [unread, setUnread] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
 
-  const refreshCount = () => countUnread().then(setUnread).catch(() => setUnread(0));
-
-  // 주기적으로 미읽음 수만 폴링(가벼움). 드롭다운 열 때 목록을 불러온다.
-  useEffect(() => {
-    refreshCount();
-    const t = setInterval(refreshCount, 60_000);
-    return () => clearInterval(t);
-  }, []);
+  // 미읽음 수만 1분마다 폴링(가벼움). 탭이 가려져 있으면 멈추고, 돌아오면 바로 갱신.
+  // 드롭다운 열 때 목록을 불러온다.
+  const queryClient = useQueryClient();
+  const unread = useQuery({
+    queryKey: ['notifications', 'unread'],
+    queryFn: () => countUnread().catch(() => 0),
+    refetchInterval: 60_000,
+  }).data ?? 0;
+  const refreshCount = () => queryClient.invalidateQueries({ queryKey: ['notifications', 'unread'] });
 
   useEffect(() => {
     if (!open) return;
@@ -50,7 +51,7 @@ export function NotificationBell() {
   const onMarkAll = async () => {
     await markAllRead().catch(() => {});
     setItems((prev) => prev.map((n) => ({ ...n, is_read: true })));
-    setUnread(0);
+    queryClient.setQueryData(['notifications', 'unread'], 0);
   };
 
   return (

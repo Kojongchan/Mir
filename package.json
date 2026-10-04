@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
+    "@tanstack/react-query": "^5.104.1",
     "docxtemplater": "^3.69.0",
     "dxf-parser": "^1.1.2",
     "mammoth": "^1.12.0",

@@ -24,16 +24,25 @@ import {
   type ProfileRow,
 } from '../lib/admin';
 import { confirmDialog, formDialog, promptDialog, passwordRule } from '../lib/dialogs';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { projectKey } from '../lib/queryClient';
+import { useCachedQuery } from '../lib/useCachedQuery';
 
 type Tab = 'projects' | 'users' | 'members';
+const NO_PROJECTS: Project[] = [];
+const NO_USERS: ProfileRow[] = [];
 
 export function Admin({ embedded = false }: { embedded?: boolean }) {
   const navigate = useNavigate();
   const { profile } = useAuth();
   useDocumentTitle(!embedded && '시스템 관리');
   const [tab, setTab] = useState<Tab>('projects');
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [users, setUsers] = useState<ProfileRow[]>([]);
+  // Same cache entry as the project list screen, so new or renamed projects show there at once.
+  const projectsQuery = useQuery({ queryKey: ['projects'], queryFn: listProjects });
+  const usersQuery = useQuery({ queryKey: ['profiles'], queryFn: listProfiles });
+  const projects: Project[] = projectsQuery.data ?? NO_PROJECTS;
+  const users: ProfileRow[] = usersQuery.data ?? NO_USERS;
+  const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -46,14 +55,17 @@ export function Admin({ embedded = false }: { embedded?: boolean }) {
     setNotice(null);
   };
 
-  const reloadProjects = () => listProjects().then(setProjects).catch(fail);
-  const reloadUsers = () => listProfiles().then(setUsers).catch(fail);
-
+  const loadError = projectsQuery.error ?? usersQuery.error;
   useEffect(() => {
-    reloadProjects();
-    reloadUsers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (loadError) fail(loadError);
+  }, [loadError]);
+
+  // Project renames also show in each project's header.
+  const reloadProjects = () => {
+    void queryClient.invalidateQueries({ queryKey: ['projects'] });
+    void queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] === 'project' && q.queryKey[2] === 'header' });
+  };
+  const reloadUsers = () => void queryClient.invalidateQueries({ queryKey: ['profiles'] });
 
   const body = (
     <>
@@ -358,7 +370,10 @@ function MembersTab({
   fail,
 }: TabProps & { projects: Project[]; users: ProfileRow[] }) {
   const [projectId, setProjectId] = useState('');
-  const [members, setMembers] = useState<MemberRow[]>([]);
+  // Same cache entry as the project's 구성원·권한 screen.
+  const [members, , , membersQuery] = useCachedQuery<MemberRow[]>(
+    projectKey(projectId, 'members'), () => listMembers(projectId), [], { enabled: !!projectId });
+  const queryClient = useQueryClient();
   const [addUserId, setAddUserId] = useState('');
   const [addRole, setAddRole] = useState<MemberRole>('viewer');
 
@@ -366,15 +381,18 @@ function MembersTab({
     if (!projectId && projects.length) setProjectId(projects[0].id);
   }, [projects, projectId]);
 
+  useEffect(() => {
+    if (membersQuery.error) fail(membersQuery.error);
+  }, [membersQuery.error, fail]);
+
+  // Membership changes also change issue assignees and that project's roles.
   const reload = (pid: string) => {
     if (!pid) return;
-    listMembers(pid).then(setMembers).catch(fail);
+    for (const part of ['members', 'assignableUsers', 'memberDirectory']) {
+      void queryClient.invalidateQueries({ queryKey: projectKey(pid, part) });
+    }
+    void queryClient.invalidateQueries({ queryKey: ['projectRole', pid] });
   };
-
-  useEffect(() => {
-    reload(projectId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
 
   const usersById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
   const memberIds = useMemo(() => new Set(members.map((m) => m.user_id)), [members]);

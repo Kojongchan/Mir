@@ -1,6 +1,7 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase, usernameToEmail, isSupabaseConfigured } from '../lib/supabase';
+import { queryClient } from '../lib/queryClient';
 
 interface Profile {
   id: string;
@@ -31,6 +32,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const userId = session?.user.id ?? null;
   // Derived, so the first render after sign-in already counts as loading (no redirect race).
   const profileLoading = !!userId && profileFor !== userId;
+
+  // Cached server data belongs to one account: drop it on sign-out or when another user signs in.
+  const cachedFor = useRef<string | null>(null);
+  useEffect(() => {
+    // (Not on the first sign-in: the cache is empty and the first screen's requests are already in flight.)
+    if (cachedFor.current !== null && cachedFor.current !== userId) queryClient.clear();
+    cachedFor.current = userId;
+  }, [userId]);
 
   useEffect(() => {
     // Without real keys the client points at a placeholder host; skip the

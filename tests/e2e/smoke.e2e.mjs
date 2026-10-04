@@ -21,10 +21,20 @@ const FIRST_LOAD_BUDGET_KB = 200;
 const ERROR_BOUNDARY_TEXT = '이 화면을 표시하는 중 문제가 발생했습니다';
 
 const USER_ID = '00000000-0000-4000-8000-000000000001';
-const PROJECT = { id: '00000000-0000-4000-8000-0000000000aa', name: 'E2E 프로젝트', code: 'E2E' };
+const PROJECT = { id: '00000000-0000-4000-8000-0000000000aa', name: 'E2E 프로젝트', code: 'E2E',
+  acc_hub_id: 'b.hub', acc_project_id: 'b.proj', acc_root_folder_id: 'F-root', acc_root_folder_name: '프로젝트 파일' };
+/** Fake ACC folder tree behind /api/aps-acc (자료 관리). */
+const ACC_TREE = {
+  'F-root': { folders: [{ id: 'F-a', name: '01.도면' }, { id: 'F-b', name: '02.문서' }], items: [] },
+  'F-a': { folders: [], items: [{ id: 'I-1', name: '평면도.pdf', urn: null, lastModified: '2026-10-01T00:00:00Z', size: 1024 }] },
+  'F-b': { folders: [], items: [] },
+};
+const POST_TITLE = 'E2E 공지사항';
 const FIXTURES = {
   profiles: [{ id: USER_ID, username: 'e2e', full_name: 'E2E 관리자', is_admin: true }],
   projects: [PROJECT],
+  posts: [{ id: '00000000-0000-4000-8000-0000000000b1', project_id: PROJECT.id, title: POST_TITLE, body: '본문',
+    pinned: false, author_name: 'E2E 관리자', created_at: '2026-10-01T00:00:00Z' }],
 };
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
@@ -74,6 +84,10 @@ async function mockBackend(context) {
     const req = route.request();
     const url = new URL(req.url());
     if (url.origin === base) {
+      if (url.pathname === '/api/aps-acc' && url.searchParams.get('action') === 'contents') {
+        const listing = ACC_TREE[url.searchParams.get('folder')];
+        return listing ? route.fulfill({ json: listing }) : route.fulfill({ status: 404, json: { error: 'no such folder' } });
+      }
       if (url.pathname.startsWith('/api/')) return route.fulfill({ status: 503, json: { error: 'not available in e2e' } });
       return route.continue();
     }
@@ -156,6 +170,54 @@ test('signed-in admin can open every project menu', { timeout: 240_000 }, async 
     await page.goto(`${base}${route}`);
     await settle(page, label, errors);
   }
+  await context.close();
+});
+
+test('revisiting a menu shows cached data without a new request', { timeout: 120_000 }, async () => {
+  const { context, page, errors } = await openContext({ signedIn: true });
+  const requests = {};
+  page.on('request', (r) => {
+    const m = new URL(r.url()).pathname.match(/^\/rest\/v1\/([a-z_]+)/);
+    if (m && r.method() === 'GET') requests[m[1]] = (requests[m[1]] ?? 0) + 1;
+  });
+  const go = async (label) => {
+    await page.locator(`nav[aria-label="메인 네비게이션"] a[aria-label="${label}"]`).click();
+    await settle(page, label, errors);
+  };
+  await page.goto(`${base}/project/${PROJECT.id}`);
+  await settle(page, 'dashboard', errors);
+  const logsAfterDashboard = requests.daily_logs ?? 0;
+  assert.ok(logsAfterDashboard >= 1, 'dashboard did not load daily logs');
+  await go('공사일보'); // same first page of logs as the dashboard: served from the cache
+  assert.equal(requests.daily_logs ?? 0, logsAfterDashboard, '공사일보 refetched logs the dashboard just loaded');
+  await go('게시판');
+  await page.getByText(POST_TITLE).waitFor();
+  const postsFirst = requests.posts ?? 0;
+  await go('사업개요');
+  await go('게시판');
+  assert.ok(await page.getByText(POST_TITLE).isVisible(), 'board revisit did not show the cached post');
+  assert.equal(requests.posts ?? 0, postsFirst, 'board revisit within the fresh window refetched posts');
+  await context.close();
+});
+
+test('자료 관리 reopens the last folder from cache', { timeout: 120_000 }, async () => {
+  const { context, page, errors } = await openContext({ signedIn: true });
+  let accCalls = 0;
+  page.on('request', (r) => { if (new URL(r.url()).pathname === '/api/aps-acc') accCalls++; });
+  const go = async (label) => {
+    await page.locator(`nav[aria-label="메인 네비게이션"] a[aria-label="${label}"]`).click();
+    await settle(page, label, errors);
+  };
+  await page.goto(`${base}/project/${PROJECT.id}`);
+  await settle(page, 'dashboard', errors);
+  await go('자료 관리');
+  await page.locator('.acc-trow.folder', { hasText: '01.도면' }).click();
+  await page.getByText('평면도.pdf').waitFor();
+  const callsAfterFirstVisit = accCalls; // root + 01.도면
+  await go('게시판');
+  await go('자료 관리');
+  await page.getByText('평면도.pdf').waitFor({ timeout: 2_000 }); // back in 01.도면, not the start folder
+  assert.equal(accCalls, callsAfterFirstVisit, 'revisit refetched folder listings that were just loaded');
   await context.close();
 });
 

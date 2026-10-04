@@ -16,6 +16,8 @@ import {
 import { DrawingSheet } from '../components/DrawingSheet';
 import { formatDate } from '../lib/dashboard';
 import { confirmDialog } from '../lib/dialogs';
+import { projectKey } from '../lib/queryClient';
+import { useCachedQuery } from '../lib/useCachedQuery';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -34,26 +36,20 @@ export function Drawings() {
   const location = useLocation();
   const openDrawingId = (location.state as { openDrawingId?: string } | null)?.openDrawingId ?? null;
 
-  const [list, setList] = useState<Drawing[]>([]);
+  const [list, setList, refresh, listQuery] = useCachedQuery<Drawing[]>(
+    projectKey(projectId, 'drawings'), () => listDrawings(projectId), []);
   const [selId, setSelId] = useState<string | null>(openDrawingId);
   const [msg, setMsg] = useState('');
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const refresh = async () => {
-    try {
-      const d = await listDrawings(projectId);
-      setList(d);
-      setSelId((cur) => cur ?? d[0]?.id ?? null);
-    } catch (e) {
-      setMsg(errMessage(e));
-    }
-  };
-
+  // Select the first drawing once the list is known (keeps an existing selection).
   useEffect(() => {
-    void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+    setSelId((cur) => cur ?? list[0]?.id ?? null);
+  }, [list]);
+  useEffect(() => {
+    if (listQuery.error) setMsg(errMessage(listQuery.error));
+  }, [listQuery.error]);
 
   useEffect(() => {
     if (openDrawingId) setSelId(openDrawingId);

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthProvider';
 
@@ -45,42 +45,29 @@ export interface ProjectRoleState {
  * 강제는 RLS(0023)가 한다.
  */
 export function useProjectRole(projectId: string | undefined): ProjectRoleState {
-  const { profile } = useAuth();
+  const { profile, profileLoading } = useAuth();
   const isSystemAdmin = !!profile?.is_admin;
-  const [role, setRole] = useState<ProjectRole | null>(null);
-  const [loading, setLoading] = useState(true);
+  // 시스템 관리자는 조회 없이 관리자 권한. 메뉴마다 재조회하던 것을 1분 캐시(역할 변경은 1분 안에 반영).
+  const enabled = !!projectId && !!profile?.id && !isSystemAdmin;
+  const query = useQuery({
+    queryKey: ['projectRole', projectId, profile?.id],
+    enabled,
+    staleTime: 60_000,
+    queryFn: async (): Promise<ProjectRole | null> => {
+      const { data } = await supabase
+        .from('project_members')
+        .select('role')
+        .eq('project_id', projectId!)
+        .eq('user_id', profile!.id)
+        .maybeSingle();
+      const r = (data?.role as ProjectRole | undefined) ?? null;
+      return r && ['viewer', 'editor', 'admin'].includes(r) ? r : data ? 'viewer' : null;
+    },
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    if (!projectId || !profile?.id) {
-      setRole(null);
-      setLoading(false);
-      return;
-    }
-    // 시스템 관리자는 조회 없이 관리자 권한.
-    if (isSystemAdmin) {
-      setRole('admin');
-      setLoading(false);
-      return;
-    }
-    supabase
-      .from('project_members')
-      .select('role')
-      .eq('project_id', projectId)
-      .eq('user_id', profile.id)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (cancelled) return;
-        const r = (data?.role as ProjectRole | undefined) ?? null;
-        setRole(r && ['viewer', 'editor', 'admin'].includes(r) ? r : data ? 'viewer' : null);
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, profile?.id, isSystemAdmin]);
-
+  const role: ProjectRole | null = isSystemAdmin ? 'admin' : enabled ? query.data ?? null : null;
+  // Profile still loading counts as loading, so screens do not flash "no permission" first.
+  const loading = profileLoading || (enabled && query.isPending);
   const canManage = isSystemAdmin || role === 'admin';
   const canEdit = canManage || role === 'editor';
   const canView = isSystemAdmin || role !== null;

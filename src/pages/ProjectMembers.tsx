@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
 import { useProjectRole, ROLE_LABEL } from '../auth/useProjectRole';
@@ -18,6 +19,8 @@ import {
   type ProfileRow,
 } from '../lib/admin';
 import { confirmDialog, promptDialog, passwordRule } from '../lib/dialogs';
+import { projectKey } from '../lib/queryClient';
+import { useCachedQuery } from '../lib/useCachedQuery';
 
 /**
  * 구성원·권한 — 프로젝트 단위 멤버/역할 관리 (S48).
@@ -31,8 +34,12 @@ export function ProjectMembers() {
   const { projectId = '' } = useParams();
   const { canManage, loading } = useProjectRole(projectId);
 
-  const [members, setMembers] = useState<MemberRow[]>([]);
-  const [users, setUsers] = useState<ProfileRow[]>([]);
+  const [members, setMembers] = useCachedQuery<MemberRow[]>(
+    projectKey(projectId, 'members'), () => listMembers(projectId).catch(() => []), [], { enabled: canManage });
+  const [users] = useCachedQuery<ProfileRow[]>(
+    projectKey(projectId, 'assignableUsers'), () => listAssignableUsers(projectId).then((r) => r.users).catch(() => []), [],
+    { enabled: canManage });
+  const queryClient = useQueryClient();
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -42,15 +49,13 @@ export function ProjectMembers() {
   // 신규 계정 생성
   const [nu, setNu] = useState({ username: '', fullName: '', password: '', role: 'viewer' as MemberRole });
 
+  // Membership changes also change who can be assigned in issues and each member's role.
   const reload = () => {
-    listMembers(projectId).then(setMembers).catch(() => setMembers([]));
-    listAssignableUsers(projectId).then((r) => setUsers(r.users)).catch(() => setUsers([]));
+    for (const part of ['members', 'assignableUsers', 'memberDirectory']) {
+      void queryClient.invalidateQueries({ queryKey: projectKey(projectId, part) });
+    }
+    void queryClient.invalidateQueries({ queryKey: ['projectRole', projectId] });
   };
-
-  useEffect(() => {
-    if (canManage) reload();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, canManage]);
 
   const usersById = useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
   const memberIds = useMemo(() => new Set(members.map((m) => m.user_id)), [members]);

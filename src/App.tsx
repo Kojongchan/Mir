@@ -4,6 +4,8 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { UiIconSprite } from './components/icons/UiIcon';
 import { DialogHost } from './components/DialogHost';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { queryClient } from './lib/queryClient';
 // 셸/경량 페이지는 즉시 로드(첫 진입 지연 최소화).
 import { Login } from './pages/Login';
 import { ProjectSelect } from './pages/ProjectSelect';
@@ -75,6 +77,7 @@ function RouteBoundary({ children }: { children: ReactElement }) {
 
 export default function App() {
   return (
+    <QueryClientProvider client={queryClient}>
     <AuthProvider>
       <UiIconSprite />
       <DialogHost />
@@ -150,5 +153,6 @@ export default function App() {
         </RouteBoundary>
       </BrowserRouter>
     </AuthProvider>
+    </QueryClientProvider>
   );
 }

@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useState } from 'react';
 import { Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { BrandLogo } from '../components/BrandLogo';
@@ -8,7 +8,9 @@ import { NotificationBell } from '../components/NotificationBell';
 import { BottomTabBar } from '../components/BottomTabBar';
 import { TopUserMenu } from '../components/TopUserMenu';
 import { UiIcon } from '../components/icons/UiIcon';
-import { getProject, type Project } from '../lib/api';
+import type { Project } from '../lib/api';
+import { useQuery } from '@tanstack/react-query';
+import { projectHeaderQuery } from '../lib/queryClient';
 
 const RAIL_KEY = 'mir.sidebar.collapsed';
 
@@ -24,18 +26,11 @@ export function ProjectShell() {
   const { projectId = '' } = useParams();
   const { pathname } = useLocation();
   const navigate = useNavigate();
-  const [project, setProject] = useState<Project | null>(null);
+  // Keyed by project: switching shows the new project's name, never a late response for the old one.
+  const { data: project = null } = useQuery<Project | null>(projectHeaderQuery(projectId));
   const [collapsed, setCollapsed] = useState<boolean>(
     () => localStorage.getItem(RAIL_KEY) === '1',
   );
-
-  useEffect(() => {
-    // Switching projects: drop the previous name at once and ignore its late response.
-    let alive = true;
-    setProject(null);
-    getProject(projectId).then((p) => { if (alive) setProject(p); });
-    return () => { alive = false; };
-  }, [projectId]);
 
   const toggleRail = () => {
     setCollapsed((c) => {

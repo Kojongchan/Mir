@@ -13,6 +13,9 @@ import {
 } from '../lib/dashboard';
 import { Attachments } from '../components/Attachments';
 import { confirmDialog, toastError } from '../lib/dialogs';
+import { useQueryClient } from '@tanstack/react-query';
+import { projectKey } from '../lib/queryClient';
+import { useCachedQuery } from '../lib/useCachedQuery';
 
 const PAGE = 60;
 
@@ -21,7 +24,6 @@ export function DailyLogs() {
   const { projectId = '' } = useParams();
   // 일보 등록·삭제·첨부 = 실무자(editor) 이상. RLS(0023)와 일치.
   const { canEdit } = useProjectRole(projectId);
-  const [logs, setLogs] = useState<DailyLog[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [msg, setMsg] = useState('');
   const [form, setForm] = useState({
@@ -33,21 +35,17 @@ export function DailyLogs() {
   });
 
   // Newest first, PAGE at a time: older logs used to be unreachable once a project passed 60 logs.
+  // The first page shares its cache entry with 사업개요.
   const [limit, setLimit] = useState(PAGE);
-  const [loadingMore, setLoadingMore] = useState(false);
   useEffect(() => { setLimit(PAGE); }, [projectId]);
-  useEffect(() => {
-    let alive = true;
-    setLoadingMore(true);
-    listDailyLogs(projectId, limit)
-      .then((l) => { if (alive) setLogs(l); })
-      .catch(() => { if (alive) setLogs([]); })
-      .finally(() => { if (alive) setLoadingMore(false); });
-    return () => { alive = false; };
-  }, [projectId, limit]);
+  const [logs, , , logsQuery] = useCachedQuery<DailyLog[]>(
+    projectKey(projectId, 'dailyLogs', limit), () => listDailyLogs(projectId, limit).catch(() => []), [], { keepPrevious: true });
+  const loadingMore = logsQuery.isFetching;
   const hasMore = logs.length >= limit;
 
-  const refresh = () => listDailyLogs(projectId, limit).then(setLogs).catch(() => setLogs([]));
+  // Every cached page (and 사업개요's) is stale after a change.
+  const queryClient = useQueryClient();
+  const refresh = () => queryClient.invalidateQueries({ queryKey: projectKey(projectId, 'dailyLogs') });
 
   const onAdd = async () => {
     if (!form.log_date) return;

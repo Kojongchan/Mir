@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
 import { listProjects, type Project } from '../lib/api';
@@ -11,15 +12,13 @@ export function ProjectSelect() {
   const navigate = useNavigate();
   const { profile, signOut } = useAuth();
   useDocumentTitle('프로젝트 선택');
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Cached: coming back to this list (project switcher) shows it at once.
+  const projectsQuery = useQuery({ queryKey: ['projects'], queryFn: listProjects });
+  const projects: Project[] = projectsQuery.data ?? [];
+  const loading = projectsQuery.isPending;
+  const error = projectsQuery.error ? (projectsQuery.error as Error).message : null;
 
   useEffect(() => {
-    listProjects()
-      .then(setProjects)
-      .catch((e) => setError((e as Error).message))
-      .finally(() => setLoading(false));
     // The next screen is the project dashboard (lazy, with charts): fetch it while the user picks.
     const prefetch = () => void import('./Dashboard');
     const w = window as Window & { requestIdleCallback?: (cb: () => void) => number };

@@ -33,6 +33,7 @@ import { OfficeViewer } from '../viewers/OfficeViewer';
 import { ModalBackdrop } from '../ModalBackdrop';
 import { useEscapeKey } from '../../lib/useEscapeKey';
 import { confirmDialog, promptDialog } from '../../lib/dialogs';
+import { useQueryClient } from '@tanstack/react-query';
 
 const NO_ITEMS: AccItem[] = [];
 const fakeFile = (name: string) => ({ name, size_bytes: null, mime_type: null }) as unknown as FileRecord;
@@ -53,6 +54,26 @@ type FolderNode = {
 const mkFolder = (id: string, name: string): FolderNode => ({
   id, name, expanded: false, loaded: false, loading: false, children: [], items: [],
 });
+
+type FolderContents = { folders: AccNamed[]; items: AccItem[] };
+const contentsKey = (accProject: string, folderId: string) => ['acc', accProject, 'contents', folderId];
+const fetchContents = (accProject: string, folderId: string) =>
+  accFetch({ action: 'contents', project: accProject, folder: folderId }) as Promise<FolderContents>;
+/** Fresh listing into an existing node: subfolders already opened keep their contents and state. */
+const withContents = (n: FolderNode, c: FolderContents): FolderNode => ({
+  ...n, loading: false, loaded: true, items: c.items,
+  children: c.folders.map((f) => {
+    const old = n.children.find((x) => x.id === f.id);
+    return old ? { ...old, name: f.name } : mkFolder(f.id, f.name);
+  }),
+});
+const lastPathKey = (projectId: string) => `mir:acc-browser-path:${projectId}`;
+function readLastPath(projectId: string): string[] | null {
+  try {
+    const v = JSON.parse(sessionStorage.getItem(lastPathKey(projectId)) ?? 'null');
+    return Array.isArray(v) && v.every((x) => typeof x === 'string') ? v : null;
+  } catch { return null; }
+}
 
 function updateFolder(nodes: FolderNode[], id: string, fn: (n: FolderNode) => FolderNode): FolderNode[] {
   return nodes.map((n) => {
@@ -124,6 +145,19 @@ export function AccBrowser({
   const [busy, setBusy] = useState(false);
 
   const [docView, setDocView] = useState<{ url: string; name: string; kind: ViewerKind } | null>(null);
+
+  // Folder listings are cached across visits (ACC round trips take ~1 s each): a folder opened
+  // before shows at once and is refreshed in the background; a never-opened one is fetched.
+  const queryClient = useQueryClient();
+  const loadContents = async (proj: string, folderId: string): Promise<FolderContents> => {
+    const key = contentsKey(proj, folderId);
+    const cached = queryClient.getQueryData<FolderContents>(key);
+    if (!cached) return queryClient.fetchQuery({ queryKey: key, queryFn: () => fetchContents(proj, folderId) });
+    void queryClient.fetchQuery({ queryKey: key, queryFn: () => fetchContents(proj, folderId), staleTime: 30_000 })
+      .then((fresh) => { if (fresh !== cached) setRoots((r) => updateFolder(r, folderId, (n) => withContents(n, fresh))); })
+      .catch(() => { /* keep the cached listing */ });
+    return cached;
+  };
   const [versionsFor, setVersionsFor] = useState<{ item: AccItem; list: AccVersion[]; loading: boolean; error?: string } | null>(null);
   const [moveFor, setMoveFor] = useState<AccItem | null>(null);
   // Move needs an explicit confirm: picking a folder only selects it (a misclick used to move at once).
@@ -143,6 +177,8 @@ export function AccBrowser({
 
   useEffect(() => {
     let cancelled = false;
+    // Read before anything selects a folder (selecting saves the path over it).
+    const last = readLastPath(projectId);
     (async () => {
       try {
         const acc = await getProjectAcc(projectId);
@@ -156,35 +192,44 @@ export function AccBrowser({
         setPinned(true);
         setAccProject(acc.acc_project_id);
         setRootLabel(acc.acc_root_folder_name || 'ACC');
+        // The tree is built locally, then published; deep-link steps are checked against it.
+        let tree: FolderNode[];
         if (acc.acc_root_folder_id) {
           const root = mkFolder(acc.acc_root_folder_id, acc.acc_root_folder_name ?? '시작 폴더');
-          setRoots([root]);
-          await ensureLoaded(root, acc.acc_project_id);
-          setSelId(acc.acc_root_folder_id);
+          const c = await loadContents(acc.acc_project_id, root.id);
+          if (cancelled) return;
+          tree = [{ ...withContents(root, c), expanded: true }];
+          setRoots(tree);
+          setSelId(root.id);
         } else {
           const { folders } = await accFetch({ action: 'topFolders', hub: acc.acc_hub_id, project: acc.acc_project_id });
           if (cancelled) return;
-          setRoots((folders as AccNamed[]).map((f) => mkFolder(f.id, f.name)));
+          tree = (folders as AccNamed[]).map((f) => mkFolder(f.id, f.name));
+          setRoots(tree);
           setSelId(null);
         }
-        // 딥링크: 특정 폴더까지 순차로 펼쳐 선택(이슈 첨부의 '위치 열기'에서 진입).
-        if (initialPath && initialPath.length) {
-          for (const fid of initialPath) {
+        // 딥링크: 특정 폴더까지 순차로 펼쳐 선택(이슈 첨부의 '위치 열기'에서 진입). 딥링크가 없으면
+        // 이 세션에서 마지막으로 보던 폴더로 복귀(같은 시작 폴더 아래일 때만, 목록은 캐시에서 즉시).
+        const resume = initialPath?.length ? initialPath
+          : last?.length && (!acc.acc_root_folder_id || last[0] === acc.acc_root_folder_id) ? last : null;
+        if (resume) {
+          let reached: string | null = null;
+          for (const fid of resume) {
             if (cancelled) return;
+            // Leading ids above the pinned start folder are skipped (links saved before it was pinned);
+            // once inside the tree, a missing id means the path changed (moved/deleted): stop there.
+            if (!findNode(tree, fid)) { if (reached) break; continue; }
             try {
-              const { folders, items } = await accFetch({ action: 'contents', project: acc.acc_project_id, folder: fid });
-              setRoots((r) =>
-                updateFolder(r, fid, (n) => ({
-                  ...n, loaded: true, expanded: true,
-                  children: (folders as AccNamed[]).map((f) => mkFolder(f.id, f.name)),
-                  items: items as AccItem[],
-                })),
-              );
+              const c = await loadContents(acc.acc_project_id, fid);
+              tree = updateFolder(tree, fid, (n) => ({ ...withContents(n, c), expanded: true }));
+              reached = fid;
             } catch {
-              /* 폴더 접근 불가 시 무시 — 부분 펼침 */
+              break; // 폴더 접근 불가(권한) — 거기까지만 펼침
             }
           }
-          setSelId(initialPath[initialPath.length - 1]);
+          if (cancelled) return;
+          setRoots(tree);
+          if (reached) setSelId(reached);
         }
         setStatus('');
       } catch (e) {
@@ -235,30 +280,21 @@ export function AccBrowser({
     }
     setRoots((r) => updateFolder(r, node.id, (n) => ({ ...n, loading: true })));
     try {
-      const { folders, items } = await accFetch({ action: 'contents', project: p, folder: node.id });
-      setRoots((r) =>
-        updateFolder(r, node.id, (n) => ({
-          ...n, loading: false, loaded: true, expanded: true,
-          children: (folders as AccNamed[]).map((f) => mkFolder(f.id, f.name)),
-          items: items as AccItem[],
-        })),
-      );
+      const c = await loadContents(p, node.id);
+      setRoots((r) => updateFolder(r, node.id, (n) => ({ ...withContents(n, c), expanded: true })));
     } catch (e) {
       setRoots((r) => updateFolder(r, node.id, (n) => ({ ...n, loading: false })));
       setStatus(`폴더 열기 실패: ${(e as Error).message}`);
     }
   };
 
+  // After a change (upload, rename, delete, move) or ⟳: always refetch, and keep the cache current.
   const reloadFolder = async (folderId: string) => {
     try {
-      const { folders, items } = await accFetch({ action: 'contents', project: accProject, folder: folderId });
-      setRoots((r) =>
-        updateFolder(r, folderId, (n) => ({
-          ...n, loaded: true, expanded: true,
-          children: (folders as AccNamed[]).map((f) => mkFolder(f.id, f.name)),
-          items: items as AccItem[],
-        })),
-      );
+      const c = await queryClient.fetchQuery({
+        queryKey: contentsKey(accProject, folderId), queryFn: () => fetchContents(accProject, folderId), staleTime: 0,
+      });
+      setRoots((r) => updateFolder(r, folderId, (n) => ({ ...withContents(n, c), expanded: true })));
     } catch { /* 무시 */ }
   };
 
@@ -284,6 +320,14 @@ export function AccBrowser({
       await ensureLoaded(node);
     }
   };
+
+  // Remember the open folder for the next visit in this browser session.
+  useEffect(() => {
+    if (!selId) return;
+    const path = findPath(roots, selId);
+    if (!path) return;
+    try { sessionStorage.setItem(lastPathKey(projectId), JSON.stringify(path.map((n) => n.id))); } catch { /* storage off */ }
+  }, [selId, roots, projectId]);
 
   // ---- 현재 폴더 컨텐츠 ----
   const selNode = selId ? findNode(roots, selId) : null;

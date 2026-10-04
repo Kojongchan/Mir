@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useProjectRole } from '../auth/useProjectRole';
 import { MiniChart } from '../components/MiniChart';
 import { errMessage } from '../lib/errors';
+import { projectKey } from '../lib/queryClient';
+import { useCachedQuery } from '../lib/useCachedQuery';
 import {
   ddayLabel,
   deleteMonthlyRecord,
@@ -27,19 +29,16 @@ export function Schedule() {
   const navigate = useNavigate();
   // 공정(월별 실적) 입력·수정·삭제 = 실무자(editor) 이상. RLS(0023)와 일치.
   const { canEdit } = useProjectRole(projectId);
-  const [info, setInfo] = useState<ProjectInfo | null>(null);
-  const [milestones, setMilestones] = useState<Milestone[]>([]);
-  const [monthly, setMonthly] = useState<MonthlyRecord[]>([]);
+  // Same cache entries as 사업개요/기성내역: switching between them shows the figures at once.
+  const [info] = useCachedQuery<ProjectInfo | null>(
+    projectKey(projectId, 'info'), () => getProjectInfo(projectId).catch(() => null), null);
+  const [milestones] = useCachedQuery<Milestone[]>(
+    projectKey(projectId, 'milestones'), () => listMilestones(projectId).catch(() => []), []);
+  const [monthly, , refreshMonthly] = useCachedQuery<MonthlyRecord[]>(
+    projectKey(projectId, 'monthly'), () => listMonthlyRecords(projectId).catch(() => []), []);
   const [rec, setRec] = useState({ ym: todayISO().slice(0, 7), planned_pct: 0, actual_pct: 0, billing_amount: 0 });
   const [msg, setMsg] = useState('');
 
-  useEffect(() => {
-    getProjectInfo(projectId).then(setInfo).catch(() => setInfo(null));
-    listMilestones(projectId).then(setMilestones).catch(() => setMilestones([]));
-    listMonthlyRecords(projectId).then(setMonthly).catch(() => setMonthly([]));
-  }, [projectId]);
-
-  const refreshMonthly = () => listMonthlyRecords(projectId).then(setMonthly).catch(() => setMonthly([]));
 
   const onSaveRecord = async () => {
     if (!/^\d{4}-\d{2}$/.test(rec.ym)) {

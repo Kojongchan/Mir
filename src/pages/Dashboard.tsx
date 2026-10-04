@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Area,
@@ -37,6 +37,8 @@ import {
   type MonthlyRecord,
   type ProjectInfo,
 } from '../lib/dashboard';
+import { projectKey } from '../lib/queryClient';
+import { useCachedQuery } from '../lib/useCachedQuery';
 
 // Recharts 툴팁 — 토큰 기반(라이트/다크 자동). 텍스트는 ink 토큰, 마크만 계열색.
 const TOOLTIP_STYLE = {
@@ -74,11 +76,18 @@ export function Dashboard() {
   // 부당하게 막던 회귀(B1)라 canEdit 으로 정정.
   const { canEdit } = useProjectRole(projectId);
 
-  const [info, setInfo] = useState<ProjectInfo | null>(null);
-  const [milestones, setMilestones] = useState<Milestone[]>([]);
-  const [logs, setLogs] = useState<DailyLog[]>([]);
-  const [monthly, setMonthly] = useState<MonthlyRecord[]>([]);
-  const [openIssues, setOpenIssues] = useState(0);
+  // Cached per project: returning to 사업개요 shows the last figures at once while they refresh.
+  // Missing tables (migration not applied) read as empty, as before.
+  const [info, , refreshInfo] = useCachedQuery<ProjectInfo | null>(
+    projectKey(projectId, 'info'), () => getProjectInfo(projectId).catch(() => null), null);
+  const [milestones, setMilestones] = useCachedQuery<Milestone[]>(
+    projectKey(projectId, 'milestones'), () => listMilestones(projectId).catch(() => []), []);
+  const [logs] = useCachedQuery<DailyLog[]>(
+    projectKey(projectId, 'dailyLogs', 60), () => listDailyLogs(projectId, 60).catch(() => []), []);
+  const [monthly, setMonthly] = useCachedQuery<MonthlyRecord[]>(
+    projectKey(projectId, 'monthly'), () => listMonthlyRecords(projectId).catch(() => []), []);
+  const [openIssues] = useCachedQuery<number>(
+    projectKey(projectId, 'issues', 'openCount'), () => countOpenIssues(projectId).catch(() => 0), 0);
   const [edit, setEdit] = useState(false);
   const [msg, setMsg] = useState('');
 
@@ -89,29 +98,21 @@ export function Dashboard() {
   const [mDate, setMDate] = useState('');
   const [rec, setRec] = useState({ ym: todayISO().slice(0, 7), planned_pct: 0, actual_pct: 0, billing_amount: 0 });
 
+  // The edit form follows the saved values until the user types; a background refresh must not
+  // overwrite what is being edited.
+  const draftTouched = useRef(false);
   useEffect(() => {
-    refreshAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
-
-  const refreshAll = async () => {
-    const [i, m, l, r] = await Promise.all([
-      getProjectInfo(projectId).catch(() => null),
-      listMilestones(projectId).catch(() => []),
-      listDailyLogs(projectId).catch(() => []),
-      listMonthlyRecords(projectId).catch(() => []),
-    ]);
-    setInfo(i);
-    setMilestones(m);
-    setLogs(l);
-    setMonthly(r);
-    countOpenIssues(projectId).then(setOpenIssues).catch(() => setOpenIssues(0));
+    if (draftTouched.current) return;
     setDraft({
-      start_date: i?.start_date ?? '',
-      end_date: i?.end_date ?? '',
-      progress_pct: i ? Number(i.progress_pct) : 0,
-      summary: i?.summary ?? '',
+      start_date: info?.start_date ?? '',
+      end_date: info?.end_date ?? '',
+      progress_pct: info ? Number(info.progress_pct) : 0,
+      summary: info?.summary ?? '',
     });
+  }, [info]);
+  const editDraft = (patch: Partial<typeof draft>) => {
+    draftTouched.current = true;
+    setDraft((d) => ({ ...d, ...patch }));
   };
 
   const onSaveInfo = async () => {
@@ -122,7 +123,8 @@ export function Dashboard() {
         progress_pct: Number(draft.progress_pct) || 0,
         summary: draft.summary || null,
       });
-      await refreshAll();
+      draftTouched.current = false;
+      await refreshInfo();
       setMsg('사업 개요 저장됨');
     } catch (e) {
       setMsg(`저장 실패: ${errMessage(e)}`);
@@ -342,13 +344,13 @@ export function Dashboard() {
         <section className="dash-edit card">
           <h3>사업 정보 편집</h3>
           <div className="dash-edit-row">
-            <label>착공일<input type="date" value={draft.start_date} onChange={(e) => setDraft({ ...draft, start_date: e.target.value })} /></label>
-            <label>준공 예정<input type="date" value={draft.end_date} onChange={(e) => setDraft({ ...draft, end_date: e.target.value })} /></label>
-            <label>전체 진행률(%)<input type="number" min={0} max={100} step={0.1} value={draft.progress_pct} onChange={(e) => setDraft({ ...draft, progress_pct: Number(e.target.value) })} /></label>
+            <label>착공일<input type="date" value={draft.start_date} onChange={(e) => editDraft({ start_date: e.target.value })} /></label>
+            <label>준공 예정<input type="date" value={draft.end_date} onChange={(e) => editDraft({ end_date: e.target.value })} /></label>
+            <label>전체 진행률(%)<input type="number" min={0} max={100} step={0.1} value={draft.progress_pct} onChange={(e) => editDraft({ progress_pct: Number(e.target.value) })} /></label>
             <button className="primary" onClick={onSaveInfo}>저장</button>
           </div>
           <div className="dash-edit-row">
-            <label className="grow">개요<input value={draft.summary} placeholder="사업 개요 메모" onChange={(e) => setDraft({ ...draft, summary: e.target.value })} /></label>
+            <label className="grow">개요<input value={draft.summary} placeholder="사업 개요 메모" onChange={(e) => editDraft({ summary: e.target.value })} /></label>
           </div>
           <div className="dash-edit-row">
             <strong>마일스톤 추가:</strong>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
 import { errMessage } from '../lib/errors';
@@ -8,6 +8,8 @@ import { createPost, deletePost, listPosts, type Post } from '../lib/portal';
 import { formatDate } from '../lib/dashboard';
 import { Attachments } from '../components/Attachments';
 import { confirmDialog, toastError } from '../lib/dialogs';
+import { projectKey } from '../lib/queryClient';
+import { useCachedQuery } from '../lib/useCachedQuery';
 
 /** 게시판 / 공지 — 프로젝트 공지·알림 글. */
 export function Board() {
@@ -17,18 +19,13 @@ export function Board() {
   const { canEdit } = useProjectRole(projectId);
   const authorName = profile?.full_name ?? profile?.username ?? null;
 
-  const [posts, setPosts] = useState<Post[]>([]);
+  const [posts, , refresh] = useCachedQuery<Post[]>(
+    projectKey(projectId, 'posts'), () => listPosts(projectId).catch(() => []), []);
   const [open, setOpen] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ title: '', body: '', pinned: false });
   const [msg, setMsg] = useState('');
 
-  useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
-
-  const refresh = () => listPosts(projectId).then(setPosts).catch(() => setPosts([]));
 
   const onCreate = async () => {
     if (!form.title.trim()) {

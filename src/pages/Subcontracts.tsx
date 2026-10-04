@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
 import { errMessage } from '../lib/errors';
@@ -13,6 +13,8 @@ import {
 } from '../lib/portal';
 import { formatAmount } from '../lib/dashboard';
 import { confirmDialog, toastError } from '../lib/dialogs';
+import { projectKey } from '../lib/queryClient';
+import { useCachedQuery } from '../lib/useCachedQuery';
 
 const STATUSES: SubStatus[] = ['active', 'done', 'terminated'];
 
@@ -21,7 +23,8 @@ export function Subcontracts() {
   const { projectId = '' } = useParams();
   // 하도급 등록·삭제 = 실무자(editor) 이상. RLS(0023)와 일치.
   const { canEdit } = useProjectRole(projectId);
-  const [rows, setRows] = useState<Subcontract[]>([]);
+  const [rows, , refresh] = useCachedQuery<Subcontract[]>(
+    projectKey(projectId, 'subcontracts'), () => listSubcontracts(projectId).catch(() => []), []);
   const [showForm, setShowForm] = useState(false);
   const [msg, setMsg] = useState('');
   const [form, setForm] = useState({
@@ -35,12 +38,6 @@ export function Subcontracts() {
     note: '',
   });
 
-  useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
-
-  const refresh = () => listSubcontracts(projectId).then(setRows).catch(() => setRows([]));
 
   const onCreate = async () => {
     if (!form.company.trim()) {

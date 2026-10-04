@@ -63,7 +63,6 @@ import { exportIssueFormDocx, exportIssuesXlsx, openIssueFormPrint } from '../li
 import { listPinsForIssue, listIssuePins, type IssuePinRef } from '../lib/drawings';
 import { listProjectMembers, memberLabel, type ProjectMember } from '../lib/members';
 import { formatDate } from '../lib/dashboard';
-import { getProject } from '../lib/api';
 import { Attachments } from '../components/Attachments';
 import { Icon } from '../components/icons/Icon';
 import { UiIcon, type UiIconName } from '../components/icons/UiIcon';
@@ -77,9 +76,13 @@ import { listAttachments } from '../lib/attachments';
 import { downloadAccItemProgress, isAccModel } from '../lib/aps';
 import { useProjectRole } from '../auth/useProjectRole';
 import { confirmDialog, promptDialog, toastError } from '../lib/dialogs';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { projectHeaderQuery, projectKey } from '../lib/queryClient';
+import { useCachedQuery } from '../lib/useCachedQuery';
 
 type ViewMode = 'list' | 'board' | 'pins';
 type SortMode = 'newest' | 'oldest' | 'due' | 'priority';
+const NO_MEMBERS: ProjectMember[] = [];
 
 const VIEW_KEY = 'mir.issues.view';
 const PRIO_ORDER: Record<IssuePriority, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
@@ -118,13 +121,20 @@ export function Issues() {
   const myId = session?.user.id ?? null;
   const authorName = profile?.full_name ?? profile?.username ?? null;
 
-  const [issues, setIssues] = useState<Issue[]>([]);
-  const [members, setMembers] = useState<ProjectMember[]>([]);
+  // Cached per project: returning to 협업 · 이슈 shows the list at once while it refreshes.
+  const [issues] = useCachedQuery<Issue[]>(
+    projectKey(projectId, 'issues', 'list'), () => listIssues(projectId).catch(() => []), []);
+  // 담당 배정·@멘션 후보 — 뷰어를 뺀 모두(실무자·관리자)가 배정 가능(0033: 같은 프로젝트 멤버끼리
+  // 이름 조회 허용). canEdit 이 역할 로딩 후 true 가 되면 그때 불러온다.
+  const [memberDirectory] = useCachedQuery<ProjectMember[]>(
+    projectKey(projectId, 'memberDirectory'), () => listProjectMembers(projectId).catch(() => []), [], { enabled: canEdit });
+  const members = canEdit ? memberDirectory : NO_MEMBERS;
   const [unread, setUnread] = useState<Set<string>>(new Set());
   const [filter, setFilter] = useState<IssueStatus | 'all'>('all');
   const [typeFilter, setTypeFilter] = useState<IssueType | 'all'>('all');
   // 항목(공종·대상 분류, 0039) — 프로젝트별 관리 목록 + 필터('none' = 미지정).
-  const [cats, setCats] = useState<IssueCategory[]>([]);
+  const [cats, setCats] = useCachedQuery<IssueCategory[]>(
+    projectKey(projectId, 'issueCategories'), () => listIssueCategories(projectId).catch(() => []), []);
   const [catFilter, setCatFilter] = useState<string>('all');
   const [catManageOpen, setCatManageOpen] = useState(false);
   const [q, setQ] = useState('');
@@ -136,7 +146,7 @@ export function Issues() {
   const [msg, setMsg] = useState('');
   const [openId, setOpenId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
-  const [projectName, setProjectName] = useState('');
+  const projectName = useQuery(projectHeaderQuery(projectId)).data?.name ?? '';
 
   const [form, setForm] = useState<{
     title: string;
@@ -153,23 +163,18 @@ export function Issues() {
   const location = useLocation();
   const focusIssueId = (location.state as { focusIssueId?: string } | null)?.focusIssueId ?? null;
 
-  useEffect(() => {
-    refresh();
-    getProject(projectId).then((p) => setProjectName(p?.name ?? '')).catch(() => {});
-    listIssueCategories(projectId).then(setCats).catch(() => setCats([]));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
-
   // 항목 이름 해석(미지정/삭제된 항목 = '').
   const catName = (id: string | null) => (id ? cats.find((c) => c.id === id)?.name ?? '' : '');
 
-  // 담당 배정·@멘션 후보 목록 — 뷰어를 뺀 모두(실무자·관리자)가 배정 가능(0033: 같은
-  // 프로젝트 멤버끼리 이름 조회 허용). canEdit 은 역할 로딩 후 갱신되므로 별도 effect 로
-  // canEdit 이 true 가 되는 시점에 반드시 다시 불러온다(초기 false 캡처로 목록이 비던 버그 수정).
+  // Unread badges for the listed issues (re-read whenever the list changes).
   useEffect(() => {
-    if (canEdit) listProjectMembers(projectId).then(setMembers).catch(() => setMembers([]));
-    else setMembers([]);
-  }, [projectId, canEdit]);
+    if (!issues.length) { setUnread(new Set()); return; }
+    let alive = true;
+    listUnreadIssues(issues.map((i) => i.id))
+      .then((u) => { if (alive) setUnread(u); })
+      .catch(() => { if (alive) setUnread(new Set()); });
+    return () => { alive = false; };
+  }, [issues]);
 
   useEffect(() => {
     if (focusIssueId) {
@@ -178,17 +183,9 @@ export function Issues() {
     }
   }, [focusIssueId]);
 
-  const refresh = async () => {
-    try {
-      const list = await listIssues(projectId);
-      setIssues(list);
-      listUnreadIssues(list.map((i) => i.id))
-        .then(setUnread)
-        .catch(() => setUnread(new Set()));
-    } catch {
-      setIssues([]);
-    }
-  };
+  // After a change: the list, and every other cached issue figure (사업개요 open count).
+  const queryClient = useQueryClient();
+  const refresh = () => queryClient.invalidateQueries({ queryKey: projectKey(projectId, 'issues') });
 
   // 이슈 상세를 열 때 읽음 처리 후 안읽음 배지 갱신.
   const onRead = (issueId: string) => {

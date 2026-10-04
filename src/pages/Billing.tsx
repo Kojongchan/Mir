@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
 import { errMessage } from '../lib/errors';
@@ -15,6 +15,8 @@ import {
   type BillingItem,
 } from '../lib/portal';
 import { confirmDialog, toastError } from '../lib/dialogs';
+import { projectKey } from '../lib/queryClient';
+import { useCachedQuery } from '../lib/useCachedQuery';
 
 /**
  * 기성내역 — billing detail. 도급액 대비 누적 기성/기성률, 월별 기성 추이.
@@ -26,25 +28,22 @@ export function Billing() {
   const navigate = useNavigate();
   // 도급액·기성내역 입력·수정·삭제 = 실무자(editor) 이상. RLS(0023)와 일치.
   const { canEdit } = useProjectRole(projectId);
-  const [monthly, setMonthly] = useState<MonthlyRecord[]>([]);
-  const [contract, setContract] = useState(0);
+  // Monthly records share their cache entry with 사업개요.
+  const [monthly] = useCachedQuery<MonthlyRecord[]>(
+    projectKey(projectId, 'monthly'), () => listMonthlyRecords(projectId).catch(() => []), []);
+  const [contract, setContract] = useCachedQuery<number>(
+    projectKey(projectId, 'contractAmount'), () => getContractAmount(projectId).catch(() => 0), 0);
   const [draft, setDraft] = useState('0');
   const [msg, setMsg] = useState('');
-
-  useEffect(() => {
-    listMonthlyRecords(projectId).then(setMonthly).catch(() => setMonthly([]));
-    getContractAmount(projectId)
-      .then((a) => {
-        setContract(a);
-        setDraft(String(a));
-      })
-      .catch(() => setContract(0));
-  }, [projectId]);
+  // The input follows the saved amount until the user types (a background refresh must not overwrite it).
+  const draftTouched = useRef(false);
+  useEffect(() => { if (!draftTouched.current) setDraft(String(contract)); }, [contract]);
 
   const onSaveContract = async () => {
     try {
       const amount = Number(draft) || 0;
       await saveContractAmount(projectId, amount);
+      draftTouched.current = false;
       setContract(amount);
       setMsg('도급액 저장됨');
     } catch (e) {
@@ -73,7 +72,7 @@ export function Billing() {
           <div className="dash-stat-big" style={{ fontSize: 30 }}>{formatAmount(contract)}<small>원</small></div>
           {canEdit && (
             <div className="dash-edit-row" style={{ marginTop: 8 }}>
-              <input type="number" value={draft} onChange={(e) => setDraft(e.target.value)} />
+              <input type="number" value={draft} onChange={(e) => { draftTouched.current = true; setDraft(e.target.value); }} />
               <button onClick={onSaveContract}>저장</button>
             </div>
           )}
@@ -134,17 +133,11 @@ const EMPTY_ITEM = { category: '', contract_amount: 0, prev_amount: 0, current_a
 
 /** 공종별 기성 명세 — 도급액 / 전월 누계 / 당월 → 누계·기성률. */
 function BillingItemsSection({ projectId, canEdit }: { projectId: string; canEdit: boolean }) {
-  const [items, setItems] = useState<BillingItem[]>([]);
+  const [items, , refresh] = useCachedQuery<BillingItem[]>(
+    projectKey(projectId, 'billingItems'), () => listBillingItems(projectId).catch(() => []), []);
   const [form, setForm] = useState<typeof EMPTY_ITEM>(EMPTY_ITEM);
   const [editId, setEditId] = useState<string | null>(null);
   const [msg, setMsg] = useState('');
-
-  useEffect(() => {
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
-
-  const refresh = () => listBillingItems(projectId).then(setItems).catch(() => setItems([]));
 
   const onSave = async () => {
     if (!form.category.trim()) {
