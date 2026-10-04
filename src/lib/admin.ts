@@ -146,7 +146,7 @@ async function adminFn<T = unknown>(action: string, payload: Record<string, unkn
     });
   } catch (e) {
     if ((e as Error)?.name === 'AbortError') {
-      throw new Error('서버 응답이 없습니다(시간 초과). 배포 환경의 서버 함수(/api/admin)와 환경변수(SUPABASE_URL · SUPABASE_SERVICE_ROLE_KEY)를 확인하세요.');
+      throw new Error('서버 응답이 없습니다(시간 초과). 배포 환경의 서버 함수(/api/admin)와 환경변수(SUPABASE_URL · SUPABASE_SERVICE_ROLE_KEY)를 확인하세요.', { cause: e });
     }
     throw e;
   } finally {

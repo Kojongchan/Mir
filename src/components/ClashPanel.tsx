@@ -42,6 +42,16 @@ interface Props {
   onClose: () => void;
 }
 
+/** Category counts within one loaded model (or all), most frequent first. */
+function categoriesFor(meta: ElementMeta[], model: 'all' | number): [string, number][] {
+  const cats = new Map<string, number>();
+  for (const e of meta) {
+    if (model !== 'all' && e.modelID !== model) continue;
+    cats.set(e.category, (cats.get(e.category) ?? 0) + 1);
+  }
+  return [...cats.entries()].sort((a, b) => b[1] - a[1]);
+}
+
 /**
  * 간섭검토 결과 — 이동/크기 조절 가능한 팝업 창. 대상 A/B 를 (모델 → 카테고리)
  * 2단계로 선택하고 허용오차로 Hard/Clearance 간섭을 검출한다. 결과 행 클릭 시
@@ -126,7 +136,6 @@ export function ClashPanel({ viewer, projectId, modelIdMap, onClose }: Props) {
   // 모델이 로드될 때마다(modelIdMap 변화) 대상 목록을 자동 갱신.
   useEffect(() => {
     if (viewer) setMeta(viewer.getElementMeta());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewer, modelIdMap]);
 
   useEffect(() => {
@@ -147,19 +156,12 @@ export function ClashPanel({ viewer, projectId, modelIdMap, onClose }: Props) {
     }
   };
 
+  // `meta` is the recompute trigger: it is replaced whenever a model loads or unloads.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const loadedModels = useMemo(() => viewer?.getLoadedModels() ?? [], [viewer, meta]);
 
-  // 모델 선택에 따른 카테고리 목록(전체 또는 특정 모델 내).
-  const categoriesFor = (model: 'all' | number) => {
-    const cats = new Map<string, number>();
-    for (const e of meta) {
-      if (model !== 'all' && e.modelID !== model) continue;
-      cats.set(e.category, (cats.get(e.category) ?? 0) + 1);
-    }
-    return [...cats.entries()].sort((a, b) => b[1] - a[1]);
-  };
-  const aCats = useMemo(() => categoriesFor(aModel), [meta, aModel]);
-  const bCats = useMemo(() => categoriesFor(bModel), [meta, bModel]);
+  const aCats = useMemo(() => categoriesFor(meta, aModel), [meta, aModel]);
+  const bCats = useMemo(() => categoriesFor(meta, bModel), [meta, bModel]);
 
   const filterFor = (model: 'all' | number, cat: string) => (e: ElementMeta) =>
     (model === 'all' || e.modelID === model) && (cat === 'all' || e.category === cat);

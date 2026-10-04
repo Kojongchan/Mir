@@ -22,7 +22,8 @@
 npm install        # SessionStart 훅이 자동 실행 (웹 세션)
 npm run dev        # 개발 서버 http://localhost:5173
 npm run build      # 프로덕션 빌드 (= 검증)
-npm run typecheck  # 타입체크 (= 린트 역할, 커밋 전 통과 필수)
+npm run typecheck  # 타입체크: 앱(src) + 서버 함수(api, tsconfig.api.json) — 커밋 전 통과 필수
+npm run lint       # ESLint(훅 규칙 포함), 경고도 0개여야 통과 — 커밋 전 통과 필수
 npm test           # 단위 테스트 (tests/*.test.mjs, CI 에서도 실행)
 ```
 

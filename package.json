@@ -10,9 +10,10 @@
     "prebuild": "node scripts/copy-wasm.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.api.json",
     "verify:e2e": "node scripts/verify-e2e.mjs",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "lint": "eslint . --max-warnings 0"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
@@ -32,11 +33,17 @@
     "zustand": "^4.5.5"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.5",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@types/three": "^0.171.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^10.12.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
     "typescript": "^5.6.3",
+    "typescript-eslint": "^8.71.0",
     "vite": "^5.4.11"
   }
 }

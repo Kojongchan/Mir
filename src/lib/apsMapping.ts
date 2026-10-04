@@ -104,7 +104,7 @@ export function buildApsMapping(model: ApsModel): Promise<ApsMapping> {
   if (cached) return cached;
 
   const built = (async (): Promise<ApsMapping> => {
-    let extToDb: Record<string, number> = {};
+    let extToDb: Record<string, number>;
     try {
       extToDb = await getExternalIdMapping(model);
     } catch {

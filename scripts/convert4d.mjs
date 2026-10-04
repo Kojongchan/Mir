@@ -143,7 +143,7 @@ async function downloadSvfToDisk(derivative, outDir) {
         token = await mintApsToken(); // 장시간 다운로드 중 토큰 만료 → 재발급
         bytes = await fetchDerivativeBytes(token, basePath + asset.URI);
       } else {
-        throw new Error(`에셋 다운로드 실패(${asset.URI}): ${e?.message || e}`);
+        throw new Error(`에셋 다운로드 실패(${asset.URI}): ${e?.message || e}`, { cause: e });
       }
     }
     const dest = path.join(outDir, asset.URI);
@@ -170,7 +170,7 @@ async function main() {
   need('APS_CLIENT_SECRET', APS_CLIENT_SECRET);
   need('SUPABASE_URL', SUPABASE_URL);
   need('SUPABASE_SERVICE_ROLE_KEY', SUPABASE_SERVICE_ROLE_KEY);
-  let host = '';
+  let host;
   try {
     host = new URL(SUPABASE_URL).host;
   } catch {

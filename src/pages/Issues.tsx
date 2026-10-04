@@ -169,7 +169,6 @@ export function Issues() {
   useEffect(() => {
     if (canEdit) listProjectMembers(projectId).then(setMembers).catch(() => setMembers([]));
     else setMembers([]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, canEdit]);
 
   useEffect(() => {
@@ -177,7 +176,6 @@ export function Issues() {
       setOpenId(focusIssueId);
       onRead(focusIssueId); // 알림에서 진입 시 읽음 처리
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusIssueId]);
 
   const refresh = async () => {
