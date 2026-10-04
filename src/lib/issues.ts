@@ -1,6 +1,12 @@
 import { supabase } from './supabase';
 import { notify } from './notifications';
 import type { IssueType } from './issueTypes';
+import { projectKey, queryClient } from './queryClient';
+
+/** Issues change from several screens (issues, clash, viewpoints, drawings, 3D pins): refresh every
+ *  cached issue list and count of the project, wherever the change came from. */
+const issuesChanged = (projectId: string) =>
+  void queryClient.invalidateQueries({ queryKey: projectKey(projectId, 'issues') });
 
 // =====================================================================
 // 협업 · 이슈/지적 관리 데이터층 (Phase 12 / S22, 워크플로우 확장 S30).
@@ -202,6 +208,7 @@ export async function createIssue(
       actorName: authorName,
     });
   }
+  issuesChanged(projectId);
   return issueId;
 }
 
@@ -224,6 +231,7 @@ export async function setIssueStatus(issue: Issue, status: IssueStatus, actorNam
     issueId: issue.id,
     actorName,
   });
+  issuesChanged(issue.project_id);
 }
 
 /** 담당자 배정 변경 + 이력 + 새 담당자 알림. */
@@ -263,6 +271,7 @@ export async function assignIssue(
       actorName,
     });
   }
+  issuesChanged(issue.project_id);
 }
 
 export async function deleteIssue(id: string): Promise<void> {
@@ -291,6 +300,7 @@ export async function updateIssueMeta(
   if (fields.description !== undefined && (fields.description ?? '') !== (issue.description ?? '')) {
     await logEvent(issue.id, issue.project_id, 'content', null, '내용 수정', actorName);
   }
+  issuesChanged(issue.project_id);
 }
 
 /** 항목(공종·대상 분류) 변경 + 변경이력('category') 기록. 0039 필요. */
@@ -308,6 +318,7 @@ export async function setIssueCategory(
     .eq('id', issue.id);
   if (error) throw error;
   await logEvent(issue.id, issue.project_id, 'category', fromName, toName, actorName);
+  issuesChanged(issue.project_id);
 }
 
 /** 타입별 전용 필드(meta jsonb) 갱신 + 변경이력('meta') 기록. 0038 필요. */
@@ -324,6 +335,7 @@ export async function updateIssueTypeFields(
     .eq('id', issue.id);
   if (error) throw error;
   await logEvent(issue.id, issue.project_id, 'meta', null, changedLabel, actorName);
+  issuesChanged(issue.project_id);
 }
 
 /** 외부(첨부 링크·다운로드 등)에서 이슈 변경이력을 남기기 위한 공개 헬퍼. */
