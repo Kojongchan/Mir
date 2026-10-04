@@ -29,9 +29,16 @@ npm run test:e2e   # 브라우저 스모크(빌드 → 가짜 Supabase·관리�
 ```
 
 ## 스택 / 구조
-- Vite + React + TypeScript + react-router / Three.js + web-ifc / Supabase / Zustand
+- Vite + React + TypeScript + react-router / Three.js + web-ifc / Supabase / Zustand / TanStack Query
 - `src/viewer/` 3D·IFC 엔진 · `src/auth/` 인증 · `src/lib/` supabase·api · `src/pages/` 화면
+- `api/` Vercel 서버 함수(Node, `tsconfig.api.json`) · `tests/` 단위 · `tests/e2e/` 브라우저 스모크
 - `supabase/migrations/` DB 스키마(추가형: `0002_`, `0003_` …)
+
+## 코드 관례
+- 서버 데이터 조회: `useCachedQuery(projectKey(projectId, '<이름>'), loader, 초기값)` (캐시·재방문 즉시 표시).
+  같은 데이터는 같은 키, 변경 후에는 관련 키 무효화(`refresh` 또는 `queryClient.invalidateQueries`).
+- 확인·입력·알림은 `src/lib/dialogs.ts`(confirmDialog/promptDialog/formDialog/toast) — `window.alert/confirm/prompt` 금지.
+- 모달 배경은 `ModalBackdrop`(드래그 끝 닫힘 방지·Esc), 탭 제목은 `useDocumentTitle`.
 
 ## 규칙
 - **비밀키·.env 절대 커밋 금지** (`service_role` 키는 프론트엔드에 절대 X).
