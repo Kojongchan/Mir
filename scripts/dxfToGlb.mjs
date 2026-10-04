@@ -429,7 +429,6 @@ const KEEP_SURFACE = process.env.DXF_KEEP_SURFACE === '1';
 // 중간 회색(#808080·#848484)의 표고/지반 레이어(ELEV-6·EZ-BASE)였다 — 어두운 뷰에선 흰선처럼
 // 보인다. 순백 기준만으론 안 걸려서, '무채색(회색~흰)' + '표면/표고/지반' 이름을 함께 숨긴다.
 // (진짜 지형은 초록 F0017xxx 로 남는다. 되살리려면 DXF_KEEP_SURFACE=1.)
-const isWhiteish = (c) => c[0] >= 0.75 && c[1] >= 0.75 && c[2] >= 0.75;
 const isGrayish = (c) => (Math.max(c[0], c[1], c[2]) - Math.min(c[0], c[1], c[2]) < 0.10) && Math.max(c[0], c[1], c[2]) >= 0.45;
 // 주의: '등고/contour/tin' 같은 일반어는 진짜 등고선(초록)·식재(PLANTING 에 'tin' 포함!)까지
 // 숨겨 '다 안 보임'을 유발 → 확인된 회색 잔재(ELEV-*·EZ-BASE·지표면/surface)만 좁게 숨긴다.
@@ -661,7 +660,7 @@ out.write('glTF', o); o += 4; out.writeUInt32LE(2, o); o += 4; out.writeUInt32LE
 out.writeUInt32LE(jsonBuf.length + jsonPad, o); o += 4; out.write('JSON', o); o += 4;
 jsonBuf.copy(out, o); o += jsonBuf.length; for (let i = 0; i < jsonPad; i++) out[o++] = 0x20;
 out.writeUInt32LE(bin.length + binPad, o); o += 4; out.write('BIN\0', o); o += 4;
-bin.copy(out, o); o += bin.length;
+bin.copy(out, o);
 fs.mkdirSync('out', { recursive: true });
 fs.writeFileSync(outGlb, out);
 log('GLB 완료', outGlb, (out.length / 1e6).toFixed(1), 'MB · 노드', nodes.length);

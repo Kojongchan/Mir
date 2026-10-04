@@ -126,17 +126,6 @@ async function getSvfDerivatives(urn) {
 
 // ACC 최신 파일은 뷰어용으로 SVF2 만 있을 때가 많다(svf-utils 는 SVF 만 읽음). SVF 파생물이
 // 없는 경우 자동 유료 작업을 요청하지 않고 중단한다. 기존 파생물 읽기용 토큰만 발급한다.
-async function apsToken(scope) {
-  const basic = Buffer.from(`${APS_CLIENT_ID}:${APS_CLIENT_SECRET}`).toString('base64');
-  const res = await fetch(`${APS_BASE}/authentication/v2/token`, {
-    method: 'POST',
-    headers: { authorization: `Basic ${basic}`, 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'client_credentials', scope }),
-  });
-  const d = await res.json();
-  if (!res.ok || !d.access_token) throw new Error('APS 토큰 실패: ' + JSON.stringify(d).slice(0, 160));
-  return d.access_token;
-}
 function scanManifest(mani) {
   let svf = false, svf2 = false, views3d = 0, views2d = 0;
   const walk = (d) => {
@@ -247,7 +236,7 @@ async function downloadSvfToDisk(derivative, outDir) {
         token = await mintApsToken(); // 장시간 다운로드 중 토큰 만료 → 재발급
         bytes = await fetchDerivativeBytes(token, remote);
       } else {
-        throw new Error(`에셋 다운로드 실패(${asset.URI}): ${e?.message || e}`);
+        throw new Error(`에셋 다운로드 실패(${asset.URI}): ${e?.message || e}`, { cause: e });
       }
     }
     const dest = path.join(outDir, asset.URI);
@@ -360,7 +349,7 @@ async function main() {
   } else {
     need('SUPABASE_URL', SUPABASE_URL);
     need('SUPABASE_SERVICE_ROLE_KEY', SUPABASE_SERVICE_ROLE_KEY);
-    let host = '';
+    let host;
     try { host = new URL(SUPABASE_URL).host; } catch {
       throw new Error(`SUPABASE_URL 형식 오류. "https://<프로젝트>.supabase.co" 형태여야 합니다.`);
     }
@@ -461,7 +450,7 @@ async function main() {
         else { xktFiles.push(name); detailBytes += buf.length; console.log(`[convert4d]   청크 ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
       } catch (e) {
         failedChunks.push({ name, kind });
-        throw new Error(`XKT ${kind} 청크 변환/업로드 실패: 게시를 중단합니다. ${e?.message || e}`);
+        throw new Error(`XKT ${kind} 청크 변환/업로드 실패: 게시를 중단합니다. ${e?.message || e}`, { cause: e });
       } finally {
         // RENDER_TEST 시 진단용으로 남긴다: LOD1 GLB(개요) + 첫 상세청크 XKT(c0). 나머지는 삭제.
         const keepGlb = kind === 'lod1' && process.env.RENDER_TEST === '1';

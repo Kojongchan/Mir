@@ -17,6 +17,16 @@ import {
   type QtyUnitMode,
 } from '../lib/quantities';
 
+/** Category counts within one loaded model (or all), most frequent first. */
+function categoriesFor(meta: ElementMeta[], model: 'all' | number): [string, number][] {
+  const cats = new Map<string, number>();
+  for (const e of meta) {
+    if (model !== 'all' && e.modelID !== model) continue;
+    cats.set(e.category, (cats.get(e.category) ?? 0) + 1);
+  }
+  return [...cats.entries()].sort((a, b) => b[1] - a[1]);
+}
+
 /**
  * 5D 물량 산출(QTO) — BIM 요소 물량을 공종/카테고리별로 집계하고 기성내역과
  * 연계한다(설계 §12). 모델 풀은 다른 3D 모듈과 공유(자동 로드). 대상 집합은
@@ -87,16 +97,10 @@ export function Quantities() {
   };
 
   // --- 대상 선택기(모델 → 카테고리) ----------------------------------
+  // `meta` is the recompute trigger: it is replaced whenever a model loads or unloads.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const loadedModels = useMemo(() => viewer?.getLoadedModels() ?? [], [viewer, meta]);
-  const categoriesFor = (model: 'all' | number) => {
-    const cats = new Map<string, number>();
-    for (const e of meta) {
-      if (model !== 'all' && e.modelID !== model) continue;
-      cats.set(e.category, (cats.get(e.category) ?? 0) + 1);
-    }
-    return [...cats.entries()].sort((a, b) => b[1] - a[1]);
-  };
-  const cats = useMemo(() => categoriesFor(selModel), [meta, selModel]);
+  const cats = useMemo(() => categoriesFor(meta, selModel), [meta, selModel]);
   const items = useMemo(
     () =>
       meta.filter(

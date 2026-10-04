@@ -210,6 +210,8 @@ export function ThreeDTest() {
     if (!motionSince) return;
     const timer = setInterval(() => void checkMotionCache(), 5000);
     return () => clearInterval(timer);
+    // The interval restarts whenever motionSince or projectId change, the only values checkMotionCache reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [motionSince, projectId]);
   const startStorageCompaction = async () => {
     setStorageBusy(true);

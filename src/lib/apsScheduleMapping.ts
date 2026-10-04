@@ -245,7 +245,7 @@ export async function applyApsRules(
   const merged: TaskMapping = {};
   for (const rule of rules) {
     if (!rule.enabled) continue;
-    let partial: TaskMapping = {};
+    let partial: TaskMapping;
     if (rule.modelProperty) {
       const propValues = await bulkPropertyValues(model, dbIds, rule.modelProperty);
       partial = mapByProperty(tasks, propValues, modelID, rule.taskField);

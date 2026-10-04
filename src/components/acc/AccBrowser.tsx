@@ -31,6 +31,7 @@ import { PdfViewer } from '../viewers/PdfViewer';
 import { SheetViewer } from '../viewers/SheetViewer';
 import { OfficeViewer } from '../viewers/OfficeViewer';
 
+const NO_ITEMS: AccItem[] = [];
 const fakeFile = (name: string) => ({ name, size_bytes: null, mime_type: null }) as unknown as FileRecord;
 const fmtDate = (s?: string | null) =>
   s ? new Date(s).toLocaleDateString('ko-KR', { year: '2-digit', month: '2-digit', day: '2-digit' }) : '';
@@ -281,7 +282,7 @@ export function AccBrowser({
   // ---- 현재 폴더 컨텐츠 ----
   const selNode = selId ? findNode(roots, selId) : null;
   const curFolders = selNode ? selNode.children : roots;
-  const curItems = selNode ? selNode.items : [];
+  const curItems = selNode ? selNode.items : NO_ITEMS;
   const q = search.trim().toLowerCase();
   const viewFolders = useMemo(
     () => (q ? curFolders.filter((f) => f.name.toLowerCase().includes(q)) : curFolders),

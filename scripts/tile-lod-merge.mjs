@@ -165,7 +165,7 @@ export async function buildMergedLod(input, profileName) {
   const mg = view(raw[21], Uint32Array), mm = view(raw[22], Uint32Array), em = view(raw[26], Uint32Array);
   const tileBoxes = view(raw[27], Float64Array), te = view(raw[28], Uint32Array);
   const ids = JSON.parse(raw[25].toString() || '[]');
-  let axisLabels = [];
+  let axisLabels;
   try { axisLabels = JSON.parse(raw[14].toString() || '[]'); } catch { axisLabels = []; }
   const numGeometries = pp.length, numMeshes = mg.length, numEntities = em.length, numTiles = te.length;
   if (!numMeshes || !numEntities || !numTiles || tileBoxes.length !== numTiles * 6 || !Array.isArray(ids) || ids.length !== numEntities ||

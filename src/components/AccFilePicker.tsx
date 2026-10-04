@@ -124,9 +124,10 @@ export function AccFilePicker({
         if (alive) { setLoading(false); setStatus(`ACC 오류: ${(e as Error).message}`); }
       }
     })();
+    const seq = requestSeq;
     return () => {
       alive = false;
-      requestSeq.current++; // drop any response that arrives after closing
+      seq.current++; // drop any response that arrives after closing
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);

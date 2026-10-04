@@ -27,7 +27,7 @@ catch (e) {
   if (!missing(e)) throw e;
   const r = await client.send(new GetObjectCommand({ Bucket, Key: `${prefix}/alias.json` }));
   const alias = JSON.parse(Buffer.from(await r.Body.transformToByteArray()).toString());
-  if (!/^[A-Za-z0-9]{1,40}$/.test(alias?.prefix ?? '')) throw Error('Invalid alias');
+  if (!/^[A-Za-z0-9]{1,40}$/.test(alias?.prefix ?? '')) throw new Error('Invalid alias', { cause: e });
   console.log(`Alias ${prefix} -> ${alias.prefix}`); prefix = alias.prefix;
 }
 const key = `${prefix}/xkt/manifest.json`;

@@ -133,35 +133,6 @@ function weld(verts, idx, normals, q = 1000) {
   }
   return { verts: nv, idx: nidx, normals: nn };
 }
-// weldGroup: 병합된 그룹(pos/nrm/dbid/idx) 전체에서 '위치+dbid 동일' 정점을 접는다. subsample
-// 로 흩어진 중복 정점(삼각형당 ~3개, 공유 없음)을 공유 정점으로 되돌려 정점 수를 급감시킨다
-// (버퍼↓ → Draco 압축 성공 → 로드 가능). dbid 를 키에 포함해 객체 경계의 픽킹은 보존.
-function weldGroup(pos, nrm, dbid, idx, q = 1000) {
-  const nv = pos.length / 3;
-  const map = new Map();
-  const remap = new Uint32Array(nv);
-  const px = [], py = [], pz = [], nx = [], ny = [], nz = [], db = [];
-  let n = 0;
-  for (let v = 0; v < nv; v++) {
-    const key = `${Math.round(pos[v * 3] * q)}_${Math.round(pos[v * 3 + 1] * q)}_${Math.round(pos[v * 3 + 2] * q)}_${dbid[v]}`;
-    let ni = map.get(key);
-    if (ni === undefined) {
-      ni = n++; map.set(key, ni);
-      px.push(pos[v * 3]); py.push(pos[v * 3 + 1]); pz.push(pos[v * 3 + 2]);
-      nx.push(nrm[v * 3]); ny.push(nrm[v * 3 + 1]); nz.push(nrm[v * 3 + 2]);
-      db.push(dbid[v]);
-    }
-    remap[v] = ni;
-  }
-  const nidx = new Uint32Array(idx.length);
-  for (let k = 0; k < idx.length; k++) nidx[k] = remap[idx[k]];
-  const P = new Float32Array(n * 3), N = new Float32Array(n * 3), D = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    P[i * 3] = px[i]; P[i * 3 + 1] = py[i]; P[i * 3 + 2] = pz[i];
-    N[i * 3] = nx[i]; N[i * 3 + 1] = ny[i]; N[i * 3 + 2] = nz[i]; D[i] = db[i];
-  }
-  return { pos: P, nrm: N, dbid: D, idx: nidx, nv: n };
-}
 // weldPos: '위치만'으로 정점 병합(dbid 는 대표값 유지). 통합모델 지표면은 49만 개 작은 패치로
 // 쪼개져 각 패치가 경계를 갖는다 → 프래그먼트별 simplify 는 LockBorder 가 그 경계를 다 잠가
 // 목표까지 못 줄인다(→subsample→정점폭발→로드 Aborted). weldPos 로 패치들을 '하나의 연결면'
@@ -224,16 +195,6 @@ function bboxSpan(pos) {
     if (x > mxx) mxx = x; if (y > mxy) mxy = y; if (z > mxz) mxz = z;
   }
   return [mxx - mnx, mxy - mny, mxz - mnz];
-}
-// countNonDegen: 클러스터 병합 후 '면적 0(정점 중복)' 아닌 실제 삼각형 수. 클러스터링의 실감량은
-// 정점 병합으로 퇴화한 삼각형이 빠지는 데서 나오므로, 목표 도달 여부는 이 값으로 판단한다.
-function countNonDegen(idx) {
-  let c = 0;
-  for (let k = 0; k + 2 < idx.length; k += 3) {
-    const a = idx[k], b = idx[k + 1], d = idx[k + 2];
-    if (a !== b && b !== d && a !== d) c++;
-  }
-  return c;
 }
 // dropDegen: 퇴화(정점 2개 이상 동일) 삼각형 제거. 미사용 정점은 compact/compactTri 가 정리.
 function dropDegen(idx) {
@@ -329,20 +290,6 @@ function clusterVND(pos, nrm, dbid, idx, targetV) {
   const idxND = dropDegen(w.idx);
   const nn = recomputeNormals(w.pos, idxND); // 클러스터된 실제 면으로 노멀 재계산 → 음영 복원
   return compactTri(w.pos, nn, w.dbid, idxND);
-}
-// subsample: 목표 삼각형 수까지 균등 간격으로 삼각형만 남긴다(항상 예산 보장 — simplify 가
-// 목표에 못 미쳐도 여기서 강제해 OOM·4GB 초과를 원천 차단). 미사용 정점은 compact 가 정리.
-function subsampleTris(idx, targetTris) {
-  const tris = idx.length / 3;
-  if (tris <= targetTris || targetTris < 1) return idx;
-  const step = tris / targetTris;
-  const out = new Uint32Array(targetTris * 3);
-  let o = 0;
-  for (let t = 0; t < targetTris; t++) {
-    const s = Math.floor(t * step) * 3;
-    out[o++] = idx[s]; out[o++] = idx[s + 1]; out[o++] = idx[s + 2];
-  }
-  return out;
 }
 
 // 프래그먼트의 대표 정점색(0~1 RGBA). 프래그먼트는 대개 단색(엔티티 1개 = ACI 색 1개)
@@ -477,7 +424,7 @@ export async function buildMergedGlb(imf, opts) {
   const quantColor = (c) => (c && Number.isFinite(c[0]) && Number.isFinite(c[1]) && Number.isFinite(c[2])
     ? [Math.round(clamp01(c[0]) * 8) / 8, Math.round(clamp01(c[1]) * 8) / 8, Math.round(clamp01(c[2]) * 8) / 8] : null);
 
-  let lineFrag = 0, lineNanFrag = 0, lineIdxOOR = 0, lineFragPair = 0, lineFragStrip = 0;
+  let lineFrag = 0, lineNanFrag = 0, lineIdxOOR = 0;
   const lineNanSamples = [], lineIdxSamples = [], lineRawDump = [];
   // SVF 는 색이 다른 수천 개의 선을 '한 프래그먼트'로 묶어 준다(한 프래그먼트 색범위가
   // [0,0,0]~[1,1,1]로 확인됨). 프래그먼트를 평균색 하나로 뭉개면(예전 방식) 빨강+초록+파랑이
@@ -1192,7 +1139,6 @@ export async function buildMergedGlb(imf, opts) {
     }
     if (decimate && idx32.length / 3 > effMinTris) {
       const target = Math.max(3, Math.floor((idx32.length * effRatio) / 3) * 3);
-      const targetTris = Math.max(1, Math.floor(target / 3));
       try {
         if (globalRatio < 1) {
           // 대용량 경로는 격자 클러스터링만 쓴다(meshopt simplify 는 이 SVF 테셀레이션을 부숴
