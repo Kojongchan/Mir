@@ -160,6 +160,12 @@ run6: 후보 1073·경량 90/120(75%) 확인, 주황 화질 OK, 위치 5m 이내
 - 플랫폼 공통 개선은 `feature/platform-hardening`(main 기반) 브랜치 — 그쪽 STATUS 참고.
 인수인계: run8 — 원경 v5(흰 가시 없음, ≈200m 밖에서만 표시), 갱구부 로딩 순서, 툴바 메뉴 확인.
 
+### 2026-10-04 — 플랫폼 브랜치와 공용 정비 반영
+- 앱 내 확인창/토스트 기반(35a7f5b 체리픽)·ESLint 설정(`eslint.config.js`, `tsconfig.api.json`) 동일 반영. 이 브랜치 코드도
+  같은 규칙으로 오류·경고 0: 변환 스크립트의 호출 없는 옛 함수 삭제(mergeGlb weld/subsample/countNonDegen, convert4d
+  apsToken, dxfToGlb isWhiteish), 죽은 대입·재throw cause, ThreeDTest 경량 상태 폴링 의존성 주석. 린트 도구 자체는 플랫폼 브랜치
+  package.json 에 있음(병합 시 합쳐짐). 테스트 108·빌드 통과.
+
 
 ## 2026-09-16 — 실제 크기 확인 뒤 타일 후보 보충 누락 수정
 
