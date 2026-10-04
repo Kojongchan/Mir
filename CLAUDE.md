@@ -25,6 +25,7 @@ npm run build      # 프로덕션 빌드 (= 검증)
 npm run typecheck  # 타입체크: 앱(src) + 서버 함수(api, tsconfig.api.json) — 커밋 전 통과 필수
 npm run lint       # ESLint(훅 규칙 포함), 경고도 0개여야 통과 — 커밋 전 통과 필수
 npm test           # 단위 테스트 (tests/*.test.mjs, CI 에서도 실행)
+npm run test:e2e   # 브라우저 스모크(빌드 → 가짜 Supabase·관리자로 전 메뉴 순회, 첫 로딩 200KB gzip 예산)
 ```
 
 ## 스택 / 구조
