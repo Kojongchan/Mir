@@ -23,6 +23,7 @@ import { rankTileRegion, regionNeedsRefresh, safeDollyFactor } from '../viewer/T
 import { inTileView, prioritizeTileView, prioritizeCameraView, viewPlanes } from '../viewer/TileView';
 import { ByteCache } from '../viewer/ByteCache';
 import { useEscapeKey } from '../lib/useEscapeKey';
+import { ObjectIndex, applyStates, objectIdOf, updateFlag } from '../viewer/ObjectIndex';
 
 /** 변환기가 구운 카메라 초점 박스(회전 전 실좌표). 이상치 제외한 중심/반경. */
 type Focus = { center: [number, number, number]; half: [number, number, number] };
@@ -141,7 +142,11 @@ export function ThreeDTest() {
   const lodTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // 카메라 정지 감지 디바운스
   const pickedRef = useRef<{ id?: string | number; worldPos?: number[] } | null>(null);
   const streamCleanupRef = useRef<(() => void) | null>(null);
-  const highlightedRef = useRef<string | null>(null); // 현재 하이라이트된 엔티티 id
+  // Selection works on original objects (SVF dbId) across far/light/detail tiles; terrain or GLB
+  // entities (no dbId) are selected individually through rawSelectedRef.
+  const objectIndexRef = useRef(new ObjectIndex());
+  const objectStatesRef = useRef({ selected: new Set<string>(), highlighted: new Set<string>(), hidden: new Set<string>() });
+  const rawSelectedRef = useRef<string | null>(null);
   const refreshRegionRef = useRef<(() => void) | null>(null);
   const reportRef = useRef<(() => unknown) | null>(null);
   const coverageReportRef = useRef<(() => unknown) | null>(null);
@@ -167,7 +172,7 @@ export function ThreeDTest() {
   const [texWarn, setTexWarn] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [modelName, setModelName] = useState<string | null>(null);
-  const [pick, setPick] = useState<{ id: string; name?: string; type?: string } | null>(null);
+  const [pick, setPick] = useState<{ id: string; dbId: string | null; name?: string; type?: string } | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [bgDark, setBgDark] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -290,6 +295,33 @@ export function ThreeDTest() {
   };
 
 
+  /** Select original objects (blue); `raw` selects one non-tile entity instead (terrain, GLB). */
+  const selectObjects = useCallback((dbIds: string[], raw: string | null = null) => {
+    const viewer = viewerRef.current;
+    const states = objectStatesRef.current;
+    const objects = (viewer?.scene.objects ?? {}) as unknown as Record<string, { selected: boolean; highlighted: boolean; visible: boolean }>;
+    const next = new Set(dbIds);
+    updateFlag(objectIndexRef.current, objects, 'selected', states.selected, next);
+    states.selected = next;
+    if (rawSelectedRef.current && objects[rawSelectedRef.current]) objects[rawSelectedRef.current].selected = false;
+    rawSelectedRef.current = raw;
+    if (raw && objects[raw]) objects[raw].selected = true;
+  }, []);
+  const selectObjectsRef = useRef(selectObjects);
+  /** Forget every object state (a new model is being opened). */
+  const resetObjects = useCallback(() => {
+    objectIndexRef.current.clear();
+    objectStatesRef.current = { selected: new Set(), highlighted: new Set(), hidden: new Set() };
+    rawSelectedRef.current = null;
+  }, []);
+  /** Index a loaded tile model and give it the current selection/highlight/visibility. */
+  const trackModel = useCallback((model: { objects: Record<string, unknown>; on: (event: string, cb: () => void) => unknown }) => {
+    const ids = Object.keys(model.objects);
+    objectIndexRef.current.add(ids);
+    applyStates(model.objects as Record<string, { selected: boolean; highlighted: boolean; visible: boolean }>, objectStatesRef.current);
+    model.on('destroyed', () => objectIndexRef.current.remove(ids));
+  }, []);
+
   // xeokit Viewer 1회 생성/파기.
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -366,12 +398,15 @@ export function ThreeDTest() {
     viewer.camera.eye = [15, 15, 15];
     viewer.camera.look = [0, 0, 0];
     viewer.camera.up = [0, 1, 0];
-    // 선택 하이라이트 — 클릭한 객체를 눈에 띄게(형광 노랑 채움 + 글로우). '뭐가 선택됐는지'
-    // 바로 보이게. glowThrough=true 로 가려진 선/면도 강조. 선(line) 프리미티브도 색이 바뀐다.
+    // Selection = blue (clicked object), highlight = amber (search results). Only visible surfaces are
+    // tinted: glowThrough drew the object through everything in front of it and, with edges the tiles do
+    // not carry, read as a broken overlay in dense areas.
+    const sm = viewer.scene.selectedMaterial;
+    sm.fill = true; sm.fillColor = [0.15, 0.55, 1.0]; sm.fillAlpha = 0.6; sm.edges = false;
+    (sm as unknown as { glowThrough?: boolean }).glowThrough = false;
     const hm = viewer.scene.highlightMaterial;
-    hm.fill = true; hm.fillColor = [1.0, 0.9, 0.0]; hm.fillAlpha = 0.5;
-    hm.edges = true; hm.edgeColor = [1.0, 0.85, 0.0]; hm.edgeAlpha = 1.0;
-    (hm as unknown as { glowThrough?: boolean }).glowThrough = true;
+    hm.fill = true; hm.fillColor = [1.0, 0.72, 0.1]; hm.fillAlpha = 0.55; hm.edges = false;
+    (hm as unknown as { glowThrough?: boolean }).glowThrough = false;
     viewerRef.current = viewer;
 
     // Keep geometry/material visibility unchanged. Restore resolution only after real inactivity;
@@ -552,20 +587,17 @@ export function ThreeDTest() {
         | { entity?: { id?: string | number; isObject?: boolean }; worldPos?: number[] }
         | undefined;
       const entity = hit?.entity;
-      // 이전 하이라이트 해제(항상 — 빈 곳 클릭·다른 객체 선택 모두).
-      const objs = viewer.scene.objects as Record<string, { highlighted?: boolean }>;
-      if (highlightedRef.current && objs[highlightedRef.current]) objs[highlightedRef.current].highlighted = false;
-      highlightedRef.current = null;
       if (entity?.isObject && entity.id != null) {
         const id = String(entity.id);
+        const dbId = objectIdOf(id);
         pickedRef.current = { id: entity.id, worldPos: hit?.worldPos };
-        // 선택 객체 강조.
-        if (objs[id]) { objs[id].highlighted = true; highlightedRef.current = id; }
+        selectObjectsRef.current(dbId !== null ? [dbId] : [], dbId === null ? id : null);
         const meta = viewer.metaScene?.metaObjects?.[id];
         // 메타 이름 없으면 glTF 노드 id(=지표면(TIN) 등)를 이름으로 표시. 숫자 id 는 숨김.
         const fallback = /^\d+$/.test(id) ? undefined : id;
-        setPick({ id, name: meta?.name ?? fallback, type: meta?.type });
+        setPick({ id, dbId, name: meta?.name ?? fallback, type: meta?.type });
       } else {
+        selectObjectsRef.current([], null);
         pickedRef.current = hit?.worldPos ? { worldPos: hit.worldPos } : null;
         setPick(null);
       }
@@ -595,9 +627,7 @@ export function ThreeDTest() {
       const canvasPos = [ev.clientX - rect.left, ev.clientY - rect.top];
       const hit = viewer.scene.pick({ canvasPos, pickSurface: true }) as { worldPos?: number[] } | undefined;
       // A double-click is navigation: undo the selection its first click made.
-      const objs = viewer.scene.objects as Record<string, { highlighted?: boolean }>;
-      if (highlightedRef.current && objs[highlightedRef.current]) objs[highlightedRef.current].highlighted = false;
-      highlightedRef.current = null;
+      selectObjectsRef.current([], null);
       pickedRef.current = null;
       setPick(null);
       if (hit?.worldPos) flyToWorldPoint(viewer, hit.worldPos);
@@ -648,6 +678,16 @@ export function ThreeDTest() {
   const zoomToSelection = useCallback(() => {
     const viewer = viewerRef.current;
     if (!viewer) return;
+    // A selected design object: frame its loaded geometry (real shapes before the far stand-in).
+    const objects = viewer.scene.objects as unknown as Record<string, { aabb: ArrayLike<number> } | undefined>;
+    const ids = [...objectStatesRef.current.selected].flatMap(db => [...objectIndexRef.current.entities(db)]);
+    const boxes = (ids.some(id => !id.includes('-far#')) ? ids.filter(id => !id.includes('-far#')) : ids)
+      .map(id => objects[id]?.aabb).filter((b): b is ArrayLike<number> => !!b && Array.from(b).every(Number.isFinite));
+    if (boxes.length) {
+      const box = [0, 1, 2].map(i => Math.min(...boxes.map(b => b[i]))).concat([3, 4, 5].map(i => Math.max(...boxes.map(b => b[i]))));
+      viewer.cameraFlight.flyTo({ aabb: box, duration: 0.5 });
+      return;
+    }
     const wp = pickedRef.current?.worldPos;
     if (wp) flyToWorldPoint(viewer, wp);
     else {
@@ -668,7 +708,7 @@ export function ThreeDTest() {
     const loader = loaderRef.current;
     if (!viewer || !loader) return;
     setPick(null);
-    highlightedRef.current = null;
+    resetObjects();
     const prev = viewer.scene.models['test'];
     if (prev) prev.destroy();
 
@@ -721,7 +761,7 @@ export function ThreeDTest() {
       setStatus(`불러오기 실패: ${errMessage(e)}`);
       setBusy(false);
     });
-  }, []);
+  }, [resetObjects]);
 
   /**
    * 분할 XKT + LOD 스트리밍(우리 xeokit 확장). 개요(LOD1)를 먼저 띄워 즉시 보이게 하고,
@@ -734,7 +774,7 @@ export function ThreeDTest() {
     const loader = xktLoaderRef.current;
     if (!viewer || !loader || urls.length === 0) return;
     setPick(null);
-    highlightedRef.current = null;
+    resetObjects();
     streamCleanupRef.current?.();
     streamCleanupRef.current = null;
     for (const id of Object.keys(viewer.scene.models)) viewer.scene.models[id].destroy();
@@ -774,7 +814,7 @@ export function ThreeDTest() {
     };
     setBusy(false);
     loadDetail(0);
-  }, []);
+  }, [resetObjects]);
 
   /** Original tiles remain visible during navigation. Loading has explicit count/encoded-byte budgets.
    * This is a bounded working view, not a full-scene LOD solution. */
@@ -795,7 +835,7 @@ export function ThreeDTest() {
     if (lodTimerRef.current) { clearTimeout(lodTimerRef.current); lodTimerRef.current = null; }
     for (const id of Object.keys(viewer.scene.models)) viewer.scene.models[id].destroy();
     setPick(null);
-    highlightedRef.current = null;
+    resetObjects();
     pickedRef.current = null;
     let active = true;
     let framed = false;
@@ -868,16 +908,13 @@ export function ThreeDTest() {
       const planes = currentPlanes();
       viewDirty = false;
       inViewCount = 0; culledCount = 0;
-      // The far level is an approximation: draw it only where its error is under one screen pixel.
-      // Nearer, it stays loaded but hidden, and only light/detail (real shapes) are shown.
-      const eye = viewer.camera.eye;
-      const fov = (viewer.camera.perspective.fov || 60) * Math.PI / 180;
-      const farMinDistance = FAR_ERROR_METERS * ((viewer.scene.canvas as unknown as { canvas: HTMLCanvasElement }).canvas.clientHeight || 900) / (2 * Math.tan(fov / 2));
-      const eyeGap = (box: ArrayLike<number>) => Math.hypot(...[0, 1, 2].map(i => Math.max(box[i] - eye[i], 0, eye[i] - box[i + 3])));
+      // The far level stands in for a tile only until its real shape (light/detail) has loaded. It used to be
+      // hidden near the camera as well, which left holes wherever the near tile had not loaded yet; near
+      // tiles now load first instead (mainPriority), so the stand-in is brief.
       for (const tile of T) {
         const far = models[`${tile.id}-far`];
         if (far && farReady.has(tile.id))
-          setCulled(far, mainReady.has(tile.id) || !inTileView(far.aabb, planes) || eyeGap(far.aabb) < farMinDistance);
+          setCulled(far, mainReady.has(tile.id) || !inTileView(far.aabb, planes));
         const model = models[tile.id];
         if (!model) continue;
         const detail = models[`${tile.id}-detail`];
@@ -915,7 +952,23 @@ export function ThreeDTest() {
     // Recently downloaded files stay in memory (bounded) so revisiting a view skips the network.
     const byteCache = new ByteCache(TILE_BYTE_CACHE);
     let cacheHits = 0;
-    const loadRepresentation = async (signal: AbortSignal, id: string, url: string, expectedMembers?: number, account?: (bytes: number) => boolean) => {
+    // Parse order (lower first). Near tiles, where the far approximation's error would be visible, and
+    // tiles with nothing drawn yet come before the whole-site far level; other light tiles after it.
+    // (Far used to enter first unconditionally: while its 1,073 files loaded, no near tile could parse.)
+    const eyeGap = (box: ArrayLike<number>) => {
+      const eye = viewer.camera.eye;
+      return Math.hypot(...[0, 1, 2].map(i => Math.max(box[i] - eye[i], 0, eye[i] - box[i + 3])));
+    };
+    const farErrorDistance = () => {
+      const fov = (viewer.camera.perspective.fov || 60) * Math.PI / 180;
+      const height = (viewer.scene.canvas as unknown as { canvas: HTMLCanvasElement }).canvas.clientHeight || 900;
+      return FAR_ERROR_METERS * height / (2 * Math.tan(fov / 2));
+    };
+    const mainPriority = (tile: typeof T[number]) => {
+      const box = models[`${tile.id}-far`]?.aabb ?? tile.worldAabb;
+      return !farReady.has(tile.id) || eyeGap(box) < farErrorDistance() ? 0 : 1.5;
+    };
+    const loadRepresentation = async (signal: AbortSignal, id: string, url: string, expectedMembers?: number, account?: (bytes: number) => boolean, priority = 1) => {
         const downloadStarted = performance.now();
         let xkt = byteCache.get(url);
         if (xkt) cacheHits++;
@@ -936,7 +989,7 @@ export function ThreeDTest() {
         const downloadMs = performance.now() - downloadStarted;
         downloadCount++; downloadTotalMs += downloadMs; downloadMaxMs = Math.max(downloadMaxMs, downloadMs);
         // The far level is tiny per tile and fills the whole site, so it parses ahead of light/detail.
-        const releaseModel = await modelQueue.acquire(signal, id.endsWith('-far') ? 0 : id.endsWith('-detail') ? 2 : 1);
+        const releaseModel = await modelQueue.acquire(signal, priority);
         try {
           await loadGate.wait(signal);
           // Draw a frame and let pending input run before each non-preemptible SDK parse, so a burst
@@ -963,6 +1016,7 @@ export function ThreeDTest() {
                 culled: id.endsWith('-detail') || (id.endsWith('-far') && mainReady.has(id.slice(0, -4))) } as unknown as Parameters<typeof loader.load>[0]);
               model.on('loaded', () => {
                 if (expectedMembers !== undefined && Object.keys(model.objects).length !== expectedMembers) { model.destroy(); finish(new Error('경량 객체 수 불일치')); return; }
+                trackModel(model as unknown as Parameters<typeof trackModel>[0]);
                 if (active && !signal.aborted) {
                   const ms = performance.now() - parseStarted;
                   parseCount++; parseTotalMs += ms; parseMaxMs = Math.max(parseMaxMs, ms);
@@ -987,7 +1041,7 @@ export function ThreeDTest() {
         const motion = tile.motion;
         if (motion && canUseOverview(motion, tile.detailByteLength)) {
           try {
-            await loadRepresentation(signal, tile.id, motion.url, motion.members, bytes => bytes === motion.byteLength && stream.accountBytes(tile.id, bytes));
+            await loadRepresentation(signal, tile.id, motion.url, motion.members, bytes => bytes === motion.byteLength && stream.accountBytes(tile.id, bytes), mainPriority(tile));
             if (signal.aborted || !active) throw new Error('cancelled');
             overviewReady.add(tile.id); mainReady.add(tile.id); viewDirty = true;
             if (lightTintOnRef.current) (models[tile.id] as unknown as { colorize: number[] | null }).colorize = LIGHT_TINT;
@@ -997,7 +1051,7 @@ export function ThreeDTest() {
             if (signal.aborted || !active) throw error;
           }
         }
-        await loadRepresentation(signal, tile.id, tile.url, undefined, bytes => stream.accountBytes(tile.id, bytes));
+        await loadRepresentation(signal, tile.id, tile.url, undefined, bytes => stream.accountBytes(tile.id, bytes), mainPriority(tile));
         if (signal.aborted || !active) throw new Error('cancelled');
         mainReady.add(tile.id); viewDirty = true;
       },
@@ -1021,7 +1075,7 @@ export function ThreeDTest() {
     const detailStream = new TileStream<typeof T[number]>({
       concurrency: 1, maxTiles: 8, maxEncodedBytes: 128 * 1048576,
       load: async (tile, signal) => {
-        await loadRepresentation(signal, `${tile.id}-detail`, tile.url, undefined, bytes => detailStream.accountBytes(tile.id, bytes));
+        await loadRepresentation(signal, `${tile.id}-detail`, tile.url, undefined, bytes => detailStream.accountBytes(tile.id, bytes), 2);
         const overview = models[tile.id], detail = models[`${tile.id}-detail`];
         if (signal.aborted || !active || !overview || !detail || !motionPairMatches(detail as unknown as Parameters<typeof motionPairMatches>[0], overview as unknown as Parameters<typeof motionPairMatches>[1])) {
           detail?.destroy(); throw new Error('상세 형상 검증 실패');
@@ -1042,7 +1096,7 @@ export function ThreeDTest() {
     const farStream = new TileStream<typeof farTiles[number]>({
       concurrency: 6, maxTiles: Number.POSITIVE_INFINITY, maxEncodedBytes: FAR_BUDGET, replaceAfterLoad: true,
       load: async (tile, signal) => {
-        await loadRepresentation(signal, `${tile.id}-far`, tile.far!.url, undefined, bytes => farStream.accountBytes(tile.id, bytes));
+        await loadRepresentation(signal, `${tile.id}-far`, tile.far!.url, undefined, bytes => farStream.accountBytes(tile.id, bytes), 1);
         if (signal.aborted || !active) throw new Error('cancelled');
         farReady.add(tile.id); viewDirty = true;
         if (lightTintOnRef.current) (models[`${tile.id}-far`] as unknown as { colorize: number[] | null }).colorize = FAR_TINT;
@@ -1264,7 +1318,7 @@ export function ThreeDTest() {
         if (active) frameOnce();
       }
     })();
-  }, []);
+  }, [trackModel, resetObjects]);
 
   /** ACC 모델 선택 → (캐시/실패 조회 → 없으면 변환 dispatch → 폴링) → GLB/XKT 로드.
    *  force=true 면 캐시/실패 마커를 지우고 재변환(빈 캐시 갱신·재시도). */
