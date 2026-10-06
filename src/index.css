@@ -3332,6 +3332,209 @@ button.danger:hover:not(:disabled) {
   font-size: 12px !important;
   opacity: 0.85;
 }
+/* Model tree (left) and property/search (right) panels over the 3D viewport. */
+.threed-test__panel {
+  position: absolute;
+  z-index: 25;
+  bottom: 44px; /* above the diagnostics line */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--color-surface, var(--panel));
+  border: 1px solid var(--color-border, var(--border));
+  border-radius: 10px;
+  box-shadow: var(--shadow-md, 0 4px 16px rgba(0, 0, 0, 0.12));
+  font-size: 12px;
+  overflow: hidden;
+}
+.threed-test__panel--left {
+  top: 8px;
+  left: 8px;
+  width: min(300px, 42vw);
+}
+.threed-test__panel--right {
+  top: 156px; /* below the NavCube */
+  right: 8px;
+  width: min(340px, 46vw);
+}
+.threed-test__panel-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border, var(--border));
+}
+.model-tree {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.model-tree__row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+.model-tree__row.is-selected {
+  background: color-mix(in srgb, var(--color-brand-solid, #2563eb) 16%, transparent);
+}
+.model-tree__row.is-hidden .model-tree__name {
+  opacity: 0.45;
+}
+.model-tree__caret {
+  width: 16px;
+  min-width: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 10px;
+  color: var(--muted);
+}
+.model-tree__row input[type='checkbox'] {
+  margin: 0 4px 0 0;
+}
+.model-tree__name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px 0 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.model-tree__count {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--muted);
+}
+.prop-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.prop-panel__search {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border, var(--border));
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 45%;
+  min-height: 0;
+}
+.prop-panel__search input {
+  width: 100%;
+}
+.prop-panel__search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.prop-panel__results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  min-height: 0;
+}
+.prop-panel__results button {
+  width: 100%;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 3px 6px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+}
+.prop-panel__results button span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prop-panel__results button:hover,
+.prop-panel__results button.is-selected {
+  background: color-mix(in srgb, var(--color-brand-solid, #2563eb) 14%, transparent);
+}
+.prop-panel__more {
+  padding: 4px 6px;
+  font-size: 11px;
+}
+.prop-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 10px 12px;
+}
+.prop-panel__hint {
+  margin: 8px 0;
+}
+.prop-panel__title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  word-break: break-all;
+}
+.prop-panel__path {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  margin-bottom: 8px;
+}
+.prop-panel__path button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 11px;
+  color: var(--color-brand-solid, #2563eb);
+}
+.prop-panel__path button::after {
+  content: ' ›';
+  color: var(--muted);
+}
+.prop-panel__group {
+  border-top: 1px solid var(--color-border, var(--border));
+  padding: 4px 0;
+}
+.prop-panel__group summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 2px 0;
+}
+.prop-panel__group dl {
+  margin: 4px 0 0;
+}
+.prop-panel__row {
+  display: grid;
+  grid-template-columns: 42% 1fr;
+  gap: 6px;
+  padding: 2px 0;
+}
+.prop-panel__row dt {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.prop-panel__row dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.prop-panel__ext {
+  margin-top: 8px;
+  font-size: 11px;
+  word-break: break-all;
+}
 .threed-test__props {
   position: absolute;
   top: 160px; /* below the 140px NavCube at top: 10px */

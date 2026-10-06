@@ -24,6 +24,9 @@ import { inTileView, prioritizeTileView, prioritizeCameraView, viewPlanes } from
 import { ByteCache } from '../viewer/ByteCache';
 import { useEscapeKey } from '../lib/useEscapeKey';
 import { ObjectIndex, applyStates, objectIdOf, updateFlag } from '../viewer/ObjectIndex';
+import { ModelTree, type TreeData } from '../viewer/ModelTree';
+import { ModelTreePanel } from '../components/model/ModelTreePanel';
+import { PropertyPanel, type ObjectProps } from '../components/model/PropertyPanel';
 
 /** 변환기가 구운 카메라 초점 박스(회전 전 실좌표). 이상치 제외한 중심/반경. */
 type Focus = { center: [number, number, number]; half: [number, number, number] };
@@ -147,6 +150,16 @@ export function ThreeDTest() {
   const objectIndexRef = useRef(new ObjectIndex());
   const objectStatesRef = useRef({ selected: new Set<string>(), highlighted: new Set<string>(), hidden: new Set<string>() });
   const rawSelectedRef = useRef<string | null>(null);
+  // Model tree / property index (scripts/build-meta-index.mjs), when built for the open model.
+  type MetaInfo = { tree: string; shardSize: number; shardCount: number; objects?: number };
+  const metaRef = useRef<{ urn: string; shardSize: number; shardCount: number; shards: Map<number, Promise<Record<string, ObjectProps>>> } | null>(null);
+  const [modelTree, setModelTree] = useState<ModelTree | null>(null);
+  const [treeNote, setTreeNote] = useState('');
+  const [selectedDb, setSelectedDb] = useState<number | null>(null);
+  const [revealDb, setRevealDb] = useState<number | null>(null);
+  const [hiddenNodes, setHiddenNodes] = useState<ReadonlySet<number>>(new Set());
+  const [treeOpen, setTreeOpen] = useState(true);
+  const [propsOpen, setPropsOpen] = useState(true);
   const refreshRegionRef = useRef<(() => void) | null>(null);
   const reportRef = useRef<(() => unknown) | null>(null);
   const coverageReportRef = useRef<(() => unknown) | null>(null);
@@ -313,7 +326,100 @@ export function ThreeDTest() {
     objectIndexRef.current.clear();
     objectStatesRef.current = { selected: new Set(), highlighted: new Set(), hidden: new Set() };
     rawSelectedRef.current = null;
+    metaRef.current = null;
+    setModelTree(null); setTreeNote(''); setSelectedDb(null); setRevealDb(null); setHiddenNodes(new Set());
   }, []);
+
+  /** Load the open model's tree (properties are fetched per shard on demand). */
+  const loadModelIndex = useCallback(async (urn: string, meta: MetaInfo | undefined) => {
+    if (!meta) { setTreeNote('이 모델은 아직 모델 트리·속성 색인이 없습니다.'); return; }
+    metaRef.current = { urn, shardSize: meta.shardSize, shardCount: meta.shardCount, shards: new Map() };
+    setTreeNote('모델 트리 불러오는 중…');
+    try {
+      const r = await fetch(meta.tree);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const tree = new ModelTree(await r.json() as TreeData);
+      if (metaRef.current?.urn !== urn) return;
+      setModelTree(tree); setTreeNote('');
+    } catch (e) { if (metaRef.current?.urn === urn) setTreeNote(`모델 트리를 불러오지 못했습니다: ${errMessage(e)}`); }
+  }, []);
+
+  const loadProps = useCallback(async (dbId: number): Promise<ObjectProps | null> => {
+    const meta = metaRef.current;
+    if (!meta) return null;
+    const k = Math.floor(dbId / meta.shardSize);
+    if (k < 0 || k >= meta.shardCount) return null;
+    let shard = meta.shards.get(k);
+    if (!shard) {
+      shard = (async () => {
+        const { data } = await supabase.auth.getSession();
+        const r = await fetch(`/api/aps-convert?urn=${encodeURIComponent(meta.urn)}&metaShard=${k}`,
+          { headers: { authorization: `Bearer ${data.session?.access_token ?? ''}` } });
+        const j = await r.json() as { url?: string; error?: string };
+        if (!r.ok || !j.url) throw new Error(j.error ?? '속성 조회 실패');
+        const res = await fetch(j.url);
+        if (res.status === 404) return {}; // no object in this range carries properties
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json() as Promise<Record<string, ObjectProps>>;
+      })();
+      meta.shards.set(k, shard);
+      shard.catch(() => meta.shards.delete(k));
+    }
+    return (await shard)[dbId] ?? null;
+  }, []);
+
+  /** Frame loaded geometry of objects (real shapes before the far stand-in). False if none is loaded. */
+  const zoomToObjects = useCallback((dbIds: Iterable<string>) => {
+    const viewer = viewerRef.current;
+    if (!viewer) return false;
+    const objects = viewer.scene.objects as unknown as Record<string, { aabb: ArrayLike<number> } | undefined>;
+    const ids: string[] = [];
+    for (const db of dbIds) for (const id of objectIndexRef.current.entities(db)) ids.push(id);
+    const near = ids.filter(id => !id.includes('-far#'));
+    const boxes = (near.length ? near : ids).map(id => objects[id]?.aabb)
+      .filter((b): b is ArrayLike<number> => !!b && Array.from(b).every(Number.isFinite));
+    if (!boxes.length) return false;
+    const box = [0, 1, 2].map(i => Math.min(...boxes.map(b => b[i]))).concat([3, 4, 5].map(i => Math.max(...boxes.map(b => b[i]))));
+    viewer.cameraFlight.flyTo({ aabb: box, duration: 0.6 });
+    return true;
+  }, []);
+
+  /** Tree or search selection: the node and everything under it (a file selects all its objects). */
+  const selectNode = useCallback((id: number, zoom: boolean) => {
+    if (!modelTree) return;
+    const ids = modelTree.subtree(id).map(String);
+    selectObjects(ids);
+    setSelectedDb(id);
+    if (zoom && !zoomToObjects(ids)) setStatus('선택한 객체가 아직 화면에 로드되지 않았습니다. 원경이 다 로드되면 다시 시도해 주세요.');
+  }, [modelTree, selectObjects, zoomToObjects]);
+
+  const highlightObjects = useCallback((ids: number[] | null) => {
+    const viewer = viewerRef.current;
+    const states = objectStatesRef.current;
+    const next = new Set((ids ?? []).flatMap(id => modelTree ? modelTree.subtree(id) : [id]).map(String));
+    updateFlag(objectIndexRef.current, (viewer?.scene.objects ?? {}) as unknown as Record<string, { selected: boolean; highlighted: boolean; visible: boolean }>,
+      'highlighted', states.highlighted, next);
+    states.highlighted = next;
+  }, [modelTree]);
+
+  const zoomToNodes = useCallback((ids: number[]) => {
+    const all = modelTree ? ids.flatMap(id => modelTree.subtree(id)) : ids;
+    if (!zoomToObjects(all.map(String))) setStatus('검색된 객체가 아직 화면에 로드되지 않았습니다.');
+  }, [modelTree, zoomToObjects]);
+
+  /** Tree checkbox: hide/show a branch (applied to tiles loaded later too). */
+  const toggleNode = useCallback((id: number, visible: boolean) => {
+    if (!modelTree) return;
+    const next = new Set(hiddenNodes);
+    if (visible) for (const d of modelTree.subtree(id)) next.delete(d); else next.add(id);
+    const hiddenDb = new Set<string>();
+    for (const h of next) for (const d of modelTree.subtree(h)) hiddenDb.add(String(d));
+    const states = objectStatesRef.current;
+    updateFlag(objectIndexRef.current, (viewerRef.current?.scene.objects ?? {}) as unknown as Record<string, { selected: boolean; highlighted: boolean; visible: boolean }>,
+      'hidden', states.hidden, hiddenDb);
+    states.hidden = hiddenDb;
+    setHiddenNodes(next);
+  }, [modelTree, hiddenNodes]);
   /** Index a loaded tile model and give it the current selection/highlight/visibility. */
   const trackModel = useCallback((model: { objects: Record<string, unknown>; on: (event: string, cb: () => void) => unknown }) => {
     const ids = Object.keys(model.objects);
@@ -592,6 +698,8 @@ export function ThreeDTest() {
         const dbId = objectIdOf(id);
         pickedRef.current = { id: entity.id, worldPos: hit?.worldPos };
         selectObjectsRef.current(dbId !== null ? [dbId] : [], dbId === null ? id : null);
+        const numeric = dbId !== null && /^\d+$/.test(dbId) ? Number(dbId) : null;
+        setSelectedDb(numeric); setRevealDb(numeric);
         const meta = viewer.metaScene?.metaObjects?.[id];
         // 메타 이름 없으면 glTF 노드 id(=지표면(TIN) 등)를 이름으로 표시. 숫자 id 는 숨김.
         const fallback = /^\d+$/.test(id) ? undefined : id;
@@ -599,7 +707,7 @@ export function ThreeDTest() {
       } else {
         selectObjectsRef.current([], null);
         pickedRef.current = hit?.worldPos ? { worldPos: hit.worldPos } : null;
-        setPick(null);
+        setPick(null); setSelectedDb(null);
       }
     });
 
@@ -629,7 +737,7 @@ export function ThreeDTest() {
       // A double-click is navigation: undo the selection its first click made.
       selectObjectsRef.current([], null);
       pickedRef.current = null;
-      setPick(null);
+      setPick(null); setSelectedDb(null);
       if (hit?.worldPos) flyToWorldPoint(viewer, hit.worldPos);
     };
     canvasEl.addEventListener('dblclick', onDblClick);
@@ -1350,6 +1458,7 @@ export function ThreeDTest() {
         instUrls?: string[];
         lod1Url?: string;
         focus?: Focus;
+        meta?: MetaInfo;
         failed?: boolean;
         error?: string;
         status?: string;
@@ -1370,7 +1479,10 @@ export function ThreeDTest() {
       // XKT(분할) 우선, 없으면 단일 GLB(DWG 등).
       const doMount = (s: State) => {
         // 타일(뷰 종속 스트리밍) 우선 → 없으면 분할 XKT → 단일 GLB.
-        if (s.xkt && s.tiles && s.tiles.length) mountTiles(s.tiles, s.baseUrls, s.instUrls, s.lod1Url, f.name, s.focus);
+        if (s.xkt && s.tiles && s.tiles.length) {
+          mountTiles(s.tiles, s.baseUrls, s.instUrls, s.lod1Url, f.name, s.focus);
+          void loadModelIndex(urn, s.meta);
+        }
         else if (s.xkt && s.urls && s.urls.length) mountXkt(s.urls, s.lod1Url, f.name, s.focus, s.navUrls);
         else if (s.url) mountGlb(s.url, f.name, s.focus);
       };
@@ -1452,7 +1564,7 @@ export function ThreeDTest() {
         setBusy(false);
       }
     },
-    [mountGlb, mountXkt, mountTiles],
+    [mountGlb, mountXkt, mountTiles, loadModelIndex],
   );
 
   /** 로컬 .glb 드롭/선택(이미 변환된 산출물 눈확인용). */
@@ -1550,6 +1662,13 @@ export function ThreeDTest() {
               <button className="btn btn--sm" onClick={() => coverageActionRef.current?.('bounded')}>기본 보기 복귀</button>
             </>}
           </>}
+          {modelTree && (
+            <>
+              <button className={`btn btn--sm${treeOpen ? ' btn--primary' : ''}`} onClick={() => setTreeOpen(o => !o)}>모델 트리</button>
+              <button className={`btn btn--sm${propsOpen ? ' btn--primary' : ''}`} onClick={() => setPropsOpen(o => !o)}>속성</button>
+            </>
+          )}
+          {treeNote && <span className="muted" title={treeNote}>{treeNote}</span>}
           {/* Diagnostics and admin tools stay one click away instead of crowding the view controls. */}
           <ToolMenu label="진단 도구">
             <div className="report-menu__title">모델</div>
@@ -1658,6 +1777,29 @@ export function ThreeDTest() {
               ⚠ {texWarn}
             </div>
           )}
+          {modelTree && treeOpen && (
+            <aside className="threed-test__panel threed-test__panel--left" aria-label="모델 트리">
+              <div className="threed-test__panel-h">
+                <strong>모델 트리</strong>
+                <span className="muted">{(modelTree.n - 1).toLocaleString()}개 객체</span>
+                <div className="spacer" />
+                <button type="button" className="ic-only" onClick={() => setTreeOpen(false)} aria-label="모델 트리 닫기">✕</button>
+              </div>
+              <ModelTreePanel tree={modelTree} hiddenNodes={hiddenNodes} selected={selectedDb} reveal={revealDb}
+                onToggle={toggleNode} onSelect={id => { setRevealDb(null); selectNode(id, false); }} />
+            </aside>
+          )}
+          {modelTree && propsOpen && (
+            <aside className="threed-test__panel threed-test__panel--right" aria-label="속성">
+              <div className="threed-test__panel-h">
+                <strong>속성</strong>
+                <div className="spacer" />
+                <button type="button" className="ic-only" onClick={() => setPropsOpen(false)} aria-label="속성 닫기">✕</button>
+              </div>
+              <PropertyPanel tree={modelTree} selected={selectedDb} loadProps={loadProps}
+                onSelect={(id, zoom) => { setRevealDb(id); selectNode(id, zoom); }} onZoom={zoomToNodes} onHighlight={highlightObjects} />
+            </aside>
+          )}
           {!modelName && !busy && (
             <div className="threed-test__empty">
               <UiIcon name="cube" size={40} />
@@ -1671,7 +1813,7 @@ export function ThreeDTest() {
           )}
         </div>
 
-        {pick && (
+        {pick && !modelTree && (
           <div className="threed-test__props">
             <div className="threed-test__props-h">선택 객체</div>
             <dl>

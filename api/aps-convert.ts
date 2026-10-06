@@ -139,8 +139,25 @@ async function r2TotalSize(): Promise<number> {
 type Focus = { center: [number, number, number]; half: [number, number, number] };
 type MotionTile = { url: string; byteLength: number; policy: string; members?: number };
 type Tile = { url: string; aabb: number[]; byteLength?: number; motion?: MotionTile; far?: MotionTile };
+/** Model tree + property shards (scripts/build-meta-index.mjs), when built for this model. */
+type MetaIndex = { tree: string; shardSize: number; shardCount: number; objects: number };
+type MetaPointer = { v: number; gen: string; shardSize: number; shardCount: number; objects?: number };
+async function readMetaPointer(dir: string): Promise<MetaPointer | null> {
+  const text = await r2GetText(`${dir}/meta/current.json`);
+  if (!text) return null;
+  try {
+    const m = JSON.parse(text) as MetaPointer;
+    return m.v === 1 && /^runs\/[a-zA-Z0-9-]+$/.test(m.gen) && Number.isSafeInteger(m.shardSize) && m.shardSize > 0 &&
+      Number.isSafeInteger(m.shardCount) && m.shardCount >= 0 ? m : null;
+  } catch { return null; }
+}
+async function metaIndex(dir: string): Promise<MetaIndex | undefined> {
+  const m = await readMetaPointer(dir);
+  if (!m) return undefined;
+  return { tree: await r2PresignGet(`${dir}/meta/${m.gen}/tree.json`), shardSize: m.shardSize, shardCount: m.shardCount, objects: m.objects ?? 0 };
+}
 type CacheState =
-  | { ready: true; xkt: true; urls: string[]; navUrls?: string[]; tiles?: Tile[]; baseUrls?: string[]; instUrls?: string[]; lod1Url?: string; focus?: Focus }
+  | { ready: true; xkt: true; urls: string[]; navUrls?: string[]; tiles?: Tile[]; baseUrls?: string[]; instUrls?: string[]; lod1Url?: string; focus?: Focus; meta?: MetaIndex }
   | { ready: true; url: string; focus?: Focus }
   | { failed: true; error: string }
   | { ready: false };
@@ -190,7 +207,8 @@ async function cacheState(urn: string): Promise<CacheState> {
           ? await Promise.all(inst.map((f) => r2PresignGet(`${dir}/xkt/${f}`)))
           : undefined;
         const lod1Url = lod1 ? await r2PresignGet(`${dir}/xkt/${lod1}`) : undefined;
-        return { ready: true, xkt: true, urls, navUrls, tiles: tileList, baseUrls, instUrls, lod1Url, focus: manifestFocus ?? await readFocus(dir) };
+        return { ready: true, xkt: true, urls, navUrls, tiles: tileList, baseUrls, instUrls, lod1Url, focus: manifestFocus ?? await readFocus(dir),
+          meta: await metaIndex(dir) };
       }
     } catch {
       /* 매니페스트 파손 — GLB/실패 경로로 폴백 */
@@ -268,6 +286,16 @@ export default async function handler(req: Request): Promise<Response> {
   if (req.method === 'GET') {
     const urn = url.searchParams.get('urn') ?? '';
     if (!urn) return json({ error: 'urn 필요' }, 400);
+    // One property shard (objects [k*size, (k+1)*size)) of the model index: a short-lived signed URL.
+    const shard = url.searchParams.get('metaShard');
+    if (shard !== null) {
+      const dir = await resolveCacheDir(urn);
+      const m = await readMetaPointer(dir);
+      const k = Number(shard);
+      if (!m) return json({ error: '이 모델의 속성 색인이 아직 없습니다.' }, 404);
+      if (!Number.isSafeInteger(k) || k < 0 || k >= m.shardCount) return json({ error: 'shard 범위 오류' }, 400);
+      return json({ url: await r2PresignGet(`${dir}/meta/${m.gen}/p/${k}.json`, 600) });
+    }
     return json(await cacheState(urn));
   }
 

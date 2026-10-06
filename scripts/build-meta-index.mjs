@@ -11,13 +11,15 @@ import path from 'node:path';
 import AdmZip from 'adm-zip';
 import { buildMetaIndex } from './meta-index.mjs';
 import { checkStorageBudget } from './storage-budget.mjs';
+import { cacheKey } from './cache-key.mjs';
 
 const env = process.env;
 const APS = 'https://developer.api.autodesk.com';
 const region = env.APS_REGION && env.APS_REGION !== 'US' ? env.APS_REGION : '';
 const shardSize = Math.min(Math.max(Number(env.META_SHARD || 1024), 64), 16384);
 const maxBytes = Math.min(Math.max(Number(env.META_MAX_MB || 1024), 16), 4096) * 1048576;
-let prefix = env.MODEL_CACHE_PREFIX;
+// Cache id from the dispatch input, or (right after a conversion) derived from the URN like the converter.
+let prefix = env.MODEL_CACHE_PREFIX || (env.URN ? cacheKey(env.URN) : '');
 if (!/^[A-Za-z0-9]{1,40}$/.test(prefix ?? '')) throw new Error('Invalid cache identifier');
 const client = new S3Client({ region: 'auto', endpoint: `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
   credentials: { accessKeyId: env.R2_ACCESS_KEY_ID, secretAccessKey: env.R2_SECRET_ACCESS_KEY } }), Bucket = env.R2_BUCKET;

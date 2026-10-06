@@ -198,7 +198,7 @@ jobs:
       - name: Prepare index runtime
         run: |
           mkdir -p "$RUNNER_TEMP/meta-index"
-          cp scripts/build-meta-index.mjs scripts/meta-index.mjs scripts/storage-budget.mjs "$RUNNER_TEMP/meta-index/"
+          cp scripts/build-meta-index.mjs scripts/meta-index.mjs scripts/storage-budget.mjs scripts/cache-key.mjs "$RUNNER_TEMP/meta-index/"
           npm install --prefix "$RUNNER_TEMP/meta-index" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 adm-zip@0.5
       - name: Build object tree and property index
         env:
@@ -355,6 +355,21 @@ jobs:
           XKT_INST_BYTES: ${{ github.event.inputs.inst_bytes }}
           XKT_LOD_CELL: ${{ github.event.inputs.lod_cell }}
         run: node scripts/convert4d.mjs
+
+      # Viewer model tree / properties / search for the model just converted. Not fatal: the model opens without it.
+      - name: Model tree and property index
+        if: success() && github.event.inputs.dxf_test != '1' && github.event.inputs.tiles == '1' && github.event.inputs.urn != ''
+        continue-on-error: true
+        env:
+          URN: ${{ github.event.inputs.urn }}
+          APS_REGION: ${{ github.event.inputs.region }}
+          APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
+          APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: node --max-old-space-size=6144 scripts/build-meta-index.mjs
 
       - name: Headless xeokit 렌더 진단 (LOD1 오블리크 · base64 PNG 로그)
         if: github.event.inputs.render_test == 'lod'
