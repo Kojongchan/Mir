@@ -16,6 +16,21 @@ test('objectIdOf reads the dbId of every tile representation and ignores other m
   assert.equal(objectIdOf('tile12-detail#345'), '345');
   assert.equal(objectIdOf('base0#terrain'), null);
   assert.equal(objectIdOf('15676'), null);
+  // Converter-generated names are reused by unrelated objects in other tiles: keyed per tile.
+  assert.equal(objectIdOf('tile4-detail#entity-117'), 'tile4#entity-117');
+  assert.equal(objectIdOf('tile4-far#entity-117'), 'tile4#entity-117');
+  assert.equal(objectIdOf('tile9#entity-117'), 'tile9#entity-117');
+});
+
+test('an object without a dbId selects only its own tile', () => {
+  const index = new ObjectIndex();
+  const objects = {};
+  for (const id of ['tile4#entity-117', 'tile4-far#entity-117', 'tile4-detail#entity-117', 'tile9#entity-117']) objects[id] = { colorize: null, visible: true };
+  index.add(Object.keys(objects));
+  const states = { selected: new Set([objectIdOf('tile4-detail#entity-117')]), highlighted: new Set(), hidden: new Set() };
+  updateFlag(index, objects, 'selected', new Set(), states);
+  assert.deepEqual(Object.keys(objects).filter(id => objects[id].colorize === SELECT_COLOR).sort(),
+    ['tile4#entity-117', 'tile4-detail#entity-117', 'tile4-far#entity-117']);
 });
 
 test('selection follows an object across far, light and detail tiles', () => {

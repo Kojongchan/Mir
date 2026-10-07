@@ -8,32 +8,41 @@ export type Shard = Record<string, { p: [string, string, unknown, string?][]; x?
 
 export class PropSearchIndex {
   private vocab: string[] = [];
-  private vocabIds = new Map<string, number>();
-  private objects: number[] = [];
-  private starts: number[] = [0];
-  private entries: number[] = [];
+  private vocabIds: Map<string, number> | null = new Map();
+  private objects: number[] | Int32Array = [];
+  private starts: number[] | Int32Array = [0];
+  private entries: number[] | Int32Array = [];
 
-  /** Add one shard (objects must be added once). */
+  /** Add one shard (objects must be added once, all before `seal`). */
   addShard(shard: Shard): void {
+    const vocabIds = this.vocabIds;
+    if (!vocabIds) throw new Error('Index is sealed');
+    const entries = this.entries as number[], objects = this.objects as number[], starts = this.starts as number[];
+    const entry = (text: string) => {
+      let v = vocabIds.get(text);
+      if (v === undefined) { v = this.vocab.length; this.vocab.push(text); vocabIds.set(text, v); }
+      return v;
+    };
     for (const [key, obj] of Object.entries(shard)) {
       const id = Number(key);
       if (!Number.isSafeInteger(id)) continue;
       const seen = new Set<number>();
       for (const [, label, value, unit] of obj.p) {
-        const text = `${label} ${typeof value === 'number' ? value : String(value)}${unit ? ` ${unit}` : ''}`.toLowerCase();
-        let v = this.vocabIds.get(text);
-        if (v === undefined) { v = this.vocab.length; this.vocab.push(text); this.vocabIds.set(text, v); }
-        if (!seen.has(v)) { seen.add(v); this.entries.push(v); }
+        const v = entry(`${label} ${typeof value === 'number' ? value : String(value)}${unit ? ` ${unit}` : ''}`.toLowerCase());
+        if (!seen.has(v)) { seen.add(v); entries.push(v); }
       }
-      if (obj.x) {
-        const text = `external id ${obj.x}`.toLowerCase();
-        let v = this.vocabIds.get(text);
-        if (v === undefined) { v = this.vocab.length; this.vocab.push(text); this.vocabIds.set(text, v); }
-        this.entries.push(v);
-      }
-      this.objects.push(id);
-      this.starts.push(this.entries.length);
+      if (obj.x) entries.push(entry(`external id ${obj.x}`.toLowerCase()));
+      objects.push(id);
+      starts.push(entries.length);
     }
+  }
+
+  /** After the last shard: drop the build-time lookup and pack the lists (≈12M entries for 250k objects). */
+  seal(): void {
+    this.vocabIds = null;
+    this.objects = Int32Array.from(this.objects);
+    this.starts = Int32Array.from(this.starts);
+    this.entries = Int32Array.from(this.entries);
   }
 
   get size(): number { return this.objects.length; }

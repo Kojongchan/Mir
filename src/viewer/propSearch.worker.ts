@@ -22,6 +22,7 @@ async function load(urls: string[], key: string) {
     }
   };
   await Promise.all(Array.from({ length: 8 }, worker));
+  next.seal();
   index = next; indexKey = key;
 }
 

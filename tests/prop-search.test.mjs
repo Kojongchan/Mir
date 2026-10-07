@@ -22,3 +22,13 @@ test('every term must match some "label value" of the object, across shards', ()
   assert.deepEqual(idx.search('없는값'), []);
   assert.equal(idx.size, 3);
 });
+
+test('a sealed index answers the same and takes no more shards', () => {
+  const idx = new PropSearchIndex();
+  idx.addShard({ 5: { p: [['Item', '재료', '콘크리트 C30']] }, 9: { p: [['사용자', 'A1_객체재료', '콘크리트']] } });
+  const before = idx.search('콘크리트');
+  idx.seal();
+  assert.deepEqual(idx.search('콘크리트'), before);
+  assert.deepEqual(idx.search('a1_객체재료'), [9]);
+  assert.throws(() => idx.addShard({ 10: { p: [] } }), /sealed/);
+});

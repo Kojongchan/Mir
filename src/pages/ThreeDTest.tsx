@@ -369,10 +369,11 @@ export function ThreeDTest() {
   }, []);
 
   /** Property-value search in a worker; the first search loads every shard (≈8 MB), later ones are instant. */
-  const searchWorkerRef = useRef<{ worker: Worker; seq: number; pending: Map<number, {
-    query: string; key: string; onProgress: (done: number, total: number) => void;
-    resolve: (ids: number[]) => void; reject: (e: Error) => void;
-  }> } | null>(null);
+  const searchWorkerRef = useRef<{ worker: Worker; seq: number; urls?: { key: string; at: number; list: Promise<string[]> };
+    pending: Map<number, {
+      query: string; key: string; onProgress: (done: number, total: number) => void;
+      resolve: (ids: number[]) => void; reject: (e: Error) => void;
+    }>; } | null>(null);
   useEffect(() => () => { searchWorkerRef.current?.worker.terminate(); searchWorkerRef.current = null; }, []);
   const searchValues = useCallback((query: string, onProgress: (done: number, total: number) => void) => {
     const meta = metaRef.current;
@@ -388,12 +389,20 @@ export function ThreeDTest() {
         if (!p) return;
         if (msg.type === 'need-urls') {
           try {
-            const { data } = await supabase.auth.getSession();
-            const r = await fetch(`/api/aps-convert?urn=${encodeURIComponent(p.key)}&metaShards=all`,
-              { headers: { authorization: `Bearer ${data.session?.access_token ?? ''}` } });
-            const j = await r.json() as { urls?: string[]; error?: string };
-            if (!r.ok || !j.urls) throw new Error(j.error ?? '속성 색인 조회 실패');
-            worker.postMessage({ type: 'search', key: p.key, urls: j.urls, query: p.query, seq: msg.seq });
+            // Signed for 15 minutes; queries typed while the index loads share one request.
+            if (state.urls?.key !== p.key || Date.now() - state.urls.at > 10 * 60_000) {
+              const urls = (async () => {
+                const { data } = await supabase.auth.getSession();
+                const r = await fetch(`/api/aps-convert?urn=${encodeURIComponent(p.key)}&metaShards=all`,
+                  { headers: { authorization: `Bearer ${data.session?.access_token ?? ''}` } });
+                const j = await r.json() as { urls?: string[]; error?: string };
+                if (!r.ok || !j.urls) throw new Error(j.error ?? '속성 색인 조회 실패');
+                return j.urls;
+              })();
+              state.urls = { key: p.key, at: Date.now(), list: urls };
+              urls.catch(() => { if (state.urls?.list === urls) state.urls = undefined; });
+            }
+            worker.postMessage({ type: 'search', key: p.key, urls: await state.urls.list, query: p.query, seq: msg.seq });
           } catch (err) { state.pending.delete(msg.seq!); p.reject(err as Error); }
           return;
         }
@@ -1835,7 +1844,8 @@ export function ThreeDTest() {
                 <div className="spacer" />
                 <button type="button" className="ic-only" onClick={() => setPropsOpen(false)} aria-label="속성 닫기">✕</button>
               </div>
-              <PropertyPanel tree={modelTree} selected={selectedDb} loadProps={loadProps} searchValues={searchValues}
+              <PropertyPanel tree={modelTree} selected={selectedDb} unindexed={selectedDb === null ? pick?.id.split('#').pop() ?? null : null}
+                loadProps={loadProps} searchValues={searchValues}
                 onSelect={(id, zoom) => { setRevealDb(id); selectNode(id, zoom); }} onZoom={zoomToNodes} onHighlight={highlightObjects} />
             </aside>
           )}

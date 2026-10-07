@@ -3,13 +3,18 @@
  * appears as `tile12#345` (light/original), `tile12-far#345` and `tile12-detail#345`, and an object that
  * spans tiles appears once per tile. Selection, search highlights and visibility act on the dbId so every
  * representation that is (or later becomes) loaded follows.
+ *
+ * Geometry without a dbId gets a converter-generated name (`entity-117`) that is only unique inside its
+ * tile, and unrelated objects in other tiles reuse it; those are keyed per tile (`tile12#entity-117`) so
+ * only that tile's own representations follow.
  */
-const TILE_ENTITY = /^tile\d+(?:-far|-detail)?#(.+)$/;
+const TILE_ENTITY = /^(tile\d+)(?:-far|-detail)?#(.+)$/;
 
-/** dbId of a tile entity; null for terrain/base models and anything else. */
+/** dbId of a tile entity (or its per-tile key when it has none); null for terrain/base models and others. */
 export function objectIdOf(entityId: string): string | null {
   const m = TILE_ENTITY.exec(entityId);
-  return m ? m[1] : null;
+  if (!m) return null;
+  return /^\d+$/.test(m[2]) ? m[2] : `${m[1]}#${m[2]}`;
 }
 
 export class ObjectIndex {

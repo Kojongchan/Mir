@@ -8,6 +8,10 @@ const SHOWN = 300; // result rows listed; highlight/zoom act on every match
 
 type Section = { id: number; groups: [string, { label: string; value: string }[]][]; ext?: string; rich: boolean };
 
+// Revit API dumps in Navisworks exports ("Document", "Category", "CreatedPhaseId"…): one CamelCase word.
+// They follow the design data and start collapsed.
+const isApiGroup = (category: string) => category !== 'Item' && /^[A-Z][a-z]+(?:[A-Z][a-zA-Z]*)*$/.test(category);
+
 function groupsOf(data: ObjectProps | null): Section['groups'] {
   const map = new Map<string, { label: string; value: string }[]>();
   for (const [category, label, value, unit] of data?.p ?? []) {
@@ -15,7 +19,8 @@ function groupsOf(data: ObjectProps | null): Section['groups'] {
     list.push({ label, value: `${typeof value === 'number' ? value.toLocaleString(undefined, { maximumFractionDigits: 6 }) : String(value)}${unit ? ` ${unit}` : ''}` });
     map.set(category || '기타', list);
   }
-  return [...map.entries()];
+  const groups = [...map.entries()];
+  return [...groups.filter(([c]) => !isApiGroup(c)), ...groups.filter(([c]) => isApiGroup(c))];
 }
 
 /**
@@ -24,9 +29,11 @@ function groupsOf(data: ObjectProps | null): Section['groups'] {
  * plain geometry (Item only) while the design data (element, family, material, schedule…) sits on its
  * parent objects, so the parents' properties are listed below, nearest first.
  */
-export function PropertyPanel({ tree, selected, loadProps, searchValues, onSelect, onZoom, onHighlight }: {
+export function PropertyPanel({ tree, selected, unindexed, loadProps, searchValues, onSelect, onZoom, onHighlight }: {
   tree: ModelTree;
   selected: number | null;
+  /** Picked geometry that has no original object id (nothing to show but its scene id). */
+  unindexed?: string | null;
   loadProps: (dbId: number) => Promise<ObjectProps | null>;
   searchValues: ValueSearch;
   onSelect: (id: number, zoom: boolean) => void;
@@ -37,7 +44,8 @@ export function PropertyPanel({ tree, selected, loadProps, searchValues, onSelec
   const [term, setTerm] = useState('');
   const [byValue, setByValue] = useState(false);
   const [valueHits, setValueHits] = useState<{ term: string; ids: number[] } | null>(null);
-  const [valueNote, setValueNote] = useState('');
+  const [valueError, setValueError] = useState<{ term: string; message: string } | null>(null);
+  const [valueProgress, setValueProgress] = useState('');
   const [highlighted, setHighlighted] = useState(false);
   const [sections, setSections] = useState<{ id: number; list: Section[]; loading: boolean; error?: string } | null>(null);
 
@@ -47,21 +55,25 @@ export function PropertyPanel({ tree, selected, loadProps, searchValues, onSelec
     return () => clearTimeout(t);
   }, [query]);
   useEffect(() => {
-    if (!byValue || !term) { setValueHits(null); setValueNote(''); return; }
+    if (!byValue || !term) return;
     let alive = true;
-    setValueNote('속성 값 검색 중…');
-    searchValues(term, (done, total) => { if (alive) setValueNote(`속성 색인 불러오는 중 ${done}/${total}`); })
-      .then(ids => { if (alive) { setValueHits({ term, ids }); setValueNote(''); } })
-      .catch(e => { if (alive) setValueNote(`속성 값 검색 실패: ${(e as Error).message}`); });
+    setValueProgress('');
+    searchValues(term, (done, total) => { if (alive) setValueProgress(`속성 색인 불러오는 중 ${done}/${total} (처음 한 번)`); })
+      .then(ids => { if (alive) setValueHits({ term, ids }); })
+      .catch(e => { if (alive) setValueError({ term, message: (e as Error).message }); });
     return () => { alive = false; };
   }, [byValue, term, searchValues]);
+  const valueDone = byValue && !!term && valueHits?.term === term;
+  const valueFailed = byValue && !!term && !valueDone && valueError?.term === term;
+  const valuePending = byValue && !!term && !valueDone && !valueFailed;
+  const valueNote = valuePending ? valueProgress || '속성 값 검색 중…' : valueFailed ? `속성 값 검색 실패: ${valueError!.message}` : '';
   const result = useMemo(() => {
     if (!term) return null;
     const byName = tree.search(term);
-    if (!byValue || valueHits?.term !== term) return byName;
-    const ids = [...new Set([...byName.ids, ...valueHits.ids])].sort((a, b) => a - b);
+    if (!valueDone) return byName;
+    const ids = [...new Set([...byName.ids, ...valueHits!.ids])].sort((a, b) => a - b);
     return { total: ids.length, ids };
-  }, [tree, term, byValue, valueHits]);
+  }, [tree, term, valueDone, valueHits]);
   useEffect(() => { setHighlighted(false); onHighlight(null); }, [result, onHighlight]);
 
   // The selected object, then its parents (nearest first) that carry more than the Item basics.
@@ -94,8 +106,8 @@ export function PropertyPanel({ tree, selected, loadProps, searchValues, onSelec
         </label>
         {valueNote && <span className="muted">{valueNote}</span>}
         {result && (
-          <div className="prop-panel__search-bar">
-            <span className="muted">{result.total.toLocaleString()}건</span>
+          <div className="prop-panel__search-bar" data-term={term} data-pending={valuePending || undefined}>
+            <span className="muted">{valuePending ? `이름·유형 ${result.total.toLocaleString()}건 · 값 검색 중` : `${result.total.toLocaleString()}건`}</span>
             <div className="spacer" />
             <button type="button" className={`btn btn--sm${highlighted ? ' btn--primary' : ''}`} disabled={!result.total}
               title="검색된 객체를 모두 주황색으로 강조합니다"
@@ -123,7 +135,9 @@ export function PropertyPanel({ tree, selected, loadProps, searchValues, onSelec
 
       <div className="prop-panel__body">
         {selected === null ? (
-          <p className="muted prop-panel__hint">3D 화면이나 트리에서 객체를 선택하면 속성이 표시됩니다.</p>
+          <p className="muted prop-panel__hint">
+            {unindexed ? `선택한 형상(${unindexed})은 원본 객체 정보가 없어 속성이 없습니다.` : '3D 화면이나 트리에서 객체를 선택하면 속성이 표시됩니다.'}
+          </p>
         ) : (
           <>
             <div className="prop-panel__title">
@@ -148,7 +162,8 @@ export function PropertyPanel({ tree, selected, loadProps, searchValues, onSelec
                   </div>
                 )}
                 {section.groups.map(([category, rows]) => (
-                  <details key={category} className="prop-panel__group" open={si === 0 ? section.groups.length <= 4 || category !== 'Item' : si === 1}>
+                  <details key={category} className="prop-panel__group"
+                    open={!isApiGroup(category) && (si === 0 ? section.groups.length <= 4 || category !== 'Item' : si === 1)}>
                     <summary>{category} <span className="muted">{rows.length}</span></summary>
                     <dl>
                       {rows.map((r, j) => (
