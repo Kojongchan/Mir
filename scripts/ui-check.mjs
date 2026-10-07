@@ -367,7 +367,8 @@ try {
       const id = h?.entity?.isObject ? String(h.entity.id) : '';
       if (!/^tile\d+(?:-far|-detail)?#/.test(id)) continue;
       const a = Array.from(h.entity.aabb);
-      list.push({ id, aabb: a, diag: Math.hypot(a[3] - a[0], a[4] - a[1], a[5] - a[2]), off: Math.hypot(pos[0] - W / 2, pos[1] - H / 2) });
+      list.push({ id, aabb: a, diag: Math.hypot(a[3] - a[0], a[4] - a[1], a[5] - a[2]), off: Math.hypot(pos[0] - W / 2, pos[1] - H / 2),
+        textured: !!h.entity.meshes?.some(m => m.textureSet) });
     }
     return list;
   });
@@ -388,10 +389,11 @@ try {
   // Objects with several fragments in their tile (renamed ones in the table) show whether selection covers all.
   const multi = new Set(Object.entries(aliasTable?.tiles ?? {}).flatMap(([pos, t]) => t.a.filter((_, i) => i % 2).map(d => `tile${pos}#${d}`)));
   const isMulti = h => multi.has(h.id.replace(/-(?:far|detail)#/, '#'));
-  const rank = h => (designed(h) ? 0 : dbOf(h) ? 2 : 4) * 1e6 - (isMulti(h) ? 1e6 : 0) + (sized(h) ? 0 : 1e5) + h.off;
+  // Textured objects (soil, rock) multiply the selection colour with a dark image: judge on plain ones.
+  const rank = h => (designed(h) ? 0 : dbOf(h) ? 2 : 4) * 1e6 - (isMulti(h) ? 1e6 : 0) + (h.textured ? 3e6 : 0) + (sized(h) ? 0 : 1e5) + h.off;
   const pick = hits.sort((a, b) => rank(a) - rank(b))[0];
   results.pickCandidates = hits.length;
-  results.pickKinds = { designed: hits.filter(designed).length, multi: hits.filter(isMulti).length,
+  results.pickKinds = { designed: hits.filter(designed).length, multi: hits.filter(isMulti).length, textured: hits.filter(h => h.textured).length,
     numeric: hits.filter(h => dbOf(h) > 0).length, generated: hits.filter(h => !dbOf(h)).length };
   results.sceneInfo = await page.evaluate(() => {
     const v = window.__viewer, objs = Object.values(v.scene.objects);
