@@ -122,11 +122,16 @@ const richFlag = new Uint8Array(tree.n);
   }
   const buildMs = performance.now() - t0;
   global.gc?.();
+  const heapBuildMB = MB(process.memoryUsage().heapUsed - h0);
+  const ab0 = process.memoryUsage().arrayBuffers;
+  index.seal();
+  global.gc?.();
   const heapMB = MB(process.memoryUsage().heapUsed - h0);
+  const packedMB = MB(process.memoryUsage().arrayBuffers - ab0); // typed arrays live outside the JS heap
   const vocab = index.vocab ?? [];
   const vocabChars = vocab.reduce((s, v) => s + v.length, 0);
   results.valueIndex = { objects: index.size, vocab: vocab.length, vocabMChars: Math.round(vocabChars / 1e5) / 10,
-    entries: index.entries?.length, buildMs: Math.round(buildMs), parseMs: Math.round(parseMs), heapMB };
+    entries: index.entries?.length, buildMs: Math.round(buildMs), parseMs: Math.round(parseMs), heapBuildMB, heapMB, packedMB };
   // Searches: values taken from the data (one and two terms) plus fixed words.
   const rand = mulberry(7);
   const queries = ['concrete', '콘크리트', 'sm490', '철근', 'level 1'];
@@ -224,11 +229,15 @@ fs.writeFileSync(path.join(hdir, 'stubRole.ts'), 'export function useProjectRole
 // Tiles around one dense spot (software rendering cannot draw the whole site in reasonable time).
 const allTiles = manifest.tiles ?? [];
 const centre = a => [(a[0] + a[3]) / 2, (a[1] + a[4]) / 2, (a[2] + a[5]) / 2];
+// Default: the tile with the most objects (dense structure), not the largest file (big civil solids).
+const members = t => t.far?.members ?? t.motion?.members ?? 0;
 let target = Number(env.UI_TILE);
 if (!(target >= 0 && target < allTiles.length)) {
   target = 0;
-  allTiles.forEach((t, i) => { if (t.far && (t.byteLength ?? 0) > (allTiles[target].byteLength ?? 0)) target = i; });
+  allTiles.forEach((t, i) => { if (members(t) > members(allTiles[target])) target = i; });
 }
+results.tileTop = allTiles.map((t, i) => ({ i, members: members(t), MB: MB(t.byteLength ?? 0), centre: centre(t.aabb).map(Math.round) }))
+  .sort((a, b) => b.members - a.members).slice(0, 8);
 const c0 = centre(allTiles[target].aabb);
 const chosen = allTiles.map((t, i) => [i, Math.hypot(...centre(t.aabb).map((v, j) => v - c0[j]))])
   .sort((a, b) => a[1] - b[1]).slice(0, Math.max(1, Number(env.UI_TILES) || 16)).map(([i]) => i);
@@ -338,8 +347,8 @@ try {
   const box = await canvasBox();
   const hits = await page.evaluate(() => {
     const v = window.__viewer, c = v.scene.canvas.canvas, W = c.clientWidth, H = c.clientHeight, list = [];
-    for (let gx = 1; gx < 10; gx++) for (let gy = 1; gy < 8; gy++) {
-      const pos = [W * gx / 10, H * gy / 8];
+    for (let gx = 1; gx < 24; gx++) for (let gy = 1; gy < 14; gy++) {
+      const pos = [W * gx / 24, H * gy / 14];
       const h = v.scene.pick({ canvasPos: pos });
       const id = h?.entity?.isObject ? String(h.entity.id) : '';
       if (!/^tile\d+(?:-far|-detail)?#/.test(id)) continue;
@@ -359,12 +368,18 @@ try {
     }
     return list;
   }));
-  const good = hits.filter(h => h.diag > 3 && h.diag < 80).sort((a, b) => a.off - b.off);
-  const pick = good[0] ?? hits.sort((a, b) => a.off - b.off)[0];
+  const dbOf = h => { const m = /#(\d+)$/.exec(h.id); return m ? Number(m[1]) : 0; };
+  const designed = h => dbOf(h) > 0 && dbOf(h) < tree.n && tree.path(dbOf(h)).some(id => id !== dbOf(h) && richFlag[id]);
+  const sized = h => h.diag > 2 && h.diag < 60;
+  const rank = h => (designed(h) ? 0 : dbOf(h) ? 1 : 2) * 1e6 + (sized(h) ? 0 : 1e5) + h.off;
+  const pick = hits.sort((a, b) => rank(a) - rank(b))[0];
   results.pickCandidates = hits.length;
+  results.pickKinds = { designed: hits.filter(designed).length, numeric: hits.filter(h => dbOf(h) > 0).length, generated: hits.filter(h => !dbOf(h)).length };
   results.sceneInfo = await page.evaluate(() => {
     const v = window.__viewer, objs = Object.values(v.scene.objects);
+    const ids = Object.keys(v.scene.objects);
     return { models: Object.keys(v.scene.models).length, objects: objs.length, visible: objs.filter(o => o.visible).length,
+      numericIds: ids.filter(k => /^tile\d+(?:-far|-detail)?#\d+$/.test(k)).length, generatedIds: ids.filter(k => /#entity-\d+$/.test(k)).length,
       culled: objs.filter(o => o.culled).length, aabb: Array.from(v.scene.aabb).map(Math.round),
       eye: Array.from(v.camera.eye).map(Math.round), look: Array.from(v.camera.look).map(Math.round),
       gl: (() => { const gl = v.scene.canvas.gl, ext = gl.getExtension('WEBGL_debug_renderer_info'); return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER); })() };
@@ -474,12 +489,14 @@ try {
     let count = null;
     while (Date.now() - ts0 < 300000) {
       await sleep(300);
-      const s = await page.evaluate(() => ({
-        notes: [...document.querySelectorAll('.prop-panel__search > .muted')].map(e => e.textContent),
-        count: document.querySelector('.prop-panel__search-bar .muted')?.textContent ?? null }));
+      const s = await page.evaluate(want => {
+        const bar = document.querySelector('.prop-panel__search-bar');
+        return { notes: [...document.querySelectorAll('.prop-panel__search > .muted')].map(e => e.textContent),
+          ready: !!bar && bar.dataset.term === want.trim() && !bar.dataset.pending,
+          count: bar?.querySelector('.muted')?.textContent ?? null };
+      }, q);
       s.notes.forEach(n => notes.add(n.replace(/\d+\/(\d+)/, 'n/$1')));
-      if (s.count && !s.notes.some(n => /중|실패/.test(n))) { count = s.count; break; }
-      if (s.notes.some(n => /실패/.test(n))) { count = s.notes.join(' '); break; }
+      if (s.ready) { count = s.count; break; }
     }
     results.panelSearch.push({ q, ms: Date.now() - ts0, count, notes: [...notes] });
     log('panel search', results.panelSearch.at(-1));
