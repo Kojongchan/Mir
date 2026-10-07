@@ -3535,6 +3535,44 @@ button.danger:hover:not(:disabled) {
   font-size: 11px;
   word-break: break-all;
 }
+.prop-panel__mode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.prop-panel__mode input {
+  width: auto;
+  margin: 0;
+}
+.prop-panel__mode .muted {
+  flex-basis: 100%;
+  font-size: 11px;
+  white-space: normal;
+}
+.prop-panel__section + .prop-panel__section {
+  margin-top: 10px;
+}
+.prop-panel__parent {
+  padding: 4px 6px;
+  margin-bottom: 2px;
+  border-radius: 4px;
+  font-size: 12px;
+  background: color-mix(in srgb, var(--color-brand-solid, #2563eb) 8%, transparent);
+  word-break: break-all;
+}
+.prop-panel__parent button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-brand-solid, #2563eb);
+  text-align: left;
+}
 .threed-test__props {
   position: absolute;
   top: 160px; /* below the 140px NavCube at top: 10px */

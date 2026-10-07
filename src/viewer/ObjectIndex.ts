@@ -53,37 +53,49 @@ export class ObjectIndex {
   }
 }
 
-/** Entity flags driven by object sets (selected = clicked, highlighted = search hits, hidden = tree). */
+/** Object sets driving entity state: selected = clicked (blue), highlighted = search hits (amber), hidden = tree. */
 export type ObjectStates = { selected: ReadonlySet<string>; highlighted: ReadonlySet<string>; hidden: ReadonlySet<string> };
-type Flaggable = { selected: boolean; highlighted: boolean; visible: boolean };
+type Paintable = { colorize: number[] | null; visible: boolean };
+
+// Selection recolours the object instead of drawing xeokit's emphasis pass over it: that second pass
+// z-fights with the surface under the logarithmic depth buffer and showed as scattered blue specks.
+// SceneModel colorize replaces the colour (lighting kept) and `null` restores the original.
+export const SELECT_COLOR = [0.15, 0.5, 1.0];
+export const HIGHLIGHT_COLOR = [1.0, 0.62, 0.08];
+
+function colorFor(db: string, states: ObjectStates): number[] | null {
+  return states.selected.has(db) ? SELECT_COLOR : states.highlighted.has(db) ? HIGHLIGHT_COLOR : null;
+}
 
 /** Apply the object sets to one newly loaded model's entities. */
-export function applyStates(objects: Record<string, Flaggable>, states: ObjectStates): void {
+export function applyStates(objects: Record<string, Paintable>, states: ObjectStates): void {
   for (const [id, entity] of Object.entries(objects)) {
     const db = objectIdOf(id);
     if (db === null) continue;
-    if (states.selected.has(db)) entity.selected = true;
-    if (states.highlighted.has(db)) entity.highlighted = true;
+    const color = colorFor(db, states);
+    if (color) entity.colorize = color;
     if (states.hidden.has(db)) entity.visible = false;
   }
 }
 
-/** Move one flag from the previous object set to the next, touching only entities that change. */
+/** After `states[flag]` changed from `previous`, update only the entities of objects that changed. */
 export function updateFlag(
   index: ObjectIndex,
-  objects: Record<string, Flaggable | undefined>,
+  objects: Record<string, Paintable | undefined>,
   flag: 'selected' | 'highlighted' | 'hidden',
   previous: ReadonlySet<string>,
-  next: ReadonlySet<string>,
+  states: ObjectStates,
 ): void {
-  const set = (db: string, on: boolean) => {
+  const next = states[flag];
+  const touch = (db: string) => {
+    const color = colorFor(db, states), hidden = states.hidden.has(db);
     for (const id of index.entities(db)) {
       const entity = objects[id];
       if (!entity) continue;
-      if (flag === 'hidden') entity.visible = !on;
-      else entity[flag] = on;
+      if (flag === 'hidden') entity.visible = !hidden;
+      else entity.colorize = color;
     }
   };
-  for (const db of previous) if (!next.has(db)) set(db, false);
-  for (const db of next) if (!previous.has(db)) set(db, true);
+  for (const db of previous) if (!next.has(db)) touch(db);
+  for (const db of next) if (!previous.has(db)) touch(db);
 }

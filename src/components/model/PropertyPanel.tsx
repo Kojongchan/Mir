@@ -2,58 +2,97 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ModelTree } from '../../viewer/ModelTree';
 
 export type ObjectProps = { p: [string, string, unknown, string?][]; x?: string };
+export type ValueSearch = (query: string, onProgress: (done: number, total: number) => void) => Promise<number[]>;
 
 const SHOWN = 300; // result rows listed; highlight/zoom act on every match
 
+type Section = { id: number; groups: [string, { label: string; value: string }[]][]; ext?: string; rich: boolean };
+
+function groupsOf(data: ObjectProps | null): Section['groups'] {
+  const map = new Map<string, { label: string; value: string }[]>();
+  for (const [category, label, value, unit] of data?.p ?? []) {
+    const list = map.get(category || '기타') ?? [];
+    list.push({ label, value: `${typeof value === 'number' ? value.toLocaleString(undefined, { maximumFractionDigits: 6 }) : String(value)}${unit ? ` ${unit}` : ''}` });
+    map.set(category || '기타', list);
+  }
+  return [...map.entries()];
+}
+
 /**
- * Right panel: search the model by name or type (highlight / zoom to every match), and the selected
- * object's properties grouped by category with its place in the tree.
+ * Right panel: search the model by name/type, optionally by property values too (highlight / zoom to
+ * every match), and the selected object's properties. In Navisworks exports the picked node is often
+ * plain geometry (Item only) while the design data (element, family, material, schedule…) sits on its
+ * parent objects, so the parents' properties are listed below, nearest first.
  */
-export function PropertyPanel({ tree, selected, loadProps, onSelect, onZoom, onHighlight }: {
+export function PropertyPanel({ tree, selected, loadProps, searchValues, onSelect, onZoom, onHighlight }: {
   tree: ModelTree;
   selected: number | null;
   loadProps: (dbId: number) => Promise<ObjectProps | null>;
+  searchValues: ValueSearch;
   onSelect: (id: number, zoom: boolean) => void;
   onZoom: (ids: number[]) => void;
   onHighlight: (ids: number[] | null) => void;
 }) {
   const [query, setQuery] = useState('');
   const [term, setTerm] = useState('');
+  const [byValue, setByValue] = useState(false);
+  const [valueHits, setValueHits] = useState<{ term: string; ids: number[] } | null>(null);
+  const [valueNote, setValueNote] = useState('');
   const [highlighted, setHighlighted] = useState(false);
-  const [props, setProps] = useState<{ id: number; data: ObjectProps | null; error?: string } | null>(null);
+  const [sections, setSections] = useState<{ id: number; list: Section[]; loading: boolean; error?: string } | null>(null);
 
-  // Search after typing pauses (250k names per pass).
+  // Search after typing pauses.
   useEffect(() => {
-    const t = setTimeout(() => setTerm(query.trim()), 250);
+    const t = setTimeout(() => setTerm(query.trim()), 300);
     return () => clearTimeout(t);
   }, [query]);
-  const result = useMemo(() => (term ? tree.search(term) : null), [tree, term]);
+  useEffect(() => {
+    if (!byValue || !term) { setValueHits(null); setValueNote(''); return; }
+    let alive = true;
+    setValueNote('속성 값 검색 중…');
+    searchValues(term, (done, total) => { if (alive) setValueNote(`속성 색인 불러오는 중 ${done}/${total}`); })
+      .then(ids => { if (alive) { setValueHits({ term, ids }); setValueNote(''); } })
+      .catch(e => { if (alive) setValueNote(`속성 값 검색 실패: ${(e as Error).message}`); });
+    return () => { alive = false; };
+  }, [byValue, term, searchValues]);
+  const result = useMemo(() => {
+    if (!term) return null;
+    const byName = tree.search(term);
+    if (!byValue || valueHits?.term !== term) return byName;
+    const ids = [...new Set([...byName.ids, ...valueHits.ids])].sort((a, b) => a - b);
+    return { total: ids.length, ids };
+  }, [tree, term, byValue, valueHits]);
   useEffect(() => { setHighlighted(false); onHighlight(null); }, [result, onHighlight]);
 
+  // The selected object, then its parents (nearest first) that carry more than the Item basics.
   useEffect(() => {
-    if (selected === null) { setProps(null); return; }
+    if (selected === null) { setSections(null); return; }
     let alive = true;
-    setProps({ id: selected, data: null });
-    loadProps(selected)
-      .then(data => { if (alive) setProps({ id: selected, data }); })
-      .catch(e => { if (alive) setProps({ id: selected, data: null, error: (e as Error).message }); });
+    const chain = tree.path(selected).reverse();
+    setSections({ id: selected, list: [], loading: true });
+    Promise.all(chain.map(id => loadProps(id).then(data => ({ id, data }))))
+      .then(rows => {
+        if (!alive) return;
+        const list = rows.map(({ id, data }) => {
+          const groups = groupsOf(data);
+          return { id, groups, ext: data?.x, rich: groups.some(([c]) => c !== 'Item' && c !== '항목') };
+        }).filter((s, i) => i === 0 || s.rich);
+        setSections({ id: selected, list, loading: false });
+      })
+      .catch(e => { if (alive) setSections({ id: selected, list: [], loading: false, error: (e as Error).message }); });
     return () => { alive = false; };
-  }, [selected, loadProps]);
-
-  const groups = useMemo(() => {
-    const map = new Map<string, { label: string; value: string }[]>();
-    for (const [category, label, value, unit] of props?.data?.p ?? []) {
-      const list = map.get(category || '기타') ?? [];
-      list.push({ label, value: `${typeof value === 'number' ? value.toLocaleString(undefined, { maximumFractionDigits: 6 }) : String(value)}${unit ? ` ${unit}` : ''}` });
-      map.set(category || '기타', list);
-    }
-    return [...map.entries()];
-  }, [props]);
+  }, [selected, tree, loadProps]);
 
   return (
     <div className="prop-panel">
       <div className="prop-panel__search">
-        <input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="객체 검색 (이름 · 유형)" aria-label="객체 검색" />
+        <input type="search" value={query} onChange={e => setQuery(e.target.value)}
+          placeholder={byValue ? '이름 · 유형 · 속성 값 검색' : '객체 검색 (이름 · 유형)'} aria-label="객체 검색" />
+        <label className="prop-panel__mode">
+          <input type="checkbox" checked={byValue} onChange={e => setByValue(e.target.checked)} />
+          속성 값 포함 <span className="muted">(재료, 공정, 요소 ID 등 · 여러 단어는 모두 포함)</span>
+        </label>
+        {valueNote && <span className="muted">{valueNote}</span>}
         {result && (
           <div className="prop-panel__search-bar">
             <span className="muted">{result.total.toLocaleString()}건</span>
@@ -70,7 +109,8 @@ export function PropertyPanel({ tree, selected, loadProps, onSelect, onZoom, onH
           <ul className="prop-panel__results">
             {result.ids.slice(0, SHOWN).map(id => (
               <li key={id}>
-                <button type="button" className={selected === id ? 'is-selected' : ''} onClick={() => onSelect(id, true)}>
+                <button type="button" className={selected === id ? 'is-selected' : ''} onClick={() => onSelect(id, true)}
+                  title={tree.path(id).map(p => tree.name(p)).join(' › ')}>
                   <span>{tree.name(id)}</span>
                   {tree.type(id) && <span className="muted">{tree.type(id)}</span>}
                 </button>
@@ -95,20 +135,31 @@ export function PropertyPanel({ tree, selected, loadProps, onSelect, onZoom, onH
                 <button key={id} type="button" onClick={() => onSelect(id, false)}>{tree.name(id)}</button>
               ))}
             </nav>
-            {props?.error && <p className="muted">속성을 불러오지 못했습니다: {props.error}</p>}
-            {!props?.data && !props?.error && <p className="muted">속성 불러오는 중…</p>}
-            {props?.data && !groups.length && <p className="muted">표시할 속성이 없습니다.</p>}
-            {groups.map(([category, rows], i) => (
-              <details key={category} className="prop-panel__group" open={i < 4}>
-                <summary>{category} <span className="muted">{rows.length}</span></summary>
-                <dl>
-                  {rows.map((r, j) => (
-                    <div key={j} className="prop-panel__row"><dt>{r.label}</dt><dd>{r.value}</dd></div>
-                  ))}
-                </dl>
-              </details>
+            {sections?.error && <p className="muted">속성을 불러오지 못했습니다: {sections.error}</p>}
+            {sections?.loading && <p className="muted">속성 불러오는 중…</p>}
+            {sections && !sections.loading && !sections.list.some(s => s.groups.length) && <p className="muted">표시할 속성이 없습니다.</p>}
+            {sections?.list.map((section, si) => (
+              <section key={section.id} className="prop-panel__section">
+                {si > 0 && (
+                  <div className="prop-panel__parent">
+                    상위 객체 ·{' '}
+                    <button type="button" onClick={() => onSelect(section.id, false)}>{tree.name(section.id)}</button>
+                    {tree.type(section.id) && <span className="muted"> {tree.type(section.id)}</span>}
+                  </div>
+                )}
+                {section.groups.map(([category, rows]) => (
+                  <details key={category} className="prop-panel__group" open={si === 0 ? section.groups.length <= 4 || category !== 'Item' : si === 1}>
+                    <summary>{category} <span className="muted">{rows.length}</span></summary>
+                    <dl>
+                      {rows.map((r, j) => (
+                        <div key={j} className="prop-panel__row"><dt>{r.label}</dt><dd>{r.value}</dd></div>
+                      ))}
+                    </dl>
+                  </details>
+                ))}
+                {section.ext && <p className="muted prop-panel__ext">External ID · {section.ext}</p>}
+              </section>
             ))}
-            {props?.data?.x && <p className="muted prop-panel__ext">External ID · {props.data.x}</p>}
           </>
         )}
       </div>

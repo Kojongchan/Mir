@@ -23,7 +23,7 @@ import { rankTileRegion, regionNeedsRefresh, safeDollyFactor } from '../viewer/T
 import { inTileView, prioritizeTileView, prioritizeCameraView, viewPlanes } from '../viewer/TileView';
 import { ByteCache } from '../viewer/ByteCache';
 import { useEscapeKey } from '../lib/useEscapeKey';
-import { ObjectIndex, applyStates, objectIdOf, updateFlag } from '../viewer/ObjectIndex';
+import { ObjectIndex, SELECT_COLOR, applyStates, objectIdOf, updateFlag } from '../viewer/ObjectIndex';
 import { ModelTree, type TreeData } from '../viewer/ModelTree';
 import { ModelTreePanel } from '../components/model/ModelTreePanel';
 import { PropertyPanel, type ObjectProps } from '../components/model/PropertyPanel';
@@ -312,13 +312,13 @@ export function ThreeDTest() {
   const selectObjects = useCallback((dbIds: string[], raw: string | null = null) => {
     const viewer = viewerRef.current;
     const states = objectStatesRef.current;
-    const objects = (viewer?.scene.objects ?? {}) as unknown as Record<string, { selected: boolean; highlighted: boolean; visible: boolean }>;
-    const next = new Set(dbIds);
-    updateFlag(objectIndexRef.current, objects, 'selected', states.selected, next);
-    states.selected = next;
-    if (rawSelectedRef.current && objects[rawSelectedRef.current]) objects[rawSelectedRef.current].selected = false;
+    const objects = (viewer?.scene.objects ?? {}) as unknown as Record<string, { colorize: number[] | null; visible: boolean }>;
+    const previous = states.selected;
+    states.selected = new Set(dbIds);
+    updateFlag(objectIndexRef.current, objects, 'selected', previous, states);
+    if (rawSelectedRef.current && objects[rawSelectedRef.current]) objects[rawSelectedRef.current].colorize = null;
     rawSelectedRef.current = raw;
-    if (raw && objects[raw]) objects[raw].selected = true;
+    if (raw && objects[raw]) objects[raw].colorize = SELECT_COLOR;
   }, []);
   const selectObjectsRef = useRef(selectObjects);
   /** Forget every object state (a new model is being opened). */
@@ -368,6 +368,52 @@ export function ThreeDTest() {
     return (await shard)[dbId] ?? null;
   }, []);
 
+  /** Property-value search in a worker; the first search loads every shard (≈8 MB), later ones are instant. */
+  const searchWorkerRef = useRef<{ worker: Worker; seq: number; pending: Map<number, {
+    query: string; key: string; onProgress: (done: number, total: number) => void;
+    resolve: (ids: number[]) => void; reject: (e: Error) => void;
+  }> } | null>(null);
+  useEffect(() => () => { searchWorkerRef.current?.worker.terminate(); searchWorkerRef.current = null; }, []);
+  const searchValues = useCallback((query: string, onProgress: (done: number, total: number) => void) => {
+    const meta = metaRef.current;
+    if (!meta) return Promise.resolve([]);
+    let w = searchWorkerRef.current;
+    if (!w) {
+      const worker = new Worker(new URL('../viewer/propSearch.worker.ts', import.meta.url), { type: 'module' });
+      const state = { worker, seq: 0, pending: new Map() } as NonNullable<typeof searchWorkerRef.current>;
+      worker.onmessage = async (e: MessageEvent<{ type: string; seq?: number; ids?: number[]; done?: number; total?: number; message?: string }>) => {
+        const msg = e.data;
+        if (msg.type === 'progress') { for (const p of state.pending.values()) p.onProgress(msg.done ?? 0, msg.total ?? 0); return; }
+        const p = msg.seq === undefined ? undefined : state.pending.get(msg.seq);
+        if (!p) return;
+        if (msg.type === 'need-urls') {
+          try {
+            const { data } = await supabase.auth.getSession();
+            const r = await fetch(`/api/aps-convert?urn=${encodeURIComponent(p.key)}&metaShards=all`,
+              { headers: { authorization: `Bearer ${data.session?.access_token ?? ''}` } });
+            const j = await r.json() as { urls?: string[]; error?: string };
+            if (!r.ok || !j.urls) throw new Error(j.error ?? '속성 색인 조회 실패');
+            worker.postMessage({ type: 'search', key: p.key, urls: j.urls, query: p.query, seq: msg.seq });
+          } catch (err) { state.pending.delete(msg.seq!); p.reject(err as Error); }
+          return;
+        }
+        state.pending.delete(msg.seq!);
+        if (msg.type === 'result') p.resolve(msg.ids ?? []);
+        else p.reject(new Error(msg.message ?? '검색 실패'));
+      };
+      worker.onerror = e => {
+        for (const p of state.pending.values()) p.reject(new Error(e.message || '검색 작업자 오류'));
+        state.pending.clear();
+      };
+      searchWorkerRef.current = w = state;
+    }
+    const seq = ++w.seq;
+    return new Promise<number[]>((resolve, reject) => {
+      w!.pending.set(seq, { query, key: meta.urn, onProgress, resolve, reject });
+      w!.worker.postMessage({ type: 'search', key: meta.urn, query, seq });
+    });
+  }, []);
+
   /** Frame loaded geometry of objects (real shapes before the far stand-in). False if none is loaded. */
   const zoomToObjects = useCallback((dbIds: Iterable<string>) => {
     const viewer = viewerRef.current;
@@ -397,9 +443,9 @@ export function ThreeDTest() {
     const viewer = viewerRef.current;
     const states = objectStatesRef.current;
     const next = new Set((ids ?? []).flatMap(id => modelTree ? modelTree.subtree(id) : [id]).map(String));
-    updateFlag(objectIndexRef.current, (viewer?.scene.objects ?? {}) as unknown as Record<string, { selected: boolean; highlighted: boolean; visible: boolean }>,
-      'highlighted', states.highlighted, next);
+    const previous = states.highlighted;
     states.highlighted = next;
+    updateFlag(objectIndexRef.current, (viewer?.scene.objects ?? {}) as unknown as Record<string, { colorize: number[] | null; visible: boolean }>, 'highlighted', previous, states);
   }, [modelTree]);
 
   const zoomToNodes = useCallback((ids: number[]) => {
@@ -415,16 +461,16 @@ export function ThreeDTest() {
     const hiddenDb = new Set<string>();
     for (const h of next) for (const d of modelTree.subtree(h)) hiddenDb.add(String(d));
     const states = objectStatesRef.current;
-    updateFlag(objectIndexRef.current, (viewerRef.current?.scene.objects ?? {}) as unknown as Record<string, { selected: boolean; highlighted: boolean; visible: boolean }>,
-      'hidden', states.hidden, hiddenDb);
+    const previous = states.hidden;
     states.hidden = hiddenDb;
+    updateFlag(objectIndexRef.current, (viewerRef.current?.scene.objects ?? {}) as unknown as Record<string, { colorize: number[] | null; visible: boolean }>, 'hidden', previous, states);
     setHiddenNodes(next);
   }, [modelTree, hiddenNodes]);
   /** Index a loaded tile model and give it the current selection/highlight/visibility. */
   const trackModel = useCallback((model: { objects: Record<string, unknown>; on: (event: string, cb: () => void) => unknown }) => {
     const ids = Object.keys(model.objects);
     objectIndexRef.current.add(ids);
-    applyStates(model.objects as Record<string, { selected: boolean; highlighted: boolean; visible: boolean }>, objectStatesRef.current);
+    applyStates(model.objects as Record<string, { colorize: number[] | null; visible: boolean }>, objectStatesRef.current);
     model.on('destroyed', () => objectIndexRef.current.remove(ids));
   }, []);
 
@@ -504,15 +550,8 @@ export function ThreeDTest() {
     viewer.camera.eye = [15, 15, 15];
     viewer.camera.look = [0, 0, 0];
     viewer.camera.up = [0, 1, 0];
-    // Selection = blue (clicked object), highlight = amber (search results). Only visible surfaces are
-    // tinted: glowThrough drew the object through everything in front of it and, with edges the tiles do
-    // not carry, read as a broken overlay in dense areas.
-    const sm = viewer.scene.selectedMaterial;
-    sm.fill = true; sm.fillColor = [0.15, 0.55, 1.0]; sm.fillAlpha = 0.6; sm.edges = false;
-    (sm as unknown as { glowThrough?: boolean }).glowThrough = false;
-    const hm = viewer.scene.highlightMaterial;
-    hm.fill = true; hm.fillColor = [1.0, 0.72, 0.1]; hm.fillAlpha = 0.55; hm.edges = false;
-    (hm as unknown as { glowThrough?: boolean }).glowThrough = false;
+    // Selection and search highlights recolour objects (src/viewer/ObjectIndex.ts) rather than using the
+    // emphasis materials, whose extra pass z-fights under the logarithmic depth buffer.
     viewerRef.current = viewer;
 
     // Keep geometry/material visibility unchanged. Restore resolution only after real inactivity;
@@ -1796,7 +1835,7 @@ export function ThreeDTest() {
                 <div className="spacer" />
                 <button type="button" className="ic-only" onClick={() => setPropsOpen(false)} aria-label="속성 닫기">✕</button>
               </div>
-              <PropertyPanel tree={modelTree} selected={selectedDb} loadProps={loadProps}
+              <PropertyPanel tree={modelTree} selected={selectedDb} loadProps={loadProps} searchValues={searchValues}
                 onSelect={(id, zoom) => { setRevealDb(id); selectNode(id, zoom); }} onZoom={zoomToNodes} onHighlight={highlightObjects} />
             </aside>
           )}
