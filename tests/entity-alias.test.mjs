@@ -39,3 +39,17 @@ test('two renamed fragments of one object take different source fragments', () =
   assert.deepEqual(pairs, [1, 20, 2, 20]);
   assert.equal(stats.ambiguous, 0);
 });
+
+test('a rotated fragment whose source box is looser still finds its object by containment and centre', () => {
+  const fragments = indexFragments([
+    { dbId: 30, bbox: at(214100, 395100, 40, 4) },
+    { dbId: 30, bbox: [214110, 395100, 40, 214114.6, 395104.6, 44] }, // box of a rotated 4 m cube
+    { dbId: 31, bbox: at(214110.3, 395100.3, 40.3, 4) },               // neighbour, not in this file
+  ]);
+  const ids = ['30', 'entity-4'];
+  const tight = [214110.3, 395100.3, 40, 214114.3, 395104.3, 44];
+  const boxes = Float64Array.from([...shift(at(214100, 395100, 40, 4)), ...shift(tight)]);
+  const { pairs, stats } = matchFile({ ids, boxes, steps: new Float64Array(6).fill(0.005) }, fragments, origin);
+  assert.deepEqual(pairs, [4, 30]);
+  assert.equal(stats.contained, 1);
+});

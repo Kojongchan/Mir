@@ -7,6 +7,7 @@
 const NAMED = /^\d+$/;
 const GENERATED = /^entity-(\d+)$/;
 const CELL = 1; // metres; candidate lookup by the box's minimum corner
+const CENTRE_CELL = 4; // metres; second pass looks up by centre
 
 /** Per-axis match tolerance: file quantization, float32 source boxes at survey coordinates, slack. */
 const tolerance = (step, value) => 0.03 + 2 * step + 2.5e-7 * Math.abs(value);
@@ -77,7 +78,8 @@ export function matchFile({ ids, boxes, steps }, fragments, origin) {
     return worst;
   };
   const taken = new Set();
-  const stats = { entities: ids.length, named: 0, namedMatched: 0, generated: 0, matched: 0, ambiguous: 0 };
+  const stats = { entities: ids.length, named: 0, namedMatched: 0, generated: 0, matched: 0, contained: 0, ambiguous: 0 };
+  const left = [];
   ids.forEach((id, e) => {
     if (!NAMED.test(id) || Number.isNaN(boxes[e * 6])) return;
     stats.named++;
@@ -103,11 +105,50 @@ export function matchFile({ ids, boxes, steps }, fragments, origin) {
       fits.push(f);
       if (v <= bestFit) { best = f; bestFit = v; }
     }
-    if (best < 0) return;
+    if (best < 0) { left.push(e); return; }
     if (fits.some(f => fragments.db[f] !== fragments.db[best])) stats.ambiguous++;
     taken.add(best);
     pairs.push(Number(g[1]), fragments.db[best]);
     stats.matched++;
   });
+
+  // Second pass: a source box of rotated geometry is the box of its rotated local box, so it can be larger
+  // than the entity's tight box. Accept a box that contains the entity with nearly the same centre.
+  const centreGrid = new Map();
+  const centreOf = (arr, i, shift) => [0, 1, 2].map(a => (arr[i * 6 + a] + arr[i * 6 + a + 3]) / 2 - (shift ? origin[a] : 0));
+  for (const d of named) for (const f of fragments.byDb.get(d) ?? []) {
+    if (taken.has(f)) continue;
+    const key = cellKey(...centreOf(fb, f, true).map(v => Math.floor(v / CENTRE_CELL)));
+    const cell = centreGrid.get(key);
+    if (cell) cell.push(f); else centreGrid.set(key, [f]);
+  }
+  const loose = (e, f) => {
+    const c = centreOf(boxes, e, false), fc = centreOf(fb, f, true);
+    let diag = 0;
+    for (let a = 0; a < 3; a++) {
+      const tol = tolerance(steps[e * 3 + a], fb[f * 6 + a]);
+      if (boxes[e * 6 + a] < fb[f * 6 + a] - origin[a] - tol || boxes[e * 6 + a + 3] > fb[f * 6 + a + 3] - origin[a] + tol) return Infinity;
+      diag += (fb[f * 6 + a + 3] - fb[f * 6 + a]) ** 2;
+    }
+    const off = Math.hypot(c[0] - fc[0], c[1] - fc[1], c[2] - fc[2]);
+    return off <= Math.max(0.1, 0.1 * Math.sqrt(diag)) ? off : Infinity;
+  };
+  for (const e of left) {
+    const base = centreOf(boxes, e, false).map(v => Math.floor(v / CENTRE_CELL));
+    let best = -1, bestOff = Infinity, rivals = 0;
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++)
+      for (const f of centreGrid.get(cellKey(base[0] + dx, base[1] + dy, base[2] + dz)) ?? []) {
+        if (taken.has(f)) continue;
+        const off = loose(e, f);
+        if (off === Infinity) continue;
+        if (best >= 0 && fragments.db[f] !== fragments.db[best]) rivals++;
+        if (off < bestOff) { best = f; bestOff = off; }
+      }
+    if (best < 0) continue;
+    if (rivals) stats.ambiguous++;
+    taken.add(best);
+    pairs.push(Number(GENERATED.exec(ids[e])[1]), fragments.db[best]);
+    stats.matched++; stats.contained++;
+  }
   return { pairs, stats };
 }

@@ -105,7 +105,7 @@ const est = estimateOrigin(files.filter(Boolean), fragments);
 if (!est || est.votes < est.samples * 0.9) throw new Error(`No consistent converter origin: ${JSON.stringify(est)}`);
 console.log(`Origin ${est.origin.join(',')} (${est.votes}/${est.samples} single-fragment objects agree)`);
 
-const out = { v: 1, tiles: {} }, total = { entities: 0, named: 0, namedMatched: 0, generated: 0, matched: 0, ambiguous: 0 };
+const out = { v: 1, tiles: {} }, total = { entities: 0, named: 0, namedMatched: 0, generated: 0, matched: 0, contained: 0, ambiguous: 0 };
 files.forEach((file, i) => {
   if (!file) return;
   const { pairs, stats } = matchFile(file, fragments, est.origin);
