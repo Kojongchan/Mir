@@ -7,7 +7,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 
 export default defineConfig(
-  { ignores: ['dist/**', 'public/**', 'node_modules/**', 'supabase/**', 'coverage/**'] },
+  { ignores: ['dist/**', 'public/**', 'node_modules/**', 'supabase/**', 'coverage/**', '.ui-check/**'] },
   js.configs.recommended,
   tseslint.configs.recommended,
   {

@@ -1,5 +1,5 @@
 name: 4D 모델 변환(SVF→GLB)
-run-name: ${{ github.event.inputs.diag_only == 'compact-xkt' && 'R2 XKT storage compaction' || github.event.inputs.diag_only == 'motion-cache' && 'R2 model motion cache' || github.event.inputs.diag_only == 'lod-cache' && 'R2 model LOD cache' || github.event.inputs.diag_only == 'meta-index' && 'R2 model tree and property index' || '4D model conversion' }}
+run-name: ${{ github.event.inputs.diag_only == 'compact-xkt' && 'R2 XKT storage compaction' || github.event.inputs.diag_only == 'motion-cache' && 'R2 model motion cache' || github.event.inputs.diag_only == 'lod-cache' && 'R2 model LOD cache' || github.event.inputs.diag_only == 'meta-index' && 'R2 model tree and property index' || github.event.inputs.diag_only == 'ui-check' && '3D page check with real data' || '4D model conversion' }}
 
 # 4D 공정관리 자체 뷰어용: ACC 모델(SVF)을 glTF/GLB 로 변환해 Supabase Storage 에
 # 올린다. 대형 모델 변환은 Vercel 서버리스 한도를 넘으므로 여기(러너: 7GB/14GB/6h)서
@@ -212,8 +212,47 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: node --max-old-space-size=6144 "$RUNNER_TEMP/meta-index/build-meta-index.mjs"
+  # Read-only check of the 3D page with a cached model's real tiles and index (scripts/ui-check.mjs).
+  # Screenshots + results.json are published to refs/diag/ui-check (not a branch; nothing deploys from it).
+  ui-check:
+    if: github.event.inputs.diag_only == 'ui-check'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: |
+          npm ci --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund @aws-sdk/client-s3@3 playwright-core
+          npx playwright-core install --with-deps chromium
+      - name: Check the 3D page with this model's data
+        env:
+          MODEL_CACHE_PREFIX: ${{ github.event.inputs.item }}
+          UI_OUT: ${{ runner.temp }}/ui-check
+          # SwiftShader draws nothing for xeokit data-texture (DTX) layers (picking still works): use VBO layers.
+          UI_NO_DTX: '1'
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: node --expose-gc --max-old-space-size=6144 scripts/ui-check.mjs
+      - name: Publish results
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd "$RUNNER_TEMP/ui-check" || exit 0
+          git init -q
+          git add -A
+          git -c user.name=ui-check -c user.email=ui-check@users.noreply.github.com commit -qm "UI check run ${{ github.run_number }}"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:refs/diag/ui-check
   convert:
-    if: github.event.inputs.diag_only != 'compact-xkt' && github.event.inputs.diag_only != 'motion-cache' && github.event.inputs.diag_only != 'lod-cache' && github.event.inputs.diag_only != 'meta-index'
+    if: github.event.inputs.diag_only != 'compact-xkt' && github.event.inputs.diag_only != 'motion-cache' && github.event.inputs.diag_only != 'lod-cache' && github.event.inputs.diag_only != 'meta-index' && github.event.inputs.diag_only != 'ui-check'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
