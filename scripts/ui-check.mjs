@@ -272,6 +272,11 @@ const server = http.createServer(async (req, res) => {
       res.end(o.body);
       return;
     }
+    if (u.pathname === '/ui-alias.json' && aliasTable) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(aliasTable));
+      return;
+    }
     let f = path.join(dist, path.normalize(decodeURIComponent(u.pathname)));
     if (!f.startsWith(dist) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(dist, 'index.html');
     res.writeHead(200, { 'content-type': mime[path.extname(f)] || 'application/octet-stream' });
@@ -281,8 +286,17 @@ const server = http.createServer(async (req, res) => {
 await new Promise(r => server.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${server.address().port}`;
 const shardUrl = k => `${base}/r2/${metaBase}/p/${k}.json`;
+// The renamed-fragment table is keyed by manifest index: re-key it to this subset's positions.
+let aliasTable = null;
+if (typeof pointer.alias === 'string') {
+  const full = parse((await r2Get(`${prefix}/meta/${pointer.alias}`)).body);
+  aliasTable = { v: full.v, tiles: Object.fromEntries(chosen.map((i, pos) => [pos, full.tiles[i]]).filter(([, t]) => t)) };
+  results.alias = { tiles: Object.keys(full.tiles).length, subsetTiles: Object.keys(aliasTable.tiles).length,
+    subsetPairs: Object.values(aliasTable.tiles).reduce((n, t) => n + t.a.length / 2, 0) };
+}
 const state = { ready: true, xkt: true, urls: [r2Path('unused.xkt')], tiles,
-  meta: { tree: `/r2/${metaBase}/tree.json`, shardSize: pointer.shardSize, shardCount: pointer.shardCount, objects: pointer.objects ?? 0 } };
+  meta: { tree: `/r2/${metaBase}/tree.json`, shardSize: pointer.shardSize, shardCount: pointer.shardCount, objects: pointer.objects ?? 0,
+    ...(aliasTable ? { alias: '/ui-alias.json' } : {}) } };
 
 const { chromium } = await import('playwright-core');
 const browser = await chromium.launch({ args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader', '--enable-precise-memory-info'] });
@@ -349,7 +363,7 @@ try {
     const v = window.__viewer, c = v.scene.canvas.canvas, W = c.clientWidth, H = c.clientHeight, list = [];
     for (let gx = 1; gx < 24; gx++) for (let gy = 1; gy < 14; gy++) {
       const pos = [W * gx / 24, H * gy / 14];
-      const h = v.scene.pick({ canvasPos: pos });
+      const h = v.scene.pick({ canvasPos: pos, pickSurface: true });
       const id = h?.entity?.isObject ? String(h.entity.id) : '';
       if (!/^tile\d+(?:-far|-detail)?#/.test(id)) continue;
       const a = Array.from(h.entity.aabb);
@@ -371,10 +385,14 @@ try {
   const dbOf = h => { const m = /#(\d+)$/.exec(h.id); return m ? Number(m[1]) : 0; };
   const designed = h => dbOf(h) > 0 && dbOf(h) < tree.n && tree.path(dbOf(h)).some(id => id !== dbOf(h) && richFlag[id]);
   const sized = h => h.diag > 2 && h.diag < 60;
-  const rank = h => (designed(h) ? 0 : dbOf(h) ? 1 : 2) * 1e6 + (sized(h) ? 0 : 1e5) + h.off;
+  // Objects with several fragments in their tile (renamed ones in the table) show whether selection covers all.
+  const multi = new Set(Object.entries(aliasTable?.tiles ?? {}).flatMap(([pos, t]) => t.a.filter((_, i) => i % 2).map(d => `tile${pos}#${d}`)));
+  const isMulti = h => multi.has(h.id.replace(/-(?:far|detail)#/, '#'));
+  const rank = h => (designed(h) ? 0 : dbOf(h) ? 2 : 4) * 1e6 - (isMulti(h) ? 1e6 : 0) + (sized(h) ? 0 : 1e5) + h.off;
   const pick = hits.sort((a, b) => rank(a) - rank(b))[0];
   results.pickCandidates = hits.length;
-  results.pickKinds = { designed: hits.filter(designed).length, numeric: hits.filter(h => dbOf(h) > 0).length, generated: hits.filter(h => !dbOf(h)).length };
+  results.pickKinds = { designed: hits.filter(designed).length, multi: hits.filter(isMulti).length,
+    numeric: hits.filter(h => dbOf(h) > 0).length, generated: hits.filter(h => !dbOf(h)).length };
   results.sceneInfo = await page.evaluate(() => {
     const v = window.__viewer, objs = Object.values(v.scene.objects);
     const ids = Object.keys(v.scene.objects);
@@ -399,7 +417,7 @@ try {
     const v = window.__viewer, c = v.scene.canvas.canvas, W = c.clientWidth, H = c.clientHeight;
     for (let r = 0; r < 300; r += 6) for (let k = 0; k < 16; k++) {
       const pos = [W / 2 + r * Math.cos(k * Math.PI / 8), H / 2 + r * Math.sin(k * Math.PI / 8)];
-      const h = v.scene.pick({ canvasPos: pos });
+      const h = v.scene.pick({ canvasPos: pos, pickSurface: true });
       if (h?.entity && String(h.entity.id).endsWith(`#${want}`)) return { pos, id: String(h.entity.id) };
     }
     return null;
@@ -429,7 +447,8 @@ try {
       byTile.set(key, (byTile.get(key) ?? 0) + 1);
     }
     const overlaps = [...byTile.entries()].filter(([, n]) => n > 1);
-    return { blue: blue.slice(0, 12), blueCount: blue.length, emphasised: emphasised.length, reps,
+    return { blue: blue.slice(0, 12), blueCount: blue.length, blueGenerated: blue.filter(k => /#entity-\d+$/.test(k)).length,
+      emphasised: emphasised.length, reps,
       drawnObjects: byTile.size, sameTileOverlaps: overlaps.length, overlapSample: overlaps.slice(0, 8).map(([k]) => k),
       title: document.querySelector('.prop-panel__title')?.innerText ?? null, selectedRow: document.querySelector('.model-tree__row.is-selected')?.innerText ?? null };
   });
@@ -506,7 +525,10 @@ try {
   if (await hl.count() && await hl.isEnabled()) {
     await hl.click();
     await sleep(4000);
-    results.highlighted = await page.evaluate(() => Object.values(window.__viewer.scene.objects).filter(o => o.colorize && o.colorize[0] > 0.9 && o.colorize[2] < 0.2).length);
+    results.highlighted = await page.evaluate(() => {
+      const amber = Object.entries(window.__viewer.scene.objects).filter(([, o]) => o.colorize && o.colorize[0] > 0.9 && o.colorize[2] < 0.2);
+      return { entities: amber.length, generated: amber.filter(([k]) => /#entity-\d+$/.test(k)).length };
+    });
     await shot('06-search-highlight.png');
     await page.locator('.prop-panel__search-bar button', { hasText: '확대' }).click();
     await settle('search-zoom', 180000);
