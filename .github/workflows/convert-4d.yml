@@ -1,5 +1,5 @@
 name: 4D 모델 변환(SVF→GLB)
-run-name: ${{ github.event.inputs.diag_only == 'compact-xkt' && 'R2 XKT storage compaction' || github.event.inputs.diag_only == 'motion-cache' && 'R2 model motion cache' || github.event.inputs.diag_only == 'lod-cache' && 'R2 model LOD cache' || github.event.inputs.diag_only == 'meta-index' && 'R2 model tree and property index' || github.event.inputs.diag_only == 'ui-check' && '3D page check with real data' || '4D model conversion' }}
+run-name: ${{ github.event.inputs.diag_only == 'compact-xkt' && 'R2 XKT storage compaction' || github.event.inputs.diag_only == 'motion-cache' && 'R2 model motion cache' || github.event.inputs.diag_only == 'lod-cache' && 'R2 model LOD cache' || github.event.inputs.diag_only == 'meta-index' && 'R2 model tree and property index' || github.event.inputs.diag_only == 'ui-check' && '3D page check with real data' || github.event.inputs.diag_only == 'entity-alias' && 'R2 renamed-fragment table' || '4D model conversion' }}
 
 # 4D 공정관리 자체 뷰어용: ACC 모델(SVF)을 glTF/GLB 로 변환해 Supabase Storage 에
 # 올린다. 대형 모델 변환은 Vercel 서버리스 한도를 넘으므로 여기(러너: 7GB/14GB/6h)서
@@ -212,6 +212,36 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: node --max-old-space-size=6144 "$RUNNER_TEMP/meta-index/build-meta-index.mjs"
+  # Owners of fragments convert2xkt renamed `entity-N` (several fragments of one object in a tile), from the
+  # SVF fragment list and the original tiles (scripts/build-entity-alias.mjs). Tiles are not changed.
+  entity-alias:
+    if: github.event.inputs.diag_only == 'entity-alias'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare alias runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/entity-alias"
+          cp scripts/build-entity-alias.mjs scripts/entity-alias.mjs scripts/tile-lod-merge.mjs scripts/storage-budget.mjs scripts/cache-key.mjs "$RUNNER_TEMP/entity-alias/"
+          npm install --prefix "$RUNNER_TEMP/entity-alias" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 adm-zip@0.5 svf-utils@8 meshoptimizer@1.3.0
+      - name: Build the renamed-fragment table
+        env:
+          MODEL_CACHE_PREFIX: ${{ github.event.inputs.item }}
+          URN: ${{ github.event.inputs.urn }}
+          APS_REGION: ${{ github.event.inputs.region }}
+          APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
+          APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: node --max-old-space-size=6144 "$RUNNER_TEMP/entity-alias/build-entity-alias.mjs"
   # Read-only check of the 3D page with a cached model's real tiles and index (scripts/ui-check.mjs).
   # Screenshots + results.json are published to refs/diag/ui-check (not a branch; nothing deploys from it).
   ui-check:
@@ -252,7 +282,7 @@ jobs:
           git -c user.name=ui-check -c user.email=ui-check@users.noreply.github.com commit -qm "UI check run ${{ github.run_number }}"
           git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:refs/diag/ui-check
   convert:
-    if: github.event.inputs.diag_only != 'compact-xkt' && github.event.inputs.diag_only != 'motion-cache' && github.event.inputs.diag_only != 'lod-cache' && github.event.inputs.diag_only != 'meta-index' && github.event.inputs.diag_only != 'ui-check'
+    if: github.event.inputs.diag_only != 'compact-xkt' && github.event.inputs.diag_only != 'motion-cache' && github.event.inputs.diag_only != 'lod-cache' && github.event.inputs.diag_only != 'meta-index' && github.event.inputs.diag_only != 'ui-check' && github.event.inputs.diag_only != 'entity-alias'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -409,6 +439,19 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: node --max-old-space-size=6144 scripts/build-meta-index.mjs
+      - name: Renamed-fragment table (selection of multi-fragment objects)
+        if: success() && github.event.inputs.dxf_test != '1' && github.event.inputs.tiles == '1' && github.event.inputs.urn != ''
+        continue-on-error: true
+        env:
+          URN: ${{ github.event.inputs.urn }}
+          APS_REGION: ${{ github.event.inputs.region }}
+          APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
+          APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: node --max-old-space-size=6144 scripts/build-entity-alias.mjs
 
       - name: Headless xeokit 렌더 진단 (LOD1 오블리크 · base64 PNG 로그)
         if: github.event.inputs.render_test == 'lod'

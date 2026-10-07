@@ -105,3 +105,13 @@ test('far drops needle slivers longer than 1 m but never empties a mesh', async 
     }
   }
 });
+
+test('entity boxes: quantized and instanced meshes decode to world boxes in file order', async () => {
+  const { xktEntityBoxes } = await import('../scripts/tile-lod-merge.mjs');
+  const { ids, boxes, steps } = xktEntityBoxes(fixture());
+  assert.deepEqual(ids, ['plane', 'cubeA', 'cubeB']);
+  const expected = [[100, 200, 0, 100 + 60000 * 21.845 / 65535, 200 + 60000 * 21.845 / 65535, 0],
+    [1015, 1010, 20, 1016, 1011, 21], [1020, 1010, 20, 1021, 1011, 21]];
+  expected.forEach((b, e) => b.forEach((v, a) => assert.ok(Math.abs(boxes[e * 6 + a] - v) < 1e-4, `entity ${e} axis ${a}: ${boxes[e * 6 + a]}`)));
+  assert.ok(Math.abs(steps[0] - 21.845 / 65535) < 1e-12);
+});

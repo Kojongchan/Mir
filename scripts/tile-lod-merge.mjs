@@ -299,6 +299,59 @@ export async function buildMergedLod(input, profileName) {
     policy: profile.policy, aabb: box };
 }
 
+/**
+ * World bounding box of every entity of an XKT v12 file, in file order, plus the decode step per axis
+ * (quantization) of the internal tile it lives in — for matching entities to source fragments.
+ */
+export function xktEntityBoxes(input) {
+  const raw = readTables(Buffer.from(input));
+  if (!raw) return null;
+  const positions = view(raw[4], Uint16Array), matrices = view(raw[11], Float32Array), reuseDecode = view(raw[12], Float32Array);
+  const pp = view(raw[15], Uint32Array), mg = view(raw[21], Uint32Array), mm = view(raw[22], Uint32Array), em = view(raw[26], Uint32Array);
+  const tileBoxes = view(raw[27], Float64Array), te = view(raw[28], Uint32Array);
+  const ids = JSON.parse(raw[25].toString() || '[]');
+  const numGeometries = pp.length, numMeshes = mg.length, numEntities = em.length, numTiles = te.length;
+  if (!Array.isArray(ids) || ids.length !== numEntities || tileBoxes.length !== numTiles * 6 || mm.length !== numMeshes)
+    throw new Error('Invalid XKT layout');
+  const reuse = new Uint32Array(numGeometries);
+  for (const g of mg) { if (g >= numGeometries) throw new Error('Invalid mesh geometry'); reuse[g]++; }
+  const reuseM = reuseDecode.length === 16 ? reuseDecode : null;
+  const boxes = new Float64Array(numEntities * 6).fill(NaN), steps = new Float64Array(numEntities * 3);
+  for (let t = 0; t < numTiles; t++) {
+    const box = tileBoxes.subarray(t * 6, t * 6 + 6);
+    const centre = [0, 1, 2].map(a => (box[a] + box[a + 3]) / 2);
+    const step = [0, 1, 2].map(a => (box[a + 3] - box[a]) / 65535);
+    const [e0, e1] = span(te, t, numEntities);
+    for (let e = e0; e < e1; e++) {
+      const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+      const grow = (x, y, z) => {
+        if (x < b[0]) b[0] = x; if (y < b[1]) b[1] = y; if (z < b[2]) b[2] = z;
+        if (x > b[3]) b[3] = x; if (y > b[4]) b[4] = y; if (z > b[5]) b[5] = z;
+      };
+      const [m0, m1] = span(em, e, numMeshes);
+      for (let m = m0; m < m1; m++) {
+        const g = mg[m];
+        const [p0, p1] = span(pp, g, positions.length);
+        if (reuse[g] > 1) {
+          if (!reuseM) throw new Error('Missing reused geometry decode matrix');
+          const mat = matrices.subarray(mm[m], mm[m] + 16);
+          for (let v = p0; v < p1; v += 3) {
+            const local = transform(reuseM, positions[v], positions[v + 1], positions[v + 2]);
+            const w = transform(mat, local[0], local[1], local[2]);
+            grow(w[0] + centre[0], w[1] + centre[1], w[2] + centre[2]);
+          }
+        } else {
+          for (let v = p0; v < p1; v += 3)
+            grow(box[0] + positions[v] * step[0], box[1] + positions[v + 1] * step[1], box[2] + positions[v + 2] * step[2]);
+        }
+      }
+      if (b[0] <= b[3]) boxes.set(b, e * 6);
+      steps.set(step, e * 3);
+    }
+  }
+  return { ids, boxes, steps };
+}
+
 /** Decoded world positions of a merged (single-tile, non-reused) file — for validation and tests. */
 export function decodeMergedPositions(input) {
   const raw = readTables(Buffer.from(input));

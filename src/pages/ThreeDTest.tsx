@@ -23,7 +23,7 @@ import { rankTileRegion, regionNeedsRefresh, safeDollyFactor } from '../viewer/T
 import { inTileView, prioritizeTileView, prioritizeCameraView, viewPlanes } from '../viewer/TileView';
 import { ByteCache } from '../viewer/ByteCache';
 import { useEscapeKey } from '../lib/useEscapeKey';
-import { ObjectIndex, SELECT_COLOR, applyStates, objectIdOf, updateFlag } from '../viewer/ObjectIndex';
+import { ObjectIndex, SELECT_COLOR, applyStates, updateFlag, type AliasTable } from '../viewer/ObjectIndex';
 import { ModelTree, type TreeData } from '../viewer/ModelTree';
 import { ModelTreePanel } from '../components/model/ModelTreePanel';
 import { PropertyPanel, type ObjectProps } from '../components/model/PropertyPanel';
@@ -151,7 +151,7 @@ export function ThreeDTest() {
   const objectStatesRef = useRef({ selected: new Set<string>(), highlighted: new Set<string>(), hidden: new Set<string>() });
   const rawSelectedRef = useRef<string | null>(null);
   // Model tree / property index (scripts/build-meta-index.mjs), when built for the open model.
-  type MetaInfo = { tree: string; shardSize: number; shardCount: number; objects?: number };
+  type MetaInfo = { tree: string; shardSize: number; shardCount: number; objects?: number; alias?: string };
   const metaRef = useRef<{ urn: string; shardSize: number; shardCount: number; shards: Map<number, Promise<Record<string, ObjectProps>>> } | null>(null);
   const [modelTree, setModelTree] = useState<ModelTree | null>(null);
   const [treeNote, setTreeNote] = useState('');
@@ -335,6 +335,13 @@ export function ThreeDTest() {
     if (!meta) { setTreeNote('이 모델은 아직 모델 트리·속성 색인이 없습니다.'); return; }
     metaRef.current = { urn, shardSize: meta.shardSize, shardCount: meta.shardCount, shards: new Map() };
     setTreeNote('모델 트리 불러오는 중…');
+    // Fragments the converter renamed `entity-N` join their object once the table arrives (optional).
+    if (meta.alias) void fetch(meta.alias).then(r => (r.ok ? r.json() as Promise<AliasTable> : null)).then(table => {
+      if (!table || metaRef.current?.urn !== urn) return;
+      const changed = objectIndexRef.current.setAliases(table);
+      const objects = (viewerRef.current?.scene.objects ?? {}) as unknown as Record<string, { colorize: number[] | null; visible: boolean }>;
+      applyStates(objectIndexRef.current, objects, objectStatesRef.current, changed);
+    }).catch(() => { /* selection still works per fragment */ });
     try {
       const r = await fetch(meta.tree);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -477,10 +484,11 @@ export function ThreeDTest() {
   }, [modelTree, hiddenNodes]);
   /** Index a loaded tile model and give it the current selection/highlight/visibility. */
   const trackModel = useCallback((model: { objects: Record<string, unknown>; on: (event: string, cb: () => void) => unknown }) => {
-    const ids = Object.keys(model.objects);
-    objectIndexRef.current.add(ids);
-    applyStates(model.objects as Record<string, { colorize: number[] | null; visible: boolean }>, objectStatesRef.current);
-    model.on('destroyed', () => objectIndexRef.current.remove(ids));
+    const ids = Object.keys(model.objects), index = objectIndexRef.current;
+    const changed = index.add(ids);
+    applyStates(index, model.objects as Record<string, { colorize: number[] | null; visible: boolean }>, objectStatesRef.current);
+    if (changed.length) applyStates(index, (viewerRef.current?.scene.objects ?? {}) as unknown as Record<string, { colorize: number[] | null; visible: boolean }>, objectStatesRef.current, changed);
+    model.on('destroyed', () => index.remove(ids));
   }, []);
 
   // xeokit Viewer 1회 생성/파기.
@@ -743,7 +751,7 @@ export function ThreeDTest() {
       const entity = hit?.entity;
       if (entity?.isObject && entity.id != null) {
         const id = String(entity.id);
-        const dbId = objectIdOf(id);
+        const dbId = objectIndexRef.current.keyOf(id);
         pickedRef.current = { id: entity.id, worldPos: hit?.worldPos };
         selectObjectsRef.current(dbId !== null ? [dbId] : [], dbId === null ? id : null);
         const numeric = dbId !== null && /^\d+$/.test(dbId) ? Number(dbId) : null;

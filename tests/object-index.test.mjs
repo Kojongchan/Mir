@@ -58,9 +58,41 @@ test('selection follows an object across far, light and detail tiles', () => {
   // A detail tile that loads later picks up the current states.
   const later = { 'tile1-detail#8': { colorize: null, visible: true }, 'tile1-detail#9': { colorize: null, visible: true } };
   index.add(Object.keys(later));
-  applyStates(later, { selected: new Set(['8']), highlighted: new Set(), hidden: new Set(['9']) });
+  applyStates(index, later, { selected: new Set(['8']), highlighted: new Set(), hidden: new Set(['9']) });
   assert.equal(later['tile1-detail#8'].colorize, SELECT_COLOR);
   assert.equal(later['tile1-detail#9'].visible, false);
   index.remove(['tile1#7', 'tile1-far#7', 'tile2#7']);
   assert.equal(index.has('7'), false);
+});
+
+test('the renamed-fragment table folds entity-N into its object, also for tiles loaded before it', () => {
+  const index = new ObjectIndex();
+  const objects = {};
+  const tile = ['tile3#45', 'tile3#entity-9', 'tile3#entity-12', 'tile3-far#45', 'tile3-far#entity-9', 'tile3-far#entity-12'];
+  for (const id of tile) objects[id] = { colorize: null, visible: true };
+  index.add(tile.filter(id => !id.includes('-far')));
+  index.add(tile.filter(id => id.includes('-far')));
+  const states = { selected: new Set(['45']), highlighted: new Set(), hidden: new Set() };
+  updateFlag(index, objects, 'selected', new Set(), states);
+  assert.equal(objects['tile3#entity-9'].colorize, null);            // before the table: only the named fragment
+  const changed = index.setAliases({ v: 1, tiles: { 3: { n: 3, a: [9, 45] } } });
+  assert.deepEqual(changed.sort(), ['tile3#entity-9', 'tile3-far#entity-9']);
+  applyStates(index, objects, states, changed);
+  assert.equal(objects['tile3#entity-9'].colorize, SELECT_COLOR);
+  assert.equal(objects['tile3-far#entity-9'].colorize, SELECT_COLOR);
+  assert.equal(objects['tile3#entity-12'].colorize, null);
+  assert.equal(index.keyOf('tile3-detail#entity-9'), '45');
+  assert.deepEqual([...index.entities('45')].sort(), ['tile3#45', 'tile3#entity-9', 'tile3-far#45', 'tile3-far#entity-9']);
+});
+
+test('a tile file with another entity count than the table describes keeps its own keys', () => {
+  for (const tableFirst of [true, false]) {
+    const index = new ObjectIndex();
+    const table = { v: 1, tiles: { 3: { n: 3, a: [9, 45] } } };
+    if (tableFirst) index.setAliases(table);
+    index.add(['tile3#45', 'tile3#entity-9']);                       // 2 entities: not the described file
+    if (!tableFirst) index.setAliases(table);
+    assert.equal(index.keyOf('tile3#entity-9'), 'tile3#entity-9');
+    assert.deepEqual([...index.entities('tile3#entity-9')], ['tile3#entity-9']);
+  }
 });

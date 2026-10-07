@@ -104,8 +104,11 @@ await checkStorageBudget(tok => client.send(new ListObjectsV2Command({ Bucket, M
 
 const put = (Key, Body) => client.send(new PutObjectCommand({ Bucket, Key, Body, ContentType: 'application/json', ContentEncoding: 'gzip' }));
 for (let i = 0; i < files.length; i += 16) await Promise.all(files.slice(i, i + 16).map(([k, b]) => put(k, b)));
+// The renamed-fragment table (scripts/build-entity-alias.mjs) depends on the tiles, not the index: keep it.
+const previous = await getJson(`${prefix}/meta/current.json`).catch(() => null);
+const kept = typeof previous?.alias === 'string' ? { alias: previous.alias, aliasBuiltAt: previous.aliasBuiltAt } : {};
 await client.send(new PutObjectCommand({ Bucket, Key: `${prefix}/meta/current.json`, ContentType: 'application/json',
-  Body: JSON.stringify({ v: 1, gen, shardSize, shardCount, objects: stats.objects, builtAt: new Date().toISOString() }) }));
+  Body: JSON.stringify({ v: 1, gen, shardSize, shardCount, objects: stats.objects, builtAt: new Date().toISOString(), ...kept }) }));
 console.log(`Published ${prefix}/meta/${gen}`);
 
 // Remove superseded generations (the pointer no longer references them).

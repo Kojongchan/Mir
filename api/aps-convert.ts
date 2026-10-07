@@ -140,8 +140,8 @@ type Focus = { center: [number, number, number]; half: [number, number, number] 
 type MotionTile = { url: string; byteLength: number; policy: string; members?: number };
 type Tile = { url: string; aabb: number[]; byteLength?: number; motion?: MotionTile; far?: MotionTile };
 /** Model tree + property shards (scripts/build-meta-index.mjs), when built for this model. */
-type MetaIndex = { tree: string; shardSize: number; shardCount: number; objects: number };
-type MetaPointer = { v: number; gen: string; shardSize: number; shardCount: number; objects?: number };
+type MetaIndex = { tree: string; shardSize: number; shardCount: number; objects: number; alias?: string };
+type MetaPointer = { v: number; gen: string; shardSize: number; shardCount: number; objects?: number; alias?: string };
 async function readMetaPointer(dir: string): Promise<MetaPointer | null> {
   const text = await r2GetText(`${dir}/meta/current.json`);
   if (!text) return null;
@@ -154,7 +154,10 @@ async function readMetaPointer(dir: string): Promise<MetaPointer | null> {
 async function metaIndex(dir: string): Promise<MetaIndex | undefined> {
   const m = await readMetaPointer(dir);
   if (!m) return undefined;
-  return { tree: await r2PresignGet(`${dir}/meta/${m.gen}/tree.json`), shardSize: m.shardSize, shardCount: m.shardCount, objects: m.objects ?? 0 };
+  // Owners of fragments the converter renamed `entity-N` (scripts/build-entity-alias.mjs), when built.
+  const alias = typeof m.alias === 'string' && /^alias\/[a-zA-Z0-9-]+\.json$/.test(m.alias)
+    ? { alias: await r2PresignGet(`${dir}/meta/${m.alias}`) } : {};
+  return { tree: await r2PresignGet(`${dir}/meta/${m.gen}/tree.json`), shardSize: m.shardSize, shardCount: m.shardCount, objects: m.objects ?? 0, ...alias };
 }
 type CacheState =
   | { ready: true; xkt: true; urls: string[]; navUrls?: string[]; tiles?: Tile[]; baseUrls?: string[]; instUrls?: string[]; lod1Url?: string; focus?: Focus; meta?: MetaIndex }
