@@ -1,0 +1,1320 @@
+{
+ "started": "2026-10-07T04:39:29.049Z",
+ "index": {
+  "objects": 252851,
+  "shards": 247,
+  "gzMB": 7.9,
+  "rawMB": 525.4,
+  "maxShardRawMB": 3.7,
+  "downloadMs": 9727
+ },
+ "valueIndex": {
+  "objects": 252851,
+  "vocab": 914764,
+  "vocabMChars": 25.3,
+  "entries": 11826995,
+  "buildMs": 15137,
+  "parseMs": 4336,
+  "heapBuildMB": 193.6,
+  "heapMB": 48.2,
+  "packedMB": 47
+ },
+ "valueSearch": [
+  {
+   "q": "concrete",
+   "hits": 6602,
+   "ms": 38
+  },
+  {
+   "q": "콘크리트",
+   "hits": 11233,
+   "ms": 26
+  },
+  {
+   "q": "sm490",
+   "hits": 0,
+   "ms": 14
+  },
+  {
+   "q": "철근",
+   "hits": 1515,
+   "ms": 26
+  },
+  {
+   "q": "level 1",
+   "hits": 118359,
+   "ms": 41
+  },
+  {
+   "q": "a3_level7 p44",
+   "hits": 14,
+   "ms": 53
+  },
+  {
+   "q": "527265",
+   "hits": 1,
+   "ms": 32
+  },
+  {
+   "q": "간격띄우기 130.851611",
+   "hits": 1,
+   "ms": 43
+  },
+  {
+   "q": "guid b775e975-0548-4ea2-a1dd-000b4386c2bd",
+   "hits": 1,
+   "ms": 40
+  },
+  {
+   "q": "external 46/0/0/23/0/37003/0",
+   "hits": 1,
+   "ms": 63
+  },
+  {
+   "q": "value 1653161",
+   "hits": 1,
+   "ms": 55
+  }
+ ],
+ "categories": [
+  [
+   "Item",
+   252851
+  ],
+  [
+   "요소 ID",
+   118712
+  ],
+  [
+   "요소",
+   118685
+  ],
+  [
+   "생성 공정",
+   118685
+  ],
+  [
+   "사용자",
+   114683
+  ],
+  [
+   "요소 특성",
+   110943
+  ],
+  [
+   "CreatedPhaseId",
+   110943
+  ],
+  [
+   "Id",
+   110943
+  ],
+  [
+   "WorksetId",
+   110943
+  ],
+  [
+   "Document",
+   110943
+  ],
+  [
+   "Category",
+   110943
+  ],
+  [
+   "DemolishedPhaseId",
+   107089
+  ],
+  [
+   "PartMaker",
+   107028
+  ],
+  [
+   "OriginalCategoryId",
+   107028
+  ],
+  [
+   "Revit 재질",
+   44772
+  ],
+  [
+   "재료",
+   17887
+  ],
+  [
+   "LevelId",
+   6015
+  ],
+  [
+   "레벨",
+   4481
+  ],
+  [
+   "베이스 레벨",
+   4191
+  ],
+  [
+   "Revit 유형",
+   3913
+  ],
+  [
+   "FacingOrientation",
+   3911
+  ],
+  [
+   "HandOrientation",
+   3911
+  ],
+  [
+   "Symbol",
+   3911
+  ],
+  [
+   "StructuralMaterialId",
+   3894
+  ],
+  [
+   "Location",
+   3655
+  ],
+  [
+   "General",
+   1367
+  ],
+  [
+   "Entity Handle",
+   1367
+  ],
+  [
+   "3D Visualization",
+   1241
+  ],
+  [
+   "유형",
+   972
+  ],
+  [
+   "코리더 ID",
+   790
+  ],
+  [
+   "코리더 모형 정보",
+   790
+  ],
+  [
+   "코리더 쉐이프 정보",
+   790
+  ],
+  [
+   "패밀리",
+   638
+  ],
+  [
+   "Solid History",
+   599
+  ],
+  [
+   "보강 철근 피복 - 상단 면",
+   436
+  ],
+  [
+   "보강 철근 피복",
+   369
+  ],
+  [
+   "참조 레벨",
+   308
+  ],
+  [
+   "구조 재료",
+   172
+  ],
+  [
+   "보강 철근 피복 - 다른 면",
+   154
+  ],
+  [
+   "속성정보",
+   96
+  ]
+ ],
+ "labels": [
+  [
+   "DemolishedPhaseId › IntegerValue",
+   531272
+  ],
+  [
+   "Item › Type",
+   252851
+  ],
+  [
+   "Item › Icon",
+   252851
+  ],
+  [
+   "Item › Source File",
+   252802
+  ],
+  [
+   "Item › Name",
+   159181
+  ],
+  [
+   "Item › GUID",
+   120100
+  ],
+  [
+   "요소 ID › Value",
+   118712
+  ],
+  [
+   "요소 › 이름",
+   118685
+  ],
+  [
+   "요소 › 범주",
+   118685
+  ],
+  [
+   "요소 › 범주 ID",
+   118685
+  ],
+  [
+   "요소 › ID",
+   118685
+  ],
+  [
+   "요소 › 생성 공정",
+   118685
+  ],
+  [
+   "요소 › 작업 세트",
+   118685
+  ],
+  [
+   "생성 공정 › 이름",
+   118685
+  ],
+  [
+   "생성 공정 › 범주",
+   118685
+  ],
+  [
+   "생성 공정 › 범주 ID",
+   118685
+  ],
+  [
+   "생성 공정 › ID",
+   118685
+  ],
+  [
+   "생성 공정 › 작업 세트",
+   118685
+  ],
+  [
+   "요소 › 유형",
+   118682
+  ],
+  [
+   "요소 › 패밀리",
+   118682
+  ],
+  [
+   "요소 › IfcGUID",
+   118682
+  ],
+  [
+   "요소 › IFC로 내보내기",
+   118682
+  ],
+  [
+   "요소 › 체적",
+   115244
+  ],
+  [
+   "사용자 › A3_Level6",
+   114683
+  ],
+  [
+   "사용자 › A3_Level1",
+   114683
+  ],
+  [
+   "사용자 › A2_개정일자",
+   114683
+  ],
+  [
+   "사용자 › A2_객체관리기관",
+   114683
+  ],
+  [
+   "사용자 › A2_객체버전",
+   114683
+  ],
+  [
+   "사용자 › A2_객체저작자",
+   114683
+  ],
+  [
+   "사용자 › A2_최초생성일자",
+   114683
+  ],
+  [
+   "사용자 › A4_기준점",
+   114683
+  ],
+  [
+   "사용자 › A5_실시공정시작일",
+   114683
+  ],
+  [
+   "사용자 › A1_객체명칭",
+   114682
+  ],
+  [
+   "사용자 › A1_객체형상",
+   114682
+  ],
+  [
+   "사용자 › A5_실시공정종료일",
+   114681
+  ],
+  [
+   "사용자 › A3_Level2/3/4",
+   114674
+  ],
+  [
+   "사용자 › A5_계획공정시작일",
+   114651
+  ],
+  [
+   "사용자 › A5_계획공정종료일",
+   114651
+  ],
+  [
+   "사용자 › A3_Level5",
+   114623
+  ],
+  [
+   "사용자 › A1_객체재료",
+   114362
+  ],
+  [
+   "사용자 › A3_Level7",
+   113891
+  ],
+  [
+   "사용자 › A3_WBS CODE (IPS)",
+   113838
+  ],
+  [
+   "사용자 › A3_Level8",
+   113801
+  ],
+  [
+   "사용자 › A3_C-WBS CODE",
+   111738
+  ],
+  [
+   "요소 특성 › ViewSpecific",
+   110943
+  ],
+  [
+   "요소 특성 › UniqueId",
+   110943
+  ],
+  [
+   "요소 특성 › IsTransient",
+   110943
+  ],
+  [
+   "요소 특성 › IsModifiable",
+   110943
+  ],
+  [
+   "요소 특성 › Name",
+   110943
+  ],
+  [
+   "CreatedPhaseId › IntegerValue",
+   110943
+  ],
+  [
+   "Id › IntegerValue",
+   110943
+  ],
+  [
+   "WorksetId › IntegerValue",
+   110943
+  ],
+  [
+   "Document › MassDisplayTemporaryOverride",
+   110943
+  ],
+  [
+   "Document › IsModelInCloud",
+   110943
+  ],
+  [
+   "Document › IsDetached",
+   110943
+  ],
+  [
+   "Document › IsWorkshared",
+   110943
+  ],
+  [
+   "Document › IsLinked",
+   110943
+  ],
+  [
+   "Document › IsReadOnlyFile",
+   110943
+  ],
+  [
+   "Document › IsModified",
+   110943
+  ],
+  [
+   "Document › IsModifiable",
+   110943
+  ]
+ ],
+ "leafPanels": {
+  "sampled": 400,
+  "leaves": 122541,
+  "leafRich": 98,
+  "noRichAnywhere": 0,
+  "richParents": {
+   "2": 337,
+   "3": 11,
+   "4": 33,
+   "5": 17,
+   "6": 2
+  },
+  "firstRichDepth": {
+   "1": 365,
+   "2": 19,
+   "3": 16
+  },
+  "depth": {
+   "4": 7,
+   "6": 1,
+   "7": 12,
+   "8": 343,
+   "9": 19,
+   "10": 18
+  },
+  "examples": [
+   [
+    {
+     "id": 129477,
+     "name": "솔리드",
+     "type": "솔리드",
+     "cats": {
+      "Item": 3
+     },
+     "sample": []
+    },
+    {
+     "id": 129476,
+     "name": "부품",
+     "type": "일반 모델: PT-4_강지보: PT-4_강지보",
+     "cats": {
+      "Item": 5,
+      "요소": 19,
+      "사용자": 22,
+      "생성 공정": 5,
+      "요소 특성": 6,
+      "PartMaker": 5,
+      "OriginalCategoryId": 1,
+      "DemolishedPhaseId": 5,
+      "CreatedPhaseId": 1,
+      "Id": 1,
+      "WorksetId": 1,
+      "Document": 13,
+      "Category": 10,
+      "요소 ID": 1
+     },
+     "sample": [
+      "요소 › 이름 = 부품",
+      "요소 › 유형 = PT-4_강지보",
+      "요소 › 패밀리 = PT-4_강지보",
+      "요소 › 범주 = 일반 모델"
+     ]
+    },
+    {
+     "id": 29865,
+     "name": "PO05_F_AC_TUN02_N24.nwc",
+     "type": "File",
+     "cats": {
+      "Item": 4,
+      "프로젝트": 6,
+      "구역": 6,
+      "ID": 3
+     },
+     "sample": [
+      "프로젝트 › 클라이언트 이름 = 소유자",
+      "프로젝트 › 프로젝트 발행 날짜 = 발행 날짜",
+      "프로젝트 › 프로젝트 번호 = 0001",
+      "프로젝트 › 프로젝트 상태 = 프로젝트 상태"
+     ]
+    }
+   ],
+   [
+    {
+     "id": 133977,
+     "name": "솔리드",
+     "type": "솔리드",
+     "cats": {
+      "Item": 3
+     },
+     "sample": []
+    },
+    {
+     "id": 133976,
+     "name": "부품",
+     "type": "일반 모델: PT-4_강지보: PT-4_강지보",
+     "cats": {
+      "Item": 5,
+      "요소": 19,
+      "사용자": 22,
+      "생성 공정": 5,
+      "요소 특성": 6,
+      "PartMaker": 5,
+      "OriginalCategoryId": 1,
+      "DemolishedPhaseId": 5,
+      "CreatedPhaseId": 1,
+      "Id": 1,
+      "WorksetId": 1,
+      "Document": 13,
+      "Category": 10,
+      "요소 ID": 1
+     },
+     "sample": [
+      "요소 › 이름 = 부품",
+      "요소 › 유형 = PT-4_강지보",
+      "요소 › 패밀리 = PT-4_강지보",
+      "요소 › 범주 = 일반 모델"
+     ]
+    },
+    {
+     "id": 29865,
+     "name": "PO05_F_AC_TUN02_N24.nwc",
+     "type": "File",
+     "cats": {
+      "Item": 4,
+      "프로젝트": 6,
+      "구역": 6,
+      "ID": 3
+     },
+     "sample": [
+      "프로젝트 › 클라이언트 이름 = 소유자",
+      "프로젝트 › 프로젝트 발행 날짜 = 발행 날짜",
+      "프로젝트 › 프로젝트 번호 = 0001",
+      "프로젝트 › 프로젝트 상태 = 프로젝트 상태"
+     ]
+    }
+   ],
+   [
+    {
+     "id": 153135,
+     "name": "솔리드",
+     "type": "솔리드",
+     "cats": {
+      "Item": 3
+     },
+     "sample": []
+    },
+    {
+     "id": 153134,
+     "name": "부품",
+     "type": "일반 모델: PT-4_강지보: PT-4_강지보",
+     "cats": {
+      "Item": 5,
+      "요소": 19,
+      "사용자": 22,
+      "생성 공정": 5,
+      "요소 특성": 6,
+      "PartMaker": 5,
+      "OriginalCategoryId": 1,
+      "DemolishedPhaseId": 5,
+      "CreatedPhaseId": 1,
+      "Id": 1,
+      "WorksetId": 1,
+      "Document": 13,
+      "Category": 10,
+      "요소 ID": 1
+     },
+     "sample": [
+      "요소 › 이름 = 부품",
+      "요소 › 유형 = PT-4_강지보",
+      "요소 › 패밀리 = PT-4_강지보",
+      "요소 › 범주 = 일반 모델"
+     ]
+    },
+    {
+     "id": 29865,
+     "name": "PO05_F_AC_TUN02_N24.nwc",
+     "type": "File",
+     "cats": {
+      "Item": 4,
+      "프로젝트": 6,
+      "구역": 6,
+      "ID": 3
+     },
+     "sample": [
+      "프로젝트 › 클라이언트 이름 = 소유자",
+      "프로젝트 › 프로젝트 발행 날짜 = 발행 날짜",
+      "프로젝트 › 프로젝트 번호 = 0001",
+      "프로젝트 › 프로젝트 상태 = 프로젝트 상태"
+     ]
+    }
+   ],
+   [
+    {
+     "id": 148733,
+     "name": "솔리드",
+     "type": "솔리드",
+     "cats": {
+      "Item": 3
+     },
+     "sample": []
+    },
+    {
+     "id": 148732,
+     "name": "부품",
+     "type": "일반 모델: PT-4_강지보: PT-4_강지보",
+     "cats": {
+      "Item": 5,
+      "요소": 19,
+      "사용자": 22,
+      "생성 공정": 5,
+      "요소 특성": 6,
+      "PartMaker": 5,
+      "OriginalCategoryId": 1,
+      "DemolishedPhaseId": 5,
+      "CreatedPhaseId": 1,
+      "Id": 1,
+      "WorksetId": 1,
+      "Document": 13,
+      "Category": 10,
+      "요소 ID": 1
+     },
+     "sample": [
+      "요소 › 이름 = 부품",
+      "요소 › 유형 = PT-4_강지보",
+      "요소 › 패밀리 = PT-4_강지보",
+      "요소 › 범주 = 일반 모델"
+     ]
+    },
+    {
+     "id": 29865,
+     "name": "PO05_F_AC_TUN02_N24.nwc",
+     "type": "File",
+     "cats": {
+      "Item": 4,
+      "프로젝트": 6,
+      "구역": 6,
+      "ID": 3
+     },
+     "sample": [
+      "프로젝트 › 클라이언트 이름 = 소유자",
+      "프로젝트 › 프로젝트 발행 날짜 = 발행 날짜",
+      "프로젝트 › 프로젝트 번호 = 0001",
+      "프로젝트 › 프로젝트 상태 = 프로젝트 상태"
+     ]
+    }
+   ],
+   [
+    {
+     "id": 212607,
+     "name": "솔리드",
+     "type": "솔리드",
+     "cats": {
+      "Item": 3
+     },
+     "sample": []
+    },
+    {
+     "id": 212606,
+     "name": "부품",
+     "type": "일반 모델: PT-4_강지보: PT-4_강지보",
+     "cats": {
+      "Item": 5,
+      "요소": 19,
+      "사용자": 22,
+      "생성 공정": 5,
+      "요소 특성": 6,
+      "PartMaker": 5,
+      "OriginalCategoryId": 1,
+      "DemolishedPhaseId": 5,
+      "CreatedPhaseId": 1,
+      "Id": 1,
+      "WorksetId": 1,
+      "Document": 13,
+      "Category": 10,
+      "요소 ID": 1
+     },
+     "sample": [
+      "요소 › 이름 = 부품",
+      "요소 › 유형 = PT-4_강지보",
+      "요소 › 패밀리 = PT-4_강지보",
+      "요소 › 범주 = 일반 모델"
+     ]
+    },
+    {
+     "id": 29865,
+     "name": "PO05_F_AC_TUN02_N24.nwc",
+     "type": "File",
+     "cats": {
+      "Item": 4,
+      "프로젝트": 6,
+      "구역": 6,
+      "ID": 3
+     },
+     "sample": [
+      "프로젝트 › 클라이언트 이름 = 소유자",
+      "프로젝트 › 프로젝트 발행 날짜 = 발행 날짜",
+      "프로젝트 › 프로젝트 번호 = 0001",
+      "프로젝트 › 프로젝트 상태 = 프로젝트 상태"
+     ]
+    }
+   ],
+   [
+    {
+     "id": 135955,
+     "name": "솔리드",
+     "type": "솔리드",
+     "cats": {
+      "Item": 3
+     },
+     "sample": []
+    },
+    {
+     "id": 135954,
+     "name": "부품",
+     "type": "일반 모델: PT-4_강지보: PT-4_강지보",
+     "cats": {
+      "Item": 5,
+      "요소": 19,
+      "사용자": 22,
+      "생성 공정": 5,
+      "요소 특성": 6,
+      "PartMaker": 5,
+      "OriginalCategoryId": 1,
+      "DemolishedPhaseId": 5,
+      "CreatedPhaseId": 1,
+      "Id": 1,
+      "WorksetId": 1,
+      "Document": 13,
+      "Category": 10,
+      "요소 ID": 1
+     },
+     "sample": [
+      "요소 › 이름 = 부품",
+      "요소 › 유형 = PT-4_강지보",
+      "요소 › 패밀리 = PT-4_강지보",
+      "요소 › 범주 = 일반 모델"
+     ]
+    },
+    {
+     "id": 29865,
+     "name": "PO05_F_AC_TUN02_N24.nwc",
+     "type": "File",
+     "cats": {
+      "Item": 4,
+      "프로젝트": 6,
+      "구역": 6,
+      "ID": 3
+     },
+     "sample": [
+      "프로젝트 › 클라이언트 이름 = 소유자",
+      "프로젝트 › 프로젝트 발행 날짜 = 발행 날짜",
+      "프로젝트 › 프로젝트 번호 = 0001",
+      "프로젝트 › 프로젝트 상태 = 프로젝트 상태"
+     ]
+    }
+   ],
+   [
+    {
+     "id": 21037,
+     "name": "#21037",
+     "type": "",
+     "cats": {
+      "Item": 5,
+      "Revit 재질": 21
+     },
+     "sample": [
+      "Revit 재질 › Name = #록볼트_튜브",
+      "Revit 재질 › Color = 120, 120, 120",
+      "Revit 재질 › Shininess = 64",
+      "Revit 재질 › Smoothness = 50"
+     ]
+    },
+    {
+     "id": 21035,
+     "name": "PD-3-1_록볼트_1",
+     "type": "일반 모델: PD-3-1_록볼트_1: PD-3-1_록볼트_1",
+     "cats": {
+      "Item": 5,
+      "요소": 15,
+      "사용자": 23,
+      "생성 공정": 5,
+      "요소 ID": 1
+     },
+     "sample": [
+      "요소 › 이름 = PD-3-1_록볼트_1",
+      "요소 › 유형 = PD-3-1_록볼트_1",
+      "요소 › 패밀리 = PD-3-1_록볼트_1",
+      "요소 › 범주 = 일반 모델"
+     ]
+    },
+    {
+     "id": 20983,
+     "name": "PD-3-1_록볼트_1",
+     "type": "유형",
+     "cats": {
+      "Item": 4,
+      "유형": 9
+     },
+     "sample": [
+      "유형 › 이름 = PD-3-1_록볼트_1",
+      "유형 › 범주 = 일반 모델",
+      "유형 › 범주 ID = -2000151",
+      "유형 › ID = 247572"
+     ]
+    },
+    {
+     "id": 20982,
+     "name": "PD-3-1_록볼트_1",
+     "type": "패밀리",
+     "cats": {
+      "Item": 4,
+      "패밀리": 13
+     },
+     "sample": [
+      "패밀리 › 이름 = PD-3-1_록볼트_1",
+      "패밀리 › 범주 = PD-3-1_록볼트_1",
+      "패밀리 › ID = 247515",
+      "패밀리 › 공유 = 0"
+     ]
+    },
+    {
+     "id": 16672,
+     "name": "PO05_F_AC_TUN01_R24.rvt",
+     "type": "File",
+     "cats": {
+      "Item": 4,
+      "프로젝트": 6,
+      "구역": 6,
+      "ID": 3
+     },
+     "sample": [
+      "프로젝트 › 클라이언트 이름 = 소유자",
+      "프로젝트 › 프로젝트 발행 날짜 = 발행 날짜",
+      "프로젝트 › 프로젝트 번호 = 0001",
+      "프로젝트 › 프로젝트 상태 = 프로젝트 상태"
+     ]
+    }
+   ],
+   [
+    {
+     "id": 134113,
+     "name": "솔리드",
+     "type": "솔리드",
+     "cats": {
+      "Item": 3
+     },
+     "sample": []
+    },
+    {
+     "id": 134112,
+     "name": "부품",
+     "type": "일반 모델: PT-4_강지보: PT-4_강지보",
+     "cats": {
+      "Item": 5,
+      "요소": 19,
+      "사용자": 22,
+      "생성 공정": 5,
+      "요소 특성": 6,
+      "PartMaker": 5,
+      "OriginalCategoryId": 1,
+      "DemolishedPhaseId": 5,
+      "CreatedPhaseId": 1,
+      "Id": 1,
+      "WorksetId": 1,
+      "Document": 13,
+      "Category": 10,
+      "요소 ID": 1
+     },
+     "sample": [
+      "요소 › 이름 = 부품",
+      "요소 › 유형 = PT-4_강지보",
+      "요소 › 패밀리 = PT-4_강지보",
+      "요소 › 범주 = 일반 모델"
+     ]
+    },
+    {
+     "id": 29865,
+     "name": "PO05_F_AC_TUN02_N24.nwc",
+     "type": "File",
+     "cats": {
+      "Item": 4,
+      "프로젝트": 6,
+      "구역": 6,
+      "ID": 3
+     },
+     "sample": [
+      "프로젝트 › 클라이언트 이름 = 소유자",
+      "프로젝트 › 프로젝트 발행 날짜 = 발행 날짜",
+      "프로젝트 › 프로젝트 번호 = 0001",
+      "프로젝트 › 프로젝트 상태 = 프로젝트 상태"
+     ]
+    }
+   ]
+  ]
+ },
+ "tileTop": [
+  {
+   "i": 702,
+   "members": 9223,
+   "MB": 0,
+   "centre": [
+    4291,
+    -2807,
+    -52
+   ]
+  },
+  {
+   "i": 625,
+   "members": 9044,
+   "MB": 0,
+   "centre": [
+    4077,
+    -2619,
+    -57
+   ]
+  },
+  {
+   "i": 697,
+   "members": 4951,
+   "MB": 0,
+   "centre": [
+    4301,
+    -2823,
+    -51
+   ]
+  },
+  {
+   "i": 698,
+   "members": 4935,
+   "MB": 0,
+   "centre": [
+    4301,
+    -2823,
+    -51
+   ]
+  },
+  {
+   "i": 620,
+   "members": 4903,
+   "MB": 0,
+   "centre": [
+    3998,
+    -2547,
+    -59
+   ]
+  },
+  {
+   "i": 621,
+   "members": 4879,
+   "MB": 0,
+   "centre": [
+    3998,
+    -2547,
+    -59
+   ]
+  },
+  {
+   "i": 622,
+   "members": 4679,
+   "MB": 0,
+   "centre": [
+    3998,
+    -2547,
+    -59
+   ]
+  },
+  {
+   "i": 623,
+   "members": 4623,
+   "MB": 0,
+   "centre": [
+    3998,
+    -2547,
+    -59
+   ]
+  }
+ ],
+ "scene": {
+  "tiles": 1073,
+  "used": 16,
+  "target": 702,
+  "centre": [
+   4291,
+   -2807,
+   -52
+  ],
+  "bytesMB": 0,
+  "base": 1,
+  "inst": 0
+ },
+ "alias": {
+  "tiles": 1035,
+  "subsetTiles": 16,
+  "subsetPairs": 3012
+ },
+ "timeline": [
+  {
+   "s": 7,
+   "label": "open",
+   "status": "원경 15/16(11MB) · 타일 15/16 · 표시 15 · 후보 16 · 다운로드 중 1 · 실패 0 · 경량 15 · 상세화 0"
+  },
+  {
+   "s": 12,
+   "label": "open",
+   "status": "원경 15/16(11MB) · 타일 16/16 · 표시 16 · 후보 16 · 다운로드 중 0 · 실패 0 · 경량 16 · 상세화 0"
+  },
+  {
+   "s": 17,
+   "label": "open",
+   "status": "원경 15/16(11MB) · 타일 16/16 · 표시 16 · 후보 16 · 다운로드 중 0 · 실패 0 · 경량 16 · 상세화 0"
+  },
+  {
+   "s": 22,
+   "label": "open",
+   "status": "원경 15/16(11MB) · 타일 16/16 · 표시 16 · 후보 16 · 다운로드 중 0 · 실패 0 · 경량 16 · 상세화 0"
+  },
+  {
+   "s": 35,
+   "label": "close",
+   "status": "원경 16/16(11MB) · 타일 16/16 · 표시 16 · 후보 16 · 다운로드 중 0 · 실패 0 · 경량 16 · 상세화 0"
+  },
+  {
+   "s": 40,
+   "label": "close",
+   "status": "원경 16/16(11MB) · 타일 16/16 · 표시 16 · 후보 16 · 다운로드 중 0 · 실패 0 · 경량 16 · 상세화 0"
+  },
+  {
+   "s": 45,
+   "label": "close",
+   "status": "원경 16/16(11MB) · 타일 16/16 · 표시 16 · 후보 16 · 다운로드 중 0 · 실패 0 · 경량 16 · 상세화 0"
+  },
+  {
+   "s": 158,
+   "label": "search-zoom",
+   "status": "원경 16/16(11MB) · 타일 16/16 · 표시 16 · 후보 16 · 다운로드 중 0 · 실패 0 · 경량 16 · 상세화 2"
+  },
+  {
+   "s": 163,
+   "label": "search-zoom",
+   "status": "원경 16/16(11MB) · 타일 16/16 · 표시 16 · 후보 16 · 다운로드 중 0 · 실패 0 · 경량 16 · 상세화 2"
+  },
+  {
+   "s": 168,
+   "label": "search-zoom",
+   "status": "원경 16/16(11MB) · 타일 16/16 · 표시 16 · 후보 16 · 다운로드 중 0 · 실패 0 · 경량 16 · 상세화 2"
+  }
+ ],
+ "treeShownSec": 2,
+ "firstSettled": true,
+ "pickCandidates": 4,
+ "pickKinds": {
+  "designed": 3,
+  "multi": 2,
+  "textured": 3,
+  "numeric": 3,
+  "generated": 1
+ },
+ "sceneInfo": {
+  "models": 32,
+  "objects": 29088,
+  "visible": 29088,
+  "numericIds": 23054,
+  "generatedIds": 6034,
+  "culled": 1503,
+  "aabb": [
+   4183,
+   -60,
+   2714,
+   4399,
+   -40,
+   2903
+  ],
+  "eye": [
+   4576,
+   235,
+   3094
+  ],
+  "look": [
+   4289,
+   -52,
+   2807
+  ],
+  "gl": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)"
+ },
+ "target": {
+  "entity": "tile0#251326",
+  "db": "251326",
+  "diag": 60.1,
+  "name": "기본 양식",
+  "type": "솔리드"
+ },
+ "closeSettled": true,
+ "clickAt": {
+  "pos": [
+   800,
+   368
+  ],
+  "id": "tile0-detail#251326"
+ },
+ "selection": {
+  "blue": [
+   "tile0#251326",
+   "tile0-far#251326",
+   "tile0-detail#251326"
+  ],
+  "blueCount": 3,
+  "blueGenerated": 0,
+  "emphasised": 0,
+  "reps": [
+   {
+    "id": "tile0#251326",
+    "drawn": false
+   },
+   {
+    "id": "tile0-far#251326",
+    "drawn": false
+   },
+   {
+    "id": "tile0-detail#251326",
+    "drawn": true
+   }
+  ],
+  "drawnObjects": 14544,
+  "sameTileOverlaps": 0,
+  "overlapSample": [],
+  "title": "기본 양식\n솔리드",
+  "selectedRow": "기본 양식"
+ },
+ "panel": {
+  "text": "기본 양식\n솔리드\n평택-오송 2복선화 건설사업 5공구_통합모델.nwd\nPO05_F_AC_TUN03_N24.nwc\n레벨 1\n일반 모델\nPT-4_굴착\nPT-4_굴착\nPT-4_굴착\nPT-4_굴착\nPT-4_굴착\nItem 5\nName\n기본 양식\nType\n솔리드\nIcon\nGeometry\nMaterial\n기본 양식\nSource File\nPO05_F_AC_TUN03_R24.rvt\nRevit 재질 5\nName\n기본 양식\nColor\n185, 189, 196\nShininess\n0\nSmoothness\n50\nTransparency\n50\n\nExternal ID · 47/1/0/7/0/2/0/0/0\n\n상위 객체 · PT-4_굴착 일반 모델: PT-4_굴착: PT-4_굴착\nItem 5\nName\nPT-4_굴착\nType\n일반 모델: PT-4_굴착: PT-4_굴착\nGUID\n8d06112f-282b-4ea9-8da6-00c09e59e321\nIcon\nComposite Object\nSource File\nPO05_F_AC_TUN03_R24.rvt\n요소 24\n이름\nPT-4_굴착\n유형\nPT-4_굴착\n패밀리\nPT-4_굴착\n범주\n일반 모델\n범주 ID\n-2,000,151\nID\n1,180,109\nIfcGUID\n2D1X4lA2jEgOsc0C2UMUCX\nIFC로 내보내기\n유형별\nrot_XY_A\n2.41748 radian\nrot_XY_B\n2.414505 radian\nrot_XY_C\n2.411497 radian\n가변높이\n0.13 m\n가변폭\n6.5 m\n높이_A\n7.43 m\n높이_B\n7.43 m\n높이_C\n7.43 m\n반전\n0\n생성 공정\nPhase \"311311C5F20390516\", #0\n작업 세트\nWorkset1\n체적\n4,558.134745 m^3\n폭_A\n19 m\n폭_B\n19 m\n폭_C\n19 m\n해설\n13구간\n사용자 21\nA1_객체명칭\nPT-4_굴착\nA1_객체형상\nPT-4_굴착\nA2_객체관리기관\n국가철도공단\nA2_객체저작자\n㈜케이씨엠씨\nA2_최초생성일자\nYYYY-MM-DD\nA2_개정일자\nYYYY-MM-DD\nA2_객체버전\nRevit 2024\nA4_기준점\n222365295.3,452929999.9,0\nA5_계획공정시작일\n2026-05-08\nA5_계획공정종료일\n2026-05-12\nA5_실시공정시작일\nYYYY-MM-DD\nA5_실시공정종료일\nYYYY-MM-DD\nA3_Level5\n용와터널\nA3_Level6\n본선터널\nA3_Level7\nNATM TBM(하) 13구간(1300m/2,392m)\nA3_Level8\n굴착 및 보조공법\nA3_WBS CODE (IPS)\n311311C5F20780674\nA3_C-WBS CODE\n900000175C-A5C1101\nA3_Level1\n평택-오송 2복선화\nA3_Level2/3/4\n노반/공사/5공구\nactivity\n1200\n생성 공정 5\n이름\n311311C5F20390516\n범주\n공정\n범주 ID\n-2,000,112\nID\n0\n작업 세트\nWorkset1\nRevit 유형 13\n이름\nPT-4_굴착\n범주\n일반 모델\n범주 ID\n-2,000,151\nID\n1,174,886\n#기초\nMaterial \"#기초 - 18Mpa\", #441548\n#라이닝\nMaterial \"#라이닝 - 27Mpa\", #432915\n#맹암거\nMaterial \"#맹암거\", #432916\n#숏크리트\nMaterial \"#숏크리트-고강도 - 35Mpa\", #433072\n#인버트\nMaterial \"#인버트 - 27Mpa\", #432918\nIFC로 유형 내보내기\n기본값\n기본 높이\n0 m\n유형 IfcGUID\n2D1X4lA2jEgOsc0C2UMW_A\n작업 세트\nWorkset1\n요소 특성 20\nHasSpatialElementFromToCalculationPoints\n0\nHasSpatialElementCalculationPoint\n0\nCanFlipWorkPlane\n0\nIsSlantedColumn\n0\nCanSplit\n0\nCanRotate\n0\nCanFlipFacing\n0\nCanFlipHand\n0\nMirrored\n0\nInvisible\n0\nFacingFlipped\n0\nHandFlipped\n0\nStructuralType\nrevit_DB::Structure::StructuralType:0\nStructuralUsage\nOther\nStructuralMaterialType\nOther\nViewSpecific\n0\nUniqueId\n8d06112f-282b-4ea9-8da6-00c09e4be2ec-001201cd\nIsTransient\n0\nIsModifiable\n1\nName\nPT-4_굴착\n요소 ID 1\nValue\n1180109\nFacingOrientation 3\nHandOrientation 3\nLocation 1\nStructuralMaterialId 5\nSymbol 10\nCreatedPhaseId 1\nLevelId 1\nId 1\nWorksetId 1\nDocument 13\nCategory 10\n\nExternal ID · 47/1/0/7/0/2\n\n상위 객체 · PT-4_굴착 유형\nItem 4\n유형 13\n\nExternal ID · 47/1/0/7/0\n\n상위 객체 · PT-4_굴착 패밀리\nItem 4\n패밀리 12\n\nExternal ID · 47/1/0/7\n\n상위 객체 · 레벨 1 레벨들: 레벨: 8mm 헤드\nItem 4\n요소 ID 1\n\nExternal ID · 47/1\n\n상위 객체 · PO05_F_AC_TUN03_N24.nwc File\nItem 4\n프로젝트 6\n구역 6\nID 3\n\nExternal ID · 47",
+  "sections": [
+   {
+    "parent": null,
+    "groups": [
+     "Item 5",
+     "Revit 재질 5"
+    ]
+   },
+   {
+    "parent": "상위 객체 · PT-4_굴착 일반 모델: PT-4_굴착: PT-4_굴착",
+    "groups": [
+     "Item 5",
+     "요소 24",
+     "사용자 21",
+     "생성 공정 5",
+     "Revit 유형 13",
+     "요소 특성 20",
+     "요소 ID 1",
+     "FacingOrientation 3",
+     "HandOrientation 3",
+     "Location 1",
+     "StructuralMaterialId 5",
+     "Symbol 10",
+     "CreatedPhaseId 1",
+     "LevelId 1",
+     "Id 1",
+     "WorksetId 1",
+     "Document 13",
+     "Category 10"
+    ]
+   },
+   {
+    "parent": "상위 객체 · PT-4_굴착 유형",
+    "groups": [
+     "Item 4",
+     "유형 13"
+    ]
+   },
+   {
+    "parent": "상위 객체 · PT-4_굴착 패밀리",
+    "groups": [
+     "Item 4",
+     "패밀리 12"
+    ]
+   },
+   {
+    "parent": "상위 객체 · 레벨 1 레벨들: 레벨: 8mm 헤드",
+    "groups": [
+     "Item 4",
+     "요소 ID 1"
+    ]
+   },
+   {
+    "parent": "상위 객체 · PO05_F_AC_TUN03_N24.nwc File",
+    "groups": [
+     "Item 4",
+     "프로젝트 6",
+     "구역 6",
+     "ID 3"
+    ]
+   }
+  ]
+ },
+ "panelSearch": [
+  {
+   "q": "PT-4_굴착",
+   "ms": 14858,
+   "count": "28건",
+   "notes": [
+    "속성 값 검색 중…",
+    "속성 색인 불러오는 중 n/247 (처음 한 번)"
+   ]
+  },
+  {
+   "q": "일반 모델",
+   "ms": 629,
+   "count": "129,503건",
+   "notes": [
+    "속성 색인 불러오는 중 n/247 (처음 한 번)"
+   ]
+  }
+ ],
+ "mainHeapMB": 214,
+ "highlighted": {
+  "entities": 38274,
+  "generated": 6172
+ },
+ "console": [
+  "warning: [.WebGL-0xb3c001a4800]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+  "warning: [.WebGL-0xb3c001a4800]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+  "warning: [.WebGL-0xb3c001a4800]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+  "warning: [.WebGL-0xb3c001a4800]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)"
+ ],
+ "pageErrors": [],
+ "failedRequests": [
+  "http://127.0.0.1:35121/basis/basis_transcoder.wasm net::ERR_ABORTED"
+ ],
+ "apiCalls": [
+  "GET /api/aps-acc?action=contents&project=b.p&folder=F",
+  "GET /api/aps-convert?urn=…",
+  "GET /api/aps-convert?urn=…&metaShard=245",
+  "GET /api/aps-convert?urn=…&metaShard=238",
+  "GET /api/aps-convert?urn=…&metaShard=0",
+  "GET /api/aps-convert?urn=…&metaShards=all"
+ ],
+ "r2MB": 39.7,
+ "finished": "2026-10-07T04:42:52.564Z"
+}
