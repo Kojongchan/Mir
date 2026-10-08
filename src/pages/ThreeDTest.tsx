@@ -594,6 +594,14 @@ export function ThreeDTest() {
     const pointerDown = () => quality.hold(true);
     const pointerUp = () => quality.hold(false);
     canvasRef.current.addEventListener('pointerdown', pointerDown);
+    // A drag that starts on empty sky orbits around the SDK's last clicked surface point (MousePickHandler
+    // _lastClickedWorldPos), which after navigating can be kilometres away or behind the camera: a 60 px drag
+    // then swung the eye ~650 m. Forget it before each press so a miss pivots about the view centre (look);
+    // a press on geometry still pivots about the picked point. Runs before the SDK's own mousedown listener.
+    const pickHandler = (viewer.cameraControl as unknown as { _handlers?: ({ _lastClickedWorldPos?: number[] | null } | undefined)[] })
+      ._handlers?.find(h => !!h && '_lastClickedWorldPos' in h);
+    const forgetPivot = (ev: MouseEvent) => { if (ev.button === 0 && pickHandler) pickHandler._lastClickedWorldPos = null; };
+    canvasRef.current.addEventListener('mousedown', forgetPivot, { capture: true });
     window.addEventListener('pointerup', pointerUp);
     window.addEventListener('pointercancel', pointerUp);
     window.addEventListener('blur', pointerUp);
@@ -810,6 +818,7 @@ export function ThreeDTest() {
       loafObserver?.disconnect();
       reportRef.current = null;
       canvasEl.removeEventListener('pointerdown', pointerDown);
+      canvasEl.removeEventListener('mousedown', forgetPivot, { capture: true });
       window.removeEventListener('pointerup', pointerUp);
       window.removeEventListener('pointercancel', pointerUp);
       window.removeEventListener('blur', pointerUp);
