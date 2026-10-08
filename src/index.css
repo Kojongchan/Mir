@@ -3457,10 +3457,19 @@ button.danger:hover:not(:disabled) {
   text-align: left;
   font-size: 12px;
 }
-.prop-panel__results button span:first-child {
+/* Long types ("구조 프레임: Structural Framing 1: …") must not squeeze the name to one letter. */
+.prop-panel__results button span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.prop-panel__results button span:first-child {
+  flex: 1 1 auto;
+}
+.prop-panel__results button span + span {
+  flex: 0 1 auto;
+  max-width: 55%;
 }
 .prop-panel__results button:hover,
 .prop-panel__results button.is-selected {

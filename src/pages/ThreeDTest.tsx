@@ -11,7 +11,7 @@ import { useProjectRole } from '../auth/useProjectRole';
 import { supabase } from '../lib/supabase';
 import { isAccModel } from '../lib/aps';
 import { UiIcon } from '../components/icons/UiIcon';
-import { errMessage } from '../lib/errors';
+import { errMessage, readApiJson } from '../lib/errors';
 import { TileStream } from '../viewer/TileStream';
 import { readBounded } from '../viewer/readBounded';
 import { NavigationLoadGate } from '../viewer/NavigationLoadGate';
@@ -240,7 +240,7 @@ export function ThreeDTest() {
       const r = await fetch(`/api/r2-compact?projectId=${encodeURIComponent(projectId)}`, {
         method: 'POST', headers: { Authorization: `Bearer ${data.session.access_token}` },
       });
-      const result = await r.json();
+      const result = await readApiJson<{ error?: string; requestedAt?: string; startedAt?: string }>(r);
       if (!r.ok) throw new Error(result.error ?? '압축 시작 실패');
       storageSince.current = result.requestedAt ?? result.startedAt ?? null;
       setStorageNotice('저장소 압축 작업이 접수되었습니다. 창을 닫아도 서버에서 계속 진행됩니다.');
@@ -362,7 +362,7 @@ export function ThreeDTest() {
         const { data } = await supabase.auth.getSession();
         const r = await fetch(`/api/aps-convert?urn=${encodeURIComponent(meta.urn)}&metaShard=${k}`,
           { headers: { authorization: `Bearer ${data.session?.access_token ?? ''}` } });
-        const j = await r.json() as { url?: string; error?: string };
+        const j = await readApiJson<{ url?: string; error?: string }>(r);
         if (!r.ok || !j.url) throw new Error(j.error ?? '속성 조회 실패');
         const res = await fetch(j.url);
         if (res.status === 404) return {}; // no object in this range carries properties
@@ -402,7 +402,7 @@ export function ThreeDTest() {
                 const { data } = await supabase.auth.getSession();
                 const r = await fetch(`/api/aps-convert?urn=${encodeURIComponent(p.key)}&metaShards=all`,
                   { headers: { authorization: `Bearer ${data.session?.access_token ?? ''}` } });
-                const j = await r.json() as { urls?: string[]; error?: string };
+                const j = await readApiJson<{ urls?: string[]; error?: string }>(r);
                 if (!r.ok || !j.urls) throw new Error(j.error ?? '속성 색인 조회 실패');
                 return j.urls;
               })();
@@ -1229,11 +1229,11 @@ export function ThreeDTest() {
         // Completion must not fly the camera to the union of hundreds of loaded chunks.
         // Keep the user's current work location; structure fit remains an explicit action.
         if (completeRegion) {
-          setStatus(`${loadingStopped ? '구간 로딩 중지' : stats.loaded < stats.selected ? '화면 우선 로딩' : stats.selected < stats.total ? '메모리 상한 내 표시 완료 · 화면 밖부터 해제' : '고정 구간 표시 완료 · 경량/상세 혼합'}: ${stats.loaded}/${stats.selected} · 후보 ${stats.total} · 실패 ${stats.failed}`);
+          setStatus(`${loadingStopped ? '구간 로딩 중지' : stats.loaded < stats.selected ? '화면 우선 로딩' : stats.selected < stats.total ? '메모리 상한 내 표시 완료 · 화면 밖부터 해제' : '고정 구간 표시 완료 · 경량/상세 혼합'}: ${stats.loaded}/${stats.selected} · 후보 ${stats.total} · 실패 ${stats.failed}${stats.deferred ? ` · 메모리 상한 대기 ${stats.deferred}` : ''}`);
         } else setStatus(!stats.total ? '현재 위치에 구조물 후보가 없습니다. 위치를 이동한 뒤 현재 위치 불러오기를 눌러 주세요.' : stats.failed ? `일부 구간 로드 실패 ${stats.failed}개 — 모델을 다시 열어 주세요.` :
           stats.loaded < stats.selected ? (stats.loading ? `구조물 로딩… ${stats.loaded}/${stats.selected}` : '표시 용량 제한으로 일부 구간이 미표시 상태입니다.') :
           limited ? `일부 표시: 후보 ${stats.total}개 중 ${stats.loaded}개 로드 · 전체 구간 아님` : '주변 구조물 표시 완료 · 가까운 구간 상세화');
-        setDbg(`원경 ${farStats.loaded}/${farTiles.length}(${Math.round(farStats.bytes / 1048576)}MB) · 타일 ${stats.loaded}/${stats.selected} · 표시 ${stats.resident} · 후보 ${stats.total} · 다운로드 중 ${stats.loading} · 실패 ${stats.failed} · 경량 ${overviewReady.size} · 상세화 ${detailReady.size} · 파일 크기 예산 사용 ≈${Math.round(stats.encodedBytes / 1048576)}MB (GPU 메모리 아님)`);
+        setDbg(`원경 ${farStats.loaded}/${farTiles.length}(${Math.round(farStats.bytes / 1048576)}MB) · 타일 ${stats.loaded}/${stats.selected} · 표시 ${stats.resident} · 후보 ${stats.total} · 다운로드 중 ${stats.loading} · 실패 ${stats.failed}${stats.deferred ? ` · 메모리 상한 대기 ${stats.deferred}` : ''} · 경량 ${overviewReady.size} · 상세화 ${detailReady.size} · 파일 크기 예산 사용 ≈${Math.round(stats.encodedBytes / 1048576)}MB (GPU 메모리 아님)`);
       },
     });
     const detailStream = new TileStream<typeof T[number]>({

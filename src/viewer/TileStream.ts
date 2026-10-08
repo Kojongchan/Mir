@@ -1,8 +1,10 @@
 /** Bounded tile loading. byteLength is encoded size, NOT a GPU-memory measurement. */
 export type StreamTile = { id: string; byteLength?: number };
 type State = 'idle' | 'loading' | 'loaded' | 'failed';
-type Entry<T> = { tile: T; state: State; attempts: number; used: number; controller?: AbortController };
-export type StreamStats = { selected: number; total: number; loaded: number; loading: number; failed: number; encodedBytes: number; resident: number };
+// overBudget: the last attempt was refused by the byte budget (measured size), not a network or parse error.
+type Entry<T> = { tile: T; state: State; attempts: number; used: number; controller?: AbortController; overBudget?: boolean };
+/** failed = errors; deferred = refused because the measured file did not fit the byte budget (retried later). */
+export type StreamStats = { selected: number; total: number; loaded: number; loading: number; failed: number; deferred: number; encodedBytes: number; resident: number };
 
 export class TileStream<T extends StreamTile> {
   private entries = new Map<string, Entry<T>>();
@@ -38,7 +40,7 @@ export class TileStream<T extends StreamTile> {
     const e = this.entries.get(id);
     if (this.disposed || !e || e.state !== 'loading' || !Number.isFinite(bytes) || bytes <= 0) return false;
     const budget = this.options.maxEncodedBytes ?? 192 * 1024 * 1024;
-    if (bytes > budget) return false;
+    if (bytes > budget) { e.overBudget = true; return false; }
     const wanted = new Set(this.wanted);
     const replace = !!this.options.replaceAfterLoad;
     let others = this.resident().filter(r => r !== e && (!replace || wanted.has(r))).reduce((sum, r) => sum + this.bytes(r), 0);
@@ -47,7 +49,7 @@ export class TileStream<T extends StreamTile> {
       others -= this.bytes(victim);
       this.release(victim);
     }
-    if (others + bytes > budget) return false;
+    if (others + bytes > budget) { e.overBudget = true; return false; }
     e.tile.byteLength = bytes;
     this.notify();
     return true;
@@ -143,7 +145,8 @@ export class TileStream<T extends StreamTile> {
       selected: this.wanted.length, total: this.total,
       loaded: this.wanted.filter(e => e.state === 'loaded').length,
       loading: all.filter(e => e.state === 'loading').length,
-      failed: this.wanted.filter(e => e.state === 'failed').length,
+      failed: this.wanted.filter(e => e.state === 'failed' && !e.overBudget).length,
+      deferred: this.wanted.filter(e => e.state === 'failed' && e.overBudget).length,
       encodedBytes: all.reduce((sum, e) => sum + this.bytes(e), 0),
       resident: all.filter(e => e.state === 'loaded').length,
     });
@@ -170,6 +173,7 @@ export class TileStream<T extends StreamTile> {
         const controller = new AbortController();
         e.controller = controller;
         e.state = 'loading';
+        e.overBudget = false;
         e.attempts++;
         // Timeout covers the network phase as well as parsing; an offline request cannot hold a slot forever.
         const timeout = setTimeout(() => controller.abort(), this.options.loadTimeoutMs ?? 60_000);

@@ -431,7 +431,8 @@ try {
   const selection = await page.evaluate(() => {
     const objs = window.__viewer.scene.objects, blue = [], emphasised = [];
     for (const [k, o] of Object.entries(objs)) {
-      const c = o.colorize;
+      // The SDK getter keeps returning the last colour after colorize = null; the mesh flag is the drawn state.
+      const c = o.meshes?.some(m => m._colorizing) ? o.colorize : null;
       if (c && Math.abs(c[0] - 0.15) < 0.02 && Math.abs(c[2] - 1) < 0.02) blue.push(k);
       if (o.selected || o.highlighted) emphasised.push(k);
     }
@@ -528,7 +529,7 @@ try {
     await hl.click();
     await sleep(4000);
     results.highlighted = await page.evaluate(() => {
-      const amber = Object.entries(window.__viewer.scene.objects).filter(([, o]) => o.colorize && o.colorize[0] > 0.9 && o.colorize[2] < 0.2);
+      const amber = Object.entries(window.__viewer.scene.objects).filter(([, o]) => o.meshes?.some(m => m._colorizing) && o.colorize[0] > 0.9 && o.colorize[2] < 0.2);
       return { entities: amber.length, generated: amber.filter(([k]) => /#entity-\d+$/.test(k)).length };
     });
     await shot('06-search-highlight.png');

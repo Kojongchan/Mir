@@ -599,3 +599,15 @@ test('a small dense tile near the camera loads before a large sparse tile furthe
  const tiles=[{id:'track',worldAabb:[-20,-5,-1300,20,5,-300]},{id:'portal',worldAabb:[-15,-10,-140,15,10,-120]}];
  assert.deepEqual(prioritizeCameraView(tiles,identity4,perspective,[0,0,0]).map(t=>t.id),['portal','track']);
 });
+
+test('a tile refused by the byte budget is reported as deferred, not failed', async () => {
+  let stats;
+  const stream = new TileStream({ retryMs: 1000, maxEncodedBytes: 100, fallbackBytes: 10,
+    load: async tile => { if (!stream.accountBytes(tile.id, 500)) throw new Error('budget'); },
+    unload: () => {}, onChange: s => { stats = s; } });
+  stream.select([{ id: 'big' }]);
+  await wait(10);
+  assert.equal(stats.failed, 0);
+  assert.equal(stats.deferred, 1);
+  stream.dispose();
+});
