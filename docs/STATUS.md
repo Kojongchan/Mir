@@ -209,6 +209,19 @@ run6: 후보 1073·경량 90/120(75%) 확인, 주황 화질 OK, 위치 5m 이내
 다음: 사용자 실화면 확인(배포 화면에서 구조 프레임 선택·검색 강조). 필요하면 텍스처 객체용 선택 표시(외곽선 등) 검토.
 인수인계: 하이라이트 조각남 원인(프래그먼트 이름 충돌) 해결·실데이터 검증 완료 → 사용자 확인 대기.
 
+### 2026-10-08 — 배포 화면 직접 점검 준비 (다음 세션이 바로 실행)
+사용자가 클라우드 환경(Default)에 설정 완료: 허용 도메인 `*.vercel.app`·`*.supabase.co`·`*.r2.cloudflarestorage.com` 등,
+환경 변수 `MIR_TEST_USERNAME`/`MIR_TEST_PASSWORD`(전용 테스트 계정), `VERCEL_BYPASS_SECRET`(Vercel Protection Bypass).
+값은 채팅에 받지 않음 — `printenv` 로만 사용, 출력·커밋 금지.
+- 주소: `https://mir-git-claude-3d-view-testing-hlrugl-kojongchans-projects.vercel.app` (브랜치 별칭, 프리뷰는 Vercel
+  Authentication 보호 → 302 SSO). 모든 요청에 헤더 `x-vercel-protection-bypass: $VERCEL_BYPASS_SECRET` 와
+  `x-vercel-set-bypass-cookie: true` (Playwright `extraHTTPHeaders`). curl 로 먼저 200 확인.
+- 브라우저: Playwright(전역 `/opt/node22/lib/node_modules/playwright`)로 Chromium 을 `proxy: { server: process.env.HTTPS_PROXY }`
+  로 실행(NSS 에 프록시 CA 설치됨, TLS 무시 금지). SwiftShader 라 DTX 는 그려지지 않을 수 있음 → 픽·상태·속성은 확인 가능.
+- 순서: 로그인(아이디/비밀번호) → 프로젝트(평택-오송 5공구) → 3D 테스트 → ACC에서 열기 → 통합모델.nwd → 타일 로드 대기 →
+  구조 프레임 선택·검색 "모두 강조"·속성 패널 확인, 콘솔 오류·실패 요청 수집 → 문제 있으면 수정·푸시.
+- `*.supabase.co` 실제 호스트는 번들에서 확인(빌드된 VITE_SUPABASE_URL). 막히면 프록시 status 의 recentRelayFailures 확인.
+
 ### 2026-10-04 — 플랫폼 브랜치와 공용 정비 반영
 - 앱 내 확인창/토스트 기반(35a7f5b 체리픽)·ESLint 설정(`eslint.config.js`, `tsconfig.api.json`) 동일 반영. 이 브랜치 코드도
   같은 규칙으로 오류·경고 0: 변환 스크립트의 호출 없는 옛 함수 삭제(mergeGlb weld/subsample/countNonDegen, convert4d
