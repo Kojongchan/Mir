@@ -19,17 +19,19 @@ const authHeaders = async () => {
 
 /**
  * 3D뷰 (신규 테스트 2차) — second viewer engine prototype (decision D23, docs/3D뷰_2차_엔진.md): the model's 3D Tiles
- * (built by Actions diag_only=tiles3d) on three.js + 3DTilesRendererJS, next to the xeokit page for comparison.
+ * (built by Actions diag_only=tiles3d, startable here by project admins) on three.js + 3DTilesRendererJS, next to the
+ * xeokit page for comparison.
  */
 const narrowScreen = () => window.matchMedia('(max-width: 900px)').matches;
 
 export function ThreeDTest2() {
   const { projectId = '' } = useParams();
-  const { canEdit } = useProjectRole(projectId);
+  const { canEdit, canManage } = useProjectRole(projectId);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<TilesViewer | null>(null);
   const urlsRef = useRef<Record<string, string> | null>(null);
   const boxesRef = useRef<Promise<Float32Array> | null>(null);
+  const renewAt = useRef<{ urn: string; at: number } | null>(null);
   const index = useModelIndex();
   const tree = index.tree;
   const [initError, setInitError] = useState('');
@@ -38,6 +40,9 @@ export function ThreeDTest2() {
   const [status, setStatus] = useState('');
   const [modelName, setModelName] = useState('');
   const [stats, setStats] = useState<ViewerStats | null>(null);
+  // A model without tiles: whether it is converted at all (tiles come from the converted model) and a build job.
+  const [missing, setMissing] = useState<{ file: PickedAccFile; converted: boolean } | null>(null);
+  const [job, setJob] = useState<{ since: string; note: string } | null>(null);
   const [tier, setTier] = useState<DeviceTier | 'auto'>('auto');
   const [selectedDb, setSelectedDb] = useState<number | null>(null);
   const [revealDb, setRevealDb] = useState<number | null>(null);
@@ -129,26 +134,76 @@ export function ThreeDTest2() {
     const viewer = viewerRef.current;
     if (!viewer) return;
     if (!f.accUrn) { setStatus('이 파일은 아직 APS 파생(URN)이 없습니다.'); return; }
-    setBusy(true); setStatus(`불러오는 중… ${f.name}`); setModelName(f.name);
+    setBusy(true); setStatus(`불러오는 중… ${f.name}`); setModelName(f.name); setMissing(null);
     setSelectedDb(null); setRevealDb(null); setHiddenNodes(new Set()); setHighlightIds(null);
     index.reset(); boxesRef.current = null; urlsRef.current = null;
     try {
       const headers = await authHeaders();
       const urn = encodeURIComponent(f.accUrn);
       const [stateRes, tilesRes] = await Promise.all([fetch(`/api/aps-convert?urn=${urn}`, { headers }), fetch(`/api/aps-convert?urn=${urn}&tiles3d=1`, { headers })]);
-      const tiles = await readApiJson<{ urls?: Record<string, string>; builtAt?: string; error?: string }>(tilesRes);
+      const tiles = await readApiJson<{ urls?: Record<string, string>; builtAt?: string; expiresIn?: number; error?: string; missing?: boolean }>(tilesRes);
+      const state = await readApiJson<{ meta?: MetaInfo; tiles?: unknown[] }>(stateRes);
       if (!tilesRes.ok || !tiles.urls?.['tileset.json']) {
-        setStatus(tiles.error ?? '이 모델의 2차 엔진용 타일이 아직 없습니다.');
+        if (tiles.missing) {
+          const converted = Array.isArray(state.tiles) && state.tiles.length > 0;
+          setMissing({ file: f, converted });
+          setStatus(converted ? `${f.name} · 2차 화면용 타일이 아직 없습니다.` : `${f.name} · 아직 변환되지 않은 모델입니다.`);
+        } else setStatus(tiles.error ?? '2차 화면용 타일을 불러오지 못했습니다.');
         return;
       }
-      const state = await readApiJson<{ meta?: MetaInfo }>(stateRes);
       urlsRef.current = tiles.urls;
+      renewAt.current = { urn: f.accUrn, at: Date.now() + Math.max(60, (tiles.expiresIn ?? 14400) - 900) * 1000 };
       viewer.open(tiles.urls, (state.meta?.objects ?? 0) + 1);
       void index.open(f.accUrn, state.meta);
       setStatus(`${f.name} · 3D Tiles ${Object.keys(tiles.urls).length.toLocaleString()}개 파일${tiles.builtAt ? ` · 생성 ${tiles.builtAt.slice(0, 10)}` : ''}`);
     } catch (e) { setStatus(`열기 실패: ${errMessage(e)}`); }
     finally { setBusy(false); }
   }, [index]);
+
+  // Signed tile URLs last 4 h: renew them 15 min early so a long session keeps loading tiles.
+  useEffect(() => {
+    const timer = setInterval(async () => {
+      const due = renewAt.current;
+      if (!due || Date.now() < due.at) return;
+      renewAt.current = null;
+      try {
+        const r = await fetch(`/api/aps-convert?urn=${encodeURIComponent(due.urn)}&tiles3d=1`, { headers: await authHeaders() });
+        const next = await readApiJson<{ urls?: Record<string, string>; expiresIn?: number }>(r);
+        if (!r.ok || !next.urls) throw new Error('renew');
+        Object.assign(urlsRef.current ?? {}, next.urls);
+        viewerRef.current?.updateUrls(next.urls);
+        renewAt.current = { urn: due.urn, at: Date.now() + Math.max(60, (next.expiresIn ?? 14400) - 900) * 1000 };
+      } catch { renewAt.current = { urn: due.urn, at: Date.now() + 60_000 }; }
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  /** Project admins: build this model's tiles (Actions job, ≈10–20 min), then open it when the job succeeds. */
+  const buildTiles = useCallback(async () => {
+    if (!missing?.converted || job) return;
+    setJob({ since: new Date().toISOString(), note: '2차 화면 타일 생성 요청 중…' });
+    try {
+      const r = await fetch(`/api/r2-motion?job=tiles3d&projectId=${encodeURIComponent(projectId)}`, {
+        method: 'POST', headers: { 'content-type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ urn: missing.file.accUrn }),
+      });
+      const result = await readApiJson<{ requestedAt?: string; error?: string }>(r);
+      if (!r.ok) throw new Error(result.error ?? '요청 실패');
+      setJob({ since: result.requestedAt ?? new Date().toISOString(), note: '2차 화면 타일 생성 중 · 보통 10~20분 걸리며, 끝나면 자동으로 엽니다.' });
+    } catch (e) { setJob(null); setStatus(`타일 생성 요청 실패: ${errMessage(e)}`); }
+  }, [job, missing, projectId]);
+  useEffect(() => {
+    if (!job || !missing) return;
+    const timer = setInterval(async () => {
+      try {
+        const r = await fetch(`/api/r2-motion?job=tiles3d&projectId=${encodeURIComponent(projectId)}&since=${encodeURIComponent(job.since)}`, { headers: await authHeaders() });
+        const result = await readApiJson<{ state?: string; error?: string }>(r);
+        if (!r.ok) throw new Error(result.error ?? '상태 조회 실패');
+        if (result.state === 'success') { setJob(null); void openModel(missing.file); }
+        else if (result.state === 'failed') { setJob(null); setStatus('타일 생성 실패 · 기존 모델 파일은 그대로입니다.'); }
+      } catch { /* keep polling: a transient error must not drop the job */ }
+    }, 20_000);
+    return () => clearInterval(timer);
+  }, [job, missing, openModel, projectId]);
 
   const toggleNode = useCallback((id: number, visible: boolean) => {
     setHiddenNodes(prev => {
@@ -211,6 +266,25 @@ export function ThreeDTest2() {
         </div>
         <div className="threed-test__viewport">
           <canvas ref={canvasRef} className="threed-test__canvas" />
+          {missing && (
+            <div className="threed-test__empty">
+              <UiIcon name="cube" size={40} />
+              {missing.converted ? (
+                <>
+                  <p><strong>{missing.file.name}</strong> 은(는) 2차 화면용 타일이 아직 없습니다.</p>
+                  <p className="threed-test__empty-sub">2차 화면은 시제품이라 타일을 만든 모델만 열립니다. 변환된 모델로부터 만들며 보통 10~20분 걸립니다.</p>
+                  {job ? <p className="threed-test__empty-sub">{job.note}</p>
+                    : canManage ? <button className="btn btn--primary btn--sm" onClick={() => void buildTiles()}>2차 타일 만들기</button>
+                      : <p className="threed-test__empty-sub">프로젝트 관리자가 이 화면에서 만들 수 있습니다.</p>}
+                </>
+              ) : (
+                <>
+                  <p><strong>{missing.file.name}</strong> 은(는) 아직 변환되지 않은 모델입니다.</p>
+                  <p className="threed-test__empty-sub">먼저 「3D뷰 (신규 테스트)」에서 이 모델을 열어 변환한 뒤, 여기서 2차 타일을 만들 수 있습니다.</p>
+                </>
+              )}
+            </div>
+          )}
           {initError && (
             <div className="threed-test__empty">
               <h3>3D 화면을 시작하지 못했습니다</h3>

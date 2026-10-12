@@ -11,6 +11,24 @@ import { PROFILES, detectTier, type DeviceProfile, type DeviceTier } from './dev
 
 CameraControls.install({ THREE: { Vector2, Vector3, Vector4, Quaternion, Matrix4, Spherical, Box3, Sphere, Raycaster } });
 
+/**
+ * Let failed tiles load again on the next update. The library's resetFailedTiles() (0.5.3) cannot be used: it visits
+ * children that were never preprocessed (no `internal`) and throws, and a failed tile stays in the LRU cache, which
+ * refuses to queue it again. Removing it from the cache also marks it unloaded.
+ */
+const FAILED = -1; // 3d-tiles-renderer core/renderer/constants.js (not in its typings)
+const resetFailed = (tiles: TilesRenderer) => {
+  type Node = { internal?: { loadingState: number } };
+  type Walk = { traverse(before: (tile: Node) => boolean, after: null, ensureProcessed: boolean): void };
+  const failed: Node[] = [];
+  (tiles as unknown as Walk).traverse(tile => {
+    if (tile.internal && tile.internal.loadingState === FAILED) failed.push(tile);
+    return false;
+  }, null, false);
+  for (const tile of failed) tiles.lruCache.remove(tile as never);
+  (tiles as unknown as { stats: TileStats }).stats.failed = 0;
+};
+
 /** Stand-in origin: the tileset's relative paths resolve against it and are then mapped to signed URLs. */
 const BASE = 'https://tiles.mir.invalid/';
 
@@ -53,6 +71,10 @@ export class TilesViewer {
   private firstFrameMs: number | null = null;
   private settledMs: number | null = null;
   private lastStats = 0;
+  /** Path → signed URL of the open tileset (kept so renewed URLs apply to later requests). */
+  private urls: Record<string, string> = {};
+  /** Failed tiles are retried with a growing delay (a dropped request on a field network must not leave a hole). */
+  private retry = { at: 0, delay: 2000 };
   /** CSS px at the bottom covered by a panel (a phone's bottom sheet). */
   private inset = 0;
   /** Tileset bounds in the scene frame (set when the tileset loads). */
@@ -93,6 +115,8 @@ export class TilesViewer {
   /** Open a published tileset: `urls` maps its relative paths (tileset.json, c/*.glb, objects.bin) to signed URLs. */
   open(urls: Record<string, string>, objects: number): void {
     this.closeTiles();
+    this.urls = { ...urls };
+    this.retry = { at: 0, delay: 2000 };
     this.state = new ObjectStateTexture(objects);
     this.surface = { opaque: createSurfaceMaterial(this.state, false), transparent: createSurfaceMaterial(this.state, true) };
     this.pickMaterial = createPickMaterial(this.state);
@@ -102,7 +126,7 @@ export class TilesViewer {
       name: 'MIR_SIGNED_URLS',
       preprocessURL: (url: string | URL) => {
         const text = String(url);
-        return text.startsWith(BASE) ? (urls[text.slice(BASE.length).split('?')[0]] ?? text) : text;
+        return text.startsWith(BASE) ? (this.urls[text.slice(BASE.length).split('?')[0]] ?? text) : text;
       },
     });
     this.applyProfile(tiles);
@@ -121,6 +145,12 @@ export class TilesViewer {
     this.openedAt = performance.now();
     this.firstFrameMs = this.settledMs = null;
     this.needsUpdate = this.dirty = true;
+  }
+
+  /** Renewed signed URLs (same paths) for tiles requested from now on; failed tiles are retried with them. */
+  updateUrls(urls: Record<string, string>): void {
+    Object.assign(this.urls, urls);
+    this.retry.at = performance.now();
   }
 
   setTier(tier: DeviceTier): void {
@@ -341,6 +371,16 @@ export class TilesViewer {
     const moved = this.controls.update(this.clock.getDelta());
     if (moved) { this.dirty = true; this.needsUpdate = true; }
     const tiles = this.tiles;
+    const failed = (tiles as unknown as { stats?: TileStats } | null)?.stats?.failed ?? 0;
+    if (tiles && failed > 0) {
+      const now = performance.now();
+      if (!this.retry.at) this.retry.at = now + this.retry.delay;
+      else if (now >= this.retry.at) {
+        resetFailed(tiles);
+        this.retry = { at: 0, delay: Math.min(this.retry.delay * 2, 30000) };
+        this.needsUpdate = true;
+      }
+    } else if (tiles && !loading(tiles)) this.retry = { at: 0, delay: 2000 };
     if (tiles && (this.needsUpdate || loading(tiles))) {
       // Near plane follows the distance to the orbit target; the far plane reaches just past the model.
       const distance = this.controls.distance;

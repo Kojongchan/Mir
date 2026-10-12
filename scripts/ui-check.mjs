@@ -248,6 +248,7 @@ const c0 = centre(allTiles[target].aabb);
 const chosen = allTiles.map((t, i) => [i, Math.hypot(...centre(t.aabb).map((v, j) => v - c0[j]))])
   .sort((a, b) => a[1] - b[1]).slice(0, env.UI_TILES === 'all' ? allTiles.length : Math.max(1, Number(env.UI_TILES) || 16)).map(([i]) => i);
 const r2Path = n => `/r2/${prefix}/xkt/${n}`;
+const failedOnce = new Set();
 const tiles = chosen.map(i => {
   const t = allTiles[i];
   return { url: r2Path(t.n), aabb: t.aabb, byteLength: t.byteLength,
@@ -270,6 +271,11 @@ const server = http.createServer(async (req, res) => {
     if (u.pathname.startsWith('/r2/')) {
       const key = decodeURIComponent(u.pathname.slice(4));
       if (!key.startsWith(`${prefix}/`)) { res.writeHead(403); res.end(); return; }
+      // UI_FAILFIRST=1: the first request of every 3D Tiles content file fails (a dropped request on a poor network).
+      if (env.UI_FAILFIRST && /\/tiles3d\/.*\.glb$/.test(key) && !failedOnce.has(key)) {
+        failedOnce.add(key); results.failedFirst = (results.failedFirst ?? 0) + 1;
+        res.writeHead(503); res.end(); return;
+      }
       const o = await r2Get(key);
       if (!o) { res.writeHead(404); res.end(); return; }
       r2Bytes += o.body.length;
@@ -342,7 +348,7 @@ await page.route('**/api/**', r => {
     if (u.searchParams.has('metaShard')) return r.fulfill({ json: { url: shardUrl(Number(u.searchParams.get('metaShard'))) } });
     if (u.searchParams.get('tiles3d') === '1') return (async () => {
       const current = await r2Get(`${prefix}/tiles3d/current.json`);
-      if (!current) return r.fulfill({ status: 404, json: { error: 'no tiles3d' } });
+      if (!current) return r.fulfill({ status: 404, json: { error: '이 모델은 2차 화면용 타일이 아직 없습니다.', missing: true } });
       const c = parse(current.body);
       results.tiles3d = { run: c.run, files: c.files.length, MB: MB(c.bytes), builtAt: c.builtAt, stats: c.stats };
       return r.fulfill({ json: { run: c.run, builtAt: c.builtAt, urls: Object.fromEntries(c.files.map(f => [f, `${base}/r2/${prefix}/tiles3d/${c.run}/${f}`])) } });
@@ -413,6 +419,10 @@ if (PAGE === 2) {
     await page.getByRole('button', { name: 'ACC에서 열기' }).click();
     await page.locator('.acc-picker-row', { hasText: modelName }).first().click();
     await page.waitForSelector('.threed-test2__stats', { timeout: 180000 });
+    // A model without tiles: record the message the page shows and stop.
+    await sleep(3000);
+    const missing = await page.locator('.threed-test__empty').innerText().catch(() => '');
+    if (missing) { results.v2missing = missing; await shot('10-v2-missing.png'); throw new Error('no 3D Tiles for this model'); }
     /** Until the viewer reports a settled frame and no downloads/parses for two samples (or the deadline). */
     const settle2 = async (label, maxMs) => {
       const until = Date.now() + maxMs;

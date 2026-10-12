@@ -303,7 +303,7 @@ export default async function handler(req: Request): Promise<Response> {
     if (url.searchParams.get('tiles3d') === '1') {
       const dir = await resolveCacheDir(urn);
       const text = await r2GetText(`${dir}/tiles3d/current.json`);
-      if (!text) return json({ error: '이 모델의 3D Tiles 가 아직 없습니다. (Actions diag_only=tiles3d)' }, 404);
+      if (!text) return json({ error: '이 모델은 2차 화면용 타일이 아직 없습니다.', missing: true }, 404);
       let current: { v?: number; run?: string; files?: unknown; builtAt?: string };
       try { current = JSON.parse(text); } catch { return json({ error: '3D Tiles 기록이 손상되었습니다.' }, 500); }
       if (current.v !== 1 || !/^runs\/[a-zA-Z0-9-]+$/.test(current.run ?? '') || !Array.isArray(current.files))
