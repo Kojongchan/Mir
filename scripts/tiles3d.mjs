@@ -1,0 +1,238 @@
+// 3D Tiles 1.1 content for the second viewer engine (docs/3D뷰_2차_엔진.md). Pure: arrays in, buffers out.
+//   packMeshes      decoded XKT meshes → one opaque + one transparent group (positions, colour, dbId, indices)
+//   simplifyGroup   coarser level: meshopt simplify with an absolute error (metres), prune, needle removal
+//   encodeGlb       group(s) → .glb: int16 positions (KHR_mesh_quantization) + EXT_meshopt_compression,
+//                   per-vertex _FEATURE_ID_0 = dbId (EXT_mesh_features), no normals (viewer shades flat)
+//   groupSpatially  items → tree of ≤ maxChildren per node (recursive median splits)
+// Coordinates: tileset frame = decoded XKT frame (Z-up, metres). glTF is Y-up, so content stores (x, z, −y).
+import { MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
+
+/** Colour for meshes whose material was a texture (factor white): a neutral earth tone instead of white. */
+const TEXTURED_RGBA = [150, 140, 122, 255];
+
+/**
+ * @param {{ entity: number, world: Float64Array, tri: Uint32Array, rgba: number[], textured: boolean }[]} meshes
+ * @param {(entity: number) => number} dbIdOf  object id per entity (0 = none)
+ */
+export function packMeshes(meshes, dbIdOf) {
+  const parts = { opaque: [], transparent: [] };
+  for (const m of meshes) (m.rgba[3] < 250 ? parts.transparent : parts.opaque).push(m);
+  const pack = list => {
+    let nv = 0, ni = 0;
+    for (const m of list) { nv += m.world.length / 3; ni += m.tri.length; }
+    if (!ni) return null;
+    const pos = new Float64Array(nv * 3), rgba = new Uint8Array(nv * 4), ids = new Float32Array(nv), idx = new Uint32Array(ni);
+    let v = 0, i = 0;
+    for (const m of list) {
+      const n = m.world.length / 3, colour = m.textured && m.rgba[0] > 240 && m.rgba[1] > 240 && m.rgba[2] > 240 ? TEXTURED_RGBA : m.rgba;
+      const id = dbIdOf(m.entity) || 0;
+      pos.set(m.world, v * 3);
+      for (let k = 0; k < n; k++) { rgba.set(colour, (v + k) * 4); ids[v + k] = id; }
+      for (let k = 0; k < m.tri.length; k++) idx[i + k] = m.tri[k] + v;
+      v += n; i += m.tri.length;
+    }
+    return { pos, rgba, ids, idx };
+  };
+  return { opaque: pack(parts.opaque), transparent: pack(parts.transparent) };
+}
+
+/** Concatenate groups (same kind) of several tiles. */
+export function mergeGroups(groups) {
+  const list = groups.filter(Boolean);
+  if (!list.length) return null;
+  let nv = 0, ni = 0;
+  for (const g of list) { nv += g.ids.length; ni += g.idx.length; }
+  const out = { pos: new Float64Array(nv * 3), rgba: new Uint8Array(nv * 4), ids: new Float32Array(nv), idx: new Uint32Array(ni) };
+  let v = 0, i = 0;
+  for (const g of list) {
+    out.pos.set(g.pos, v * 3); out.rgba.set(g.rgba, v * 4); out.ids.set(g.ids, v);
+    for (let k = 0; k < g.idx.length; k++) out.idx[i + k] = g.idx[k] + v;
+    v += g.ids.length; i += g.idx.length;
+  }
+  return out;
+}
+
+export function triangles(group) { return group ? group.idx.length / 3 : 0; }
+
+export function boundsOf(...groups) {
+  const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+  for (const g of groups) if (g) for (let i = 0; i < g.pos.length; i++) {
+    const a = i % 3, v = g.pos[i];
+    if (v < b[a]) b[a] = v;
+    if (v > b[a + 3]) b[a + 3] = v;
+  }
+  return b;
+}
+
+/** Keep only referenced vertices (after simplification), preserving attributes. */
+function compact(group, idx) {
+  const remap = new Int32Array(group.ids.length).fill(-1);
+  let n = 0;
+  for (const v of idx) if (remap[v] < 0) remap[v] = n++;
+  const out = { pos: new Float64Array(n * 3), rgba: new Uint8Array(n * 4), ids: new Float32Array(n), idx: new Uint32Array(idx.length) };
+  for (let v = 0; v < remap.length; v++) {
+    const r = remap[v];
+    if (r < 0) continue;
+    out.pos[r * 3] = group.pos[v * 3]; out.pos[r * 3 + 1] = group.pos[v * 3 + 1]; out.pos[r * 3 + 2] = group.pos[v * 3 + 2];
+    out.rgba.set(group.rgba.subarray(v * 4, v * 4 + 4), r * 4);
+    out.ids[r] = group.ids[v];
+  }
+  for (let k = 0; k < idx.length; k++) out.idx[k] = remap[idx[k]];
+  return out;
+}
+
+/**
+ * Coarser copy: simplify the whole group with an absolute error in metres and prune parts smaller than it.
+ * Objects are separate vertex islands, so simplification never joins two objects; dbIds stay per vertex.
+ * Long needle triangles that collapsed thin parts leave behind are dropped (they flash when flat-shaded).
+ */
+export async function simplifyGroup(group, errorMeters, { ratio = 0.01 } = {}) {
+  if (!group || group.idx.length < 3) return group;
+  await MeshoptSimplifier.ready;
+  const b = boundsOf(group);
+  const local = new Float32Array(group.pos.length);
+  for (let i = 0; i < local.length; i++) local[i] = group.pos[i] - b[i % 3];
+  const target = Math.max(3, Math.floor(group.idx.length * ratio / 3) * 3);
+  let result;
+  try { [result] = MeshoptSimplifier.simplify(group.idx, local, 3, target, errorMeters, ['ErrorAbsolute', 'Prune']); }
+  catch { return group; }
+  if (!result || result.length < 3) return null;
+  const kept = [];
+  const minEdge2 = errorMeters * errorMeters;
+  for (let i = 0; i < result.length; i += 3) {
+    const [a, c, d] = [result[i], result[i + 1], result[i + 2]];
+    const ax = local[a * 3], ay = local[a * 3 + 1], az = local[a * 3 + 2];
+    const ab = [local[c * 3] - ax, local[c * 3 + 1] - ay, local[c * 3 + 2] - az];
+    const ad = [local[d * 3] - ax, local[d * 3 + 1] - ay, local[d * 3 + 2] - az];
+    const cd = [local[d * 3] - local[c * 3], local[d * 3 + 1] - local[c * 3 + 1], local[d * 3 + 2] - local[c * 3 + 2]];
+    const len2 = v => v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+    const maxE2 = Math.max(len2(ab), len2(ad), len2(cd));
+    const cr = [ab[1] * ad[2] - ab[2] * ad[1], ab[2] * ad[0] - ab[0] * ad[2], ab[0] * ad[1] - ab[1] * ad[0]];
+    if (maxE2 > minEdge2 && Math.sqrt(len2(cr)) / 2 < 0.02 * maxE2) continue;
+    kept.push(a, c, d);
+  }
+  return kept.length ? compact(group, Uint32Array.from(kept)) : null;
+}
+
+// ── GLB ───────────────────────────────────────────────────────────────────────────────────────────
+const SHORT = 5122, UBYTE = 5121, FLOAT = 5126, UINT = 5125, USHORT = 5123;
+
+/**
+ * One .glb for a tile: one node (dequantization transform) and one mesh with up to two primitives
+ * (opaque, transparent). Returns { glb, triangles, vertices, bytes }.
+ */
+export async function encodeGlb({ opaque, transparent }) {
+  await MeshoptEncoder.ready;
+  const groups = [opaque, transparent].filter(g => g && g.idx.length >= 3);
+  if (!groups.length) return null;
+  // One quantization box for both primitives (they share the node transform).
+  const b = boundsOf(...groups);
+  const c = [0, 1, 2].map(a => (b[a] + b[a + 3]) / 2), h = [0, 1, 2].map(a => Math.max((b[a + 3] - b[a]) / 2, 1e-4));
+  const views = [], accessors = [], fallbackParts = [], compressedParts = [];
+  let fallbackLength = 0, compressedLength = 0;
+  const addView = (raw, count, stride, mode, target) => {
+    const align = n => (4 - (n % 4)) % 4;
+    const encoded = MeshoptEncoder.encodeGltfBuffer(raw, count, stride, mode);
+    const view = { buffer: 1, byteOffset: fallbackLength, byteLength: raw.length, ...(mode === 'ATTRIBUTES' ? { byteStride: stride } : {}), target,
+      extensions: { EXT_meshopt_compression: { buffer: 0, byteOffset: compressedLength, byteLength: encoded.length, byteStride: stride, count, mode } } };
+    fallbackLength += raw.length + align(raw.length);
+    compressedParts.push(Buffer.from(encoded.buffer, encoded.byteOffset, encoded.length));
+    const pad = align(encoded.length);
+    if (pad) compressedParts.push(Buffer.alloc(pad));
+    compressedLength += encoded.length + pad;
+    fallbackParts.push(raw.length);
+    views.push(view);
+    return views.length - 1;
+  };
+  const primitives = [];
+  let totalTriangles = 0, totalVertices = 0;
+  for (const [gi, g] of groups.entries()) {
+    const nv = g.ids.length;
+    // Vertex cache / fetch order improves both GPU efficiency and compression. reorderMesh rewrites the
+    // index copy in place (new triangle order, new vertex numbers) and returns old → new vertex numbers.
+    const idx = Uint32Array.from(g.idx);
+    const [remap, unique] = MeshoptEncoder.reorderMesh(idx, true, true);
+    const order = new Uint32Array(unique);
+    for (let v = 0; v < Math.min(nv, remap.length); v++) if (remap[v] < unique) order[remap[v]] = v;
+    // int16 positions (stride 8), Y-up: (x, z, −y) relative to the box centre, normalized by the half extent.
+    const pos = new Int16Array(unique * 4), col = new Uint8Array(unique * 4), ids = new Float32Array(unique);
+    const q = (v, a) => Math.max(-32767, Math.min(32767, Math.round((v - c[a]) / h[a] * 32767)));
+    const min = [32767, 32767, 32767], max = [-32767, -32767, -32767];
+    for (let r = 0; r < unique; r++) {
+      const v = order[r];
+      const x = q(g.pos[v * 3], 0), y = q(g.pos[v * 3 + 2], 2), z = -q(g.pos[v * 3 + 1], 1);
+      pos[r * 4] = x; pos[r * 4 + 1] = y; pos[r * 4 + 2] = z;
+      if (x < min[0]) min[0] = x; if (y < min[1]) min[1] = y; if (z < min[2]) min[2] = z;
+      if (x > max[0]) max[0] = x; if (y > max[1]) max[1] = y; if (z > max[2]) max[2] = z;
+      col.set(g.rgba.subarray(v * 4, v * 4 + 4), r * 4);
+      ids[r] = g.ids[v];
+    }
+    const bytes = a => new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+    const useShort = unique < 65536;
+    const indexArray = useShort ? Uint16Array.from(idx) : idx;
+    const vPos = addView(bytes(pos), unique, 8, 'ATTRIBUTES', 34962);
+    const vCol = addView(bytes(col), unique, 4, 'ATTRIBUTES', 34962);
+    const vIds = addView(bytes(ids), unique, 4, 'ATTRIBUTES', 34962);
+    const vIdx = addView(bytes(indexArray), idx.length, useShort ? 2 : 4, 'TRIANGLES', 34963);
+    const featureCount = new Set(ids).size;
+    accessors.push({ bufferView: vPos, componentType: SHORT, normalized: true, count: unique, type: 'VEC3', min, max });
+    const aPos = accessors.length - 1;
+    accessors.push({ bufferView: vCol, componentType: UBYTE, normalized: true, count: unique, type: 'VEC4' });
+    const aCol = accessors.length - 1;
+    accessors.push({ bufferView: vIds, componentType: FLOAT, count: unique, type: 'SCALAR' });
+    const aIds = accessors.length - 1;
+    accessors.push({ bufferView: vIdx, componentType: useShort ? USHORT : UINT, count: idx.length, type: 'SCALAR' });
+    const aIdx = accessors.length - 1;
+    primitives.push({ attributes: { POSITION: aPos, COLOR_0: aCol, _FEATURE_ID_0: aIds }, indices: aIdx, material: gi === 0 && g === opaque ? 0 : 1, mode: 4,
+      extensions: { EXT_mesh_features: { featureIds: [{ featureCount, attribute: 0 }] } } });
+    totalTriangles += idx.length / 3; totalVertices += unique;
+  }
+  const json = {
+    asset: { version: '2.0', generator: 'MIR tiles3d' },
+    extensionsUsed: ['KHR_mesh_quantization', 'EXT_meshopt_compression', 'EXT_mesh_features'],
+    extensionsRequired: ['KHR_mesh_quantization', 'EXT_meshopt_compression'],
+    scene: 0, scenes: [{ nodes: [0] }],
+    // Dequantization: position = translation + scale ∘ normalized; same axis swap as the positions.
+    nodes: [{ mesh: 0, translation: [c[0], c[2], -c[1]], scale: [h[0], h[2], h[1]] }],
+    meshes: [{ primitives }],
+    materials: [
+      { pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 1], metallicFactor: 0, roughnessFactor: 1 }, doubleSided: true },
+      { pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 1], metallicFactor: 0, roughnessFactor: 1 }, doubleSided: true, alphaMode: 'BLEND' },
+    ],
+    accessors, bufferViews: views,
+    buffers: [{ byteLength: compressedLength }, { byteLength: fallbackLength, extensions: { EXT_meshopt_compression: { fallback: true } } }],
+  };
+  const bin = Buffer.concat(compressedParts);
+  let jsonBuf = Buffer.from(JSON.stringify(json));
+  if (jsonBuf.length % 4) jsonBuf = Buffer.concat([jsonBuf, Buffer.alloc(4 - (jsonBuf.length % 4), 0x20)]);
+  const total = 12 + 8 + jsonBuf.length + 8 + bin.length;
+  const head = Buffer.alloc(12);
+  head.writeUInt32LE(0x46546c67, 0); head.writeUInt32LE(2, 4); head.writeUInt32LE(total, 8);
+  const jsonHead = Buffer.alloc(8); jsonHead.writeUInt32LE(jsonBuf.length, 0); jsonHead.writeUInt32LE(0x4e4f534a, 4);
+  const binHead = Buffer.alloc(8); binHead.writeUInt32LE(bin.length, 0); binHead.writeUInt32LE(0x004e4942, 4);
+  return { glb: Buffer.concat([head, jsonHead, jsonBuf, binHead, bin]), triangles: totalTriangles, vertices: totalVertices, bounds: b };
+}
+
+/** 3D Tiles box bounding volume (centre + half axes) from [minX, minY, minZ, maxX, maxY, maxZ]. */
+export function boxVolume(b) {
+  const c = [0, 1, 2].map(a => (b[a] + b[a + 3]) / 2), h = [0, 1, 2].map(a => Math.max((b[a + 3] - b[a]) / 2, 0.01));
+  return { box: [c[0], c[1], c[2], h[0], 0, 0, 0, h[1], 0, 0, 0, h[2]] };
+}
+
+/**
+ * Spatial tree: each node has ≤ maxChildren children, split by recursive medians of item centres on the
+ * longer horizontal axis. Items are leaves ({ centre: [x, y, z] , ... }). Returns nested { children } nodes.
+ */
+export function groupSpatially(items, maxChildren = 8) {
+  if (items.length <= maxChildren) return { children: items };
+  const split = (list, parts) => {
+    if (parts <= 1 || list.length <= 1) return [list];
+    const lo = [Infinity, Infinity], hi = [-Infinity, -Infinity];
+    for (const it of list) for (let a = 0; a < 2; a++) { lo[a] = Math.min(lo[a], it.centre[a]); hi[a] = Math.max(hi[a], it.centre[a]); }
+    const axis = hi[0] - lo[0] >= hi[1] - lo[1] ? 0 : 1;
+    const sorted = [...list].sort((p, q) => p.centre[axis] - q.centre[axis] || p.key - q.key);
+    const mid = Math.floor(sorted.length / 2);
+    return [...split(sorted.slice(0, mid), Math.floor(parts / 2)), ...split(sorted.slice(mid), Math.ceil(parts / 2))];
+  };
+  return { children: split(items, maxChildren).filter(l => l.length).map(l => groupSpatially(l, maxChildren)) };
+}

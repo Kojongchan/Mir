@@ -352,6 +352,64 @@ export function xktEntityBoxes(input) {
   return { ids, boxes, steps };
 }
 
+/**
+ * Every triangle mesh of an XKT v12 file as world positions + indices, with its entity and material colour
+ * (r, g, b, opacity 0–255) — for re-encoding into other formats. Reused geometry is expanded; lines/points
+ * are skipped. `textured` marks meshes whose colour came from a texture (their factor is white).
+ */
+export function decodeXkt(input) {
+  const raw = readTables(Buffer.from(input));
+  if (!raw) return null;
+  const positions = view(raw[4], Uint16Array), indices = view(raw[8], Uint32Array);
+  const matrices = view(raw[11], Float32Array), reuseDecode = view(raw[12], Float32Array), primitive = view(raw[13], Uint8Array);
+  const pp = view(raw[15], Uint32Array), ip = view(raw[19], Uint32Array);
+  const mg = view(raw[21], Uint32Array), mm = view(raw[22], Uint32Array), meshSet = view(raw[23], Int32Array);
+  const attrs = view(raw[24], Uint8Array), em = view(raw[26], Uint32Array);
+  const tileBoxes = view(raw[27], Float64Array), te = view(raw[28], Uint32Array);
+  const ids = JSON.parse(raw[25].toString() || '[]');
+  const numGeometries = pp.length, numMeshes = mg.length, numEntities = em.length, numTiles = te.length;
+  if (!Array.isArray(ids) || ids.length !== numEntities || tileBoxes.length !== numTiles * 6 || mm.length !== numMeshes ||
+      ip.length !== numGeometries) throw new Error('Invalid XKT layout');
+  // Material attributes (r, g, b, opacity, metallic, roughness per mesh); grey when a file has none.
+  const colourOf = m => (attrs.length >= (m + 1) * 6 ? [attrs[m * 6], attrs[m * 6 + 1], attrs[m * 6 + 2], attrs[m * 6 + 3]] : [200, 200, 200, 255]);
+  const reuse = new Uint32Array(numGeometries);
+  for (const g of mg) { if (g >= numGeometries) throw new Error('Invalid mesh geometry'); reuse[g]++; }
+  const reuseM = reuseDecode.length === 16 ? reuseDecode : null;
+  const meshes = [];
+  for (let t = 0; t < numTiles; t++) {
+    const box = tileBoxes.subarray(t * 6, t * 6 + 6);
+    const centre = [0, 1, 2].map(a => (box[a] + box[a + 3]) / 2);
+    const step = [0, 1, 2].map(a => (box[a + 3] - box[a]) / 65535);
+    const [e0, e1] = span(te, t, numEntities);
+    for (let e = e0; e < e1; e++) {
+      const [m0, m1] = span(em, e, numMeshes);
+      for (let m = m0; m < m1; m++) {
+        const g = mg[m];
+        if (primitive[g] > 1) continue; // lines / points
+        const [p0, p1] = span(pp, g, positions.length), [i0, i1] = span(ip, g, indices.length);
+        const nv = (p1 - p0) / 3;
+        if (!Number.isInteger(nv) || i1 > indices.length) throw new Error('Invalid geometry span');
+        const world = new Float64Array(nv * 3);
+        if (reuse[g] > 1) {
+          if (!reuseM) throw new Error('Missing reused geometry decode matrix');
+          const mat = matrices.subarray(mm[m], mm[m] + 16);
+          for (let v = 0; v < nv; v++) {
+            const local = transform(reuseM, positions[p0 + v * 3], positions[p0 + v * 3 + 1], positions[p0 + v * 3 + 2]);
+            const w = transform(mat, local[0], local[1], local[2]);
+            world[v * 3] = w[0] + centre[0]; world[v * 3 + 1] = w[1] + centre[1]; world[v * 3 + 2] = w[2] + centre[2];
+          }
+        } else {
+          for (let v = 0; v < nv * 3; v++) world[v] = box[v % 3] + positions[p0 + v] * step[v % 3];
+        }
+        const tri = indices.slice(i0, i1);
+        if (tri.length < 3 || !tri.every(i => i < nv)) continue;
+        meshes.push({ entity: e, world, tri, rgba: colourOf(m), textured: (meshSet[m] ?? -1) >= 0 });
+      }
+    }
+  }
+  return { ids, meshes };
+}
+
 /** Decoded world positions of a merged (single-tile, non-reused) file — for validation and tests. */
 export function decodeMergedPositions(input) {
   const raw = readTables(Buffer.from(input));
