@@ -358,17 +358,20 @@ const shot = async (name, clip) => {
 const statusLine = () => page.evaluate(() => document.body.innerText.match(/원경 \d+\/\d+[^\n]*/)?.[0] ?? '').catch(() => '');
 results.timeline = [];
 const t0 = Date.now();
-/** Wait until no tile is downloading and the status line stops changing (or the deadline). */
+/** Seconds since the start of the check (both pages count from the same point: before the page loads). */
+const since = at => Math.round((at - t0) / 100) / 10;
+/** Wait until no tile is downloading and the status line stops changing (or the deadline); `ready` = its last change. */
+const ready = {};
 async function settle(label, maxMs) {
   const until = Date.now() + maxMs;
-  let last = '', same = 0;
+  let last = '', same = 0, changed = Date.now();
   while (Date.now() < until) {
-    await sleep(5000);
+    await sleep(2000);
     const s = await statusLine();
     results.timeline.push({ s: Math.round((Date.now() - t0) / 1000), label, status: s.replace(/ · 파일 크기.*/, '') });
-    same = s === last ? same + 1 : 0;
+    if (s === last) same++; else { same = 0; changed = Date.now(); }
     last = s;
-    if (/다운로드 중 0/.test(s) && same >= 2) return true;
+    if (/다운로드 중 0/.test(s) && same >= 3) { ready[label] = since(changed); return true; }
   }
   return false;
 }
@@ -376,10 +379,29 @@ const canvasBox = async () => (await page.locator('canvas').first().boundingBox(
 
 const sample = async label => {
   const m = await page.evaluate(() => ({ lt: window.__lt, heap: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null,
-    v: window.__viewer?.stats ? window.__viewer.stats() : null })).catch(() => null);
+    v: window.__viewer?.stats ? window.__viewer.stats()
+      : window.__viewer?.scene ? { loadedTriangles: Object.values(window.__viewer.scene.models).reduce((n, m) => n + (m.numTriangles || 0), 0),
+        objects: window.__viewer.scene.numObjects, models: Object.keys(window.__viewer.scene.models).length } : null })).catch(() => null);
   return { label, s: Math.round((Date.now() - t0) / 1000), r2MB: MB(r2Bytes), heapMB: m?.heap ?? null,
     longTasks: m?.lt ? { n: m.lt.n, ms: Math.round(m.lt.ms), max: Math.round(m.lt.max) } : null, viewer: m?.v ?? null };
 };
+/** Orbit: drag 40% of the view to the right and back (≈6 s); frames drawn (`frames` reads a counter) and stalls. */
+async function orbit(frames) {
+  const box = await canvasBox();
+  const read = () => page.evaluate(frames).catch(() => null);
+  const lt = () => page.evaluate(() => window.__lt?.ms ?? 0).catch(() => 0);
+  const f0 = await read(), lt0 = await lt(), t = Date.now();
+  await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.5);
+  await page.mouse.down();
+  for (let k = 1; k <= 120; k++) {
+    const u = k <= 60 ? k / 60 : (120 - k) / 60;
+    await page.mouse.move(box.x + box.width * (0.3 + 0.4 * u), box.y + box.height * 0.5);
+    await sleep(50);
+  }
+  await page.mouse.up();
+  const ms = Date.now() - t, f1 = await read(), lt1 = await lt();
+  return { label: 'orbit', ms, fps: f0 !== null && f1 !== null ? Math.round((f1 - f0) * 1000 / ms) : null, longTaskMs: Math.round(lt1 - lt0) };
+}
 if (PAGE === 2) {
   results.v2 = [];
   try {
@@ -390,13 +412,15 @@ if (PAGE === 2) {
     /** Until the viewer reports a settled frame and no downloads/parses for two samples (or the deadline). */
     const settle2 = async (label, maxMs) => {
       const until = Date.now() + maxMs;
-      let quiet = 0;
+      let quiet = 0, last = '', changed = Date.now();
       while (Date.now() < until) {
         await sleep(2000);
         const st = await page.evaluate(() => window.__viewer?.stats()).catch(() => null);
         results.timeline.push({ s: Math.round((Date.now() - t0) / 1000), label, st });
+        const key = st ? `${st.tilesLoaded}/${st.tilesVisible}/${st.triangles}/${st.downloading}/${st.parsing}` : '';
+        if (key !== last) { last = key; changed = Date.now(); }
         quiet = st && st.downloading === 0 && st.parsing === 0 && st.settledMs !== null ? quiet + 1 : 0;
-        if (quiet >= 2) return true;
+        if (quiet >= 2) { ready[label] = since(changed); return true; }
       }
       return false;
     };
@@ -404,19 +428,8 @@ if (PAGE === 2) {
     results.v2.push(await sample('overview'));
     await shot('11-v2-overview.png');
     save();
-    // Orbit: a 3 s drag across the view; frames drawn and stalls during it.
     const box = await canvasBox();
-    const before = await sample('orbit-before');
-    await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.5);
-    await page.mouse.down();
-    const t = Date.now();
-    for (let k = 1; k <= 60; k++) { await page.mouse.move(box.x + box.width * (0.3 + 0.4 * k / 60), box.y + box.height * 0.5); await sleep(50); }
-    await page.mouse.up();
-    const after = await sample('orbit-after');
-    const orbitMs = Date.now() - t;
-    results.v2.push({ label: 'orbit', ms: orbitMs,
-      fps: after.viewer && before.viewer ? Math.round((after.viewer.frames - before.viewer.frames) * 1000 / orbitMs) : null,
-      longTaskMs: (after.longTasks?.ms ?? 0) - (before.longTasks?.ms ?? 0), triangles: after.viewer?.triangles ?? null });
+    results.v2.push(await orbit(() => window.__viewer.stats().frames));
     await settle2('after-orbit', 120000);
     // Pick an object near the centre (first hit on a widening grid), then zoom to it (per-object boxes) and let the
     // finer levels load.
@@ -456,6 +469,7 @@ if (PAGE === 2) {
     log('page check failed', e);
     await shot('99-error.png');
   } finally {
+    results.ready = ready;
     results.console = consoleLines.slice(0, 80);
     results.pageErrors = pageErrors;
     results.failedRequests = failed.slice(0, 40);
@@ -480,6 +494,9 @@ try {
   results.v1 = [await sample('open')];
   await shot('01-overview.png');
   save();
+  await page.evaluate(() => { window.__frames = 0; window.__viewer.scene.on('rendered', () => { window.__frames++; }); });
+  results.v1.push(await orbit(() => window.__frames));
+  await settle('after-orbit', 120000);
 
   // An object near the middle of the view, then fly close so the light/original tiles load around it.
   const box = await canvasBox();
@@ -666,6 +683,7 @@ try {
   log('page check failed', e);
   await shot('99-error.png');
 } finally {
+  results.ready = ready;
   results.console = consoleLines.slice(0, 80);
   results.pageErrors = pageErrors;
   results.failedRequests = failed.slice(0, 40);
