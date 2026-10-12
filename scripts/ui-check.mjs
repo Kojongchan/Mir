@@ -522,7 +522,8 @@ try {
       list.push({ id, aabb: a, diag: Math.hypot(a[3] - a[0], a[4] - a[1], a[5] - a[2]),
         off: Math.hypot((a[0] + a[3]) / 2 - look[0], (a[1] + a[4]) / 2 - look[1], (a[2] + a[5]) / 2 - look[2]) });
     }
-    return list;
+    // The nearest few hundred (a whole site has ≈240k objects: too many to spread into push).
+    return list.sort((p, q) => p.off - q.off).slice(0, 500);
   }));
   const dbOf = h => { const m = /#(\d+)$/.exec(h.id); return m ? Number(m[1]) : 0; };
   const designed = h => dbOf(h) > 0 && dbOf(h) < tree.n && tree.path(dbOf(h)).some(id => id !== dbOf(h) && richFlag[id]);
