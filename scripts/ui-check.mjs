@@ -271,6 +271,7 @@ const server = http.createServer(async (req, res) => {
     if (u.pathname.startsWith('/r2/')) {
       const key = decodeURIComponent(u.pathname.slice(4));
       if (!key.startsWith(`${prefix}/`)) { res.writeHead(403); res.end(); return; }
+      if (key.includes('/tiles3d/') && !u.searchParams.has('X-Amz-Signature')) { results.unsigned = (results.unsigned ?? 0) + 1; res.writeHead(403); res.end(); return; }
       // UI_FAILFIRST=1: the first request of every 3D Tiles content file fails (a dropped request on a poor network).
       if (env.UI_FAILFIRST && /\/tiles3d\/.*\.glb$/.test(key) && !failedOnce.has(key)) {
         failedOnce.add(key); results.failedFirst = (results.failedFirst ?? 0) + 1;
@@ -351,7 +352,9 @@ await page.route('**/api/**', r => {
       if (!current) return r.fulfill({ status: 404, json: { error: '이 모델은 2차 화면용 타일이 아직 없습니다.', missing: true } });
       const c = parse(current.body);
       results.tiles3d = { run: c.run, files: c.files.length, MB: MB(c.bytes), builtAt: c.builtAt, stats: c.stats };
-      return r.fulfill({ json: { run: c.run, builtAt: c.builtAt, urls: Object.fromEntries(c.files.map(f => [f, `${base}/r2/${prefix}/tiles3d/${c.run}/${f}`])) } });
+      // Like R2 presigned URLs: each file's URL carries its own query, and the file server refuses one without it.
+      return r.fulfill({ json: { run: c.run, builtAt: c.builtAt, expiresIn: 14400,
+        urls: Object.fromEntries(c.files.map(f => [f, `${base}/r2/${prefix}/tiles3d/${c.run}/${f}?X-Amz-Signature=ui-check`])) } });
     })();
     return r.fulfill({ json: state });
   }

@@ -122,11 +122,17 @@ export class TilesViewer {
     this.pickMaterial = createPickMaterial(this.state);
     const tiles = new TilesRenderer(`${BASE}tileset.json`);
     tiles.registerPlugin(new GLTFExtensionsPlugin({ meshoptDecoder: MeshoptDecoder }));
+    // Relative paths resolve against the stand-in origin for the root, but the library resolves child content against
+    // the *processed* (signed) tileset URL, i.e. the run folder in R2 without a signature: map both to signed URLs.
+    const runFolder = (urls['tileset.json'] ?? '').split('?')[0].replace(/tileset\.json$/, '');
     tiles.registerPlugin({
       name: 'MIR_SIGNED_URLS',
       preprocessURL: (url: string | URL) => {
-        const text = String(url);
-        return text.startsWith(BASE) ? (this.urls[text.slice(BASE.length).split('?')[0]] ?? text) : text;
+        const text = String(url), bare = text.split('?')[0];
+        for (const base of [BASE, runFolder]) {
+          if (base && bare.startsWith(base)) return this.urls[decodeURI(bare.slice(base.length))] ?? text;
+        }
+        return text;
       },
     });
     this.applyProfile(tiles);
