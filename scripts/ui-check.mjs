@@ -431,24 +431,6 @@ if (PAGE === 2) {
     const box = await canvasBox();
     results.v2.push(await orbit(() => window.__viewer.stats().frames));
     await settle2('after-orbit', 120000);
-    // Pick an object near the centre (first hit on a widening grid), then zoom to it (per-object boxes) and let the
-    // finer levels load.
-    const at = await page.evaluate(() => {
-      const v = window.__viewer, c = v.renderer.domElement, W = c.clientWidth, H = c.clientHeight;
-      for (let ring = 0; ring <= 6; ring++) for (let i = -ring; i <= ring; i++) for (let j = -ring; j <= ring; j++) {
-        if (Math.max(Math.abs(i), Math.abs(j)) !== ring) continue;
-        const x = W / 2 + i * W / 16, y = H / 2 + j * H / 16;
-        if (v.pick(x, y)?.dbId) return { x, y };
-      }
-      return { x: W / 2, y: H / 2 };
-    }).catch(() => ({ x: box.width / 2, y: box.height / 2 }));
-    await page.mouse.click(box.x + at.x, box.y + at.y);
-    await sleep(1500);
-    results.v2pick = await page.evaluate(() => document.querySelector('.prop-panel__title')?.innerText ?? null);
-    const zoom = page.getByRole('button', { name: '선택 확대' });
-    if (await zoom.isEnabled()) { await zoom.click(); await sleep(1500); await settle2('zoom', 240000); }
-    results.v2.push(await sample('zoomed'));
-    await shot('12-v2-zoomed.png');
     // Search "Structural Framing" (the reported case): highlight all, zoom to them.
     const search = page.locator('.prop-panel input[type=search]');
     if (await search.count()) {
@@ -464,6 +446,24 @@ if (PAGE === 2) {
         results.v2.push(await sample('search-zoom'));
       }
     }
+    // In that closer view: click an object near the centre (first hit on a widening grid), zoom to the selection
+    // (per-object boxes) and let the finer levels load.
+    const at = await page.evaluate(() => {
+      const v = window.__viewer, c = v.renderer.domElement, W = c.clientWidth, H = c.clientHeight;
+      for (let ring = 0; ring <= 8; ring++) for (let i = -ring; i <= ring; i++) for (let j = -ring; j <= ring; j++) {
+        if (Math.max(Math.abs(i), Math.abs(j)) !== ring) continue;
+        const x = W / 2 + i * W / 32, y = H / 2 + j * H / 32;
+        if (v.pick(x, y)?.dbId) return { x, y };
+      }
+      return { x: W / 2, y: H / 2 };
+    }).catch(() => ({ x: box.width / 2, y: box.height / 2 }));
+    await page.mouse.click(box.x + at.x, box.y + at.y);
+    await sleep(1500);
+    results.v2pick = await page.evaluate(() => document.querySelector('.prop-panel__title')?.innerText ?? null);
+    const zoom = page.getByRole('button', { name: '선택 확대' });
+    if (await zoom.isEnabled()) { await zoom.click(); await sleep(1500); await settle2('zoom', 240000); }
+    results.v2.push(await sample('zoomed'));
+    await shot('12-v2-zoomed.png');
   } catch (e) {
     results.error = e.stack?.slice(0, 1500) ?? String(e);
     log('page check failed', e);

@@ -186,14 +186,54 @@ export class TilesViewer {
     this.needsUpdate = this.dirty = true;
   }
 
-  /** The whole tileset. */
+  /**
+   * The whole tileset, seen from the side of its main horizontal direction at 35° so a long site (railway, road)
+   * spans the screen width instead of a thin diagonal line. The direction is the principal axis of the upper tiles'
+   * centres; a compact site just gets an oblique view.
+   */
   frameAll(animate = true): void {
-    const sphere = this.bounds;
-    if (!sphere) return;
-    // Oblique view from the south-east, like a site overview.
-    const d = sphere.radius * 1.6;
-    void this.controls.setLookAt(sphere.center.x + d * 0.5, sphere.center.y + d * 0.6, sphere.center.z + d * 0.6,
-      sphere.center.x, sphere.center.y, sphere.center.z, animate);
+    if (!this.bounds) return;
+    type TileNode = { boundingVolume?: { box?: number[] }; children?: TileNode[] };
+    const boxes: number[][] = [];
+    const visit = (t: TileNode, depth: number) => {
+      if (t.boundingVolume?.box) boxes.push(t.boundingVolume.box);
+      if (depth < 3) for (const c of t.children ?? []) visit(c, depth + 1);
+    };
+    const root = (this.tiles as unknown as { root: TileNode | null } | null)?.root;
+    if (root) visit(root, 0);
+    if (!boxes.length) {
+      const { center: c, radius } = this.bounds, d = radius * 1.6;
+      void this.controls.setLookAt(c.x + d * 0.5, c.y + d * 0.6, c.z + d * 0.6, c.x, c.y, c.z, animate);
+      this.needsUpdate = this.dirty = true;
+      return;
+    }
+    let mx = 0, my = 0;
+    for (const b of boxes) { mx += b[0]; my += b[1]; }
+    mx /= boxes.length; my /= boxes.length;
+    let sxx = 0, syy = 0, sxy = 0;
+    for (const b of boxes) { sxx += (b[0] - mx) ** 2; syy += (b[1] - my) ** 2; sxy += (b[0] - mx) * (b[1] - my); }
+    const angle = boxes.length > 2 ? 0.5 * Math.atan2(2 * sxy, sxx - syy) : -Math.PI / 4;
+    const u = [Math.cos(angle), Math.sin(angle)], v = [-u[1], u[0]];
+    // Extent along / across the axis and the height range (box centre ± half axes projected).
+    let a0 = Infinity, a1 = -Infinity, c0 = Infinity, c1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const b of boxes) {
+      const along = Math.abs(u[0] * b[3] + u[1] * b[4]) + Math.abs(u[0] * b[6] + u[1] * b[7]) + Math.abs(u[0] * b[9] + u[1] * b[10]);
+      const across = Math.abs(v[0] * b[3] + v[1] * b[4]) + Math.abs(v[0] * b[6] + v[1] * b[7]) + Math.abs(v[0] * b[9] + v[1] * b[10]);
+      const p = u[0] * b[0] + u[1] * b[1], q = v[0] * b[0] + v[1] * b[1], h = Math.abs(b[5]) + Math.abs(b[8]) + Math.abs(b[11]);
+      a0 = Math.min(a0, p - along); a1 = Math.max(a1, p + along);
+      c0 = Math.min(c0, q - across); c1 = Math.max(c1, q + across);
+      z0 = Math.min(z0, b[2] - h); z1 = Math.max(z1, b[2] + h);
+    }
+    const along = (a0 + a1) / 2, across = (c0 + c1) / 2;
+    const centre = new Vector3(u[0] * along + v[0] * across, u[1] * along + v[1] * across, (z0 + z1) / 2).applyMatrix4(this.world.matrixWorld);
+    const halfLength = (a1 - a0) / 2, halfWidth = Math.max((c1 - c0) / 2, (z1 - z0) / 2);
+    const vfov = (this.camera.fov * Math.PI) / 180, hfov = 2 * Math.atan(Math.tan(vfov / 2) * this.camera.aspect);
+    const elevation = (35 * Math.PI) / 180;
+    const distance = Math.max(halfLength / Math.tan(hfov / 2), halfWidth / Math.tan(vfov / 2)) * 1.1 + halfWidth;
+    // From the side (−v) and above, in the tileset frame, then to the scene frame.
+    const eye = new Vector3(-v[0] * Math.cos(elevation), -v[1] * Math.cos(elevation), Math.sin(elevation))
+      .transformDirection(this.world.matrixWorld).multiplyScalar(distance).add(centre);
+    void this.controls.setLookAt(eye.x, eye.y, eye.z, centre.x, centre.y, centre.z, animate);
     this.needsUpdate = this.dirty = true;
   }
 
