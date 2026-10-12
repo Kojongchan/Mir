@@ -1,14 +1,16 @@
 // Publish a 3D Tiles 1.1 tileset for the second viewer engine (docs/3D뷰_2차_엔진.md, decision D23) from the
 // model's existing R2 tiles. Read-only on those tiles.
 //   whole site : every tile's far (merged) file → leaf content, then coarser parents (HLOD) up to one root
-//   region     : TILES3D_REGION="<manifest index>:<count>" (default: the tile with most objects, 48 tiles)
+//   region     : TILES3D_REGION="<manifest index>:<count>" or DIAG_OPTIONS="region=<index>:<count>"
+//                (default: the tile with most objects, 48 tiles)
 //                gets light → original children under its far leaf
 //   output     : <prefix>/tiles3d/runs/<id>/{tileset.json, objects.bin, c/*.glb}, then <prefix>/tiles3d/current.json
 // Object ids: numeric entity ids are dbIds; converter-renamed fragments (`entity-N`) use the model's fragment
 // table (meta/alias), so every level carries the owning object's dbId per vertex.
-import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command, HeadObjectCommand } from '@aws-sdk/client-s3';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { decodeXkt } from './tile-lod-merge.mjs';
 import { packMeshes, mergeGroups, simplifyGroup, encodeGlb, boxVolume, groupSpatially, triangles } from './tiles3d.mjs';
 import { checkStorageBudget } from './storage-budget.mjs';
@@ -20,8 +22,34 @@ const LIGHT_ERROR = 0.05; // metres: light v2 (0.1 % relative per island)
 const PARENT_FACTOR = 3;  // each coarser level allows 3× the error of its children
 let prefix = env.MODEL_CACHE_PREFIX || (env.URN ? cacheKey(env.URN) : '');
 if (!/^[A-Za-z0-9]{1,40}$/.test(prefix ?? '')) throw new Error('Invalid cache identifier');
-const client = new S3Client({ region: 'auto', endpoint: `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+// TILES3D_LOCAL_DIR: a folder laid out like the bucket (dry runs and tests without R2).
+const localDir = env.TILES3D_LOCAL_DIR ? path.resolve(env.TILES3D_LOCAL_DIR) : '';
+// Plain command objects locally; the SDK's classes against R2.
+const local = name => class { constructor(input) { this.input = input; this.name = name; } };
+const { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command, HeadObjectCommand } = localDir
+  ? { S3Client: null, GetObjectCommand: local('Get'), PutObjectCommand: local('Put'), DeleteObjectCommand: local('Delete'), ListObjectsV2Command: local('List'), HeadObjectCommand: local('Head') }
+  : await import('@aws-sdk/client-s3');
+const s3 = localDir ? null : new S3Client({ region: 'auto', endpoint: `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
   credentials: { accessKeyId: env.R2_ACCESS_KEY_ID, secretAccessKey: env.R2_SECRET_ACCESS_KEY } }), Bucket = env.R2_BUCKET;
+const client = localDir ? { send: async command => localSend(command) } : s3;
+/** The few S3 commands this job uses, on a local folder. */
+async function localSend(command) {
+  const { Key, Body, Prefix } = command.input;
+  const file = Key && path.join(localDir, Key);
+  if (command instanceof HeadObjectCommand || command instanceof GetObjectCommand) {
+    if (!fs.existsSync(file)) throw Object.assign(new Error('NoSuchKey'), { name: 'NoSuchKey' });
+    const bytes = fs.readFileSync(file);
+    return { Body: { transformToByteArray: async () => bytes } };
+  }
+  if (command instanceof PutObjectCommand) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, Body); return {}; }
+  if (command instanceof DeleteObjectCommand) { fs.rmSync(file, { force: true }); return {}; }
+  if (command instanceof ListObjectsV2Command) {
+    const walk = dir => (fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }).flatMap(d => d.isDirectory() ? walk(path.join(dir, d.name)) : [path.join(dir, d.name)]) : []);
+    return { Contents: walk(localDir).map(f => ({ Key: path.relative(localDir, f).split(path.sep).join('/'), Size: fs.statSync(f).size }))
+      .filter(o => !Prefix || o.Key.startsWith(Prefix)) };
+  }
+  throw new Error('Unsupported local command');
+}
 const missing = e => e?.name === 'NoSuchKey' || e?.name === 'NotFound' || e?.$metadata?.httpStatusCode === 404;
 const getBytes = async Key => {
   try {
@@ -66,7 +94,9 @@ const validLight = t => (t.motion?.policy === 'merged-light-v2' || t.motion?.pol
 // Region with full detail (prototype scope; the whole site gets far + coarser levels).
 const members = t => t.far?.members ?? t.motion?.members ?? 0;
 const centreOf = b => [(b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2];
-let [regionTile, regionCount] = (env.TILES3D_REGION || '').split(':').map(Number);
+// An empty input must not read as tile 0 (Number('') === 0).
+const regionOption = env.TILES3D_REGION || /(?:^|,)\s*region=(\d+:\d+)/.exec(env.DIAG_OPTIONS || '')?.[1];
+let [regionTile, regionCount] = regionOption ? regionOption.split(':').map(Number) : [NaN, NaN];
 if (!(regionTile >= 0 && regionTile < tiles.length)) { regionTile = 0; tiles.forEach((t, i) => { if (members(t) > members(tiles[regionTile])) regionTile = i; }); }
 if (!(regionCount > 0)) regionCount = 48;
 const c0 = centreOf(tiles[regionTile].aabb);
@@ -171,7 +201,7 @@ files.set('objects.bin', gzipSync(Buffer.from(objectBoxes.buffer)));
 const total = [...files.values()].reduce((s, b) => s + b.length, 0);
 console.log(`Tileset: ${files.size} files, ${MB(total)} MB; root ${triangles(root.groups?.opaque) + triangles(root.groups?.transparent)} triangles`);
 delete root.groups;
-await checkStorageBudget(tok => client.send(new ListObjectsV2Command({ Bucket, MaxKeys: 1000, ...(tok ? { ContinuationToken: tok } : {}) })), total);
+if (!localDir) await checkStorageBudget(tok => client.send(new ListObjectsV2Command({ Bucket, MaxKeys: 1000, ...(tok ? { ContinuationToken: tok } : {}) })), total);
 const run = `runs/${randomUUID()}`;
 const entries = [...files.entries()];
 for (let k = 0; k < entries.length; k += 16) await Promise.all(entries.slice(k, k + 16).map(([path, body]) => client.send(new PutObjectCommand({

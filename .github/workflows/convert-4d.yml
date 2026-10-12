@@ -102,8 +102,8 @@ on:
         description: '(선택) 지표면 LandXML ACC 아이템 ID (urn:adsk.wipprod:dm.lineage:…)'
         required: false
         default: ''
-      tiles3d_region:
-        description: "diag_only=tiles3d 일 때 경량·상세까지 굽는 구간 '<타일 번호>:<개수>' (비우면 객체 최다 타일 주변 48개)"
+      diag_options:
+        description: "진단 옵션 — tiles3d: 'region=<타일 번호>:<개수>' (비우면 객체 최다 타일 주변 48개) · ui-check: 'page=2,cpu=4,mobile=1,tiles=all'"
         required: false
         default: ''
 
@@ -267,14 +267,15 @@ jobs:
       - name: Build the tileset
         env:
           MODEL_CACHE_PREFIX: ${{ github.event.inputs.item }}
-          TILES3D_REGION: ${{ github.event.inputs.tiles3d_region }}
+          DIAG_OPTIONS: ${{ github.event.inputs.diag_options }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: node --max-old-space-size=12288 "$RUNNER_TEMP/tiles3d/build-tiles3d.mjs"
   # Read-only check of the 3D page with a cached model's real tiles and index (scripts/ui-check.mjs).
-  # Screenshots + results.json are published to refs/diag/ui-check (not a branch; nothing deploys from it).
+  # Screenshots + results.json are published to refs/diag/ui-check and refs/diag/ui-check-<run number>
+  # (not branches; nothing deploys from them).
   ui-check:
     if: github.event.inputs.diag_only == 'ui-check'
     runs-on: ubuntu-latest
@@ -297,6 +298,7 @@ jobs:
           UI_OUT: ${{ runner.temp }}/ui-check
           # SwiftShader draws nothing for xeokit data-texture (DTX) layers (picking still works): use VBO layers.
           UI_NO_DTX: '1'
+          UI_OPTIONS: ${{ github.event.inputs.diag_options }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -311,7 +313,7 @@ jobs:
           git init -q
           git add -A
           git -c user.name=ui-check -c user.email=ui-check@users.noreply.github.com commit -qm "UI check run ${{ github.run_number }}"
-          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:refs/diag/ui-check
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:refs/diag/ui-check HEAD:refs/diag/ui-check-${{ github.run_number }}
   convert:
     if: github.event.inputs.diag_only != 'compact-xkt' && github.event.inputs.diag_only != 'motion-cache' && github.event.inputs.diag_only != 'lod-cache' && github.event.inputs.diag_only != 'meta-index' && github.event.inputs.diag_only != 'ui-check' && github.event.inputs.diag_only != 'entity-alias' && github.event.inputs.diag_only != 'tiles3d'
     runs-on: ubuntu-latest

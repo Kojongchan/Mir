@@ -1,0 +1,245 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useParams } from 'react-router-dom';
+import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
+import { useProjectRole } from '../auth/useProjectRole';
+import { supabase } from '../lib/supabase';
+import { isAccModel } from '../lib/aps';
+import { errMessage, readApiJson } from '../lib/errors';
+import { UiIcon } from '../components/icons/UiIcon';
+import { ModelTreePanel } from '../components/model/ModelTreePanel';
+import { PropertyPanel } from '../components/model/PropertyPanel';
+import { useModelIndex, type MetaInfo } from '../viewer/useModelIndex';
+import { TilesViewer, type ViewerStats } from '../viewer2/TilesViewer';
+import { PROFILES, type DeviceTier } from '../viewer2/deviceProfile';
+
+const authHeaders = async () => {
+  const { data } = await supabase.auth.getSession();
+  return { authorization: `Bearer ${data.session?.access_token ?? ''}` };
+};
+
+/**
+ * 3D뷰 (신규 테스트 2차) — second viewer engine prototype (decision D23, docs/3D뷰_2차_엔진.md): the model's 3D Tiles
+ * (built by Actions diag_only=tiles3d) on three.js + 3DTilesRendererJS, next to the xeokit page for comparison.
+ */
+export function ThreeDTest2() {
+  const { projectId = '' } = useParams();
+  const { canEdit } = useProjectRole(projectId);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const viewerRef = useRef<TilesViewer | null>(null);
+  const urlsRef = useRef<Record<string, string> | null>(null);
+  const boxesRef = useRef<Promise<Float32Array> | null>(null);
+  const index = useModelIndex();
+  const tree = index.tree;
+  const [initError, setInitError] = useState('');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState('');
+  const [modelName, setModelName] = useState('');
+  const [stats, setStats] = useState<ViewerStats | null>(null);
+  const [tier, setTier] = useState<DeviceTier | 'auto'>('auto');
+  const [selectedDb, setSelectedDb] = useState<number | null>(null);
+  const [revealDb, setRevealDb] = useState<number | null>(null);
+  const [hiddenNodes, setHiddenNodes] = useState<ReadonlySet<number>>(new Set());
+  const [highlightIds, setHighlightIds] = useState<number[] | null>(null);
+  const [treeOpen, setTreeOpen] = useState(true);
+  const [propsOpen, setPropsOpen] = useState(true);
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    let viewer: TilesViewer;
+    try { viewer = new TilesViewer(canvasRef.current); }
+    catch (e) { setInitError(errMessage(e)); return; }
+    viewer.onStats = next => setStats(prev => prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
+    viewerRef.current = viewer;
+    return () => { viewer.dispose(); viewerRef.current = null; };
+  }, []);
+
+  // Object states → the viewer's state texture (a branch acts on everything under it).
+  const expand = useCallback((ids: Iterable<number>) => {
+    const out: number[] = [];
+    for (const id of ids) { if (tree) out.push(...tree.subtree(id)); else out.push(id); }
+    return out;
+  }, [tree]);
+  const selected = useMemo(() => (selectedDb === null ? [] : expand([selectedDb])), [selectedDb, expand]);
+  const highlighted = useMemo(() => expand(highlightIds ?? []), [highlightIds, expand]);
+  const hidden = useMemo(() => expand(hiddenNodes), [hiddenNodes, expand]);
+  useEffect(() => { viewerRef.current?.setStates(selected, highlighted, hidden); }, [selected, highlighted, hidden]);
+
+  /** Per-object boxes (objects.bin, tileset frame) for zooming; loaded on first use. */
+  const zoomTo = useCallback(async (ids: number[]) => {
+    const url = urlsRef.current?.['objects.bin'];
+    if (!url || !ids.length) return;
+    boxesRef.current ??= fetch(url).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); }).then(b => new Float32Array(b));
+    try {
+      const boxes = await boxesRef.current;
+      const box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+      for (const id of expand(ids)) {
+        if (id * 6 + 5 >= boxes.length || Number.isNaN(boxes[id * 6])) continue;
+        for (let a = 0; a < 3; a++) { box[a] = Math.min(box[a], boxes[id * 6 + a]); box[a + 3] = Math.max(box[a + 3], boxes[id * 6 + 3 + a]); }
+      }
+      if (box.every(Number.isFinite)) viewerRef.current?.frameBox(box);
+      else setStatus('선택한 객체의 위치 정보가 없습니다.');
+    } catch (e) { boxesRef.current = null; setStatus(`위치 정보를 불러오지 못했습니다: ${errMessage(e)}`); }
+  }, [expand]);
+
+  // Click (not drag) selects the object under the pointer; double-click flies toward the clicked point.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    let down: { x: number; y: number; t: number } | null = null;
+    const onDown = (e: PointerEvent) => { if (e.button === 0) down = { x: e.clientX, y: e.clientY, t: performance.now() }; };
+    const onUp = (e: PointerEvent) => {
+      const start = down; down = null;
+      if (!start || e.button !== 0 || Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4 || performance.now() - start.t > 500) return;
+      const rect = canvas.getBoundingClientRect();
+      const hit = viewerRef.current?.pick(e.clientX - rect.left, e.clientY - rect.top);
+      const id = hit?.dbId || null;
+      setSelectedDb(id); setRevealDb(id);
+    };
+    const onDouble = (e: MouseEvent) => {
+      const viewer = viewerRef.current, rect = canvas.getBoundingClientRect();
+      const hit = viewer?.pick(e.clientX - rect.left, e.clientY - rect.top);
+      if (!viewer || !hit) return;
+      const eye = viewer.camera.position.clone().lerp(hit.point, 0.6);
+      void viewer.controls.setLookAt(eye.x, eye.y, eye.z, hit.point.x, hit.point.y, hit.point.z, true);
+    };
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('dblclick', onDouble);
+    return () => { canvas.removeEventListener('pointerdown', onDown); canvas.removeEventListener('pointerup', onUp); canvas.removeEventListener('dblclick', onDouble); };
+  }, []);
+
+  const openModel = useCallback(async (f: PickedAccFile) => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    if (!f.accUrn) { setStatus('이 파일은 아직 APS 파생(URN)이 없습니다.'); return; }
+    setBusy(true); setStatus(`불러오는 중… ${f.name}`); setModelName(f.name);
+    setSelectedDb(null); setRevealDb(null); setHiddenNodes(new Set()); setHighlightIds(null);
+    index.reset(); boxesRef.current = null; urlsRef.current = null;
+    try {
+      const headers = await authHeaders();
+      const urn = encodeURIComponent(f.accUrn);
+      const [stateRes, tilesRes] = await Promise.all([fetch(`/api/aps-convert?urn=${urn}`, { headers }), fetch(`/api/aps-convert?urn=${urn}&tiles3d=1`, { headers })]);
+      const tiles = await readApiJson<{ urls?: Record<string, string>; builtAt?: string; error?: string }>(tilesRes);
+      if (!tilesRes.ok || !tiles.urls?.['tileset.json']) {
+        setStatus(tiles.error ?? '이 모델의 2차 엔진용 타일이 아직 없습니다.');
+        return;
+      }
+      const state = await readApiJson<{ meta?: MetaInfo }>(stateRes);
+      urlsRef.current = tiles.urls;
+      viewer.open(tiles.urls, (state.meta?.objects ?? 0) + 1);
+      void index.open(f.accUrn, state.meta);
+      setStatus(`${f.name} · 3D Tiles ${Object.keys(tiles.urls).length.toLocaleString()}개 파일${tiles.builtAt ? ` · 생성 ${tiles.builtAt.slice(0, 10)}` : ''}`);
+    } catch (e) { setStatus(`열기 실패: ${errMessage(e)}`); }
+    finally { setBusy(false); }
+  }, [index]);
+
+  const toggleNode = useCallback((id: number, visible: boolean) => {
+    setHiddenNodes(prev => {
+      const next = new Set(prev);
+      if (visible) { next.delete(id); if (tree) for (const d of tree.subtree(id)) next.delete(d); } else next.add(id);
+      return next;
+    });
+  }, [tree]);
+  const selectNode = useCallback((id: number, zoom: boolean) => {
+    setSelectedDb(id);
+    if (zoom) void zoomTo([id]);
+  }, [zoomTo]);
+
+  const statsText = stats && [
+    `${PROFILES[stats.tier].label} · 오차 ${stats.errorTarget}px`,
+    `${stats.fps}fps · 드로콜 ${stats.drawCalls} · 삼각형 ${stats.triangles.toLocaleString()}`,
+    `타일 표시 ${stats.tilesVisible} · 로드 ${stats.tilesLoaded} · 다운로드 ${stats.downloading} · 해석 ${stats.parsing}${stats.failed ? ` · 실패 ${stats.failed}` : ''}`,
+    `캐시 ${stats.cacheMB}MB${stats.heapMB !== null ? ` · 힙 ${stats.heapMB}MB` : ''}`,
+    stats.firstFrameMs !== null ? `첫 화면 ${(stats.firstFrameMs / 1000).toFixed(1)}s${stats.settledMs !== null ? ` · 안정 ${(stats.settledMs / 1000).toFixed(1)}s` : ''}` : '',
+  ].filter(Boolean).join(' · ');
+
+  return (
+    <div className="threed-test">
+      <div className="threed-test__note">
+        <UiIcon name="cube" size={16} />
+        <span>
+          <strong>3D뷰 (신규 테스트 2차)</strong> — 엔진 <strong>three.js + 3D Tiles</strong>(표준 계층형 타일, 화면 크기 기반 단계 선택).
+          기존 화면과 같은 모델을 비교하는 시제품입니다. 기기 등급에 따라 그리는 양을 자동으로 조절합니다.
+        </span>
+      </div>
+      <div className="threed-test__viewer">
+        <div className="viewer-bar threed-test__bar">
+          <button className="btn btn--sm btn--primary" onClick={() => setPickerOpen(true)} disabled={busy || !!initError}>
+            <UiIcon name="folder" size={14} /> ACC에서 열기
+          </button>
+          <button className="btn btn--sm" onClick={() => viewerRef.current?.frameAll()} disabled={!modelName}>전체 맞춤</button>
+          <button className="btn btn--sm" onClick={() => selectedDb !== null && void zoomTo([selectedDb])} disabled={selectedDb === null}>선택 확대</button>
+          <label className="threed-test2__tier" title="기기 등급: 화면 오차(px)와 메모리 상한을 정합니다">
+            기기
+            <select value={tier} onChange={e => {
+              const value = e.target.value as DeviceTier | 'auto';
+              setTier(value);
+              if (value !== 'auto') viewerRef.current?.setTier(value);
+            }}>
+              <option value="auto">자동{stats ? ` (${PROFILES[stats.tier].label})` : ''}</option>
+              <option value="high">{PROFILES.high.label}</option>
+              <option value="pc">{PROFILES.pc.label}</option>
+              <option value="mobile">{PROFILES.mobile.label}</option>
+            </select>
+          </label>
+          {tree && (
+            <>
+              <button className={`btn btn--sm${treeOpen ? ' btn--primary' : ''}`} onClick={() => setTreeOpen(o => !o)}>모델 트리</button>
+              <button className={`btn btn--sm${propsOpen ? ' btn--primary' : ''}`} onClick={() => setPropsOpen(o => !o)}>속성</button>
+            </>
+          )}
+          {index.note && <span className="muted">{index.note}</span>}
+          <div className="spacer" />
+          {status && <span className="muted threed-test2__status" title={status}>{status}</span>}
+        </div>
+        <div className="threed-test__viewport">
+          <canvas ref={canvasRef} className="threed-test__canvas" />
+          {initError && (
+            <div className="threed-test__empty">
+              <h3>3D 화면을 시작하지 못했습니다</h3>
+              <p>{initError}</p>
+            </div>
+          )}
+          {!modelName && !initError && (
+            <div className="threed-test__empty">
+              <UiIcon name="cube" size={40} />
+              <p>상단 <em>ACC에서 열기</em>로 모델을 여세요. (2차 엔진용 타일이 생성된 모델만 열립니다)</p>
+            </div>
+          )}
+          {tree && treeOpen && (
+            <aside className="threed-test__panel threed-test__panel--left" aria-label="모델 트리">
+              <div className="threed-test__panel-h">
+                <strong>모델 트리</strong>
+                <span className="muted">{(tree.n - 1).toLocaleString()}개 객체</span>
+                <div className="spacer" />
+                <button type="button" className="ic-only" onClick={() => setTreeOpen(false)} aria-label="모델 트리 닫기">✕</button>
+              </div>
+              <ModelTreePanel tree={tree} hiddenNodes={hiddenNodes} selected={selectedDb} reveal={revealDb}
+                onToggle={toggleNode} onSelect={id => { setRevealDb(null); selectNode(id, false); }} />
+            </aside>
+          )}
+          {tree && propsOpen && (
+            <aside className="threed-test__panel threed-test__panel--right" aria-label="속성">
+              <div className="threed-test__panel-h">
+                <strong>속성</strong>
+                <div className="spacer" />
+                <button type="button" className="ic-only" onClick={() => setPropsOpen(false)} aria-label="속성 닫기">✕</button>
+              </div>
+              <PropertyPanel tree={tree} selected={selectedDb} loadProps={index.loadProps} searchValues={index.searchValues}
+                onSelect={(id, zoom) => { setRevealDb(id); selectNode(id, zoom); }}
+                onZoom={ids => void zoomTo(ids)} onHighlight={setHighlightIds} />
+            </aside>
+          )}
+          {statsText && <div className="threed-test2__stats">{statsText}</div>}
+        </div>
+      </div>
+      {pickerOpen && (
+        <AccFilePicker projectId={projectId} canEdit={canEdit} title="3D 모델 열기" actionLabel="열기" accept={isAccModel}
+          onClose={() => setPickerOpen(false)} onPick={f => { setPickerOpen(false); void openModel(f); }} />
+      )}
+    </div>
+  );
+}
+
+export default ThreeDTest2;

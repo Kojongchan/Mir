@@ -298,6 +298,22 @@ export default async function handler(req: Request): Promise<Response> {
       const urls = await Promise.all(Array.from({ length: m.shardCount }, (_, k) => r2PresignGet(`${dir}/meta/${m.gen}/p/${k}.json`, 900)));
       return json({ urls });
     }
+    // Second viewer engine (D23): the published 3D Tiles run's files, each with a signed URL. The tileset refers to
+    // its files by relative path; the viewer maps those paths to these URLs.
+    if (url.searchParams.get('tiles3d') === '1') {
+      const dir = await resolveCacheDir(urn);
+      const text = await r2GetText(`${dir}/tiles3d/current.json`);
+      if (!text) return json({ error: '이 모델의 3D Tiles 가 아직 없습니다. (Actions diag_only=tiles3d)' }, 404);
+      let current: { v?: number; run?: string; files?: unknown; builtAt?: string };
+      try { current = JSON.parse(text); } catch { return json({ error: '3D Tiles 기록이 손상되었습니다.' }, 500); }
+      if (current.v !== 1 || !/^runs\/[a-zA-Z0-9-]+$/.test(current.run ?? '') || !Array.isArray(current.files))
+        return json({ error: '3D Tiles 기록이 손상되었습니다.' }, 500);
+      const paths = current.files.filter((p): p is string => typeof p === 'string' && /^(?:tileset\.json|objects\.bin|c\/[a-z]\d+\.glb)$/.test(p));
+      const expiresIn = 4 * 3600;
+      const urls = Object.fromEntries(await Promise.all(paths.map(async p =>
+        [p, await r2PresignGet(`${dir}/tiles3d/${current.run}/${p}`, expiresIn)] as const)));
+      return json({ run: current.run, builtAt: current.builtAt, expiresIn, urls });
+    }
     const shard = url.searchParams.get('metaShard');
     if (shard !== null) {
       const dir = await resolveCacheDir(urn);

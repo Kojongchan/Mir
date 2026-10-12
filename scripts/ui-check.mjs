@@ -14,6 +14,12 @@ import { gunzipSync } from 'node:zlib';
 import ts from 'typescript';
 
 const env = process.env;
+// UI_OPTIONS "page=2,cpu=4,mobile=1,tiles=all" (one workflow input) → UI_PAGE / UI_CPU / UI_MOBILE / UI_TILES.
+for (const part of (env.UI_OPTIONS || '').split(',')) {
+  const [k, v] = part.split('=').map(x => x?.trim());
+  if (k && v && /^[a-z]+$/.test(k) && /^[\w.]+$/.test(v)) env[`UI_${k.toUpperCase()}`] = v;
+}
+const PAGE = env.UI_PAGE === '2' ? 2 : 1;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.resolve(env.UI_OUT || 'ui-check-out');
 fs.mkdirSync(out, { recursive: true });
@@ -198,9 +204,9 @@ fs.writeFileSync(path.join(hdir, 'index.html'), '<!doctype html><html lang="ko">
 fs.writeFileSync(path.join(hdir, 'entry.tsx'), `import '../src/index.css';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
-import { ThreeDTest } from '../src/pages/ThreeDTest';
+import { ${PAGE === 2 ? 'ThreeDTest2 as Page' : 'ThreeDTest as Page'} } from '../src/pages/${PAGE === 2 ? 'ThreeDTest2' : 'ThreeDTest'}';
 createRoot(document.getElementById('root')!).render(
-  <MemoryRouter initialEntries={['/project/p1/model-test']}><Routes><Route path="/project/:projectId/model-test" element={<ThreeDTest />} /></Routes></MemoryRouter>);
+  <MemoryRouter initialEntries={['/project/p1/page']}><Routes><Route path="/project/:projectId/page" element={<Page />} /></Routes></MemoryRouter>);
 `);
 fs.writeFileSync(path.join(hdir, 'stubRole.ts'), 'export function useProjectRole() { return { role: \'admin\', isSystemAdmin: true, canView: true, canEdit: true, canManage: true, loading: false }; }\n');
 {
@@ -213,7 +219,7 @@ fs.writeFileSync(path.join(hdir, 'stubRole.ts'), 'export function useProjectRole
     plugins: [{
       name: 'ui-check-viewer-handle', enforce: 'pre',
       transform(code, id) {
-        if (!id.endsWith('/pages/ThreeDTest.tsx')) return null;
+        if (!id.endsWith('/pages/ThreeDTest.tsx') && !id.endsWith('/pages/ThreeDTest2.tsx')) return null;
         if (!code.includes('viewerRef.current = viewer;')) throw new Error('viewer hook not found');
         const out = code.replace('viewerRef.current = viewer;', 'viewerRef.current = viewer; (window as unknown as { __viewer: unknown }).__viewer = viewer;');
         // UI_NO_DTX=1: plain VBO layers instead of data textures (for GL implementations without DTX support).
@@ -240,7 +246,7 @@ results.tileTop = allTiles.map((t, i) => ({ i, members: members(t), MB: MB(t.byt
   .sort((a, b) => b.members - a.members).slice(0, 8);
 const c0 = centre(allTiles[target].aabb);
 const chosen = allTiles.map((t, i) => [i, Math.hypot(...centre(t.aabb).map((v, j) => v - c0[j]))])
-  .sort((a, b) => a[1] - b[1]).slice(0, Math.max(1, Number(env.UI_TILES) || 16)).map(([i]) => i);
+  .sort((a, b) => a[1] - b[1]).slice(0, env.UI_TILES === 'all' ? allTiles.length : Math.max(1, Number(env.UI_TILES) || 16)).map(([i]) => i);
 const r2Path = n => `/r2/${prefix}/xkt/${n}`;
 const tiles = chosen.map(i => {
   const t = allTiles[i];
@@ -300,7 +306,21 @@ const state = { ready: true, xkt: true, urls: [r2Path('unused.xkt')], tiles,
 
 const { chromium } = await import('playwright-core');
 const browser = await chromium.launch({ args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader', '--enable-precise-memory-info'] });
-const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
+const mobile = env.UI_MOBILE === '1';
+const page = await browser.newPage(mobile
+  ? { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' }
+  : { viewport: { width: 1600, height: 900 } });
+// Main-thread stalls (long tasks) for the whole session.
+await page.addInitScript(() => {
+  window.__lt = { n: 0, ms: 0, max: 0 };
+  try {
+    new PerformanceObserver(list => { for (const e of list.getEntries()) { window.__lt.n++; window.__lt.ms += e.duration; window.__lt.max = Math.max(window.__lt.max, e.duration); } })
+      .observe({ type: 'longtask', buffered: true });
+  } catch { /* not supported */ }
+});
+if (Number(env.UI_CPU) > 1) await (await page.context().newCDPSession(page)).send('Emulation.setCPUThrottlingRate', { rate: Number(env.UI_CPU) });
+results.conditions = { page: PAGE, cpu: Number(env.UI_CPU) || 1, mobile, tiles: env.UI_TILES || 16 };
 const consoleLines = [], pageErrors = [], failed = [], apiCalls = [];
 page.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') consoleLines.push(`${m.type()}: ${m.text()}`.slice(0, 300)); });
 page.on('pageerror', e => pageErrors.push(e.message.slice(0, 300)));
@@ -319,6 +339,13 @@ await page.route('**/api/**', r => {
   if (u.pathname === '/api/aps-convert') {
     if (u.searchParams.get('metaShards') === 'all') return r.fulfill({ json: { urls: Array.from({ length: pointer.shardCount }, (_, k) => shardUrl(k)) } });
     if (u.searchParams.has('metaShard')) return r.fulfill({ json: { url: shardUrl(Number(u.searchParams.get('metaShard'))) } });
+    if (u.searchParams.get('tiles3d') === '1') return (async () => {
+      const current = await r2Get(`${prefix}/tiles3d/current.json`);
+      if (!current) return r.fulfill({ status: 404, json: { error: 'no tiles3d' } });
+      const c = parse(current.body);
+      results.tiles3d = { run: c.run, files: c.files.length, MB: MB(c.bytes), builtAt: c.builtAt, stats: c.stats };
+      return r.fulfill({ json: { run: c.run, builtAt: c.builtAt, urls: Object.fromEntries(c.files.map(f => [f, `${base}/r2/${prefix}/tiles3d/${c.run}/${f}`])) } });
+    })();
     return r.fulfill({ json: state });
   }
   return r.fulfill({ status: 404, json: {} });
@@ -347,6 +374,102 @@ async function settle(label, maxMs) {
 }
 const canvasBox = async () => (await page.locator('canvas').first().boundingBox());
 
+const sample = async label => {
+  const m = await page.evaluate(() => ({ lt: window.__lt, heap: performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null,
+    v: window.__viewer?.stats ? window.__viewer.stats() : null })).catch(() => null);
+  return { label, s: Math.round((Date.now() - t0) / 1000), r2MB: MB(r2Bytes), heapMB: m?.heap ?? null,
+    longTasks: m?.lt ? { n: m.lt.n, ms: Math.round(m.lt.ms), max: Math.round(m.lt.max) } : null, viewer: m?.v ?? null };
+};
+if (PAGE === 2) {
+  results.v2 = [];
+  try {
+    await page.goto(base);
+    await page.getByRole('button', { name: 'ACC에서 열기' }).click();
+    await page.locator('.acc-picker-row', { hasText: modelName }).first().click();
+    await page.waitForSelector('.threed-test2__stats', { timeout: 180000 });
+    /** Until the viewer reports a settled frame and no downloads/parses for two samples (or the deadline). */
+    const settle2 = async (label, maxMs) => {
+      const until = Date.now() + maxMs;
+      let quiet = 0;
+      while (Date.now() < until) {
+        await sleep(2000);
+        const st = await page.evaluate(() => window.__viewer?.stats()).catch(() => null);
+        results.timeline.push({ s: Math.round((Date.now() - t0) / 1000), label, st });
+        quiet = st && st.downloading === 0 && st.parsing === 0 && st.settledMs !== null ? quiet + 1 : 0;
+        if (quiet >= 2) return true;
+      }
+      return false;
+    };
+    results.v2.push({ ...(await sample('open')), settled: await settle2('open', 300000) });
+    results.v2.push(await sample('overview'));
+    await shot('11-v2-overview.png');
+    save();
+    // Orbit: a 3 s drag across the view; frames drawn and stalls during it.
+    const box = await canvasBox();
+    const before = await sample('orbit-before');
+    await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.5);
+    await page.mouse.down();
+    const t = Date.now();
+    for (let k = 1; k <= 60; k++) { await page.mouse.move(box.x + box.width * (0.3 + 0.4 * k / 60), box.y + box.height * 0.5); await sleep(50); }
+    await page.mouse.up();
+    const after = await sample('orbit-after');
+    const orbitMs = Date.now() - t;
+    results.v2.push({ label: 'orbit', ms: orbitMs,
+      fps: after.viewer && before.viewer ? Math.round((after.viewer.frames - before.viewer.frames) * 1000 / orbitMs) : null,
+      longTaskMs: (after.longTasks?.ms ?? 0) - (before.longTasks?.ms ?? 0), triangles: after.viewer?.triangles ?? null });
+    await settle2('after-orbit', 120000);
+    // Pick an object near the centre (first hit on a widening grid), then zoom to it (per-object boxes) and let the
+    // finer levels load.
+    const at = await page.evaluate(() => {
+      const v = window.__viewer, c = v.renderer.domElement, W = c.clientWidth, H = c.clientHeight;
+      for (let ring = 0; ring <= 6; ring++) for (let i = -ring; i <= ring; i++) for (let j = -ring; j <= ring; j++) {
+        if (Math.max(Math.abs(i), Math.abs(j)) !== ring) continue;
+        const x = W / 2 + i * W / 16, y = H / 2 + j * H / 16;
+        if (v.pick(x, y)?.dbId) return { x, y };
+      }
+      return { x: W / 2, y: H / 2 };
+    }).catch(() => ({ x: box.width / 2, y: box.height / 2 }));
+    await page.mouse.click(box.x + at.x, box.y + at.y);
+    await sleep(1500);
+    results.v2pick = await page.evaluate(() => document.querySelector('.prop-panel__title')?.innerText ?? null);
+    const zoom = page.getByRole('button', { name: '선택 확대' });
+    if (await zoom.isEnabled()) { await zoom.click(); await sleep(1500); await settle2('zoom', 240000); }
+    results.v2.push(await sample('zoomed'));
+    await shot('12-v2-zoomed.png');
+    // Search "Structural Framing" (the reported case): highlight all, zoom to them.
+    const search = page.locator('.prop-panel input[type=search]');
+    if (await search.count()) {
+      await search.fill(env.UI_SEARCH || 'Structural Framing');
+      await page.waitForFunction(q => document.querySelector('.prop-panel__search-bar')?.dataset.term === q, env.UI_SEARCH || 'Structural Framing', { timeout: 60000 }).catch(() => {});
+      results.v2search = await page.evaluate(() => document.querySelector('.prop-panel__search-bar .muted')?.textContent ?? null);
+      const hl = page.locator('.prop-panel__search-bar button', { hasText: '모두 강조' });
+      if (await hl.count() && await hl.isEnabled()) {
+        await hl.click();
+        await page.locator('.prop-panel__search-bar button', { hasText: '확대' }).click();
+        await sleep(1500); await settle2('search-zoom', 240000);
+        await shot('13-v2-search.png');
+        results.v2.push(await sample('search-zoom'));
+      }
+    }
+  } catch (e) {
+    results.error = e.stack?.slice(0, 1500) ?? String(e);
+    log('page check failed', e);
+    await shot('99-error.png');
+  } finally {
+    results.console = consoleLines.slice(0, 80);
+    results.pageErrors = pageErrors;
+    results.failedRequests = failed.slice(0, 40);
+    results.apiCalls = apiCalls.slice(0, 60);
+    results.r2MB = MB(r2Bytes);
+    results.finished = new Date().toISOString();
+    save();
+    await browser.close();
+    server.close();
+  }
+  log('done', JSON.stringify({ error: results.error ?? null, v2: results.v2 }));
+  process.exit(0);
+}
+
 try {
   await page.goto(base);
   await page.getByRole('button', { name: 'ACC에서 열기' }).click();
@@ -354,6 +477,7 @@ try {
   await page.waitForSelector('.threed-test__panel--left', { timeout: 180000 });
   results.treeShownSec = Math.round((Date.now() - t0) / 1000);
   results.firstSettled = await settle('open', 420000);
+  results.v1 = [await sample('open')];
   await shot('01-overview.png');
   save();
 

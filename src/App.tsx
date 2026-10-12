@@ -29,6 +29,8 @@ const AccModels = lazy(() => named(import('./pages/AccModels'), 'AccModels'));
 const StyleGuide = lazy(() => named(import('./pages/StyleGuide'), 'StyleGuide'));
 // 3D뷰(신규 테스트) — 자체 뷰어 엔진(Three.js+web-ifc)을 네이티브 메뉴로 검증.
 const ThreeDTest = lazy(() => named(import('./pages/ThreeDTest'), 'ThreeDTest'));
+// 3D뷰(신규 테스트 2차) — 표준 3D Tiles + three.js 엔진 시제품(D23). 기존 화면과 비교용.
+const ThreeDTest2 = lazy(() => named(import('./pages/ThreeDTest2'), 'ThreeDTest2'));
 
 /** 지연 로드 라우트의 로딩 자리표시(Suspense fallback). */
 function RouteFallback() {
@@ -116,6 +118,7 @@ export default function App() {
             <Route path="clash" element={<AccModels key="clash" autoClash />} />
             {/* 3D뷰(신규 테스트) — iframe 없이 자체 뷰어를 직접 띄우는 실험 메뉴. */}
             <Route path="model-test" element={<ThreeDTest />} />
+            <Route path="model-test-2" element={<ThreeDTest2 />} />
             <Route path="quantities" element={<Quantities />} />
             <Route path="drawings" element={<Drawings />} />
             <Route path="docs" element={<DocumentManager />} />
