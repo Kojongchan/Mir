@@ -200,7 +200,7 @@ save();
 const hdir = path.join(root, '.ui-check');
 fs.rmSync(hdir, { recursive: true, force: true });
 fs.mkdirSync(hdir, { recursive: true });
-fs.writeFileSync(path.join(hdir, 'index.html'), '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>ui-check</title></head><body><div id="root"></div><script type="module" src="./entry.tsx"></script></body></html>');
+fs.writeFileSync(path.join(hdir, 'index.html'), '<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ui-check</title></head><body><div id="root"></div><script type="module" src="./entry.tsx"></script></body></html>');
 fs.writeFileSync(path.join(hdir, 'entry.tsx'), `import '../src/index.css';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
@@ -319,7 +319,8 @@ await page.addInitScript(() => {
       .observe({ type: 'longtask', buffered: true });
   } catch { /* not supported */ }
 });
-if (Number(env.UI_CPU) > 1) await (await page.context().newCDPSession(page)).send('Emulation.setCPUThrottlingRate', { rate: Number(env.UI_CPU) });
+const cdp = await page.context().newCDPSession(page);
+if (Number(env.UI_CPU) > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(env.UI_CPU) });
 results.conditions = { page: PAGE, cpu: Number(env.UI_CPU) || 1, mobile, tiles: env.UI_TILES || 16 };
 const consoleLines = [], pageErrors = [], failed = [], apiCalls = [];
 page.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') consoleLines.push(`${m.type()}: ${m.text()}`.slice(0, 300)); });
@@ -391,14 +392,17 @@ async function orbit(frames) {
   const read = () => page.evaluate(frames).catch(() => null);
   const lt = () => page.evaluate(() => window.__lt?.ms ?? 0).catch(() => 0);
   const f0 = await read(), lt0 = await lt(), t = Date.now();
-  await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.5);
-  await page.mouse.down();
+  // A phone gets a one-finger touch drag (mouse events do not orbit there), a desktop a mouse drag.
+  const touch = (type, x) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y: box.y + box.height * 0.5 }] });
+  const at = u => box.x + box.width * (0.3 + 0.4 * u);
+  if (mobile) await touch('touchStart', at(0));
+  else { await page.mouse.move(at(0), box.y + box.height * 0.5); await page.mouse.down(); }
   for (let k = 1; k <= 120; k++) {
     const u = k <= 60 ? k / 60 : (120 - k) / 60;
-    await page.mouse.move(box.x + box.width * (0.3 + 0.4 * u), box.y + box.height * 0.5);
+    if (mobile) await touch('touchMove', at(u)); else await page.mouse.move(at(u), box.y + box.height * 0.5);
     await sleep(50);
   }
-  await page.mouse.up();
+  if (mobile) await touch('touchEnd'); else await page.mouse.up();
   const ms = Date.now() - t, f1 = await read(), lt1 = await lt();
   return { label: 'orbit', ms, fps: f0 !== null && f1 !== null ? Math.round((f1 - f0) * 1000 / ms) : null, longTaskMs: Math.round(lt1 - lt0) };
 }
@@ -431,7 +435,9 @@ if (PAGE === 2) {
     const box = await canvasBox();
     results.v2.push(await orbit(() => window.__viewer.stats().frames));
     await settle2('after-orbit', 120000);
-    // Search "Structural Framing" (the reported case): highlight all, zoom to them.
+    // Search "Structural Framing" (the reported case): highlight all, zoom to them. Narrow screens start with the
+    // panels closed.
+    if (!await page.locator('.prop-panel').count()) await page.getByRole('button', { name: '속성', exact: true }).click();
     const search = page.locator('.prop-panel input[type=search]');
     if (await search.count()) {
       await search.fill(env.UI_SEARCH || 'Structural Framing');
@@ -450,10 +456,11 @@ if (PAGE === 2) {
     // (per-object boxes) and let the finer levels load.
     const at = await page.evaluate(() => {
       const v = window.__viewer, c = v.renderer.domElement, W = c.clientWidth, H = c.clientHeight;
-      for (let ring = 0; ring <= 8; ring++) for (let i = -ring; i <= ring; i++) for (let j = -ring; j <= ring; j++) {
+      for (let ring = 0; ring <= 14; ring++) for (let i = -ring; i <= ring; i++) for (let j = -ring; j <= ring; j++) {
         if (Math.max(Math.abs(i), Math.abs(j)) !== ring) continue;
-        const x = W / 2 + i * W / 32, y = H / 2 + j * H / 32;
-        if (v.pick(x, y)?.dbId) return { x, y };
+        const x = W / 2 + i * W / 32, y = H / 2 + j * H / 32, r = c.getBoundingClientRect();
+        // Only where the canvas is on top (a phone's bottom sheet covers the lower half).
+        if (document.elementFromPoint(r.left + x, r.top + y) === c && v.pick(x, y)?.dbId) return { x, y };
       }
       return { x: W / 2, y: H / 2 };
     }).catch(() => ({ x: box.width / 2, y: box.height / 2 }));

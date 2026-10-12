@@ -53,6 +53,8 @@ export class TilesViewer {
   private firstFrameMs: number | null = null;
   private settledMs: number | null = null;
   private lastStats = 0;
+  /** CSS px at the bottom covered by a panel (a phone's bottom sheet). */
+  private inset = 0;
   /** Tileset bounds in the scene frame (set when the tileset loads). */
   private bounds: Sphere | null = null;
   /** Counters of the last on-screen frame (renderer.info also counts the 1×1 pick renders). */
@@ -135,6 +137,15 @@ export class TilesViewer {
     this.dirty = true;
   }
 
+  /** Keep the view centred above a panel covering the bottom `px` CSS pixels (0 = none). */
+  setBottomInset(px: number): void {
+    const inset = Math.max(0, Math.round(px));
+    if (inset === this.inset) return;
+    this.inset = inset;
+    this.applyView();
+    this.needsUpdate = this.dirty = true;
+  }
+
   /** Object under a canvas position (CSS px) and its world point, or null. */
   pick(x: number, y: number): { dbId: number; point: Vector3 } | null {
     if (!this.pickMaterial || !this.tiles) return null;
@@ -145,7 +156,8 @@ export class TilesViewer {
       this.pickMaterial!.uniforms.mode.value = mode;
       this.pickMaterial!.uniforms.far.value = this.camera.far;
       const pixel = new Uint8Array(4);
-      this.camera.setViewOffset(w, h, Math.floor(px), Math.floor(py), 1, 1);
+      const inset = this.inset * this.renderer.getPixelRatio();
+      this.camera.setViewOffset(w, h + inset, Math.floor(px), Math.floor(py + inset), 1, 1);
       this.scene.overrideMaterial = this.pickMaterial;
       const background = this.scene.background;
       this.scene.background = null;
@@ -157,7 +169,7 @@ export class TilesViewer {
       this.renderer.setRenderTarget(null);
       this.scene.overrideMaterial = null;
       this.scene.background = background;
-      this.camera.clearViewOffset();
+      this.applyView();
       return pixel;
     };
     const id = read(0);
@@ -301,12 +313,25 @@ export class TilesViewer {
     if (hit && hit.dbId) this.controls.setOrbitPoint(hit.point.x, hit.point.y, hit.point.z);
   };
 
+  /**
+   * Projection for the canvas, shifted up by half the bottom inset: the canvas is the lower window of a taller virtual
+   * view, so the view centre sits in the middle of the uncovered part.
+   */
+  private applyView() {
+    const el = this.canvas.parentElement ?? this.canvas;
+    const w = Math.max(1, el.clientWidth), h = Math.max(1, el.clientHeight);
+    const inset = this.inset < h * 0.8 ? this.inset : 0;
+    this.camera.aspect = w / (h + inset);
+    if (inset) this.camera.setViewOffset(w, h + inset, 0, inset, w, h);
+    else this.camera.clearViewOffset();
+    this.camera.updateProjectionMatrix();
+  }
+
   private fit() {
     const el = this.canvas.parentElement ?? this.canvas;
     const w = Math.max(1, el.clientWidth), h = Math.max(1, el.clientHeight);
     this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    this.applyView();
     this.tiles?.setResolutionFromRenderer(this.camera, this.renderer);
     this.needsUpdate = this.dirty = true;
   }

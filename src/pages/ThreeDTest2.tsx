@@ -21,6 +21,8 @@ const authHeaders = async () => {
  * 3D뷰 (신규 테스트 2차) — second viewer engine prototype (decision D23, docs/3D뷰_2차_엔진.md): the model's 3D Tiles
  * (built by Actions diag_only=tiles3d) on three.js + 3DTilesRendererJS, next to the xeokit page for comparison.
  */
+const narrowScreen = () => window.matchMedia('(max-width: 900px)').matches;
+
 export function ThreeDTest2() {
   const { projectId = '' } = useParams();
   const { canEdit } = useProjectRole(projectId);
@@ -41,8 +43,9 @@ export function ThreeDTest2() {
   const [revealDb, setRevealDb] = useState<number | null>(null);
   const [hiddenNodes, setHiddenNodes] = useState<ReadonlySet<number>>(new Set());
   const [highlightIds, setHighlightIds] = useState<number[] | null>(null);
-  const [treeOpen, setTreeOpen] = useState(true);
-  const [propsOpen, setPropsOpen] = useState(true);
+  // Phones and narrow tablets: panels start closed and one at a time (side by side they cover the view).
+  const [treeOpen, setTreeOpen] = useState(() => !narrowScreen());
+  const [propsOpen, setPropsOpen] = useState(() => !narrowScreen());
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -53,6 +56,19 @@ export function ThreeDTest2() {
     viewerRef.current = viewer;
     return () => { viewer.dispose(); viewerRef.current = null; };
   }, []);
+
+  // Narrow screens: the open panel is a bottom sheet; keep the model centred above it.
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const update = () => {
+      const sheet = narrowScreen() ? document.querySelector<HTMLElement>('.threed-test--v2 .threed-test__panel') : null;
+      viewer.setBottomInset(sheet ? sheet.offsetHeight + 8 : 0);
+    };
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, [tree, treeOpen, propsOpen]);
 
   // Object states → the viewer's state texture (a branch acts on everything under it).
   const expand = useCallback((ids: Iterable<number>) => {
@@ -155,7 +171,7 @@ export function ThreeDTest2() {
   ].filter(Boolean).join(' · ');
 
   return (
-    <div className="threed-test">
+    <div className="threed-test threed-test--v2">
       <div className="threed-test__note">
         <UiIcon name="cube" size={16} />
         <span>
@@ -185,8 +201,8 @@ export function ThreeDTest2() {
           </label>
           {tree && (
             <>
-              <button className={`btn btn--sm${treeOpen ? ' btn--primary' : ''}`} onClick={() => setTreeOpen(o => !o)}>모델 트리</button>
-              <button className={`btn btn--sm${propsOpen ? ' btn--primary' : ''}`} onClick={() => setPropsOpen(o => !o)}>속성</button>
+              <button className={`btn btn--sm${treeOpen ? ' btn--primary' : ''}`} onClick={() => { setTreeOpen(o => !o); if (narrowScreen()) setPropsOpen(false); }}>모델 트리</button>
+              <button className={`btn btn--sm${propsOpen ? ' btn--primary' : ''}`} onClick={() => { setPropsOpen(o => !o); if (narrowScreen()) setTreeOpen(false); }}>속성</button>
             </>
           )}
           {index.note && <span className="muted">{index.note}</span>}

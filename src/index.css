@@ -7365,6 +7365,27 @@ textarea.input {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* No NavCube on this page: the property panel can start at the top. Phones / narrow tablets: panels are a bottom
+   sheet (one at a time, see ThreeDTest2) so the model stays visible above it. */
+.threed-test--v2 .threed-test__panel--right {
+  top: 8px;
+}
+@media (max-width: 900px) {
+  .threed-test--v2 .threed-test__panel--left,
+  .threed-test--v2 .threed-test__panel--right {
+    top: auto;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+    height: 46%;
+  }
+}
+@media (max-width: 600px) {
+  .threed-test--v2 .threed-test__note {
+    display: none;
+  }
+}
 .threed-test2__stats {
   position: absolute;
   left: 8px;
