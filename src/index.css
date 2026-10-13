@@ -4115,19 +4115,10 @@ button.danger:hover:not(:disabled) {
   border-color: var(--accent);
 }
 
-/* mini chart */
-.mini-chart {
+/* 월별 추이 차트(TrendChart) */
+.trend-chart {
   width: 100%;
-  height: auto;
-  display: block;
-}
-.chart-axis {
-  stroke: var(--border);
-  stroke-width: 1;
-}
-.chart-label {
-  fill: var(--muted);
-  font-size: 11px;
+  margin-top: 8px;
 }
 .chart-empty {
   display: flex;
@@ -4175,6 +4166,16 @@ button.danger:hover:not(:disabled) {
 }
 .dash-edit-row input[type='number'] {
   width: 110px;
+}
+/* 도급액: 원 단위 12~13자리가 잘리지 않게 칸을 카드 폭만큼, 아래에 억 단위 확인 */
+.dash-amount-row input[type='number'] {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+.dash-amount-hint {
+  flex-basis: 100%;
+  font-size: 12px;
 }
 .dash-edit-row input:focus {
   outline: none;
@@ -4940,7 +4941,7 @@ button.issue-block__h,
 
 /* ---- 공정현황 타임라인 ---- */
 .sched-timeline {
-  padding: 30px 12px 64px;
+  padding: var(--sched-pad-top, 34px) 12px var(--sched-pad-bottom, 40px);
 }
 .sched-track {
   position: relative;
@@ -4980,9 +4981,17 @@ button.issue-block__h,
   text-align: center;
   white-space: nowrap;
 }
-.sched-marker:nth-child(even) .sched-marker-label {
+/* 라벨 줄(Schedule labelLanes): 0·2 = 아래 1·2번째 줄, 1·3 = 위 1·2번째 줄 — 가까운 날짜끼리 겹치지 않게 */
+.sched-marker.lane-1 .sched-marker-label {
   top: auto;
   bottom: 16px;
+}
+.sched-marker.lane-2 .sched-marker-label {
+  top: 46px;
+}
+.sched-marker.lane-3 .sched-marker-label {
+  top: auto;
+  bottom: 46px;
 }
 .sched-legend {
   display: flex;
@@ -6991,10 +7000,21 @@ textarea.input {
 }
 .issue-search {
   width: 100%;
-  padding-left: 32px;
+  padding: 7px 10px 7px 32px;
+  font-size: 13px;
+  border-radius: 8px;
 }
 .issue-sort {
   flex: none;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+/* 표 안 상태 변경 칸 — 손가락·마우스로 고르기 쉬운 높이 */
+.issue-list td select {
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 6px;
 }
 
 /* 툴바 2행 — 유형 칩 + 상태·항목 드롭다운 */

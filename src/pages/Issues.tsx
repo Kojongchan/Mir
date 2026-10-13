@@ -516,7 +516,7 @@ export function Issues() {
       </div>
 
       {view === 'list' && (
-        <section className="card" style={{ padding: 0 }}>
+        <section className="card issue-list" style={{ padding: 0 }}>
           <div className="cde-table-wrap" style={{ padding: 0 }}>
             <table className="cde-table">
               <thead>

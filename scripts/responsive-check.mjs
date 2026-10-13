@@ -37,7 +37,8 @@ const rows = {
   project_members: [{ project_id: P, user_id: U, role: 'admin', created_at: iso(-90), profiles: { username: 'admin', full_name: '관리자' } }],
   project_info: [{ project_id: P, start_date: iso(-400).slice(0, 10), end_date: iso(800).slice(0, 10), progress_pct: 31.2,
     summary: '평택-오송 2복선화 제5공구 노반·교량·터널', updated_at: iso(-1) }],
-  project_milestones: [0, 1, 2].map(k => ({ id: `m${k}`, project_id: P, name: ['노반 완료', '교량 상부 완료', '궤도 착수'][k], target_date: iso(k * 120 - 30).slice(0, 10), sort_order: k })),
+  // The last milestone sits close to 준공 (labels must not overlap: the deployed 터널 완료 / 준공 pair).
+  project_milestones: [0, 1, 2, 3].map(k => ({ id: `m${k}`, project_id: P, name: ['노반 완료', '교량 상부 완료', '궤도 착수', 'OO 터널 완료'][k], target_date: iso([-30, 90, 210, 690][k]).slice(0, 10), sort_order: k })),
   issues: ['교각 P3 철근 간섭', '터널 갱문 배수 확인 요청(RFI)', '방음벽 기초 위치 오류', '안전난간 누락', '사면 녹화 구간 재검토'].map((title, k) => ({
     id: `i${k}`, project_id: P, type: ['general', 'rfi', 'punch', 'safety', 'quality'][k], meta: {}, category_id: null, title,
     description: '현장 확인 결과 도면과 모델이 다릅니다. 담당자 확인 바랍니다.', status: ['open', 'in_progress', 'resolved', 'open', 'closed'][k],
@@ -52,7 +53,8 @@ const rows = {
   schedules: [{ id: 's1', project_id: P, name: '전체 공정표', created_at: iso(-30) }],
   schedule_tasks: [0, 1, 2, 3, 4].map(k => ({ id: `t${k}`, schedule_id: 's1', project_id: P, name: ['토공', '교량 하부', '교량 상부', '터널 굴착', '궤도'][k],
     start_date: iso(k * 30 - 60).slice(0, 10), end_date: iso(k * 30 + 20).slice(0, 10), progress: [100, 70, 20, 45, 0][k], sort_order: k })),
-  billing_items: [], subcontracts: [], monthly_records: [], folders: [], files: [], drawings: [], models: [],
+  billing_items: [], subcontracts: [], monthly_records: ['2025-06', '2025-12', '2026-03', '2026-06'].map((ym, k) => ({ id: `r${k}`, project_id: P, ym, planned_pct: [20, 40, 52, 65][k], actual_pct: [15, 35, 50, 60][k],
+    billing_amount: [890000000, 98880000, 2470000000, 12740000000][k] })), folders: [], files: [], drawings: [], models: [],
 };
 
 // ── Local server: the build (SPA fallback) and the test model's files under /r2/ ──────────────────

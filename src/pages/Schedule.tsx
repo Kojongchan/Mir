@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useProjectRole } from '../auth/useProjectRole';
-import { MiniChart } from '../components/MiniChart';
+import { TrendChart } from '../components/TrendChart';
 import { errMessage } from '../lib/errors';
 import {
   ddayLabel,
@@ -16,6 +16,23 @@ import {
   type MonthlyRecord,
   type ProjectInfo,
 } from '../lib/dashboard';
+
+/** Rough width (px) of a timeline label line at 11px semibold: Hangul ≈ 11px, other characters ≈ 6.6px. */
+const labelWidth = (text: string) => [...text].reduce((w, c) => w + (/[\u3131-\uD79D]/.test(c) ? 11 : 6.6), 0) + 8;
+
+/**
+ * Lanes for the milestone labels so close dates do not overlap: 0 / 2 below the track (first, second row), 1 / 3 above.
+ * Labels alternate below / above as before and move to a second row only when the first is taken where they sit.
+ */
+function labelLanes(spans: [number, number][]): number[] {
+  const ends = [-Infinity, -Infinity, -Infinity, -Infinity];
+  return spans.map(([a, b], i) => {
+    const order = i % 2 === 0 ? [0, 1, 2, 3] : [1, 0, 3, 2];
+    const lane = order.find(l => ends[l] + 8 <= a) ?? order.reduce((best, l) => (ends[l] < ends[best] ? l : best), order[0]);
+    ends[lane] = b;
+    return lane;
+  });
+}
 
 /**
  * 공정현황 — schedule overview. A milestone timeline (착공→준공) plus the
@@ -32,6 +49,15 @@ export function Schedule() {
   const [monthly, setMonthly] = useState<MonthlyRecord[]>([]);
   const [rec, setRec] = useState({ ym: todayISO().slice(0, 7), planned_pct: 0, actual_pct: 0, billing_amount: 0 });
   const [msg, setMsg] = useState('');
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [trackW, setTrackW] = useState(1000);
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setTrackW(el.clientWidth || 1000));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [info]);
 
   useEffect(() => {
     getProjectInfo(projectId).then(setInfo).catch(() => setInfo(null));
@@ -77,6 +103,21 @@ export function Schedule() {
     ...milestones.map((m) => ({ name: m.name, date: m.target_date })),
     info?.end_date ? { name: '준공', date: info.end_date } : null,
   ].filter((x): x is { name: string; date: string | null } => !!x && !!x.date);
+  const placed = markers
+    .map((m, i) => ({ m, i, p: pos(m.date) }))
+    .filter((x): x is { m: (typeof markers)[number]; i: number; p: number } => x.p !== null)
+    .sort((a, b) => a.p - b.p);
+  const lanes = labelLanes(placed.map(({ m, i, p }) => {
+    const w = Math.max(labelWidth(m.name), labelWidth(`${formatDate(m.date)} · ${ddayLabel(m.date)}`));
+    const x = (p / 100) * trackW;
+    // First and last labels are anchored inward (CSS is-first / is-last).
+    return i === 0 ? [x - 6, x - 6 + w] : i === markers.length - 1 ? [x + 6 - w, x + 6] : [x - w / 2, x + w / 2];
+  }));
+  const laneOf = new Map(placed.map((x, k) => [x.i, lanes[k]]));
+  const timelinePad = {
+    '--sched-pad-top': `${lanes.includes(3) ? 64 : 34}px`,
+    '--sched-pad-bottom': `${lanes.includes(2) ? 70 : 40}px`,
+  } as CSSProperties;
 
   return (
     <div className="dash">
@@ -91,8 +132,8 @@ export function Schedule() {
         {span === null ? (
           <p className="muted">착공일·준공 예정일을 사업개요에서 설정하면 타임라인이 표시됩니다.</p>
         ) : (
-          <div className="sched-timeline">
-            <div className="sched-track">
+          <div className="sched-timeline" style={timelinePad}>
+            <div className="sched-track" ref={trackRef}>
               {todayPos !== null && (
                 <div className="sched-today" style={{ left: `${todayPos}%` }} title="오늘" />
               )}
@@ -100,7 +141,7 @@ export function Schedule() {
                 const p = pos(m.date);
                 if (p === null) return null;
                 return (
-                  <div className={`sched-marker${i === 0 ? ' is-first' : ''}${i === markers.length - 1 ? ' is-last' : ''}`} key={i} style={{ left: `${p}%` }}>
+                  <div className={`sched-marker lane-${laneOf.get(i) ?? 0}${i === 0 ? ' is-first' : ''}${i === markers.length - 1 ? ' is-last' : ''}`} key={i} style={{ left: `${p}%` }}>
                     <span className="sched-dot" />
                     <span className="sched-marker-label">
                       {m.name}<br /><span className="muted">{formatDate(m.date)} · {ddayLabel(m.date)}</span>
@@ -116,17 +157,19 @@ export function Schedule() {
       {/* ---- 진도 곡선 (S-curve) ---- */}
       <section className="card">
         <h3>진도 곡선 <span className="muted">(월별 계획 vs 실적 %)</span></h3>
-        <MiniChart
-          height={200}
+        <TrendChart
+          height={240}
+          domain={[0, 100]}
+          data={monthly.map((m) => ({ ym: m.ym, 계획: Number(m.planned_pct), 실적: Number(m.actual_pct) }))}
+          x="ym"
           series={[
-            { values: monthly.map((m) => Number(m.planned_pct)), color: 'var(--muted)' },
-            { values: monthly.map((m) => Number(m.actual_pct)), color: 'var(--accent)', fill: true },
+            { key: '계획', color: 'var(--chart-2)', dashed: true },
+            { key: '실적', color: 'var(--chart-1)', kind: 'area' },
           ]}
-          labels={monthly.length ? [monthly[0].ym, monthly[monthly.length - 1].ym] : undefined}
         />
-        <div className="sched-legend muted">
-          <span><i className="legend-swatch" style={{ background: 'var(--muted)' }} /> 계획</span>
-          <span><i className="legend-swatch" style={{ background: 'var(--accent)' }} /> 실적</span>
+        <div className="dash-chart-legend" aria-hidden>
+          <span><i style={{ borderTopColor: 'var(--chart-1)' }} /> 실적</span>
+          <span><i style={{ borderTopColor: 'var(--chart-2)', borderTopStyle: 'dashed' }} /> 계획</span>
         </div>
         {canEdit && (
           <div className="dash-edit-row" style={{ marginTop: 12 }}>
