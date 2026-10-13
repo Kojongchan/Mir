@@ -1,7 +1,9 @@
 // Publish a 3D Tiles 1.1 tileset for the second viewer engine (docs/3D뷰_2차_엔진.md, decision D23) from the
 // model's existing R2 tiles. Read-only on those tiles.
 //   structures : every tile's far (merged) file → leaf content; under it the original (detail) file, unless the far
-//                file already keeps ≥ 90 % of the original's triangles; coarser parents (HLOD) up to one root
+//                file already keeps ≥ 90 % of the original's triangles, reached through simplified copies of the
+//                original (1 m, 0.3 m) so a finer view does not jump from far straight to the full original;
+//                coarser parents (HLOD) up to one root
 //   terrain    : the always-loaded base files (aerial photo per patch) → one textured leaf per photo (KTX2 kept as
 //                is) and simplified parents carrying the same photos
 //   region     : TILES3D_REGION="<manifest index>:<count>" or DIAG_OPTIONS="region=<index>:<count>" limits the detail
@@ -17,7 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { decodeXkt } from './tile-lod-merge.mjs';
 import { packMeshes, mergeGroups, simplifyGroup, encodeGlb, boxVolume, groupSpatially, triangles, packTerrain, simplifyTerrain,
-  encodeTerrainGlb } from './tiles3d.mjs';
+  encodeTerrainGlb, weldGroup } from './tiles3d.mjs';
 import { checkStorageBudget } from './storage-budget.mjs';
 import { cacheKey } from './cache-key.mjs';
 
@@ -26,6 +28,10 @@ const env = process.env;
 // replaces it from ≈200 m (field PC tier), where the first viewer also switches.
 const FAR_ERROR = 3;            // metres
 const FAR_ENOUGH = 0.9;         // far keeps this share of the original's triangles → no detail copy needed
+// Between far and the original. Without them a finer screen error jumped from far (17 M triangles site-wide) to the
+// originals (361 M): a 400 m view went from 11 M to 52 M triangles between 6 and 3 px (ui-check run 189).
+const MID_ERRORS = [1, 0.3];    // metres, coarse → fine
+const MID_ENOUGH = 0.7;         // a level is kept only if it has at most this share of the next finer level's triangles
 const TERRAIN_ERROR = 2;        // metres: first simplified terrain level (photo patches are ≈ 9 m triangles)
 const PARENT_FACTOR = 3;        // each coarser level allows 3× the error of its children
 const MAX_PARENT_ERROR = 81;    // metres: a whole-site level simplified harder than this prunes everything away
@@ -116,7 +122,8 @@ if (regionOption) {
 }
 
 const files = new Map(); // relative path → Buffer
-const stats = { far: { files: 0, triangles: 0, bytes: 0 }, detail: { files: 0, triangles: 0, bytes: 0, skipped: 0 },
+const stats = { far: { files: 0, triangles: 0, bytes: 0 }, detail: { files: 0, triangles: 0, bytes: 0, skipped: 0, vertices: 0, weldedVertices: 0 },
+  mid: Object.fromEntries(MID_ERRORS.map(e => [e, { files: 0, triangles: 0, bytes: 0, skipped: 0 }])),
   parents: [], terrain: { leaves: 0, triangles: 0, bytes: 0, textures: 0, textureBytes: 0, parents: [] } };
 const objectBoxes = new Float32Array(objectCount * 6);
 for (let k = 0; k < objectCount; k++) objectBoxes.set([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], k * 6);
@@ -141,12 +148,13 @@ async function load(i, key) {
   const dbIds = dbIdsFor(i, decoded.ids);
   return packMeshes(decoded.meshes, e => dbIds[e]);
 }
-/** Write packed groups as c/<name>.glb; returns { bounds, triangles } or null. */
+/** Write packed groups as c/<name>.glb (counted in `kind`, a stats key or entry); returns { bounds, triangles } or null. */
 async function write(groups, name, kind) {
   const out = await encodeGlb(groups);
   if (!out) return null;
   files.set(`c/${name}.glb`, out.glb);
-  stats[kind].files++; stats[kind].triangles += out.triangles; stats[kind].bytes += out.glb.length;
+  const s = typeof kind === 'string' ? stats[kind] : kind;
+  s.files++; s.triangles += out.triangles; s.bytes += out.glb.length;
   return { bounds: out.bounds, triangles: out.triangles };
 }
 
@@ -189,24 +197,42 @@ await Promise.all(Array.from({ length: 4 }, async () => {
     growObjects(farGroups.opaque); growObjects(farGroups.transparent);
     const node = { key: i, centre: centreOf(far.bounds), bounds: far.bounds, groups: farGroups, content: `c/f${i}.glb`, error: 0, children: [] };
     if ((!region || region.has(i)) && /^[\w.-]+\.xkt$/.test(t.n ?? '')) {
-      const detailGroups = await load(i, t.n);
+      const loaded = await load(i, t.n);
+      // One vertex per position: the simplifier needs connected surfaces, and the original gets lighter too.
+      const detailGroups = loaded && { opaque: weldGroup(loaded.opaque), transparent: weldGroup(loaded.transparent) };
+      if (loaded) {
+        stats.detail.vertices += (loaded.opaque?.ids.length ?? 0) + (loaded.transparent?.ids.length ?? 0);
+        stats.detail.weldedVertices += (detailGroups.opaque?.ids.length ?? 0) + (detailGroups.transparent?.ids.length ?? 0);
+      }
       const detailTriangles = triangles(detailGroups?.opaque) + triangles(detailGroups?.transparent);
       if (detailGroups && far.triangles < FAR_ENOUGH * detailTriangles) {
         growObjects(detailGroups.opaque); growObjects(detailGroups.transparent);
         const detail = await write(detailGroups, `d${i}`, 'detail');
         if (detail) {
-          node.children = [{ bounds: detail.bounds, content: `c/d${i}.glb`, error: 0, children: [] }];
+          // Finest first: each level replaces the next finer one when it saves enough.
+          let below = { bounds: detail.bounds, content: `c/d${i}.glb`, error: 0, children: [] }, belowTriangles = detail.triangles;
+          for (const [k, error] of [...MID_ERRORS.entries()].reverse()) {
+            const s = stats.mid[error];
+            const mid = { opaque: await simplifyGroup(detailGroups.opaque, error), transparent: await simplifyGroup(detailGroups.transparent, error) };
+            const n = triangles(mid.opaque) + triangles(mid.transparent);
+            const out = n && n <= MID_ENOUGH * belowTriangles ? await write(mid, `m${k}-${i}`, s) : null;
+            if (!out) { s.skipped++; continue; }
+            const bounds = [0, 1, 2].map(a => Math.min(out.bounds[a], below.bounds[a])).concat([3, 4, 5].map(a => Math.max(out.bounds[a], below.bounds[a])));
+            below = { bounds, content: `c/m${k}-${i}.glb`, error, children: [below] };
+            belowTriangles = out.triangles;
+          }
+          node.children = [below];
           node.error = FAR_ERROR;
           // Far pruned small parts: the original can reach beyond its box, and culling uses the node's box.
-          for (let a = 0; a < 3; a++) { node.bounds[a] = Math.min(node.bounds[a], detail.bounds[a]); node.bounds[a + 3] = Math.max(node.bounds[a + 3], detail.bounds[a + 3]); }
+          for (let a = 0; a < 3; a++) { node.bounds[a] = Math.min(node.bounds[a], below.bounds[a]); node.bounds[a + 3] = Math.max(node.bounds[a + 3], below.bounds[a + 3]); }
         }
       } else if (detailGroups) stats.detail.skipped++;
     }
     leaves.push(node);
-    if (++done % 100 === 0) console.log(`Leaves ${done}/${tiles.length} · far ${MB(stats.far.bytes)} MB · detail ${MB(stats.detail.bytes)} MB`);
+    if (++done % 100 === 0) console.log(`Leaves ${done}/${tiles.length} · far ${MB(stats.far.bytes)} MB · ${MID_ERRORS.map(e => `${e} m ${MB(stats.mid[e].bytes)} MB`).join(' · ')} · detail ${MB(stats.detail.bytes)} MB`);
   }
 }));
-console.log('Leaves', JSON.stringify({ far: stats.far, detail: stats.detail }));
+console.log('Leaves', JSON.stringify({ far: stats.far, mid: stats.mid, detail: stats.detail }));
 
 // Coarser levels: merge each group of ≤8 children and simplify with a larger absolute error.
 let parentId = 0;

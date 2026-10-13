@@ -4,7 +4,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { Vector3 } from 'three';
 import { packMeshes, encodeGlb, simplifyGroup, mergeGroups, groupSpatially, boxVolume, triangles, packTerrain, simplifyTerrain,
-  encodeTerrainGlb, proxyBoxes } from '../scripts/tiles3d.mjs';
+  encodeTerrainGlb, proxyBoxes, weldGroup } from '../scripts/tiles3d.mjs';
 
 const cube = (x, y, z, s) => {
   const world = Float64Array.from([[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]].flatMap(([a, b, c]) => [x + a * s, y + b * s, z + c * s]));
@@ -146,4 +146,39 @@ test('far levels keep long thin objects as oriented boxes instead of dropping th
   const v0 = coarse.ids.indexOf(2);
   assert.deepEqual([...coarse.rgba.subarray(v0 * 4, v0 * 4 + 4)], [200, 30, 30, 255]);
   assert.equal(proxyBoxes(group, new Set([1, 2, 3]), 4), null);
+});
+
+/** A cube with its vertices split per face (as the converter writes flat-shaded geometry): 36 vertices. */
+const splitCube = (x, y, z, s) => {
+  const { world, tri } = cube(x, y, z, s);
+  return { world: Float64Array.from([...tri].flatMap(v => [world[v * 3], world[v * 3 + 1], world[v * 3 + 2]])), tri: Uint32Array.from(tri, (_, k) => k) };
+};
+
+test('welding joins per-face vertices of one object, never two objects or colours, and simplifies like the original', async () => {
+  const meshes = [
+    { entity: 0, ...splitCube(0, 0, 0, 2), rgba: [200, 10, 10, 255], textured: false },
+    { entity: 1, ...splitCube(0, 0, 0, 2), rgba: [200, 10, 10, 255], textured: false },  // same place, another object
+    { entity: 2, ...splitCube(10, 0, 0, 2), rgba: [10, 10, 200, 255], textured: false },
+  ];
+  const group = packMeshes(meshes, e => e + 1).opaque;
+  assert.equal(group.ids.length, 108);
+  const welded = weldGroup(group);
+  assert.equal(welded.ids.length, 24, '8 corners per cube');
+  assert.equal(triangles(welded), 36);
+  assert.deepEqual([...new Set(welded.ids)].sort(), [1, 2, 3]);
+  for (let v = 0; v < welded.ids.length; v++) assert.equal(welded.rgba[v * 4 + 2], welded.ids[v] === 3 ? 200 : 10);
+  // Every welded triangle is one of the original ones (same corners, same winding).
+  const key = (g, t) => [0, 1, 2].map(k => [...g.pos.subarray(g.idx[t * 3 + k] * 3, g.idx[t * 3 + k] * 3 + 3)].join(',')).join('|');
+  const original = new Set(Array.from({ length: triangles(group) }, (_, t) => key(group, t)));
+  for (let t = 0; t < triangles(welded); t++) assert.ok(original.has(key(welded, t)));
+  // A finely cut 100 × 4 m plate, vertices split per face: the simplifier cannot join loose faces; welded, it can.
+  const plate = { world: [], tri: [] };
+  for (let i = 0; i < 50; i++) for (let j = 0; j < 2; j++) {
+    const q = [[i, j], [i + 1, j], [i + 1, j + 1], [i, j], [i + 1, j + 1], [i, j + 1]];
+    for (const [x, y] of q) { plate.tri.push(plate.world.length / 3); plate.world.push(x * 2, y * 2, 0); }
+  }
+  const slab = packMeshes([{ entity: 0, world: Float64Array.from(plate.world), tri: Uint32Array.from(plate.tri), rgba: [1, 2, 3, 255], textured: false }], () => 5).opaque;
+  const loose = await simplifyGroup(slab, 0.3), coarse = await simplifyGroup(weldGroup(slab), 0.3);
+  assert.equal(triangles(loose), triangles(slab));
+  assert.ok(triangles(coarse) <= triangles(slab) / 10, `${triangles(coarse)} of ${triangles(slab)}`);
 });

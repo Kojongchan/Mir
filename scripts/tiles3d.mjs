@@ -1,5 +1,6 @@
 // 3D Tiles 1.1 content for the second viewer engine (docs/3D뷰_2차_엔진.md). Pure: arrays in, buffers out.
 //   packMeshes      decoded XKT meshes → one opaque + one transparent group (positions, colour, dbId, indices)
+//   weldGroup       one vertex per position within an object (the converter splits them per face)
 //   simplifyGroup   coarser level: meshopt simplify with an absolute error (metres), prune, needle removal; long
 //                   objects that vanished come back as oriented boxes (proxyBoxes)
 //   encodeGlb       group(s) → .glb: int16 positions (KHR_mesh_quantization) + EXT_meshopt_compression,
@@ -64,6 +65,44 @@ export function boundsOf(...groups) {
     if (v > b[a + 3]) b[a + 3] = v;
   }
   return b;
+}
+
+/**
+ * One vertex per position (to `step` metres) within an object and colour, so the simplifier sees connected surfaces
+ * instead of loose faces (the converter splits vertices per face for flat normals). Collapsed triangles are dropped.
+ */
+export function weldGroup(group, step = 0.001) {
+  if (!group) return group;
+  const nv = group.ids.length, p = group.pos, lo = boundsOf(group), c = group.rgba;
+  const q = new Int32Array(nv * 3), colour = new Uint32Array(nv);
+  for (let i = 0; i < nv * 3; i++) q[i] = Math.round((p[i] - lo[i % 3]) / step);
+  for (let v = 0; v < nv; v++) colour[v] = (c[v * 4] | (c[v * 4 + 1] << 8) | (c[v * 4 + 2] << 16) | (c[v * 4 + 3] << 24)) >>> 0;
+  // Open addressing on (position, object, colour); slots hold the first vertex index + 1.
+  let size = 1;
+  while (size < nv * 2) size <<= 1;
+  const table = new Int32Array(size), remap = new Uint32Array(nv), first = [];
+  const same = (u, v) => q[u * 3] === q[v * 3] && q[u * 3 + 1] === q[v * 3 + 1] && q[u * 3 + 2] === q[v * 3 + 2] &&
+    group.ids[u] === group.ids[v] && colour[u] === colour[v];
+  for (let v = 0; v < nv; v++) {
+    let h = Math.imul(q[v * 3], 73856093) ^ Math.imul(q[v * 3 + 1], 19349663) ^ Math.imul(q[v * 3 + 2], 83492791) ^ Math.imul(group.ids[v] | 0, 2654435761 | 0);
+    h &= size - 1;
+    while (table[h] && !same(table[h] - 1, v)) h = (h + 1) & (size - 1);
+    if (!table[h]) { table[h] = v + 1; remap[v] = first.length; first.push(v); }
+    else remap[v] = remap[table[h] - 1];
+  }
+  const n = first.length, idx = new Uint32Array(group.idx.length);
+  let ni = 0;
+  for (let i = 0; i < group.idx.length; i += 3) {
+    const x = remap[group.idx[i]], y = remap[group.idx[i + 1]], z = remap[group.idx[i + 2]];
+    if (x !== y && y !== z && x !== z) { idx[ni++] = x; idx[ni++] = y; idx[ni++] = z; }
+  }
+  const out = { pos: new Float64Array(n * 3), rgba: new Uint8Array(n * 4), ids: new Float32Array(n), idx: idx.slice(0, ni) };
+  first.forEach((v, r) => {
+    out.pos.set(group.pos.subarray(v * 3, v * 3 + 3), r * 3);
+    out.rgba.set(group.rgba.subarray(v * 4, v * 4 + 4), r * 4);
+    out.ids[r] = group.ids[v];
+  });
+  return out;
 }
 
 /** Keep only referenced vertices (after simplification), preserving attributes. */
