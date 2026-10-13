@@ -43,6 +43,9 @@ async function cacheKey(urn: string): Promise<string> {
 // 이전 규약: base64 URN 영숫자 앞 40자 = "urn:adsk.wipprod:fs.file:vf." + ID 2글자 → 버전·다른 파일이 충돌.
 // 읽기 호환 전용(새 데이터는 쓰지 않음).
 const legacyCacheKey = (urn: string) => urn.replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
+// Files of a published 3D Tiles run that get a signed URL (names written by scripts/build-tiles3d.mjs: f/d/h/t/g<n>,
+// in-between levels m<k>-<n>). ui-check signs by the same pattern, read from this line.
+const TILES3D_FILE = /^(?:tileset\.json|objects\.bin|c\/[a-z]\d+(?:-\d+)?\.glb)$/;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -308,7 +311,7 @@ export default async function handler(req: Request): Promise<Response> {
       try { current = JSON.parse(text); } catch { return json({ error: '3D Tiles 기록이 손상되었습니다.' }, 500); }
       if (current.v !== 1 || !/^runs\/[a-zA-Z0-9-]+$/.test(current.run ?? '') || !Array.isArray(current.files))
         return json({ error: '3D Tiles 기록이 손상되었습니다.' }, 500);
-      const paths = current.files.filter((p): p is string => typeof p === 'string' && /^(?:tileset\.json|objects\.bin|c\/[a-z]\d+\.glb)$/.test(p));
+      const paths = current.files.filter((p): p is string => typeof p === 'string' && TILES3D_FILE.test(p));
       const expiresIn = 4 * 3600;
       const urls = Object.fromEntries(await Promise.all(paths.map(async p =>
         [p, await r2PresignGet(`${dir}/tiles3d/${current.run}/${p}`, expiresIn)] as const)));

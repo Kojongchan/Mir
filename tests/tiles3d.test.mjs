@@ -182,3 +182,13 @@ test('welding joins per-face vertices of one object, never two objects or colour
   assert.equal(triangles(loose), triangles(slab));
   assert.ok(triangles(coarse) <= triangles(slab) / 10, `${triangles(coarse)} of ${triangles(slab)}`);
 });
+
+test('every tile file name the build writes is one the API signs', async () => {
+  const fs = await import('node:fs');
+  const signed = new RegExp(/const TILES3D_FILE = \/(.+)\/;/.exec(fs.readFileSync('api/aps-convert.ts', 'utf8'))[1]);
+  const names = [...fs.readFileSync('scripts/build-tiles3d.mjs', 'utf8').matchAll(/`(c\/[^`]*\.glb)`/g)]
+    .map(m => m[1]).filter(n => n !== 'c/${name}.glb').map(n => n.replace(/\$\{[^}]+\}/g, '17'));
+  assert.ok(names.includes('c/m17-17.glb') && names.includes('c/d17.glb'), names.join(' '));
+  for (const n of [...names, 'tileset.json', 'objects.bin']) assert.ok(signed.test(n), n);
+  for (const n of ['c/../x.glb', 'c/f1.glb?x', 'tileset.json.bak']) assert.ok(!signed.test(n), n);
+});

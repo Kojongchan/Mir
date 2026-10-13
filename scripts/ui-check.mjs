@@ -61,6 +61,8 @@ function loadTs(file) {
   return mod;
 }
 const { ModelTree } = loadTs('src/viewer/ModelTree.ts');
+/** The 3D Tiles files the API signs (api/aps-convert.ts). */
+const TILES3D_FILE = new RegExp(/const TILES3D_FILE = \/(.+)\/;/.exec(fs.readFileSync(path.join(root, 'api/aps-convert.ts'), 'utf8'))[1]);
 const { PropSearchIndex } = loadTs('src/viewer/PropSearchIndex.ts');
 
 // Cache directory (a per-URN key may alias a legacy directory, as in the other R2 jobs).
@@ -354,8 +356,11 @@ await page.route('**/api/**', r => {
       const c = parse(current.body);
       results.tiles3d = { run: c.run, files: c.files.length, MB: MB(c.bytes), builtAt: c.builtAt, stats: c.stats };
       // Like R2 presigned URLs: each file's URL carries its own query, and the file server refuses one without it.
+      // Only the files the API signs (its own pattern): a name it does not accept fails here as on the deployment.
+      const signable = c.files.filter(f => TILES3D_FILE.test(f));
+      results.tiles3d.unsignable = c.files.length - signable.length;
       return r.fulfill({ json: { run: c.run, builtAt: c.builtAt, expiresIn: 14400,
-        urls: Object.fromEntries(c.files.map(f => [f, `${base}/r2/${prefix}/tiles3d/${c.run}/${f}?X-Amz-Signature=ui-check`])) } });
+        urls: Object.fromEntries(signable.map(f => [f, `${base}/r2/${prefix}/tiles3d/${c.run}/${f}?X-Amz-Signature=ui-check`])) } });
     })();
     return r.fulfill({ json: state });
   }
