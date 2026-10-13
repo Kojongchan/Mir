@@ -270,7 +270,8 @@ const mime = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'tex
 let r2Bytes = 0;
 // UI_LATENCY: ms before each 3D Tiles file is answered (a remote store's time to first byte; the measured R2 TTFB was
 // 350-850 ms). UI_SHARD=0: every tile on one host (the API spreads them over two host names).
-const latency = Number(env.UI_LATENCY) || 0, shard = env.UI_SHARD !== '0';
+const latency = Number(env.UI_LATENCY) || 0;
+let shard = env.UI_SHARD !== '0';
 /** 3D Tiles files served: level (file kind) and bytes. */
 const r2Log = [];
 const levelOf = key => { const m = /\/c\/([a-z])(\d+)?(?:-\d+)?\.glb$/.exec(key); return m ? (m[1] === 'm' ? `m${m[2]}` : m[1]) : key.split('/').pop(); };
@@ -325,33 +326,40 @@ const state = { ready: true, xkt: true, urls: [r2Path('unused.xkt')], tiles,
 const { chromium } = await import('playwright-core');
 const browser = await chromium.launch({ args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader', '--enable-precise-memory-info'] });
 const mobile = env.UI_MOBILE === '1';
-const page = await browser.newPage(mobile
-  ? { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
-      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' }
-  : { viewport: { width: 1600, height: 900 } });
-// Main-thread stalls (long tasks) for the whole session.
-await page.addInitScript(() => {
-  window.__lt = { n: 0, ms: 0, max: 0 };
-  try {
-    new PerformanceObserver(list => { for (const e of list.getEntries()) { window.__lt.n++; window.__lt.ms += e.duration; window.__lt.max = Math.max(window.__lt.max, e.duration); } })
-      .observe({ type: 'longtask', buffered: true });
-  } catch { /* not supported */ }
-});
-const cdp = await page.context().newCDPSession(page);
-if (Number(env.UI_CPU) > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(env.UI_CPU) });
 results.conditions = { page: PAGE, cpu: Number(env.UI_CPU) || 1, mobile, tiles: env.UI_TILES || 16 };
 const consoleLines = [], pageErrors = [], failed = [], apiCalls = [];
-page.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') consoleLines.push(`${m.type()}: ${m.text()}`.slice(0, 300)); });
-page.on('pageerror', e => pageErrors.push(e.message.slice(0, 300)));
-page.on('requestfailed', r => failed.push(`${r.url().slice(0, 140)} ${r.failure()?.errorText}`));
 const modelName = env.UI_MODEL_NAME || '평택-오송 5공구_통합모델.nwd';
-await page.route('http://x.test/**', r => {
+let page, cdp;
+/** A new browser context (empty storage: no tile cache) and page, with Supabase and the API answered locally. */
+async function newPage() {
+  const context = await browser.newContext(mobile
+    ? { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+        userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' }
+    : { viewport: { width: 1600, height: 900 } });
+  page = await context.newPage();
+  // Main-thread stalls (long tasks) for the whole session.
+  await page.addInitScript(() => {
+    window.__lt = { n: 0, ms: 0, max: 0 };
+    try {
+      new PerformanceObserver(list => { for (const e of list.getEntries()) { window.__lt.n++; window.__lt.ms += e.duration; window.__lt.max = Math.max(window.__lt.max, e.duration); } })
+        .observe({ type: 'longtask', buffered: true });
+    } catch { /* not supported */ }
+  });
+  cdp = await context.newCDPSession(page);
+  if (Number(env.UI_CPU) > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(env.UI_CPU) });
+  page.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') consoleLines.push(`${m.type()}: ${m.text()}`.slice(0, 300)); });
+  page.on('pageerror', e => pageErrors.push(e.message.slice(0, 300)));
+  page.on('requestfailed', r => failed.push(`${r.url().slice(0, 140)} ${r.failure()?.errorText}`));
+  await page.route('http://x.test/**', routeSupabase);
+  await page.route('**/api/**', routeApi);
+}
+function routeSupabase(r) {
   const single = (r.request().headers().accept || '').includes('vnd.pgrst.object+json');
   if (r.request().url().includes('/rest/v1/projects') && single)
     return r.fulfill({ json: { acc_hub_id: 'b.h', acc_project_id: 'b.p', acc_root_folder_id: 'F', acc_root_folder_name: '루트' } });
   return r.fulfill({ json: single ? {} : [] });
-});
-await page.route('**/api/**', r => {
+}
+function routeApi(r) {
   const u = new URL(r.request().url());
   apiCalls.push(`${r.request().method()} ${u.pathname}${u.search.replace(/urn=[^&]+/, 'urn=…')}`);
   if (u.pathname === '/api/aps-acc') return r.fulfill({ json: { folders: [], items: [{ id: 'I1', name: modelName, urn: 'urnUICHECK' }] } });
@@ -375,7 +383,8 @@ await page.route('**/api/**', r => {
     return r.fulfill({ json: state });
   }
   return r.fulfill({ status: 404, json: {} });
-});
+}
+await newPage();
 
 const shot = async (name, clip) => {
   try { await page.screenshot({ path: path.join(out, name), ...(clip ? { clip } : {}), timeout: 120000 }); }
@@ -462,15 +471,23 @@ async function openModel2() {
  * UI_LOADTEST=1 (with UI_QLOOK): how fast a view fills. A fixed flight (whole site → 1200 → 400 → 120 → 40 → 400 m →
  * whole site) right after opening; per step the time until nothing loads any more, the first new tile, and the tile
  * requests by level. Then the page is reloaded and the model opened again (a revisit): the same flight, now with
- * this browser's tile cache. UI_ANCESTORS=0 loads only each view's own tiles (no coarser levels first).
+ * this browser's tile cache. UI_LOADCONF "a1s0_a1s1_a0s1" runs several setups, each in a fresh browser context:
+ * a1/a0 = coarser levels load first or not (only each view's own tiles), s1/s0 = tiles on two host names or one.
  */
 async function loadTest() {
   const look = fixedLook();
   if (!look) throw new Error('UI_LOADTEST needs UI_QLOOK');
-  results.loadTest = { latencyMs: latency, hosts: shard ? 2 : 1, ancestors: env.UI_ANCESTORS !== '0', runs: [] };
-  const fly = async name => {
+  results.loadTest = { latencyMs: latency, configs: [] };
+  const waitSettled = async () => {
+    for (let quiet = 0, until = Date.now() + 120000; quiet < 4 && Date.now() < until;) {
+      await sleep(500);
+      const st = await page.evaluate(() => window.__viewer?.stats()).catch(() => null);
+      quiet = st && st.downloading === 0 && st.parsing === 0 && st.settledMs !== null ? quiet + 1 : 0;
+    }
+  };
+  const fly = async (conf, name) => {
     await closePanels();
-    if (env.UI_ANCESTORS === '0') await page.evaluate(() => window.__viewer.setLoadAncestors(false));
+    await page.evaluate(on => window.__viewer.setLoadAncestors(on), conf.ancestors);
     const steps = [];
     for (const [view, d] of [['site', 0], ['1200m', 1200], ['400m', 400], ['120m', 120], ['40m', 40], ['400m-back', 400], ['site-back', 0]]) {
       const from = r2Log.length, start = Date.now();
@@ -492,25 +509,35 @@ async function loadTest() {
         requests: mine.length, MB: MB(mine.reduce((n, r) => n + r.bytes, 0)), byLevel, triangles: st.triangles, tilesVisible: st.tilesVisible,
         cacheHits: st.cacheHits, usedMB: st.usedMB };
       steps.push(row);
-      log('load', name, JSON.stringify(row));
-      await shot(`l-${name}-${view}.png`);
+      log('load', conf.name, name, JSON.stringify(row));
+      await shot(`l-${conf.name}-${name}-${view}.png`);
     }
-    const total = steps.reduce((n, r) => n + r.loadS, 0);
-    results.loadTest.runs.push({ name, totalS: Math.round(total * 10) / 10, requests: steps.reduce((n, r) => n + r.requests, 0), steps });
+    conf.runs.push({ name, totalS: Math.round(steps.reduce((n, r) => n + r.loadS, 0) * 10) / 10, requests: steps.reduce((n, r) => n + r.requests, 0), steps });
     save();
   };
-  await fly('first');
-  // Revisit: a new page load, same browser (its tile cache kept).
-  const from = r2Log.length, t = Date.now();
-  await page.reload();
-  await openModel2();
-  for (let quiet = 0, until = Date.now() + 120000; quiet < 4 && Date.now() < until;) {
-    await sleep(500);
-    const st = await page.evaluate(() => window.__viewer?.stats()).catch(() => null);
-    quiet = st && st.downloading === 0 && st.parsing === 0 && st.settledMs !== null ? quiet + 1 : 0;
+  for (const name of (env.UI_LOADCONF || `a${env.UI_ANCESTORS === '0' ? 0 : 1}s${shard ? 1 : 0}`).split('_')) {
+    const m = /^a([01])s([01])$/.exec(name);
+    if (!m) continue;
+    shard = m[2] === '1';
+    const conf = { name, ancestors: m[1] === '1', hosts: shard ? 2 : 1, runs: [] };
+    results.loadTest.configs.push(conf);
+    // A fresh context: empty tile cache, the API's URLs with this host setting.
+    await page.context().close();
+    await newPage();
+    let from = r2Log.length, t = Date.now();
+    await page.goto(base);
+    await openModel2();
+    await waitSettled();
+    conf.open = { s: Math.round((Date.now() - t) / 100) / 10, requests: r2Log.length - from };
+    await fly(conf, 'first');
+    // Revisit: a new page load, same browser (its tile cache kept).
+    from = r2Log.length; t = Date.now();
+    await page.reload();
+    await openModel2();
+    await waitSettled();
+    conf.revisitOpen = { s: Math.round((Date.now() - t) / 100) / 10, requests: r2Log.length - from };
+    await fly(conf, 'revisit');
   }
-  results.loadTest.revisitOpen = { s: Math.round((Date.now() - t) / 100) / 10, requests: r2Log.length - from, stats: await page.evaluate(() => window.__viewer.stats()) };
-  await fly('revisit');
 }
 if (PAGE === 2) {
   results.v2 = [];
