@@ -83,6 +83,11 @@ export interface ModelRecord {
 const BUCKET = 'models';
 
 /** Fill in 0019 columns when a fallback query couldn't select them. */
+/** An IFC file in Supabase storage (not an ACC model mirrored by URN for 4D links, whose bytes live in ACC). */
+export function isIfcModel(m: Pick<ModelRecord, 'name' | 'storage_path'>): boolean {
+  return /\.ifc$/i.test(m.storage_path ?? '') || /\.ifc$/i.test(m.name);
+}
+
 function normalizeModel(r: Record<string, unknown>): ModelRecord {
   return {
     bucket: 'models',

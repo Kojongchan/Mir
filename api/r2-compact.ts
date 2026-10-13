@@ -5,17 +5,18 @@ const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body)
   status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
 });
 const TITLE = 'R2 XKT storage compaction';
-const TEST_BRANCH = 'feature/3d-streaming-stability';
+// Test deployments only (never production): the 3D branch and its preview alias, which always carry the same commit.
+const TEST_BRANCHES = ['feature/3d-streaming-stability', 'claude/3d-view-testing-hlrugl'];
 
 export default async function handler(req: Request): Promise<Response> {
   if (!['GET', 'POST'].includes(req.method)) return reply({ error: 'method not allowed' }, 405);
   const env = process.env;
   const supabaseUrl = env.SUPABASE_URL ?? env.VITE_SUPABASE_URL;
-  const ref = env.VERCEL_GIT_COMMIT_REF || env.GH_REF;
+  const ref = env.VERCEL_GIT_COMMIT_REF || env.GH_REF || '';
   if (!supabaseUrl || !env.SUPABASE_SERVICE_ROLE_KEY || !env.GH_REPO || !env.GH_TOKEN) {
     return reply({ error: '서버의 저장소 작업 연결 설정을 확인해야 합니다.' }, 503);
   }
-  if (ref !== TEST_BRANCH) return reply({ error: '최신 3D 테스트 배포에서 실행해 주세요.' }, 403);
+  if (!TEST_BRANCHES.includes(ref)) return reply({ error: '최신 3D 테스트 배포에서 실행해 주세요.' }, 403);
   const token = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
   if (!token) return reply({ error: '로그인이 필요합니다.' }, 401);
   const admin = createClient(supabaseUrl, env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });

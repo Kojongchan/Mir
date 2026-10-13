@@ -5,7 +5,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { IfcViewer, type ElementMeta, type UpAxis } from '../viewer/IfcViewer';
 import { PropertiesPanel } from '../components/PropertiesPanel';
 import { useStore } from '../store/useStore';
-import { downloadModelBytes, listModels, type ModelRecord } from '../lib/api';
+import { downloadModelBytes, isIfcModel, listModels, type ModelRecord } from '../lib/api';
 import { createBillingItem, listBillingItems } from '../lib/portal';
 import {
   computeQuantities,
@@ -68,7 +68,14 @@ export function Quantities() {
   }, [setSelected]);
 
   useEffect(() => {
-    listModels(projectId).then(setModels).catch(() => setModels([]));
+    // Only IFC files can be measured here; ACC models (rows mirrored by URN for 4D links) have no bytes in storage.
+    listModels(projectId).then(ms => {
+      const ifc = ms.filter(isIfcModel);
+      setModels(ifc);
+      if (!ifc.length) setStatus(ms.length
+        ? `물량 산출은 IFC 모델 전용입니다 — 이 프로젝트의 모델 ${ms.length}개는 ACC 모델이라 아직 대상이 아닙니다.`
+        : '이 프로젝트에는 IFC 모델이 없습니다.');
+    }).catch(() => setModels([]));
   }, [projectId]);
 
   useEffect(() => {
@@ -84,7 +91,7 @@ export function Quantities() {
     for (const m of models) {
       setStatus(`불러오는 중: ${m.name} (${ok + 1}/${models.length})`);
       try {
-        const bytes = await downloadModelBytes(m.storage_path);
+        const bytes = await downloadModelBytes(m.storage_path, m.bucket);
         const saved = loadUpAxisPref(m.id);
         await viewer.loadIfc(bytes, { label: m.name, ...(saved ? { upAxis: saved } : {}) });
         ok++;
