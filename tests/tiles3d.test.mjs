@@ -4,7 +4,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { Vector3 } from 'three';
 import { packMeshes, encodeGlb, simplifyGroup, mergeGroups, groupSpatially, boxVolume, triangles, packTerrain, simplifyTerrain,
-  encodeTerrainGlb } from '../scripts/tiles3d.mjs';
+  encodeTerrainGlb, proxyBoxes } from '../scripts/tiles3d.mjs';
 
 const cube = (x, y, z, s) => {
   const world = Float64Array.from([[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]].flatMap(([a, b, c]) => [x + a * s, y + b * s, z + c * s]));
@@ -112,4 +112,38 @@ test('terrain: simplification keeps photo borders; the glb embeds each photo onc
   assert.equal(out.textureBytes, 32);
   // Photos missing (not KTX2) are left out rather than drawn untextured.
   assert.equal((await encodeTerrainGlb(coarse, [null, null])), null);
+});
+
+/** A box mesh with the given centre, axis directions (unit) and half lengths. */
+const orientedBox = (c, axes, half) => {
+  const world = [];
+  for (let k = 0; k < 8; k++) for (let a = 0; a < 3; a++)
+    world.push(c[a] + [0, 1, 2].reduce((s, j) => s + ((k >> j) & 1 ? 1 : -1) * half[j] * axes[j][a], 0));
+  const tri = [0, 1, 3, 0, 3, 2, 4, 6, 7, 4, 7, 5, 0, 4, 5, 0, 5, 1, 2, 3, 7, 2, 7, 6, 0, 2, 6, 0, 6, 4, 1, 5, 7, 1, 7, 3];
+  return { world: Float64Array.from(world), tri: Uint32Array.from(tri) };
+};
+
+test('far levels keep long thin objects as oriented boxes instead of dropping them', async () => {
+  const r = Math.SQRT1_2;
+  const meshes = [
+    { entity: 0, ...cube(0, 0, 0, 60), rgba: [180, 180, 180, 255], textured: false },                       // survives
+    { entity: 1, ...orientedBox([100, 100, 5], [[r, r, 0], [-r, r, 0], [0, 0, 1]], [20, 0.05, 0.05]), rgba: [200, 30, 30, 255], textured: false }, // 40 m rail, diagonal
+    { entity: 2, ...cube(200, 0, 0, 1), rgba: [30, 200, 30, 255], textured: false },                       // 1 m part
+  ];
+  const group = packMeshes(meshes, e => [1, 2, 3][e]).opaque;
+  const coarse = await simplifyGroup(group, 4);
+  const idsOf = g => new Set(g.ids);
+  assert.ok(idsOf(coarse).has(2), 'the rail is still there');
+  assert.ok(!idsOf(coarse).has(3), 'the small part is below the error');
+  // The rail's box runs along the diagonal: 40 m long, at least 1 m (a quarter of the error) thick.
+  const rail = [];
+  for (let v = 0; v < coarse.ids.length; v++) if (coarse.ids[v] === 2) rail.push([coarse.pos[v * 3], coarse.pos[v * 3 + 1], coarse.pos[v * 3 + 2]]);
+  const along = rail.map(p => (p[0] - 100) * r + (p[1] - 100) * r), across = rail.map(p => -(p[0] - 100) * r + (p[1] - 100) * r);
+  assert.ok(Math.abs(Math.max(...along) - Math.min(...along) - 40) < 0.01);
+  assert.ok(Math.max(...across) - Math.min(...across) >= 0.99);
+  assert.ok(Math.max(...across) - Math.min(...across) < 1.5, 'still thin: not an axis-aligned box of the diagonal');
+  // Colour comes along; nothing is proxied when everything survived.
+  const v0 = coarse.ids.indexOf(2);
+  assert.deepEqual([...coarse.rgba.subarray(v0 * 4, v0 * 4 + 4)], [200, 30, 30, 255]);
+  assert.equal(proxyBoxes(group, new Set([1, 2, 3]), 4), null);
 });

@@ -44,6 +44,7 @@ export function ThreeDTest2() {
   const [missing, setMissing] = useState<{ file: PickedAccFile; converted: boolean } | null>(null);
   const [job, setJob] = useState<{ since: string; note: string } | null>(null);
   const [terrainOn, setTerrainOn] = useState(true);
+  const [capturing, setCapturing] = useState(false);
   const [tier, setTier] = useState<DeviceTier | 'auto'>('auto');
   const [selectedDb, setSelectedDb] = useState<number | null>(null);
   const [revealDb, setRevealDb] = useState<number | null>(null);
@@ -206,6 +207,25 @@ export function ThreeDTest2() {
     return () => clearInterval(timer);
   }, [job, missing, openModel, projectId]);
 
+  /** High-quality still of the current view (2× resolution, finer levels loaded first) saved as a PNG. */
+  const capture = useCallback(async () => {
+    const viewer = viewerRef.current;
+    if (!viewer || capturing) return;
+    setCapturing(true);
+    setStatus('고화질 캡처: 세밀한 단계를 불러오는 중…');
+    try {
+      const blob = await viewer.capture({ onProgress: p => setStatus(`고화질 캡처: 세밀한 단계를 불러오는 중 ${p.seconds}초 · 남은 타일 ${p.loading}개`) });
+      const d = new Date(), two = (n: number) => String(n).padStart(2, '0');
+      const name = `${(modelName || '3D').replace(/\.[^.]+$/, '')}_${d.getFullYear()}${two(d.getMonth() + 1)}${two(d.getDate())}-${two(d.getHours())}${two(d.getMinutes())}.png`;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url; link.download = name; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      setStatus(`고화질 캡처 저장: ${name}`);
+    } catch (e) { setStatus(`고화질 캡처 실패: ${errMessage(e)}`); }
+    finally { setCapturing(false); }
+  }, [capturing, modelName]);
+
   const toggleNode = useCallback((id: number, visible: boolean) => {
     setHiddenNodes(prev => {
       const next = new Set(prev);
@@ -244,6 +264,8 @@ export function ThreeDTest2() {
           <button className="btn btn--sm" onClick={() => selectedDb !== null && void zoomTo([selectedDb])} disabled={selectedDb === null}>선택 확대</button>
           <button className={`btn btn--sm${terrainOn ? ' btn--primary' : ''}`} disabled={!modelName} title="지형(항공사진) 표시"
             onClick={() => { const next = !terrainOn; setTerrainOn(next); viewerRef.current?.setTerrainVisible(next); }}>지형</button>
+          <button className="btn btn--sm" disabled={!modelName || capturing} onClick={() => void capture()}
+            title="지금 화면을 2배 해상도로, 멀리 있는 부분까지 세밀한 단계를 불러온 뒤 PNG 로 저장">{capturing ? '캡처 중…' : '고화질 캡처'}</button>
           <label className="threed-test2__tier" title="기기 등급: 화면 오차(px)와 메모리 상한을 정합니다">
             기기
             <select value={tier} onChange={e => {

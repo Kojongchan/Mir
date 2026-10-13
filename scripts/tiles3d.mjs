@@ -1,6 +1,7 @@
 // 3D Tiles 1.1 content for the second viewer engine (docs/3D뷰_2차_엔진.md). Pure: arrays in, buffers out.
 //   packMeshes      decoded XKT meshes → one opaque + one transparent group (positions, colour, dbId, indices)
-//   simplifyGroup   coarser level: meshopt simplify with an absolute error (metres), prune, needle removal
+//   simplifyGroup   coarser level: meshopt simplify with an absolute error (metres), prune, needle removal; long
+//                   objects that vanished come back as oriented boxes (proxyBoxes)
 //   encodeGlb       group(s) → .glb: int16 positions (KHR_mesh_quantization) + EXT_meshopt_compression,
 //                   per-vertex _FEATURE_ID_0 = dbId (EXT_mesh_features), no normals (viewer shades flat)
 //   groupSpatially  items → tree of ≤ maxChildren per node (recursive median splits)
@@ -82,10 +83,74 @@ function compact(group, idx) {
   return out;
 }
 
+/** Eigenvectors (columns) of a symmetric 3×3 matrix [a00, a01, a02, a11, a12, a22] by Jacobi rotations. */
+function eigenAxes([a00, a01, a02, a11, a12, a22]) {
+  const a = [[a00, a01, a02], [a01, a11, a12], [a02, a12, a22]], v = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  for (let sweep = 0; sweep < 12; sweep++) {
+    for (const [p, q] of [[0, 1], [0, 2], [1, 2]]) {
+      if (Math.abs(a[p][q]) < 1e-12) continue;
+      const theta = (a[q][q] - a[p][p]) / (2 * a[p][q]);
+      const t = Math.sign(theta || 1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1)), c = 1 / Math.sqrt(t * t + 1), s = t * c;
+      for (let k = 0; k < 3; k++) { const akp = a[k][p], akq = a[k][q]; a[k][p] = c * akp - s * akq; a[k][q] = s * akp + c * akq; }
+      for (let k = 0; k < 3; k++) { const apk = a[p][k], aqk = a[q][k]; a[p][k] = c * apk - s * aqk; a[q][k] = s * apk + c * aqk; }
+      for (let k = 0; k < 3; k++) { const vkp = v[k][p], vkq = v[k][q]; v[k][p] = c * vkp - s * vkq; v[k][q] = s * vkp + c * vkq; }
+    }
+  }
+  return [0, 1, 2].map(j => [v[0][j], v[1][j], v[2][j]]);
+}
+
+/**
+ * Objects the simplification removed entirely but that are long enough to read from afar (rails, poles, beams,
+ * railings): one oriented box each (12 triangles, the object's colour and dbId), at least a quarter of the error thick
+ * so it stays a continuous line instead of breaking into dashes. Shorter objects are below the level's error anyway.
+ */
+export function proxyBoxes(group, survivors, errorMeters) {
+  const minLength = errorMeters * 2, minThick = errorMeters * 0.25;
+  const verts = new Map();
+  for (let v = 0; v < group.ids.length; v++) {
+    const id = group.ids[v];
+    if (!(id > 0) || survivors.has(id)) continue;
+    let list = verts.get(id);
+    if (!list) verts.set(id, list = []);
+    list.push(v);
+  }
+  const pos = [], rgba = [], ids = [], idx = [];
+  for (const [id, list] of verts) {
+    const p = group.pos, n = list.length;
+    let mx = 0, my = 0, mz = 0;
+    for (const v of list) { mx += p[v * 3]; my += p[v * 3 + 1]; mz += p[v * 3 + 2]; }
+    mx /= n; my /= n; mz /= n;
+    const cov = [0, 0, 0, 0, 0, 0];
+    for (const v of list) {
+      const x = p[v * 3] - mx, y = p[v * 3 + 1] - my, z = p[v * 3 + 2] - mz;
+      cov[0] += x * x; cov[1] += x * y; cov[2] += x * z; cov[3] += y * y; cov[4] += y * z; cov[5] += z * z;
+    }
+    const axes = eigenAxes(cov);
+    const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+    for (const v of list) for (let k = 0; k < 3; k++) {
+      const d = (p[v * 3] - mx) * axes[k][0] + (p[v * 3 + 1] - my) * axes[k][1] + (p[v * 3 + 2] - mz) * axes[k][2];
+      if (d < lo[k]) lo[k] = d; if (d > hi[k]) hi[k] = d;
+    }
+    if (Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) < minLength) continue;
+    for (let k = 0; k < 3; k++) if (hi[k] - lo[k] < minThick) { const m = (hi[k] + lo[k]) / 2; lo[k] = m - minThick / 2; hi[k] = m + minThick / 2; }
+    const base = ids.length;
+    for (let c = 0; c < 8; c++) {
+      const e = [c & 1 ? hi[0] : lo[0], c & 2 ? hi[1] : lo[1], c & 4 ? hi[2] : lo[2]];
+      for (let a = 0; a < 3; a++) pos.push((a === 0 ? mx : a === 1 ? my : mz) + e[0] * axes[0][a] + e[1] * axes[1][a] + e[2] * axes[2][a]);
+      rgba.push(...group.rgba.subarray(list[0] * 4, list[0] * 4 + 4));
+      ids.push(id);
+    }
+    for (const [a, b, c, d] of [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]])
+      idx.push(base + a, base + b, base + c, base + a, base + c, base + d);
+  }
+  return ids.length ? { pos: Float64Array.from(pos), rgba: Uint8Array.from(rgba), ids: Float32Array.from(ids), idx: Uint32Array.from(idx) } : null;
+}
+
 /**
  * Coarser copy: simplify the whole group with an absolute error in metres and prune parts smaller than it.
  * Objects are separate vertex islands, so simplification never joins two objects; dbIds stay per vertex.
  * Long needle triangles that collapsed thin parts leave behind are dropped (they flash when flat-shaded).
+ * Long objects that disappeared come back as oriented boxes (proxyBoxes), so a far view is not full of gaps.
  */
 export async function simplifyGroup(group, errorMeters, { ratio = 0.01 } = {}) {
   if (!group || group.idx.length < 3) return group;
@@ -112,7 +177,10 @@ export async function simplifyGroup(group, errorMeters, { ratio = 0.01 } = {}) {
     if (maxE2 > minEdge2 && Math.sqrt(len2(cr)) / 2 < 0.02 * maxE2) continue;
     kept.push(a, c, d);
   }
-  return kept.length ? compact(group, Uint32Array.from(kept)) : null;
+  const survivors = new Set();
+  for (const v of kept) survivors.add(group.ids[v]);
+  const simplified = kept.length ? compact(group, Uint32Array.from(kept)) : null;
+  return mergeGroups([simplified, proxyBoxes(group, survivors, errorMeters)]);
 }
 
 // ── GLB ───────────────────────────────────────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ import { TilesRenderer } from '3d-tiles-renderer';
 import { GLTFExtensionsPlugin } from '3d-tiles-renderer/plugins';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { ObjectStateTexture, createPickMaterial, createSurfaceMaterial } from './objectState';
-import { PROFILES, detectTier, type DeviceProfile, type DeviceTier } from './deviceProfile';
+import { PROFILES, probeDevice, type DeviceProfile, type DeviceTier } from './deviceProfile';
 
 CameraControls.install({ THREE: { Vector2, Vector3, Vector4, Quaternion, Matrix4, Spherical, Box3, Sphere, Raycaster } });
 
@@ -90,8 +90,10 @@ export class TilesViewer {
   constructor(private readonly canvas: HTMLCanvasElement, tier?: DeviceTier) {
     // No reverse-Z: with three r171 it drew nothing in Chromium's software GL. Depth precision comes from a near plane
     // that follows the orbit distance and a far plane that just covers the model (see `loop`).
-    this.renderer = new WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-    this.profile = PROFILES[tier ?? detectTier(this.renderer.getContext())];
+    // Edge smoothing keeps thin members (rails, railings) continuous from afar instead of breaking into dashes.
+    const device = probeDevice();
+    this.renderer = new WebGLRenderer({ canvas, antialias: device.antialias, powerPreference: 'high-performance' });
+    this.profile = PROFILES[tier ?? device.tier];
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.profile.pixelRatio));
     this.scene.background = new Color(0.78, 0.84, 0.9);
     this.scene.add(new AmbientLight(0xffffff, 1.6));
@@ -377,6 +379,54 @@ export class TilesViewer {
     this.terrainShown = shown;
     for (const scene of this.terrainScenes) scene.visible = shown;
     this.dirty = true;
+  }
+
+  /**
+   * A still for reports: the view at `scale`× the canvas resolution, every visible part refined until its error is
+   * under `errorPx` image pixels (finer than on screen, where distant parts may thin out), rendered once loading has
+   * settled. The view settings come back afterwards.
+   */
+  async capture({ scale = 2, errorPx = 1.5, maxWaitMs = 180_000, onProgress }: {
+    scale?: number; errorPx?: number; maxWaitMs?: number;
+    onProgress?: (p: { seconds: number; loaded: number; loading: number }) => void;
+  } = {}): Promise<Blob> {
+    const tiles = this.tiles;
+    if (!tiles) throw new Error('모델을 먼저 여세요.');
+    const gl = this.renderer.getContext();
+    const el = this.canvas.parentElement ?? this.canvas;
+    const largest = Math.max(1, el.clientWidth, el.clientHeight);
+    const ratio = Math.max(1, Math.min(scale, (gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) as number) / largest, 8192 / largest));
+    const saved = { ratio: this.renderer.getPixelRatio(), error: tiles.errorTarget, max: tiles.lruCache.maxBytesSize, min: tiles.lruCache.minBytesSize };
+    const MB = 1048576;
+    try {
+      this.renderer.setPixelRatio(ratio);
+      this.fit();
+      tiles.errorTarget = errorPx / ratio; // the tiles' resolution is in CSS px
+      tiles.lruCache.maxBytesSize = Math.max(saved.max, Math.min(saved.max * 2, 1536 * MB));
+      tiles.lruCache.minBytesSize = Math.max(saved.min, tiles.lruCache.maxBytesSize * 0.75);
+      const start = performance.now();
+      let quiet = 0;
+      while (performance.now() - start < maxWaitMs) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+        this.needsUpdate = this.dirty = true;
+        const st = (tiles as unknown as { stats: TileStats & { queued: number; refused: number } }).stats;
+        const busy = loading(tiles) || st.downloading > 0 || st.parsing > 0 || st.queued > 0;
+        onProgress?.({ seconds: Math.round((performance.now() - start) / 1000), loaded: st.loaded, loading: st.queued + st.downloading + st.parsing });
+        quiet = busy ? 0 : quiet + 1;
+        if (quiet >= 4) break;
+      }
+      this.controls.update(0);
+      this.camera.updateMatrixWorld();
+      this.renderer.render(this.scene, this.camera);
+      // The drawing buffer is read in this task, before the browser composites (no preserveDrawingBuffer needed).
+      return await new Promise<Blob>((resolve, reject) => this.canvas.toBlob(b => (b ? resolve(b) : reject(new Error('이미지를 만들지 못했습니다.'))), 'image/png'));
+    } finally {
+      tiles.errorTarget = saved.error;
+      tiles.lruCache.maxBytesSize = saved.max;
+      tiles.lruCache.minBytesSize = saved.min;
+      this.renderer.setPixelRatio(saved.ratio);
+      this.fit();
+    }
   }
 
   /** Fly the camera to look at `target` from `eye` (both in scene coordinates). */

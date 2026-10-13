@@ -446,6 +446,17 @@ if (PAGE === 2) {
     results.v2.push(await sample('overview'));
     await shot('11-v2-overview.png');
     save();
+    // UI_CAPTURE=1: the high-quality still of the overview (download), its size and how long it took.
+    if (env.UI_CAPTURE) {
+      const t = Date.now();
+      const [download] = await Promise.all([page.waitForEvent('download', { timeout: 240000 }), page.getByRole('button', { name: '고화질 캡처' }).click()]);
+      const file = path.join(out, '14-v2-capture.png');
+      await download.saveAs(file);
+      const png = fs.readFileSync(file);
+      results.capture = { seconds: Math.round((Date.now() - t) / 1000), bytes: png.length, width: png.readUInt32BE(16), height: png.readUInt32BE(20),
+        status: await page.locator('.threed-test2__status').innerText().catch(() => '') };
+      log('capture', results.capture);
+    }
     const box = await canvasBox();
     results.v2.push(await orbit(() => window.__viewer.stats().frames));
     await settle2('after-orbit', 120000);

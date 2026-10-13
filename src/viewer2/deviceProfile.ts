@@ -16,19 +16,33 @@ export const PROFILES: Record<DeviceTier, DeviceProfile> = {
   mobile: { tier: 'mobile', label: '모바일·태블릿', errorTarget: 20, maxBytes: 160 * MB, minBytes: 96 * MB, pixelRatio: 1.5, parseJobs: 1, downloadJobs: 6 },
 };
 
+const rendererName = (gl: WebGLRenderingContext | WebGL2RenderingContext | null) => {
+  try {
+    const info = gl?.getExtension('WEBGL_debug_renderer_info');
+    return String(gl?.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER) ?? '');
+  } catch { return ''; }
+};
+const isSoftware = (name: string) => /swiftshader|llvmpipe|basic render|software/i.test(name);
+
 /** Best guess from the browser: touch devices are mobile; a discrete GPU with ≥ 8 GB is high; the rest pc. */
 export function detectTier(gl: WebGLRenderingContext | WebGL2RenderingContext | null, nav: Navigator = navigator): DeviceTier {
   const ua = nav.userAgent;
   const touchMac = /Macintosh/.test(ua) && (nav.maxTouchPoints ?? 0) > 1; // iPadOS reports a desktop Safari
   if (/Android|iPhone|iPad|iPod|Mobile/i.test(ua) || touchMac) return 'mobile';
-  const renderer = (() => {
-    try {
-      const info = gl?.getExtension('WEBGL_debug_renderer_info');
-      return String(gl?.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER) ?? '');
-    } catch { return ''; }
-  })();
+  const renderer = rendererName(gl);
   const memory = (nav as Navigator & { deviceMemory?: number }).deviceMemory ?? 8;
-  const software = /swiftshader|llvmpipe|basic render|software/i.test(renderer);
   const discrete = /nvidia|geforce|rtx|gtx|quadro|radeon rx|radeon pro|apple m\d/i.test(renderer);
-  return !software && discrete && memory >= 8 ? 'high' : 'pc';
+  return !isSoftware(renderer) && discrete && memory >= 8 ? 'high' : 'pc';
+}
+
+/**
+ * Before the viewer's own context exists: the tier, and whether edge smoothing (MSAA) is worth it — on PCs with a
+ * real GPU; not on phones (fill rate) or software rendering (every sample costs CPU).
+ */
+export function probeDevice(): { tier: DeviceTier; antialias: boolean } {
+  const probe = document.createElement('canvas').getContext('webgl2');
+  const tier = detectTier(probe);
+  const software = isSoftware(rendererName(probe));
+  probe?.getExtension('WEBGL_lose_context')?.loseContext();
+  return { tier, antialias: tier !== 'mobile' && !software };
 }
