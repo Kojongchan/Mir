@@ -106,15 +106,17 @@ export class TilesViewer {
   private detail: { errorTarget: number | null; cacheMB: number | null } = { errorTarget: null, cacheMB: null };
 
   constructor(private readonly canvas: HTMLCanvasElement, tier?: DeviceTier) {
-    // No reverse-Z: with three r171 it drew nothing in Chromium's software GL. On PCs a logarithmic depth buffer: the
-    // model has layers a few millimetres apart (a slope's finish on the embankment, drains on it), and with a near
-    // plane that follows the orbit distance a standard buffer could not order them a few hundred metres away — they
-    // fought as flickering white saw-teeth (measured on tile 931: 921 slope vertices within 5 cm of a grey surface).
-    // Phones keep the standard buffer (per-pixel depth writes defeat their hidden-surface removal).
+    // No reverse-Z: with three r171 it drew nothing in Chromium's software GL. A logarithmic depth buffer on every
+    // tier: the model has layers a few millimetres apart (a slope's finish on the embankment, drains on it), and with
+    // a near plane that follows the orbit distance a standard buffer could not order them a few hundred metres away —
+    // they fought as flickering white saw-teeth (measured on tile 931: 921 slope vertices within 5 cm of a grey
+    // surface; standard 24-bit depth resolves about 3e-5 × the orbit distance, 12 mm at 400 m). Phones used to keep
+    // the standard buffer (per-pixel depth writes defeat a tiled GPU's hidden-surface removal) while they drew only
+    // the coarse levels at 20 px; at 4 px they draw the same fine levels as PCs, on a canvas a third the size.
     // Edge smoothing keeps thin members (rails, railings) continuous from afar instead of breaking into dashes.
     const device = probeDevice();
     this.renderer = new WebGLRenderer({ canvas, antialias: device.antialias, powerPreference: 'high-performance',
-      logarithmicDepthBuffer: device.tier !== 'mobile' });
+      logarithmicDepthBuffer: true });
     this.detectedTier = device.tier;
     this.profile = PROFILES[tier ?? device.tier];
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.profile.pixelRatio));

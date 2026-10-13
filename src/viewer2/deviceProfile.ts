@@ -14,11 +14,14 @@ const MB = 1048576;
 // Screen errors from the quality sweeps (ui-check runs 189 → 197; tiles with copies of the original at 1 / 0.3 / 0.1 m,
 // borders locked so seams do not crack): at 3 px a 120 m view looks like the original (3.1 M triangles; 15 M before
 // the copies) and no measured view drew more than 6.1 M triangles or needed more than 190 MB; at 6 px at most 3.1 M,
-// but from about 1 km the 3–9 m levels look blocky. Phones keep 20 px until measured at phone size.
+// but from about 1 km the 3–9 m levels look blocky. Phones and tablets (runs 198 / 199, 390 × 844 and 820 × 1180): a
+// phone's view is shorter, so from 20 down to 6 px a 400 m view stays on the 3 m level (patchy slopes, decks missing);
+// at 4 px the 1 m copies load and the objects are whole — at most 2.7 M triangles and 131 MB in view on both, about
+// what 현장 PC draws at 6 px (3.1 M). Finer than 4 px adds nothing on a tablet (the near views are already the original).
 export const PROFILES: Record<DeviceTier, DeviceProfile> = {
   high: { tier: 'high', label: '고성능 PC', errorTarget: 3, maxBytes: 1024 * MB, minBytes: 768 * MB, pixelRatio: 2, parseJobs: 4, downloadJobs: 12 },
   pc: { tier: 'pc', label: '현장 PC', errorTarget: 6, maxBytes: 384 * MB, minBytes: 256 * MB, pixelRatio: 1.25, parseJobs: 2, downloadJobs: 12 },
-  mobile: { tier: 'mobile', label: '모바일·태블릿', errorTarget: 20, maxBytes: 160 * MB, minBytes: 96 * MB, pixelRatio: 1.5, parseJobs: 1, downloadJobs: 8 },
+  mobile: { tier: 'mobile', label: '모바일·태블릿', errorTarget: 4, maxBytes: 256 * MB, minBytes: 160 * MB, pixelRatio: 1.5, parseJobs: 1, downloadJobs: 8 },
 };
 
 /**
@@ -32,7 +35,7 @@ export const QUALITIES: Record<Quality, { label: string; error: number; memory: 
   best: { label: '최고', error: 0.25, memory: 2 },
 };
 /** Cache ceiling per tier (MB) at any quality: a browser tab is stopped long before the device runs out of memory. */
-const CEILING_MB: Record<DeviceTier, number> = { high: 2048, pc: 768, mobile: 240 };
+const CEILING_MB: Record<DeviceTier, number> = { high: 2048, pc: 768, mobile: 384 };
 
 /** Screen error (px) and cache budget (MB) of a tier at a quality. */
 export function detailOf(profile: DeviceProfile, quality: Quality): { errorTarget: number; cacheMB: number } {
