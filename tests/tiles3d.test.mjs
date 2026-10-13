@@ -192,3 +192,13 @@ test('every tile file name the build writes is one the API signs', async () => {
   for (const n of [...names, 'tileset.json', 'objects.bin']) assert.ok(signed.test(n), n);
   for (const n of ['c/../x.glb', 'c/f1.glb?x', 'tileset.json.bak']) assert.ok(!signed.test(n), n);
 });
+
+test('finer copies keep long thin faces wider than the error; the coarse rule drops them', async () => {
+  // One object: a 4 m block and a 30 × 0.8 m strip (a parapet or deck edge) on top; at 0.3 m it is not collapsed.
+  const strip = { world: Float64Array.from([0, 0, 4.5, 30, 0, 4.5, 30, 0.8, 4.5, 0, 0.8, 4.5]), tri: Uint32Array.from([0, 1, 2, 0, 2, 3]) };
+  const group = packMeshes([{ entity: 0, ...cube(0, 0, 0, 4), rgba: [9, 9, 9, 255], textured: false },
+    { entity: 0, ...strip, rgba: [9, 9, 9, 255], textured: false }], () => 1).opaque;
+  const hasStrip = g => { for (let v = 0; v < g.ids.length; v++) if (g.pos[v * 3] > 20) return true; return false; };
+  assert.ok(!hasStrip(await simplifyGroup(group, 0.3)), 'flatter than 1:25: dropped, and the object survives, so no box');
+  assert.ok(hasStrip(await simplifyGroup(weldGroup(group), 0.3, { minHeight: 0.03 })));
+});

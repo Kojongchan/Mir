@@ -1,9 +1,9 @@
 // Publish a 3D Tiles 1.1 tileset for the second viewer engine (docs/3D뷰_2차_엔진.md, decision D23) from the
 // model's existing R2 tiles. Read-only on those tiles.
-//   structures : every tile's far (merged) file → leaf content; under it the original (detail) file, unless the far
-//                file already keeps ≥ 90 % of the original's triangles, reached through simplified copies of the
-//                original (1 m, 0.3 m) so a finer view does not jump from far straight to the full original;
-//                coarser parents (HLOD) up to one root
+//   structures : per tile, the original (detail) file reached through simplified copies of it (1 m → 0.3 m → 0.1 m),
+//                so a finer view never jumps to the full original; the coarsest copy is the tile's leaf and the
+//                coarser parents (HLOD, merged 8 at a time, 3 m and up) are built from it. A tile without an original
+//                keeps its far (merged) file as the leaf
 //   terrain    : the always-loaded base files (aerial photo per patch) → one textured leaf per photo (KTX2 kept as
 //                is) and simplified parents carrying the same photos
 //   region     : TILES3D_REGION="<manifest index>:<count>" or DIAG_OPTIONS="region=<index>:<count>" limits the detail
@@ -26,12 +26,13 @@ import { cacheKey } from './cache-key.mjs';
 const env = process.env;
 // Far v5 simplifies by 0.25 m but prunes parts < 1 m and drops thin pieces of large merged tiles; at 3 m the original
 // replaces it from ≈200 m (field PC tier), where the first viewer also switches.
-const FAR_ERROR = 3;            // metres
-const FAR_ENOUGH = 0.9;         // far keeps this share of the original's triangles → no detail copy needed
-// Between far and the original. Without them a finer screen error jumped from far (17 M triangles site-wide) to the
-// originals (361 M): a 400 m view went from 11 M to 52 M triangles between 6 and 3 px (ui-check run 189).
-const MID_ERRORS = [1, 0.3];    // metres, coarse → fine
-const MID_ENOUGH = 0.7;         // a level is kept only if it has at most this share of the next finer level's triangles
+const FAR_ERROR = 3;            // metres: the finest parent level
+// Copies of the original. Without them a finer screen error jumped from far (17 M triangles site-wide) to the
+// originals (361 M): a 400 m view went from 11 M to 52 M triangles between 6 and 3 px (ui-check run 189). With 1 m and
+// 0.3 m it drew 1.7 M (run 191); 0.3 m alone was 9.7 M site-wide, lighter than the far files, so they are not used
+// where an original exists, and 0.1 m closes the gap to the original for near views.
+const MID_ERRORS = [1, 0.3, 0.1]; // metres, coarse → fine
+const MID_ENOUGH = 0.7;           // a copy is kept only if it has at most this share of the next finer level's triangles
 const TERRAIN_ERROR = 2;        // metres: first simplified terrain level (photo patches are ≈ 9 m triangles)
 const PARENT_FACTOR = 3;        // each coarser level allows 3× the error of its children
 const MAX_PARENT_ERROR = 81;    // metres: a whole-site level simplified harder than this prunes everything away
@@ -41,8 +42,9 @@ if (!/^[A-Za-z0-9]{1,40}$/.test(prefix ?? '')) throw new Error('Invalid cache id
 const localDir = env.TILES3D_LOCAL_DIR ? path.resolve(env.TILES3D_LOCAL_DIR) : '';
 // Plain command objects locally; the SDK's classes against R2.
 const local = name => class { constructor(input) { this.input = input; this.name = name; } };
-const { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command, HeadObjectCommand } = localDir
-  ? { S3Client: null, GetObjectCommand: local('Get'), PutObjectCommand: local('Put'), DeleteObjectCommand: local('Delete'), ListObjectsV2Command: local('List'), HeadObjectCommand: local('Head') }
+const { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command, HeadObjectCommand } = localDir
+  ? { S3Client: null, GetObjectCommand: local('Get'), PutObjectCommand: local('Put'), DeleteObjectCommand: local('Delete'), DeleteObjectsCommand: local('DeleteMany'),
+    ListObjectsV2Command: local('List'), HeadObjectCommand: local('Head') }
   : await import('@aws-sdk/client-s3');
 const s3 = localDir ? null : new S3Client({ region: 'auto', endpoint: `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
   credentials: { accessKeyId: env.R2_ACCESS_KEY_ID, secretAccessKey: env.R2_SECRET_ACCESS_KEY } }), Bucket = env.R2_BUCKET;
@@ -58,6 +60,7 @@ async function localSend(command) {
   }
   if (command instanceof PutObjectCommand) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, Body); return {}; }
   if (command instanceof DeleteObjectCommand) { fs.rmSync(file, { force: true }); return {}; }
+  if (command instanceof DeleteObjectsCommand) { for (const o of command.input.Delete.Objects) fs.rmSync(path.join(localDir, o.Key), { force: true }); return {}; }
   if (command instanceof ListObjectsV2Command) {
     const walk = dir => (fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }).flatMap(d => d.isDirectory() ? walk(path.join(dir, d.name)) : [path.join(dir, d.name)]) : []);
     return { Contents: walk(localDir).map(f => ({ Key: path.relative(localDir, f).split(path.sep).join('/'), Size: fs.statSync(f).size }))
@@ -122,7 +125,7 @@ if (regionOption) {
 }
 
 const files = new Map(); // relative path → Buffer
-const stats = { far: { files: 0, triangles: 0, bytes: 0 }, detail: { files: 0, triangles: 0, bytes: 0, skipped: 0, vertices: 0, weldedVertices: 0 },
+const stats = { far: { files: 0, triangles: 0, bytes: 0 }, detail: { files: 0, triangles: 0, bytes: 0, vertices: 0, weldedVertices: 0 },
   mid: Object.fromEntries(MID_ERRORS.map(e => [e, { files: 0, triangles: 0, bytes: 0, skipped: 0 }])),
   parents: [], terrain: { leaves: 0, triangles: 0, bytes: 0, textures: 0, textureBytes: 0, parents: [] } };
 const objectBoxes = new Float32Array(objectCount * 6);
@@ -158,7 +161,7 @@ async function write(groups, name, kind) {
   return { bounds: out.bounds, triangles: out.triangles };
 }
 
-// Reuse: the published run's tileset gives each far leaf (box, error, detail child) and the terrain branch as is.
+// Reuse: the published run's tileset gives each tile's leaf (box, error, finer levels) and the terrain branch as is.
 const reuse = env.TILES3D_REUSE === '1' || /(?:^|,)\s*reuse=1\b/.test(env.DIAG_OPTIONS || '');
 let previous = null;
 const reusedLeaves = new Map();
@@ -168,68 +171,69 @@ if (reuse) {
   if (!old) throw new Error('No published tileset to reuse');
   previous = { current, tileset: old };
   const fromBox = v => { const [cx, cy, cz, hx, , , , hy, , , , hz] = v.box; return [cx - hx, cy - hy, cz - hz, cx + hx, cy + hy, cz + hz]; };
+  // The first per-tile file on the way down from the parents is the tile's leaf.
   const visit = n => {
-    const m = /^c\/f(\d+)\.glb$/.exec(n.content?.uri ?? '');
-    if (m) reusedLeaves.set(Number(m[1]), { bounds: fromBox(n.boundingVolume), error: n.geometricError, children: n.children ?? [] });
+    const m = /^c\/(?:f|d|m\d+-)(\d+)\.glb$/.exec(n.content?.uri ?? '');
+    if (m) reusedLeaves.set(Number(m[1]), { bounds: fromBox(n.boundingVolume), error: n.geometricError, content: n.content.uri, children: n.children ?? [] });
     else for (const c of n.children ?? []) if (c.extras?.mir !== 'terrain') visit(c);
   };
   visit(old.root);
-  console.log(`Reusing ${current.run}: ${reusedLeaves.size} far leaves`);
+  console.log(`Reusing ${current.run}: ${reusedLeaves.size} leaves`);
 }
 
-// Leaves: far content for every tile, the original under it where the far file dropped much.
+// Leaves: per tile, the original under its simplified copies (finest first, each kept when it saves enough); the
+// coarsest is the leaf and carries its groups for the parents. No original (or outside a test region): the far file.
 const leaves = [];
 let next = 0, done = 0;
+const progress = () => {
+  if (++done % 100 === 0) console.log(`Leaves ${done}/${tiles.length} · far ${MB(stats.far.bytes)} MB · ${MID_ERRORS.map(e => `${e} m ${MB(stats.mid[e].bytes)} MB`).join(' · ')} · detail ${MB(stats.detail.bytes)} MB`);
+};
+const union = (a, b) => [0, 1, 2].map(k => Math.min(a[k], b[k])).concat([3, 4, 5].map(k => Math.max(a[k], b[k])));
 await Promise.all(Array.from({ length: 4 }, async () => {
   for (let i = next++; i < tiles.length; i = next++) {
     const t = tiles[i];
-    if (!validFar(t)) continue;
-    const farGroups = await load(i, t.far.n);
-    if (!farGroups) continue;
     if (reuse) {
+      // Parents are rebuilt from the far files (the copies are not decoded back).
       const kept = reusedLeaves.get(i);
-      if (kept) leaves.push({ key: i, centre: centreOf(kept.bounds), bounds: kept.bounds, groups: farGroups, content: `c/f${i}.glb`, error: kept.error, childrenJson: kept.children });
-      if (++done % 100 === 0) console.log(`Leaves ${done}/${tiles.length}`);
+      const groups = kept && validFar(t) ? await load(i, t.far.n) : null;
+      if (kept) leaves.push({ key: i, centre: centreOf(kept.bounds), bounds: kept.bounds, groups, content: kept.content, error: kept.error, childrenJson: kept.children });
+      progress();
       continue;
     }
-    const far = await write(farGroups, `f${i}`, 'far');
-    if (!far) continue;
-    growObjects(farGroups.opaque); growObjects(farGroups.transparent);
-    const node = { key: i, centre: centreOf(far.bounds), bounds: far.bounds, groups: farGroups, content: `c/f${i}.glb`, error: 0, children: [] };
-    if ((!region || region.has(i)) && /^[\w.-]+\.xkt$/.test(t.n ?? '')) {
-      const loaded = await load(i, t.n);
-      // One vertex per position: the simplifier needs connected surfaces, and the original gets lighter too.
-      const detailGroups = loaded && { opaque: weldGroup(loaded.opaque), transparent: weldGroup(loaded.transparent) };
-      if (loaded) {
-        stats.detail.vertices += (loaded.opaque?.ids.length ?? 0) + (loaded.transparent?.ids.length ?? 0);
-        stats.detail.weldedVertices += (detailGroups.opaque?.ids.length ?? 0) + (detailGroups.transparent?.ids.length ?? 0);
-      }
-      const detailTriangles = triangles(detailGroups?.opaque) + triangles(detailGroups?.transparent);
-      if (detailGroups && far.triangles < FAR_ENOUGH * detailTriangles) {
-        growObjects(detailGroups.opaque); growObjects(detailGroups.transparent);
-        const detail = await write(detailGroups, `d${i}`, 'detail');
-        if (detail) {
-          // Finest first: each level replaces the next finer one when it saves enough.
-          let below = { bounds: detail.bounds, content: `c/d${i}.glb`, error: 0, children: [] }, belowTriangles = detail.triangles;
-          for (const [k, error] of [...MID_ERRORS.entries()].reverse()) {
-            const s = stats.mid[error];
-            const mid = { opaque: await simplifyGroup(detailGroups.opaque, error), transparent: await simplifyGroup(detailGroups.transparent, error) };
-            const n = triangles(mid.opaque) + triangles(mid.transparent);
-            const out = n && n <= MID_ENOUGH * belowTriangles ? await write(mid, `m${k}-${i}`, s) : null;
-            if (!out) { s.skipped++; continue; }
-            const bounds = [0, 1, 2].map(a => Math.min(out.bounds[a], below.bounds[a])).concat([3, 4, 5].map(a => Math.max(out.bounds[a], below.bounds[a])));
-            below = { bounds, content: `c/m${k}-${i}.glb`, error, children: [below] };
-            belowTriangles = out.triangles;
-          }
-          node.children = [below];
-          node.error = FAR_ERROR;
-          // Far pruned small parts: the original can reach beyond its box, and culling uses the node's box.
-          for (let a = 0; a < 3; a++) { node.bounds[a] = Math.min(node.bounds[a], below.bounds[a]); node.bounds[a + 3] = Math.max(node.bounds[a + 3], below.bounds[a + 3]); }
+    const original = (!region || region.has(i)) && /^[\w.-]+\.xkt$/.test(t.n ?? '') ? await load(i, t.n) : null;
+    if (original) {
+      // One vertex per position: the simplifier needs connected surfaces.
+      const groups = { opaque: weldGroup(original.opaque), transparent: weldGroup(original.transparent) };
+      stats.detail.vertices += (original.opaque?.ids.length ?? 0) + (original.transparent?.ids.length ?? 0);
+      stats.detail.weldedVertices += (groups.opaque?.ids.length ?? 0) + (groups.transparent?.ids.length ?? 0);
+      growObjects(groups.opaque); growObjects(groups.transparent);
+      const detail = await write(groups, `d${i}`, 'detail');
+      if (detail) {
+        let top = { bounds: detail.bounds, content: `c/d${i}.glb`, error: 0, children: [] }, topGroups = groups, topTriangles = detail.triangles;
+        for (const [k, error] of [...MID_ERRORS.entries()].reverse()) {
+          const s = stats.mid[error];
+          // Only true slivers go (thinner than a tenth of the error): long thin faces of rails, edges and parapets stay.
+          const mid = { opaque: await simplifyGroup(groups.opaque, error, { minHeight: error * 0.1 }),
+            transparent: await simplifyGroup(groups.transparent, error, { minHeight: error * 0.1 }) };
+          const n = triangles(mid.opaque) + triangles(mid.transparent);
+          const out = n && n <= MID_ENOUGH * topTriangles ? await write(mid, `m${k}-${i}`, s) : null;
+          if (!out) { s.skipped++; continue; }
+          top = { bounds: union(out.bounds, top.bounds), content: `c/m${k}-${i}.glb`, error, children: [top] };
+          topGroups = mid; topTriangles = out.triangles;
         }
-      } else if (detailGroups) stats.detail.skipped++;
+        leaves.push({ key: i, centre: centreOf(top.bounds), ...top, groups: topGroups });
+        progress();
+        continue;
+      }
     }
-    leaves.push(node);
-    if (++done % 100 === 0) console.log(`Leaves ${done}/${tiles.length} · far ${MB(stats.far.bytes)} MB · ${MID_ERRORS.map(e => `${e} m ${MB(stats.mid[e].bytes)} MB`).join(' · ')} · detail ${MB(stats.detail.bytes)} MB`);
+    if (!validFar(t)) { progress(); continue; }
+    const farGroups = await load(i, t.far.n);
+    const far = farGroups && await write(farGroups, `f${i}`, 'far');
+    if (far) {
+      growObjects(farGroups.opaque); growObjects(farGroups.transparent);
+      leaves.push({ key: i, centre: centreOf(far.bounds), bounds: far.bounds, groups: farGroups, content: `c/f${i}.glb`, error: 0, children: [] });
+    }
+    progress();
   }
 }));
 console.log('Leaves', JSON.stringify({ far: stats.far, mid: stats.mid, detail: stats.detail }));
@@ -237,11 +241,11 @@ console.log('Leaves', JSON.stringify({ far: stats.far, mid: stats.mid, detail: s
 // Coarser levels: merge each group of ≤8 children and simplify with a larger absolute error.
 let parentId = 0;
 async function build(node, depth) {
-  if (node.content) return node; // a leaf (far) node, possibly with a detail child
+  if (node.content) return node; // a tile's leaf, possibly with finer levels under it
   const kids = [];
   for (const child of node.children) kids.push(await build(child, depth + 1));
-  const childError = Math.max(...kids.map(k => k.error || FAR_ERROR));
-  let error = Math.min(childError * PARENT_FACTOR, MAX_PARENT_ERROR), opaque, transparent, out;
+  const childError = Math.max(...kids.map(k => k.error));
+  let error = Math.min(Math.max(childError * PARENT_FACTOR, FAR_ERROR), MAX_PARENT_ERROR), opaque, transparent, out;
   const mergedOpaque = mergeGroups(kids.map(k => k.groups?.opaque)), mergedTransparent = mergeGroups(kids.map(k => k.groups?.transparent));
   // A level must show something: if the error prunes everything, retry finer (down to the children's own error).
   for (;;) {
@@ -338,7 +342,7 @@ if (!localDir) {
 }
 const run = previous ? previous.current.run : `runs/${randomUUID()}`;
 const entries = [...files.entries()];
-for (let k = 0; k < entries.length; k += 16) await Promise.all(entries.slice(k, k + 16).map(([path, body]) => client.send(new PutObjectCommand({
+for (let k = 0; k < entries.length; k += 32) await Promise.all(entries.slice(k, k + 32).map(([path, body]) => client.send(new PutObjectCommand({
   Bucket, Key: `${prefix}/tiles3d/${run}/${path}`, Body: body,
   ContentType: path.endsWith('.glb') ? 'model/gltf-binary' : path.endsWith('.json') ? 'application/json' : 'application/octet-stream',
   ...(path.endsWith('.glb') ? {} : { ContentEncoding: 'gzip' }) }))));
@@ -350,14 +354,38 @@ const bytes = previous ? previous.current.bytes + total : total; // after a reus
 await client.send(new PutObjectCommand({ Bucket, Key: `${prefix}/tiles3d/current.json`, ContentType: 'application/json',
   Body: JSON.stringify({ v: 1, run, files: published, bytes, builtAt: new Date().toISOString(), stats: publishedStats }) }));
 console.log(`Published ${prefix}/tiles3d/${run}${previous ? ' (coarser levels rebuilt in place)' : ''}`);
+/**
+ * Delete keys 1,000 per request (one at a time took 27 minutes for a run's 2,751 files); if the store refuses batch
+ * deletes, 16 single deletes at a time.
+ */
+let batchDeletes = true;
+async function removeKeys(keys) {
+  for (let k = 0; k < keys.length; k += 1000) {
+    const chunk = keys.slice(k, k + 1000);
+    if (batchDeletes) {
+      try {
+        const r = await client.send(new DeleteObjectsCommand({ Bucket, Delete: { Objects: chunk.map(Key => ({ Key })), Quiet: true } }));
+        if (r.Errors?.length) throw new Error(`Could not delete ${r.Errors.length} old files, e.g. ${r.Errors[0].Key}: ${r.Errors[0].Message}`);
+        continue;
+      } catch (e) {
+        if (/Could not delete/.test(e.message)) throw e;
+        console.log(`Batch delete refused (${e.name}: ${e.message}); deleting one by one`);
+        batchDeletes = false;
+      }
+    }
+    for (let j = 0; j < chunk.length; j += 16) await Promise.all(chunk.slice(j, j + 16).map(Key => client.send(new DeleteObjectCommand({ Bucket, Key }))));
+  }
+  return keys.length;
+}
 if (previous) {
   const keep = new Set(published);
-  for (const f of previous.current.files) if (!keep.has(f)) await client.send(new DeleteObjectCommand({ Bucket, Key: `${prefix}/tiles3d/${run}/${f}` }));
+  await removeKeys(previous.current.files.filter(f => !keep.has(f)).map(f => `${prefix}/tiles3d/${run}/${f}`));
 }
-let removed = 0, tok;
+const old = [];
+let tok;
 do {
   const page = await client.send(new ListObjectsV2Command({ Bucket, Prefix: `${prefix}/tiles3d/runs/`, MaxKeys: 1000, ...(tok ? { ContinuationToken: tok } : {}) }));
-  for (const o of page.Contents ?? []) if (!o.Key.startsWith(`${prefix}/tiles3d/${run}/`)) { await client.send(new DeleteObjectCommand({ Bucket, Key: o.Key })); removed++; }
+  for (const o of page.Contents ?? []) if (!o.Key.startsWith(`${prefix}/tiles3d/${run}/`)) old.push(o.Key);
   tok = page.IsTruncated ? page.NextContinuationToken : undefined;
 } while (tok);
-console.log(`Done, removed ${removed} old files`);
+console.log(`Done, removed ${await removeKeys(old)} old files`);

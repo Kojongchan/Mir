@@ -188,10 +188,12 @@ export function proxyBoxes(group, survivors, errorMeters) {
 /**
  * Coarser copy: simplify the whole group with an absolute error in metres and prune parts smaller than it.
  * Objects are separate vertex islands, so simplification never joins two objects; dbIds stay per vertex.
- * Long needle triangles that collapsed thin parts leave behind are dropped (they flash when flat-shaded).
+ * Long needle triangles that collapsed thin parts leave behind are dropped (they flash when flat-shaded): by default
+ * every triangle longer than the error and flatter than 1:25; with `minHeight` (metres) only those thinner than that,
+ * so long thin faces (rails, deck edges, parapets) of the finer copies stay.
  * Long objects that disappeared come back as oriented boxes (proxyBoxes), so a far view is not full of gaps.
  */
-export async function simplifyGroup(group, errorMeters, { ratio = 0.01 } = {}) {
+export async function simplifyGroup(group, errorMeters, { ratio = 0.01, minHeight } = {}) {
   if (!group || group.idx.length < 3) return group;
   await MeshoptSimplifier.ready;
   const b = boundsOf(group);
@@ -213,7 +215,8 @@ export async function simplifyGroup(group, errorMeters, { ratio = 0.01 } = {}) {
     const len2 = v => v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
     const maxE2 = Math.max(len2(ab), len2(ad), len2(cd));
     const cr = [ab[1] * ad[2] - ab[2] * ad[1], ab[2] * ad[0] - ab[0] * ad[2], ab[0] * ad[1] - ab[1] * ad[0]];
-    if (maxE2 > minEdge2 && Math.sqrt(len2(cr)) / 2 < 0.02 * maxE2) continue;
+    const twiceArea = Math.sqrt(len2(cr));
+    if (maxE2 > minEdge2 && (minHeight === undefined ? twiceArea / 2 < 0.02 * maxE2 : twiceArea / Math.sqrt(maxE2) < minHeight)) continue;
     kept.push(a, c, d);
   }
   const survivors = new Set();
