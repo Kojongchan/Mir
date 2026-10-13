@@ -508,19 +508,23 @@ if (PAGE === 2) {
         const close = page.getByRole('button', { name, exact: true });
         if (await close.count()) await close.first().click().catch(() => {});
       }
-      const look = await page.evaluate(() => {
-        const v = window.__viewer, t = v.controls.getTarget(v.camera.position.clone());
-        const dir = v.camera.getWorldDirection(t.clone());
-        dir.y = 0;
-        if (dir.lengthSq() < 1e-6) dir.set(1, 0, 0);
-        return { target: t.toArray(), dir: dir.normalize().toArray() };
-      });
+      // UI_QLOOK "x_y_z_dx_dz" (scene frame, n = minus) repeats an earlier run's views; default: around the zoomed object.
+      const fixed = (env.UI_QLOOK || '').split('_').map(s => Number(s.replace(/^n/, '-')));
+      const look = fixed.length === 5 && fixed.every(Number.isFinite)
+        ? { target: fixed.slice(0, 3), dir: [fixed[3], 0, fixed[4]] }
+        : await page.evaluate(() => {
+          const v = window.__viewer, t = v.controls.getTarget(v.camera.position.clone());
+          const dir = v.camera.getWorldDirection(t.clone());
+          dir.y = 0;
+          if (dir.lengthSq() < 1e-6) dir.set(1, 0, 0);
+          return { target: t.toArray(), dir: dir.normalize().toArray() };
+        });
       results.qualityLook = look;
       const place = d => page.evaluate(([{ target, dir }, d]) => {
         const v = window.__viewer;
         if (!d) { v.frameAll(false); return; }
         const t = v.camera.position.clone().set(...target), e = (35 * Math.PI) / 180;
-        const eye = t.clone().addScaledVector(v.camera.position.clone().set(...dir), -d * Math.cos(e));
+        const eye = t.clone().addScaledVector(v.camera.position.clone().set(...dir).normalize(), -d * Math.cos(e));
         eye.y += d * Math.sin(e);
         v.lookAt(eye, t, false);
       }, [look, d]);
