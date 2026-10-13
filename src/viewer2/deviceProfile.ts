@@ -11,13 +11,13 @@ export type DeviceProfile = { tier: DeviceTier; label: string; errorTarget: numb
   pixelRatio: number; parseJobs: number; downloadJobs: number };
 
 const MB = 1048576;
-// Screen errors from the quality sweep (ui-check runs 189 → 193, tiles with copies of the original at 1 / 0.3 / 0.1 m):
-// at 1.5 px a 120 m view looks like the original with 1.3 M triangles (15 M before), and no measured view (120 m to the
-// whole site) drew more than 2.7 M triangles or needed more than 213 MB. 3 px stays under 1.7 M; up close the 0.3 m copy
-// shows as speckle on track decks. Phones keep 20 px until measured at phone size.
+// Screen errors from the quality sweeps (ui-check runs 189 → 197; tiles with copies of the original at 1 / 0.3 / 0.1 m,
+// borders locked so seams do not crack): at 3 px a 120 m view looks like the original (3.1 M triangles; 15 M before
+// the copies) and no measured view drew more than 6.1 M triangles or needed more than 190 MB; at 6 px at most 3.1 M,
+// but from about 1 km the 3–9 m levels look blocky. Phones keep 20 px until measured at phone size.
 export const PROFILES: Record<DeviceTier, DeviceProfile> = {
-  high: { tier: 'high', label: '고성능 PC', errorTarget: 1.5, maxBytes: 1024 * MB, minBytes: 768 * MB, pixelRatio: 2, parseJobs: 4, downloadJobs: 12 },
-  pc: { tier: 'pc', label: '현장 PC', errorTarget: 3, maxBytes: 384 * MB, minBytes: 256 * MB, pixelRatio: 1.25, parseJobs: 2, downloadJobs: 12 },
+  high: { tier: 'high', label: '고성능 PC', errorTarget: 3, maxBytes: 1024 * MB, minBytes: 768 * MB, pixelRatio: 2, parseJobs: 4, downloadJobs: 12 },
+  pc: { tier: 'pc', label: '현장 PC', errorTarget: 6, maxBytes: 384 * MB, minBytes: 256 * MB, pixelRatio: 1.25, parseJobs: 2, downloadJobs: 12 },
   mobile: { tier: 'mobile', label: '모바일·태블릿', errorTarget: 20, maxBytes: 160 * MB, minBytes: 96 * MB, pixelRatio: 1.5, parseJobs: 1, downloadJobs: 8 },
 };
 

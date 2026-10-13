@@ -202,7 +202,8 @@ export async function simplifyGroup(group, errorMeters, { ratio = 0.01, minHeigh
   for (let i = 0; i < local.length; i++) local[i] = group.pos[i] - b[i % 3];
   const target = Math.max(3, Math.floor(group.idx.length * ratio / 3) * 3);
   let result;
-  try { [result] = MeshoptSimplifier.simplify(group.idx, local, 3, target, errorMeters, ['ErrorAbsolute', 'Prune', ...(lockBorder ? ['LockBorder'] : [])]); }
+  const flags = ['ErrorAbsolute', 'Prune', ...(lockBorder ? ['LockBorder'] : [])];
+  try { [result] = MeshoptSimplifier.simplify(group.idx, local, 3, target, errorMeters, flags); }
   catch { return group; }
   if (!result || result.length < 3) return null;
   const kept = [];
