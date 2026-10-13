@@ -123,7 +123,7 @@ export function ThreeDTest2() {
       const hit = viewer?.pick(e.clientX - rect.left, e.clientY - rect.top);
       if (!viewer || !hit) return;
       const eye = viewer.camera.position.clone().lerp(hit.point, 0.6);
-      void viewer.controls.setLookAt(eye.x, eye.y, eye.z, hit.point.x, hit.point.y, hit.point.z, true);
+      viewer.lookAt(eye, hit.point);
     };
     canvas.addEventListener('pointerdown', onDown);
     canvas.addEventListener('pointerup', onUp);

@@ -111,6 +111,7 @@ export class TilesViewer {
     this.controls.draggingSmoothTime = 0.06;
     this.controls.addEventListener('update', () => { this.dirty = true; this.needsUpdate = true; });
     canvas.addEventListener('pointerdown', this.pivotAtPointer, { capture: true });
+    canvas.addEventListener('wheel', this.depthAtWheel, { capture: true, passive: true });
     this.resize = new ResizeObserver(() => this.fit());
     this.resize.observe(canvas.parentElement ?? canvas);
     this.fit();
@@ -239,6 +240,7 @@ export class TilesViewer {
     // Bounding sphere, not box: a box fit looks along the current direction and can end up inside a long object.
     const sphere = corners.getBoundingSphere(new Sphere());
     sphere.radius = Math.max(sphere.radius * 1.1, 1);
+    this.centreTarget();
     void this.controls.fitToSphere(sphere, animate);
     this.needsUpdate = this.dirty = true;
   }
@@ -250,6 +252,7 @@ export class TilesViewer {
    */
   frameAll(animate = true): void {
     if (!this.bounds) return;
+    this.centreTarget();
     type TileNode = { boundingVolume?: { box?: number[] }; children?: TileNode[]; extras?: { mir?: string } };
     const boxes: number[][] = [];
     const visit = (t: TileNode, depth: number) => {
@@ -317,6 +320,7 @@ export class TilesViewer {
     cancelAnimationFrame(this.raf);
     this.resize.disconnect();
     this.canvas.removeEventListener('pointerdown', this.pivotAtPointer, { capture: true });
+    this.canvas.removeEventListener('wheel', this.depthAtWheel, { capture: true });
     this.closeTiles();
     this.controls.dispose();
     this.pickTarget.dispose();
@@ -375,12 +379,73 @@ export class TilesViewer {
     this.dirty = true;
   }
 
-  /** Orbit about the surface point under the pointer (an empty spot keeps the current target). */
+  /** Fly the camera to look at `target` from `eye` (both in scene coordinates). */
+  lookAt(eye: Vector3, target: Vector3, animate = true): void {
+    this.centreTarget();
+    void this.controls.setLookAt(eye.x, eye.y, eye.z, target.x, target.y, target.z, animate);
+    this.needsUpdate = this.dirty = true;
+  }
+
+  /**
+   * Stop any easing where the camera is now. Changing the pivot during an easing (setOrbitPoint "should not run
+   * during animations") let the rest of the motion swing about the new pivot — the camera jumped.
+   */
+  private freeze() {
+    const c = this.controls;
+    const p = c.getPosition(new Vector3(), false), t = c.getTarget(new Vector3(), false), f = c.getFocalOffset(new Vector3(), false);
+    void c.setLookAt(p.x, p.y, p.z, t.x, t.y, t.z, false);
+    void c.setFocalOffset(f.x, f.y, f.z, false);
+    (c as unknown as { _changedDolly: number })._changedDolly = 0; // a pending zoom-to-cursor shift
+  }
+
+  /**
+   * Put the target on the view axis at `depth` (default: the current distance) with no focal offset, without moving
+   * the view. Zoom toward the cursor assumes the target is on the axis, and zoom and pan steps scale with its distance:
+   * a stale target far behind what is on screen made one wheel step or pan fly hundreds of metres.
+   */
+  private centreTarget(depth?: number) {
+    this.freeze();
+    this.controls.update(0);
+    this.camera.updateMatrixWorld();
+    const eye = this.camera.position.clone(), dir = this.camera.getWorldDirection(new Vector3());
+    const d = Math.max(depth ?? this.controls.distance, this.controls.minDistance * 2);
+    const t = eye.clone().addScaledVector(dir, d);
+    void this.controls.setFocalOffset(0, 0, 0, false);
+    void this.controls.setLookAt(eye.x, eye.y, eye.z, t.x, t.y, t.z, false);
+  }
+
+  /** Depth along the view axis of the surface under a canvas point (CSS px), or null for empty space. */
+  private depthAt(x: number, y: number): { depth: number; point: Vector3 } | null {
+    const hit = this.pick(x, y);
+    if (!hit) return null;
+    const dir = this.camera.getWorldDirection(new Vector3());
+    const depth = hit.point.clone().sub(this.camera.position).dot(dir);
+    return depth > 0 ? { depth, point: hit.point } : null;
+  }
+
+  /**
+   * Pointer down: rotate about the surface under the pointer (objects and terrain); pan and pinch at that surface's
+   * depth; empty space keeps the distance with the target back on the view axis.
+   */
   private pivotAtPointer = (event: PointerEvent) => {
-    if (event.button !== 0 || !this.tiles) return;
+    if (!this.tiles) return;
     const rect = this.canvas.getBoundingClientRect();
-    const hit = this.pick(event.clientX - rect.left, event.clientY - rect.top);
-    if (hit && hit.dbId) this.controls.setOrbitPoint(hit.point.x, hit.point.y, hit.point.z);
+    const hit = this.depthAt(event.clientX - rect.left, event.clientY - rect.top);
+    if (event.button === 0 && event.isPrimary && hit) {
+      this.freeze();
+      this.controls.setOrbitPoint(hit.point.x, hit.point.y, hit.point.z);
+    } else this.centreTarget(hit?.depth);
+    this.needsUpdate = this.dirty = true;
+  };
+
+  /** Wheel: zoom steps follow the surface under the cursor (once per scroll gesture, not every notch). */
+  private lastWheel = 0;
+  private depthAtWheel = (event: WheelEvent) => {
+    const now = performance.now();
+    if (!this.tiles || now - this.lastWheel < 300) { this.lastWheel = now; return; }
+    this.lastWheel = now;
+    const rect = this.canvas.getBoundingClientRect();
+    this.centreTarget(this.depthAt(event.clientX - rect.left, event.clientY - rect.top)?.depth);
   };
 
   /**

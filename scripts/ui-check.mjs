@@ -485,6 +485,65 @@ if (PAGE === 2) {
     if (await zoom.isEnabled()) { await zoom.click(); await sleep(1500); await settle2('zoom', 240000); }
     results.v2.push(await sample('zoomed'));
     await shot('12-v2-zoomed.png');
+    // UI_CAMERA=1: the "camera flies" cases. A: a stale target 10× deeper than the surface on screen, one wheel notch.
+    // B: a new drag started while the previous rotation still eases (pointer pressed, not moved). C: after rotating
+    // about an off-centre object, one wheel notch elsewhere — how far the point under the cursor drifts on screen
+    // (zoom toward the cursor keeps it in place).
+    if (env.UI_CAMERA) {
+      const cam = () => page.evaluate(() => window.__viewer.camera.position.toArray());
+      const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+      // Points with a surface on a grid (canvas px).
+      const spots = await page.evaluate(() => {
+        const v = window.__viewer, c = v.renderer.domElement, W = c.clientWidth, H = c.clientHeight, out = [];
+        for (let j = 2; j < 8; j++) for (let i = 2; i < 14; i++) {
+          const h = v.pick(W * i / 16, H * j / 10);
+          if (h?.dbId) out.push({ x: W * i / 16, y: H * j / 10, depth: h.point.distanceTo(v.camera.position) });
+        }
+        return out;
+      });
+      if (spots.length >= 2) {
+        const s0 = spots[Math.floor(spots.length / 2)], s1 = spots[0];
+        // A
+        await page.evaluate(([x, y]) => {
+          const v = window.__viewer, h = v.pick(x, y);
+          const far = v.camera.position.clone().addScaledVector(v.camera.getWorldDirection(h.point.clone()), h.point.distanceTo(v.camera.position) * 10);
+          v.controls.setOrbitPoint(far.x, far.y, far.z);
+        }, [s0.x, s0.y]);
+        await sleep(300);
+        await page.mouse.move(box.x + s0.x, box.y + s0.y);
+        const a0 = await cam();
+        await page.mouse.wheel(0, -100);
+        await sleep(1200);
+        const wheelMove = dist(a0, await cam());
+        // B
+        await page.mouse.move(box.x + s1.x, box.y + s1.y); await page.mouse.down();
+        for (let k = 1; k <= 6; k++) { await page.mouse.move(box.x + s1.x + k * 30, box.y + s1.y); await sleep(16); }
+        await page.mouse.up();
+        await page.mouse.move(box.x + s0.x, box.y + s0.y); await page.mouse.down();
+        const b0 = await cam();
+        await sleep(600);
+        const easeMove = dist(b0, await cam());
+        await page.mouse.up();
+        await sleep(800);
+        // C: rotate about s1 (off centre), then wheel at s0.
+        await page.mouse.move(box.x + s1.x, box.y + s1.y); await page.mouse.down();
+        for (let k = 1; k <= 4; k++) { await page.mouse.move(box.x + s1.x + k * 10, box.y + s1.y); await sleep(30); }
+        await page.mouse.up();
+        await sleep(800);
+        const target = await page.evaluate(([x, y]) => { const h = window.__viewer.pick(x, y); return h && h.point.toArray(); }, [s0.x, s0.y]);
+        await page.mouse.move(box.x + s0.x, box.y + s0.y);
+        await page.mouse.wheel(0, -100);
+        await sleep(1200);
+        const drift = target && await page.evaluate(([p, x, y]) => {
+          const v = window.__viewer, c = v.renderer.domElement;
+          const q = v.camera.position.clone().set(p[0], p[1], p[2]).project(v.camera);
+          return Math.hypot((q.x + 1) / 2 * c.clientWidth - x, (1 - q.y) / 2 * c.clientHeight - y);
+        }, [target, s0.x, s0.y]);
+        results.camera = { surfaceM: Math.round(s0.depth * 10) / 10, wheelMoveM: Math.round(wheelMove * 10) / 10,
+          easeMoveM: Math.round(easeMove * 100) / 100, cursorDriftPx: drift === null ? null : Math.round(drift) };
+      } else results.camera = { error: 'no surface to test on' };
+      log('camera', results.camera);
+    }
   } catch (e) {
     results.error = e.stack?.slice(0, 1500) ?? String(e);
     log('page check failed', e);
