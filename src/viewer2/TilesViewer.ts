@@ -9,7 +9,7 @@ import { TilesRenderer } from '3d-tiles-renderer';
 import { GLTFExtensionsPlugin } from '3d-tiles-renderer/plugins';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { ObjectStateTexture, createPickMaterial, createSurfaceMaterial } from './objectState';
-import { PROFILES, probeDevice, type DeviceProfile, type DeviceTier } from './deviceProfile';
+import { PROFILES, detailOf, probeDevice, type DeviceProfile, type DeviceTier, type Quality } from './deviceProfile';
 
 CameraControls.install({ THREE: { Vector2, Vector3, Vector4, Quaternion, Matrix4, Spherical, Box3, Sphere, Raycaster } });
 
@@ -56,6 +56,10 @@ export class TilesViewer {
   readonly controls: CameraControls;
   readonly world = new Group();
   profile: DeviceProfile;
+  /** The tier this device was detected as (「자동」). */
+  readonly detectedTier: DeviceTier;
+  /** Picture quality over the tier (finer error, larger cache). */
+  quality: Quality = 'standard';
   onStats?: (stats: ViewerStats) => void;
   private tiles: TilesRenderer | null = null;
   private state: ObjectStateTexture | null = null;
@@ -86,7 +90,7 @@ export class TilesViewer {
   private bounds: Sphere | null = null;
   /** Counters of the last on-screen frame (renderer.info also counts the 1×1 pick renders). */
   private frame = { calls: 0, triangles: 0 };
-  /** Screen error (px) and cache budget (MB) chosen over the device profile's (null = the profile's). */
+  /** Screen error (px) and cache budget (MB) set directly, over the tier and quality (null = from those). */
   private detail: { errorTarget: number | null; cacheMB: number | null } = { errorTarget: null, cacheMB: null };
 
   constructor(private readonly canvas: HTMLCanvasElement, tier?: DeviceTier) {
@@ -95,6 +99,7 @@ export class TilesViewer {
     // Edge smoothing keeps thin members (rails, railings) continuous from afar instead of breaking into dashes.
     const device = probeDevice();
     this.renderer = new WebGLRenderer({ canvas, antialias: device.antialias, powerPreference: 'high-performance' });
+    this.detectedTier = device.tier;
     this.profile = PROFILES[tier ?? device.tier];
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.profile.pixelRatio));
     this.scene.background = new Color(0.78, 0.84, 0.9);
@@ -181,9 +186,15 @@ export class TilesViewer {
     this.needsUpdate = this.dirty = true;
   }
 
+  setQuality(quality: Quality): void {
+    this.quality = quality;
+    if (this.tiles) this.applyProfile(this.tiles);
+    this.needsUpdate = this.dirty = true;
+  }
+
   /**
-   * How fine the view is: the screen error (px) before a finer level loads and the memory kept for loaded tiles
-   * (MB). null keeps the device profile's value.
+   * How fine the view is, set directly (measurements): the screen error (px) before a finer level loads and the
+   * memory kept for loaded tiles (MB). null takes the value from the tier and quality.
    */
   setDetail(errorTarget: number | null, cacheMB: number | null = null): void {
     this.detail = { errorTarget, cacheMB };
@@ -329,7 +340,7 @@ export class TilesViewer {
       downloading: ts?.downloading ?? 0, parsing: ts?.parsing ?? 0, failed: ts?.failed ?? 0,
       cacheMB: Math.round((lru?.cachedBytes ?? 0) / 1048576), usedMB: Math.round(used / 1048576),
       heapMB: memory ? Math.round(memory.usedJSHeapSize / 1048576) : null,
-      tier: this.profile.tier, errorTarget: this.tiles?.errorTarget ?? this.detail.errorTarget ?? this.profile.errorTarget,
+      tier: this.profile.tier, errorTarget: this.tiles?.errorTarget ?? this.detail.errorTarget ?? detailOf(this.profile, this.quality).errorTarget,
       firstFrameMs: this.firstFrameMs, settledMs: this.settledMs,
     };
   }
@@ -355,10 +366,11 @@ export class TilesViewer {
   }
 
   private applyProfile(tiles: TilesRenderer) {
-    const p = this.profile, { errorTarget, cacheMB } = this.detail;
-    tiles.errorTarget = errorTarget ?? p.errorTarget;
-    tiles.lruCache.maxBytesSize = cacheMB ? cacheMB * 1048576 : p.maxBytes;
-    tiles.lruCache.minBytesSize = cacheMB ? cacheMB * 1048576 * (p.minBytes / p.maxBytes) : p.minBytes;
+    const p = this.profile, chosen = detailOf(p, this.quality);
+    const cacheMB = this.detail.cacheMB ?? chosen.cacheMB;
+    tiles.errorTarget = this.detail.errorTarget ?? chosen.errorTarget;
+    tiles.lruCache.maxBytesSize = cacheMB * 1048576;
+    tiles.lruCache.minBytesSize = cacheMB * 1048576 * (p.minBytes / p.maxBytes);
     tiles.parseQueue.maxJobs = p.parseJobs;
     tiles.downloadQueue.maxJobsPerOrigin = p.downloadJobs;
   }

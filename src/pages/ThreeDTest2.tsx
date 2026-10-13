@@ -10,7 +10,7 @@ import { ModelTreePanel } from '../components/model/ModelTreePanel';
 import { PropertyPanel } from '../components/model/PropertyPanel';
 import { useModelIndex, type MetaInfo } from '../viewer/useModelIndex';
 import { TilesViewer, type ViewerStats } from '../viewer2/TilesViewer';
-import { PROFILES, type DeviceTier } from '../viewer2/deviceProfile';
+import { PROFILES, QUALITIES, type DeviceTier, type Quality } from '../viewer2/deviceProfile';
 
 const authHeaders = async () => {
   const { data } = await supabase.auth.getSession();
@@ -23,6 +23,11 @@ const authHeaders = async () => {
  * xeokit page for comparison.
  */
 const narrowScreen = () => window.matchMedia('(max-width: 900px)').matches;
+/** The viewer's picture quality is remembered in this browser. */
+const QUALITY_KEY = 'mir.viewer2.quality';
+const storedQuality = (): Quality => {
+  try { const q = localStorage.getItem(QUALITY_KEY); return q && q in QUALITIES ? (q as Quality) : 'standard'; } catch { return 'standard'; }
+};
 
 export function ThreeDTest2() {
   const { projectId = '' } = useParams();
@@ -46,6 +51,7 @@ export function ThreeDTest2() {
   const [terrainOn, setTerrainOn] = useState(true);
   const [capturing, setCapturing] = useState(false);
   const [tier, setTier] = useState<DeviceTier | 'auto'>('auto');
+  const [quality, setQuality] = useState<Quality>(storedQuality);
   const [selectedDb, setSelectedDb] = useState<number | null>(null);
   const [revealDb, setRevealDb] = useState<number | null>(null);
   const [hiddenNodes, setHiddenNodes] = useState<ReadonlySet<number>>(new Set());
@@ -59,6 +65,7 @@ export function ThreeDTest2() {
     let viewer: TilesViewer;
     try { viewer = new TilesViewer(canvasRef.current); }
     catch (e) { setInitError(errMessage(e)); return; }
+    viewer.setQuality(storedQuality());
     viewer.onStats = next => setStats(prev => prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
     viewerRef.current = viewer;
     return () => { viewer.dispose(); viewerRef.current = null; };
@@ -242,7 +249,7 @@ export function ThreeDTest2() {
     `${PROFILES[stats.tier].label} · 오차 ${stats.errorTarget}px`,
     `${stats.fps}fps · 드로콜 ${stats.drawCalls} · 삼각형 ${stats.triangles.toLocaleString()}`,
     `타일 표시 ${stats.tilesVisible} · 로드 ${stats.tilesLoaded} · 다운로드 ${stats.downloading} · 해석 ${stats.parsing}${stats.failed ? ` · 실패 ${stats.failed}` : ''}`,
-    `캐시 ${stats.cacheMB}MB${stats.heapMB !== null ? ` · 힙 ${stats.heapMB}MB` : ''}`,
+    `캐시 ${stats.cacheMB}MB (화면 ${stats.usedMB}MB)${stats.heapMB !== null ? ` · 힙 ${stats.heapMB}MB` : ''}`,
     stats.firstFrameMs !== null ? `첫 화면 ${(stats.firstFrameMs / 1000).toFixed(1)}s${stats.settledMs !== null ? ` · 안정 ${(stats.settledMs / 1000).toFixed(1)}s` : ''}` : '',
   ].filter(Boolean).join(' · ');
 
@@ -271,12 +278,24 @@ export function ThreeDTest2() {
             <select value={tier} onChange={e => {
               const value = e.target.value as DeviceTier | 'auto';
               setTier(value);
-              if (value !== 'auto') viewerRef.current?.setTier(value);
+              const viewer = viewerRef.current;
+              viewer?.setTier(value === 'auto' ? viewer.detectedTier : value);
             }}>
               <option value="auto">자동{stats ? ` (${PROFILES[stats.tier].label})` : ''}</option>
               <option value="high">{PROFILES.high.label}</option>
               <option value="pc">{PROFILES.pc.label}</option>
               <option value="mobile">{PROFILES.mobile.label}</option>
+            </select>
+          </label>
+          <label className="threed-test2__tier" title="화질: 높을수록 멀리 있는 부분도 세밀한 단계로 그리고 메모리를 더 씁니다">
+            화질
+            <select value={quality} onChange={e => {
+              const value = e.target.value as Quality;
+              setQuality(value);
+              viewerRef.current?.setQuality(value);
+              try { localStorage.setItem(QUALITY_KEY, value); } catch { /* private mode */ }
+            }}>
+              {(Object.keys(QUALITIES) as Quality[]).map(q => <option key={q} value={q}>{QUALITIES[q].label}</option>)}
             </select>
           </label>
           {tree && (
