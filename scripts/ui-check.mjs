@@ -496,6 +496,67 @@ if (PAGE === 2) {
     if (await zoom.isEnabled()) { await zoom.click(); await sleep(1500); await settle2('zoom', 240000); }
     results.v2.push(await sample('zoomed'));
     await shot('12-v2-zoomed.png');
+    // UI_QUALITY=1: what a finer everyday view costs. Fixed views around the zoomed object (eye 35° above it, 120 /
+    // 400 / 1200 m away) and the whole site; in each, the screen error from coarse to fine with a large cache budget:
+    // what is drawn, the memory the view needs, the download, the load time and stalls while loading, and the time
+    // of one frame and one tile update (software GL here: compare the settings with each other, not the absolute ms).
+    if (env.UI_QUALITY) {
+      results.quality = [];
+      const budgetMB = Number(env.UI_QBUDGET) || 1536;
+      // The whole canvas (no side panels), as when looking around the model.
+      for (const name of ['모델 트리 닫기', '속성 닫기']) {
+        const close = page.getByRole('button', { name, exact: true });
+        if (await close.count()) await close.first().click().catch(() => {});
+      }
+      const look = await page.evaluate(() => {
+        const v = window.__viewer, t = v.controls.getTarget(v.camera.position.clone());
+        const dir = v.camera.getWorldDirection(t.clone());
+        dir.y = 0;
+        if (dir.lengthSq() < 1e-6) dir.set(1, 0, 0);
+        return { target: t.toArray(), dir: dir.normalize().toArray() };
+      });
+      results.qualityLook = look;
+      const place = d => page.evaluate(([{ target, dir }, d]) => {
+        const v = window.__viewer;
+        if (!d) { v.frameAll(false); return; }
+        const t = v.camera.position.clone().set(...target), e = (35 * Math.PI) / 180;
+        const eye = t.clone().addScaledVector(v.camera.position.clone().set(...dir), -d * Math.cos(e));
+        eye.y += d * Math.sin(e);
+        v.lookAt(eye, t, false);
+      }, [look, d]);
+      const timing = () => page.evaluate(() => {
+        const v = window.__viewer, gl = v.renderer.getContext(), px = new Uint8Array(4);
+        const draw = () => { v.renderer.render(v.scene, v.camera); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); };
+        draw();
+        let t = performance.now();
+        for (let k = 0; k < 3; k++) draw();
+        const frameMs = (performance.now() - t) / 3;
+        t = performance.now();
+        for (let k = 0; k < 3; k++) v.tiles.update();
+        return { frameMs: Math.round(frameMs), updateMs: Math.round((performance.now() - t) / 3 * 10) / 10 };
+      });
+      for (const [view, d] of [['near', 120], ['mid', 400], ['far', 1200], ['site', 0]]) {
+        await place(d);
+        for (const e of [12, 6, 3, 1.5]) {
+          const label = `q-${view}-${e}`;
+          await page.evaluate(([e, mb]) => window.__viewer.setDetail(e, mb), [e, budgetMB]);
+          const r0 = r2Bytes, start = Date.now();
+          const lt0 = await page.evaluate(() => { const r = { ...window.__lt }; window.__lt.max = 0; return r; });
+          const settled = await settle2(label, 240000);
+          const st = await page.evaluate(() => window.__viewer.stats());
+          const lt1 = await page.evaluate(() => ({ ...window.__lt }));
+          const row = { view, error: e, settled, loadS: ready[label] !== undefined ? Math.max(0, Math.round((ready[label] - since(start)) * 10) / 10) : null,
+            downloadMB: MB(r2Bytes - r0), triangles: st.triangles, drawCalls: st.drawCalls, tilesVisible: st.tilesVisible,
+            tilesLoaded: st.tilesLoaded, usedMB: st.usedMB, cacheMB: st.cacheMB, heapMB: st.heapMB,
+            longTasks: { n: lt1.n - lt0.n, ms: Math.round(lt1.ms - lt0.ms), max: Math.round(lt1.max) }, ...(await timing()) };
+          results.quality.push(row);
+          log('quality', JSON.stringify(row));
+          await shot(`q-${view}-${String(e).replace('.', '_')}.png`);
+          save();
+        }
+      }
+      await page.evaluate(() => window.__viewer.setDetail(null));
+    }
     // UI_CAMERA=1: the "camera flies" cases. A: a stale target 10× deeper than the surface on screen, one wheel notch.
     // B: a new drag started while the previous rotation still eases (pointer pressed, not moved). C: after rotating
     // about an off-centre object, one wheel notch elsewhere — how far the point under the cursor drifts on screen

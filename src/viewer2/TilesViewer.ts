@@ -37,7 +37,7 @@ const BASE = 'https://tiles.mir.invalid/';
 export type ViewerStats = {
   fps: number; frames: number; drawCalls: number; triangles: number; geometries: number;
   tilesVisible: number; tilesLoaded: number; downloading: number; parsing: number; failed: number;
-  cacheMB: number; heapMB: number | null; tier: DeviceTier; errorTarget: number;
+  cacheMB: number; usedMB: number; heapMB: number | null; tier: DeviceTier; errorTarget: number;
   firstFrameMs: number | null; settledMs: number | null;
 };
 type TileStats = { downloading: number; parsing: number; loaded: number; failed: number };
@@ -86,6 +86,8 @@ export class TilesViewer {
   private bounds: Sphere | null = null;
   /** Counters of the last on-screen frame (renderer.info also counts the 1×1 pick renders). */
   private frame = { calls: 0, triangles: 0 };
+  /** Screen error (px) and cache budget (MB) chosen over the device profile's (null = the profile's). */
+  private detail: { errorTarget: number | null; cacheMB: number | null } = { errorTarget: null, cacheMB: null };
 
   constructor(private readonly canvas: HTMLCanvasElement, tier?: DeviceTier) {
     // No reverse-Z: with three r171 it drew nothing in Chromium's software GL. Depth precision comes from a near plane
@@ -175,6 +177,16 @@ export class TilesViewer {
     this.profile = PROFILES[tier];
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.profile.pixelRatio));
     this.fit();
+    if (this.tiles) this.applyProfile(this.tiles);
+    this.needsUpdate = this.dirty = true;
+  }
+
+  /**
+   * How fine the view is: the screen error (px) before a finer level loads and the memory kept for loaded tiles
+   * (MB). null keeps the device profile's value.
+   */
+  setDetail(errorTarget: number | null, cacheMB: number | null = null): void {
+    this.detail = { errorTarget, cacheMB };
     if (this.tiles) this.applyProfile(this.tiles);
     this.needsUpdate = this.dirty = true;
   }
@@ -306,14 +318,18 @@ export class TilesViewer {
     // Frames drawn in the last second (rendering is on demand: 0 while nothing changes).
     const now = performance.now(), recent = this.frameTimes.filter(t => now - t <= 1000);
     const memory = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory;
+    // Bytes of the tiles the current view uses (shown, their loaded parents, queued): what the cache must hold.
+    const lru = this.tiles?.lruCache as unknown as { cachedBytes: number; usedSet: Set<unknown>; bytesMap: Map<unknown, number> } | undefined;
+    let used = 0;
+    lru?.usedSet.forEach(tile => { used += lru.bytesMap.get(tile) ?? 0; });
     return {
       fps: recent.length, frames: this.frames,
       drawCalls: this.frame.calls, triangles: this.frame.triangles, geometries: info.memory.geometries,
       tilesVisible: this.tiles?.visibleTiles.size ?? 0, tilesLoaded: ts?.loaded ?? 0,
       downloading: ts?.downloading ?? 0, parsing: ts?.parsing ?? 0, failed: ts?.failed ?? 0,
-      cacheMB: Math.round(((this.tiles?.lruCache as unknown as { cachedBytes?: number } | undefined)?.cachedBytes ?? 0) / 1048576),
+      cacheMB: Math.round((lru?.cachedBytes ?? 0) / 1048576), usedMB: Math.round(used / 1048576),
       heapMB: memory ? Math.round(memory.usedJSHeapSize / 1048576) : null,
-      tier: this.profile.tier, errorTarget: this.profile.errorTarget,
+      tier: this.profile.tier, errorTarget: this.tiles?.errorTarget ?? this.detail.errorTarget ?? this.profile.errorTarget,
       firstFrameMs: this.firstFrameMs, settledMs: this.settledMs,
     };
   }
@@ -339,10 +355,10 @@ export class TilesViewer {
   }
 
   private applyProfile(tiles: TilesRenderer) {
-    const p = this.profile;
-    tiles.errorTarget = p.errorTarget;
-    tiles.lruCache.maxBytesSize = p.maxBytes;
-    tiles.lruCache.minBytesSize = p.minBytes;
+    const p = this.profile, { errorTarget, cacheMB } = this.detail;
+    tiles.errorTarget = errorTarget ?? p.errorTarget;
+    tiles.lruCache.maxBytesSize = cacheMB ? cacheMB * 1048576 : p.maxBytes;
+    tiles.lruCache.minBytesSize = cacheMB ? cacheMB * 1048576 * (p.minBytes / p.maxBytes) : p.minBytes;
     tiles.parseQueue.maxJobs = p.parseJobs;
     tiles.downloadQueue.maxJobsPerOrigin = p.downloadJobs;
   }

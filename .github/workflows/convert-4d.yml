@@ -304,7 +304,7 @@ jobs:
   ui-check:
     if: github.event.inputs.diag_only == 'ui-check'
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 120
     permissions:
       contents: write
     steps:
