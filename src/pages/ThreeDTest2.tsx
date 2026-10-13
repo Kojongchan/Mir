@@ -249,7 +249,7 @@ export function ThreeDTest2() {
     `${PROFILES[stats.tier].label} · 오차 ${stats.errorTarget}px`,
     `${stats.fps}fps · 드로콜 ${stats.drawCalls} · 삼각형 ${stats.triangles.toLocaleString()}`,
     `타일 표시 ${stats.tilesVisible} · 로드 ${stats.tilesLoaded} · 다운로드 ${stats.downloading} · 해석 ${stats.parsing}${stats.failed ? ` · 실패 ${stats.failed}` : ''}`,
-    `캐시 ${stats.cacheMB}MB (화면 ${stats.usedMB}MB)${stats.heapMB !== null ? ` · 힙 ${stats.heapMB}MB` : ''}`,
+    `캐시 ${stats.cacheMB}MB (화면 ${stats.usedMB}MB)${stats.cacheHits ? ` · 저장본 ${stats.cacheHits}` : ''}${stats.heapMB !== null ? ` · 힙 ${stats.heapMB}MB` : ''}`,
     stats.firstFrameMs !== null ? `첫 화면 ${(stats.firstFrameMs / 1000).toFixed(1)}s${stats.settledMs !== null ? ` · 안정 ${(stats.settledMs / 1000).toFixed(1)}s` : ''}` : '',
   ].filter(Boolean).join(' · ');
 

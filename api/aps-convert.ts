@@ -69,13 +69,16 @@ function r2() {
   });
 }
 const objUrl = (key: string) => `${R2_ENDPOINT}/${R2_BUCKET}/${key}`;
+// The same object under the bucket's own host name. Browsers open at most 6 HTTP/1.1 connections per host, and 3D
+// Tiles loading is bound by request latency (many small files): two hosts double the downloads in flight.
+const altObjUrl = (key: string) => (/^[a-z0-9-]+$/.test(R2_BUCKET ?? '') ? `https://${R2_BUCKET}.${R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${key}` : objUrl(key));
 
 async function r2Head(key: string): Promise<boolean> {
   const res = await r2().fetch(objUrl(key), { method: 'HEAD' });
   return res.ok;
 }
-async function r2PresignGet(key: string, expires = 3600): Promise<string> {
-  const signed = await r2().sign(`${objUrl(key)}?X-Amz-Expires=${expires}`, {
+async function r2PresignGet(key: string, expires = 3600, altHost = false): Promise<string> {
+  const signed = await r2().sign(`${altHost ? altObjUrl(key) : objUrl(key)}?X-Amz-Expires=${expires}`, {
     method: 'GET',
     aws: { signQuery: true },
   });
@@ -313,8 +316,9 @@ export default async function handler(req: Request): Promise<Response> {
         return json({ error: '3D Tiles 기록이 손상되었습니다.' }, 500);
       const paths = current.files.filter((p): p is string => typeof p === 'string' && TILES3D_FILE.test(p));
       const expiresIn = 4 * 3600;
-      const urls = Object.fromEntries(await Promise.all(paths.map(async p =>
-        [p, await r2PresignGet(`${dir}/tiles3d/${current.run}/${p}`, expiresIn)] as const)));
+      // Every other tile file on the second host name (tileset.json and objects.bin stay on the first).
+      const urls = Object.fromEntries(await Promise.all(paths.map(async (p, i) =>
+        [p, await r2PresignGet(`${dir}/tiles3d/${current.run}/${p}`, expiresIn, p.endsWith('.glb') && i % 2 === 1)] as const)));
       return json({ run: current.run, builtAt: current.builtAt, expiresIn, urls });
     }
     const shard = url.searchParams.get('metaShard');

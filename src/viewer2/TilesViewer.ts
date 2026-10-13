@@ -10,6 +10,7 @@ import { GLTFExtensionsPlugin } from '3d-tiles-renderer/plugins';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { ObjectStateTexture, createPickMaterial, createSurfaceMaterial } from './objectState';
 import { PROFILES, detailOf, probeDevice, type DeviceProfile, type DeviceTier, type Quality } from './deviceProfile';
+import { runOf, tileCachePlugin, type TileCacheStats } from './tileCache';
 
 CameraControls.install({ THREE: { Vector2, Vector3, Vector4, Quaternion, Matrix4, Spherical, Box3, Sphere, Raycaster } });
 
@@ -38,6 +39,8 @@ export type ViewerStats = {
   fps: number; frames: number; drawCalls: number; triangles: number; geometries: number;
   tilesVisible: number; tilesLoaded: number; downloading: number; parsing: number; failed: number;
   cacheMB: number; usedMB: number; heapMB: number | null; tier: DeviceTier; errorTarget: number;
+  /** Tile files answered from this browser's tile cache (no download). */
+  cacheHits: number;
   firstFrameMs: number | null; settledMs: number | null;
 };
 type TileStats = { downloading: number; parsing: number; loaded: number; failed: number };
@@ -77,8 +80,15 @@ export class TilesViewer {
   private firstFrameMs: number | null = null;
   private settledMs: number | null = null;
   private lastStats = 0;
-  /** Path → signed URL of the open tileset (kept so renewed URLs apply to later requests). */
+  /** Path → signed URL of the open tileset (kept so renewed URLs apply to later requests), and back. */
   private urls: Record<string, string> = {};
+  private readonly pathBySigned = new Map<string, string>();
+  private tileCache: TileCacheStats | null = null;
+  /**
+   * Load ancestors: coarser levels of a view are fetched and shown first while its own tiles load (progressive), at
+   * the cost of more requests before the final tiles arrive.
+   */
+  private ancestors = true;
   /** Failed tiles are retried with a growing delay (a dropped request on a field network must not leave a hole). */
   private retry = { at: 0, delay: 2000 };
   /** Terrain tiles on screen (aerial photo, no object ids) and whether the terrain is shown. */
@@ -94,11 +104,15 @@ export class TilesViewer {
   private detail: { errorTarget: number | null; cacheMB: number | null } = { errorTarget: null, cacheMB: null };
 
   constructor(private readonly canvas: HTMLCanvasElement, tier?: DeviceTier) {
-    // No reverse-Z: with three r171 it drew nothing in Chromium's software GL. Depth precision comes from a near plane
-    // that follows the orbit distance and a far plane that just covers the model (see `loop`).
+    // No reverse-Z: with three r171 it drew nothing in Chromium's software GL. On PCs a logarithmic depth buffer: the
+    // model has layers a few millimetres apart (a slope's finish on the embankment, drains on it), and with a near
+    // plane that follows the orbit distance a standard buffer could not order them a few hundred metres away — they
+    // fought as flickering white saw-teeth (measured on tile 931: 921 slope vertices within 5 cm of a grey surface).
+    // Phones keep the standard buffer (per-pixel depth writes defeat their hidden-surface removal).
     // Edge smoothing keeps thin members (rails, railings) continuous from afar instead of breaking into dashes.
     const device = probeDevice();
-    this.renderer = new WebGLRenderer({ canvas, antialias: device.antialias, powerPreference: 'high-performance' });
+    this.renderer = new WebGLRenderer({ canvas, antialias: device.antialias, powerPreference: 'high-performance',
+      logarithmicDepthBuffer: device.tier !== 'mobile' });
     this.detectedTier = device.tier;
     this.profile = PROFILES[tier ?? device.tier];
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.profile.pixelRatio));
@@ -131,6 +145,7 @@ export class TilesViewer {
   open(urls: Record<string, string>, objects: number): void {
     this.closeTiles();
     this.urls = { ...urls };
+    this.pathBySigned.clear();
     this.retry = { at: 0, delay: 2000 };
     this.state = new ObjectStateTexture(objects);
     this.surface = { opaque: createSurfaceMaterial(this.state, false), transparent: createSurfaceMaterial(this.state, true) };
@@ -148,11 +163,23 @@ export class TilesViewer {
       preprocessURL: (url: string | URL) => {
         const text = String(url), bare = text.split('?')[0];
         for (const base of [BASE, runFolder]) {
-          if (base && bare.startsWith(base)) return this.urls[decodeURI(bare.slice(base.length))] ?? text;
+          if (!base || !bare.startsWith(base)) continue;
+          const path = decodeURI(bare.slice(base.length)), signed = this.urls[path];
+          if (!signed) return text;
+          this.pathBySigned.set(signed, path);
+          return signed;
         }
         return text;
       },
     });
+    // Files already seen in this browser come from its tile cache (after the URL plugin: it sees signed URLs).
+    const run = runOf(urls['tileset.json'] ?? '');
+    if (run) {
+      const cache = tileCachePlugin(run.model, run.run, url => this.pathBySigned.get(url) ?? null);
+      tiles.registerPlugin(cache);
+      this.tileCache = cache.stats;
+    } else this.tileCache = null;
+    tiles.loadAncestors = this.ancestors;
     this.applyProfile(tiles);
     tiles.setCamera(this.camera);
     tiles.setResolutionFromRenderer(this.camera, this.renderer);
@@ -199,6 +226,13 @@ export class TilesViewer {
   setDetail(errorTarget: number | null, cacheMB: number | null = null): void {
     this.detail = { errorTarget, cacheMB };
     if (this.tiles) this.applyProfile(this.tiles);
+    this.needsUpdate = this.dirty = true;
+  }
+
+  /** Load strategy (measurements): whether coarser levels load first while a view's own tiles arrive. */
+  setLoadAncestors(on: boolean): void {
+    this.ancestors = on;
+    if (this.tiles) this.tiles.loadAncestors = on;
     this.needsUpdate = this.dirty = true;
   }
 
@@ -341,7 +375,7 @@ export class TilesViewer {
       cacheMB: Math.round((lru?.cachedBytes ?? 0) / 1048576), usedMB: Math.round(used / 1048576),
       heapMB: memory ? Math.round(memory.usedJSHeapSize / 1048576) : null,
       tier: this.profile.tier, errorTarget: this.tiles?.errorTarget ?? this.detail.errorTarget ?? detailOf(this.profile, this.quality).errorTarget,
-      firstFrameMs: this.firstFrameMs, settledMs: this.settledMs,
+      firstFrameMs: this.firstFrameMs, settledMs: this.settledMs, cacheHits: this.tileCache?.hits ?? 0,
     };
   }
 

@@ -78,7 +78,10 @@ export function createPickMaterial(state: ObjectStateTexture): ShaderMaterial {
   return new ShaderMaterial({
     uniforms: { objectState: { value: state.texture }, mode: { value: 0 }, far: { value: 1e6 } },
     side: DoubleSide,
+    // The logarithmic depth chunks (no-ops without a log depth buffer) keep the nearest surface the one drawn on screen.
     vertexShader: STATE_VERTEX + /* glsl */`
+      #include <common>
+      #include <logdepthbuf_pars_vertex>
       varying float vDepth;
       flat varying int vId;
       void main() {
@@ -87,15 +90,18 @@ export function createPickMaterial(state: ObjectStateTexture): ShaderMaterial {
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
         vDepth = -mv.z;
         gl_Position = projectionMatrix * mv;
+        #include <logdepthbuf_vertex>
         ${HIDE}
       }`,
     fragmentShader: /* glsl */`
       #include <packing>
+      #include <logdepthbuf_pars_fragment>
       uniform int mode;
       uniform float far;
       varying float vDepth;
       flat varying int vId;
       void main() {
+        #include <logdepthbuf_fragment>
         if (mode == 0) gl_FragColor = vec4(float((vId >> 16) & 255) / 255.0, float((vId >> 8) & 255) / 255.0, float(vId & 255) / 255.0, 1.0);
         else gl_FragColor = packDepthToRGBA(clamp(vDepth / far, 0.0, 0.999999));
       }`,

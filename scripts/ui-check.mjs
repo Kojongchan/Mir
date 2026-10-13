@@ -268,6 +268,12 @@ const dist = path.join(hdir, 'dist');
 const mime = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.wasm': 'application/wasm',
   '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png' };
 let r2Bytes = 0;
+// UI_LATENCY: ms before each 3D Tiles file is answered (a remote store's time to first byte; the measured R2 TTFB was
+// 350-850 ms). UI_SHARD=0: every tile on one host (the API spreads them over two host names).
+const latency = Number(env.UI_LATENCY) || 0, shard = env.UI_SHARD !== '0';
+/** 3D Tiles files served: level (file kind) and bytes. */
+const r2Log = [];
+const levelOf = key => { const m = /\/c\/([a-z])(\d+)?(?:-\d+)?\.glb$/.exec(key); return m ? (m[1] === 'm' ? `m${m[2]}` : m[1]) : key.split('/').pop(); };
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://local');
   try {
@@ -280,11 +286,13 @@ const server = http.createServer(async (req, res) => {
         failedOnce.add(key); results.failedFirst = (results.failedFirst ?? 0) + 1;
         res.writeHead(503); res.end(); return;
       }
+      if (latency && key.includes('/tiles3d/')) await sleep(latency);
       const o = await r2Get(key);
       if (!o) { res.writeHead(404); res.end(); return; }
       r2Bytes += o.body.length;
+      if (key.includes('/tiles3d/')) r2Log.push({ level: levelOf(key), bytes: o.body.length });
       res.writeHead(200, { 'content-type': o.type || 'application/octet-stream', 'content-length': o.body.length,
-        ...(o.encoding ? { 'content-encoding': o.encoding } : {}) });
+        'access-control-allow-origin': '*', ...(o.encoding ? { 'content-encoding': o.encoding } : {}) });
       res.end(o.body);
       return;
     }
@@ -359,8 +367,10 @@ await page.route('**/api/**', r => {
       // Only the files the API signs (its own pattern): a name it does not accept fails here as on the deployment.
       const signable = c.files.filter(f => TILES3D_FILE.test(f));
       results.tiles3d.unsignable = c.files.length - signable.length;
+      // As the API: every other tile file on a second host name (here localhost next to 127.0.0.1).
+      const host = (f, i) => (shard && f.endsWith('.glb') && i % 2 === 1 ? base.replace('127.0.0.1', 'localhost') : base);
       return r.fulfill({ json: { run: c.run, builtAt: c.builtAt, expiresIn: 14400,
-        urls: Object.fromEntries(signable.map(f => [f, `${base}/r2/${prefix}/tiles3d/${c.run}/${f}?X-Amz-Signature=ui-check`])) } });
+        urls: Object.fromEntries(signable.map((f, i) => [f, `${host(f, i)}/r2/${prefix}/tiles3d/${c.run}/${f}?X-Amz-Signature=ui-check`])) } });
     })();
     return r.fulfill({ json: state });
   }
@@ -421,9 +431,90 @@ async function orbit(frames) {
   const ms = Date.now() - t, f1 = await read(), lt1 = await lt();
   return { label: 'orbit', ms, fps: f0 !== null && f1 !== null ? Math.round((f1 - f0) * 1000 / ms) : null, longTaskMs: Math.round(lt1 - lt0) };
 }
+/** The whole canvas (no side panels), as when looking around the model. */
+async function closePanels() {
+  for (const name of ['모델 트리 닫기', '속성 닫기']) {
+    const close = page.getByRole('button', { name, exact: true });
+    if (await close.count()) await close.first().click().catch(() => {});
+  }
+}
+/** UI_QLOOK "x_y_z_dx_dz" (scene frame, n = minus): a fixed target and horizontal view direction, or null. */
+function fixedLook() {
+  const fixed = (env.UI_QLOOK || '').split('_').map(s => Number(s.replace(/^n/, '-')));
+  return fixed.length === 5 && fixed.every(Number.isFinite) ? { target: fixed.slice(0, 3), dir: [fixed[3], 0, fixed[4]] } : null;
+}
+/** Eye 35° above the target at distance d (0: the whole site). */
+const placeAt = (look, d) => page.evaluate(([{ target, dir }, d]) => {
+  const v = window.__viewer;
+  if (!d) { v.frameAll(false); return; }
+  const t = v.camera.position.clone().set(...target), e = (35 * Math.PI) / 180;
+  const eye = t.clone().addScaledVector(v.camera.position.clone().set(...dir).normalize(), -d * Math.cos(e));
+  eye.y += d * Math.sin(e);
+  v.lookAt(eye, t, false);
+}, [look, d]);
+/** Open the model on page 2 (ACC picker) and wait for its first settled frame. */
+async function openModel2() {
+  await page.getByRole('button', { name: 'ACC에서 열기' }).click();
+  await page.locator('.acc-picker-row', { hasText: modelName }).first().click();
+  await page.waitForSelector('.threed-test2__stats', { timeout: 180000 });
+}
+/**
+ * UI_LOADTEST=1 (with UI_QLOOK): how fast a view fills. A fixed flight (whole site → 1200 → 400 → 120 → 40 → 400 m →
+ * whole site) right after opening; per step the time until nothing loads any more, the first new tile, and the tile
+ * requests by level. Then the page is reloaded and the model opened again (a revisit): the same flight, now with
+ * this browser's tile cache. UI_ANCESTORS=0 loads only each view's own tiles (no coarser levels first).
+ */
+async function loadTest() {
+  const look = fixedLook();
+  if (!look) throw new Error('UI_LOADTEST needs UI_QLOOK');
+  results.loadTest = { latencyMs: latency, hosts: shard ? 2 : 1, ancestors: env.UI_ANCESTORS !== '0', runs: [] };
+  const fly = async name => {
+    await closePanels();
+    if (env.UI_ANCESTORS === '0') await page.evaluate(() => window.__viewer.setLoadAncestors(false));
+    const steps = [];
+    for (const [view, d] of [['site', 0], ['1200m', 1200], ['400m', 400], ['120m', 120], ['40m', 40], ['400m-back', 400], ['site-back', 0]]) {
+      const from = r2Log.length, start = Date.now();
+      const s0 = await page.evaluate(() => window.__viewer.stats());
+      await placeAt(look, d);
+      let last = `${s0.tilesLoaded}`, changed = start, first = null, quiet = 0, st = s0;
+      while (Date.now() - start < 240000) {
+        await sleep(300);
+        st = await page.evaluate(() => window.__viewer.stats());
+        const key = `${st.tilesLoaded}/${st.tilesVisible}/${st.triangles}`;
+        if (key !== last) { last = key; changed = Date.now(); first ??= Date.now(); }
+        quiet = st.downloading === 0 && st.parsing === 0 ? quiet + 1 : 0;
+        if (quiet >= 6 && Date.now() - changed >= 1800) break;
+      }
+      const mine = r2Log.slice(from);
+      const byLevel = {};
+      for (const r of mine) byLevel[r.level] = (byLevel[r.level] ?? 0) + 1;
+      const row = { view, loadS: Math.round((changed - start) / 100) / 10, firstS: first ? Math.round((first - start) / 100) / 10 : null,
+        requests: mine.length, MB: MB(mine.reduce((n, r) => n + r.bytes, 0)), byLevel, triangles: st.triangles, tilesVisible: st.tilesVisible,
+        cacheHits: st.cacheHits, usedMB: st.usedMB };
+      steps.push(row);
+      log('load', name, JSON.stringify(row));
+      await shot(`l-${name}-${view}.png`);
+    }
+    const total = steps.reduce((n, r) => n + r.loadS, 0);
+    results.loadTest.runs.push({ name, totalS: Math.round(total * 10) / 10, requests: steps.reduce((n, r) => n + r.requests, 0), steps });
+    save();
+  };
+  await fly('first');
+  // Revisit: a new page load, same browser (its tile cache kept).
+  const from = r2Log.length, t = Date.now();
+  await page.reload();
+  await openModel2();
+  for (let quiet = 0, until = Date.now() + 120000; quiet < 4 && Date.now() < until;) {
+    await sleep(500);
+    const st = await page.evaluate(() => window.__viewer?.stats()).catch(() => null);
+    quiet = st && st.downloading === 0 && st.parsing === 0 && st.settledMs !== null ? quiet + 1 : 0;
+  }
+  results.loadTest.revisitOpen = { s: Math.round((Date.now() - t) / 100) / 10, requests: r2Log.length - from, stats: await page.evaluate(() => window.__viewer.stats()) };
+  await fly('revisit');
+}
 if (PAGE === 2) {
   results.v2 = [];
-  try {
+  try { main: {
     await page.goto(base);
     await page.getByRole('button', { name: 'ACC에서 열기' }).click();
     await page.locator('.acc-picker-row', { hasText: modelName }).first().click();
@@ -451,6 +542,7 @@ if (PAGE === 2) {
     results.v2.push(await sample('overview'));
     await shot('11-v2-overview.png');
     save();
+    if (env.UI_LOADTEST) { await loadTest(); break main; }
     // UI_CAPTURE=1: the high-quality still of the overview (download), its size and how long it took.
     if (env.UI_CAPTURE) {
       const t = Date.now();
@@ -508,31 +600,16 @@ if (PAGE === 2) {
     if (env.UI_QUALITY) {
       results.quality = [];
       const budgetMB = Number(env.UI_QBUDGET) || 1536;
-      // The whole canvas (no side panels), as when looking around the model.
-      for (const name of ['모델 트리 닫기', '속성 닫기']) {
-        const close = page.getByRole('button', { name, exact: true });
-        if (await close.count()) await close.first().click().catch(() => {});
-      }
-      // UI_QLOOK "x_y_z_dx_dz" (scene frame, n = minus) repeats an earlier run's views; default: around the zoomed object.
-      const fixed = (env.UI_QLOOK || '').split('_').map(s => Number(s.replace(/^n/, '-')));
-      const look = fixed.length === 5 && fixed.every(Number.isFinite)
-        ? { target: fixed.slice(0, 3), dir: [fixed[3], 0, fixed[4]] }
-        : await page.evaluate(() => {
-          const v = window.__viewer, t = v.controls.getTarget(v.camera.position.clone());
-          const dir = v.camera.getWorldDirection(t.clone());
-          dir.y = 0;
-          if (dir.lengthSq() < 1e-6) dir.set(1, 0, 0);
-          return { target: t.toArray(), dir: dir.normalize().toArray() };
-        });
+      await closePanels();
+      const look = fixedLook() ?? await page.evaluate(() => {
+        const v = window.__viewer, t = v.controls.getTarget(v.camera.position.clone());
+        const dir = v.camera.getWorldDirection(t.clone());
+        dir.y = 0;
+        if (dir.lengthSq() < 1e-6) dir.set(1, 0, 0);
+        return { target: t.toArray(), dir: dir.normalize().toArray() };
+      });
       results.qualityLook = look;
-      const place = d => page.evaluate(([{ target, dir }, d]) => {
-        const v = window.__viewer;
-        if (!d) { v.frameAll(false); return; }
-        const t = v.camera.position.clone().set(...target), e = (35 * Math.PI) / 180;
-        const eye = t.clone().addScaledVector(v.camera.position.clone().set(...dir).normalize(), -d * Math.cos(e));
-        eye.y += d * Math.sin(e);
-        v.lookAt(eye, t, false);
-      }, [look, d]);
+      const place = d => placeAt(look, d);
       const timing = () => page.evaluate(() => {
         const v = window.__viewer, gl = v.renderer.getContext(), px = new Uint8Array(4);
         const draw = () => { v.renderer.render(v.scene, v.camera); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); };
@@ -625,7 +702,7 @@ if (PAGE === 2) {
       } else results.camera = { error: 'no surface to test on' };
       log('camera', results.camera);
     }
-  } catch (e) {
+  } } catch (e) {
     results.error = e.stack?.slice(0, 1500) ?? String(e);
     log('page check failed', e);
     await shot('99-error.png');
