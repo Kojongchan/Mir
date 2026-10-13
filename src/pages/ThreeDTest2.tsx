@@ -56,6 +56,7 @@ export function ThreeDTest2() {
   const [revealDb, setRevealDb] = useState<number | null>(null);
   const [hiddenNodes, setHiddenNodes] = useState<ReadonlySet<number>>(new Set());
   const [highlightIds, setHighlightIds] = useState<number[] | null>(null);
+  const [statsOpen, setStatsOpen] = useState(false); // narrow screens: one summary line until tapped
   // Phones and narrow tablets: panels start closed and one at a time (side by side they cover the view).
   const [treeOpen, setTreeOpen] = useState(() => !narrowScreen());
   const [propsOpen, setPropsOpen] = useState(() => !narrowScreen());
@@ -252,6 +253,7 @@ export function ThreeDTest2() {
     `캐시 ${stats.cacheMB}MB (화면 ${stats.usedMB}MB)${stats.cacheHits ? ` · 저장본 ${stats.cacheHits}` : ''}${stats.heapMB !== null ? ` · 힙 ${stats.heapMB}MB` : ''}`,
     stats.firstFrameMs !== null ? `첫 화면 ${(stats.firstFrameMs / 1000).toFixed(1)}s${stats.settledMs !== null ? ` · 안정 ${(stats.settledMs / 1000).toFixed(1)}s` : ''}` : '',
   ].filter(Boolean).join(' · ');
+  const statsShort = stats && `${PROFILES[stats.tier].label} · ${stats.errorTarget}px · ${stats.fps}fps · 삼각형 ${stats.triangles.toLocaleString()}`;
 
   return (
     <div className="threed-test threed-test--v2">
@@ -264,8 +266,10 @@ export function ThreeDTest2() {
       </div>
       <div className="threed-test__viewer">
         <div className="viewer-bar threed-test__bar">
-          <button className="btn btn--sm btn--primary" onClick={() => setPickerOpen(true)} disabled={busy || !!initError}>
-            <UiIcon name="folder" size={14} /> ACC에서 열기
+          {/* The tools: in line on wide screens, one scrolling row on phones (status on its own line below). */}
+          <div className="threed-test__tools">
+          <button className="btn btn--sm btn--primary" onClick={() => setPickerOpen(true)} disabled={busy || !!initError} aria-label="ACC에서 열기">
+            <UiIcon name="folder" size={14} /> <span className="threed-test__wide">ACC에서 </span>열기
           </button>
           <button className="btn btn--sm" onClick={() => viewerRef.current?.frameAll()} disabled={!modelName}>전체 맞춤</button>
           <button className="btn btn--sm" onClick={() => selectedDb !== null && void zoomTo([selectedDb])} disabled={selectedDb === null}>선택 확대</button>
@@ -304,7 +308,8 @@ export function ThreeDTest2() {
               <button className={`btn btn--sm${propsOpen ? ' btn--primary' : ''}`} onClick={() => { setPropsOpen(o => !o); if (narrowScreen()) setTreeOpen(false); }}>속성</button>
             </>
           )}
-          {index.note && <span className="muted">{index.note}</span>}
+          </div>
+          {index.note && <span className="muted threed-test__model">{index.note}</span>}
           <div className="spacer" />
           {status && <span className="muted threed-test2__status" title={status}>{status}</span>}
         </div>
@@ -365,7 +370,13 @@ export function ThreeDTest2() {
                 onZoom={ids => void zoomTo(ids)} onHighlight={setHighlightIds} />
             </aside>
           )}
-          {statsText && <div className="threed-test2__stats">{statsText}</div>}
+          {statsText && (
+            <button type="button" className={`threed-test2__stats${statsOpen ? ' is-open' : ''}`} onClick={() => setStatsOpen(o => !o)}
+              aria-expanded={statsOpen} title="성능 표시 (좁은 화면에서는 눌러서 펼침)">
+              <span className="threed-test2__stats-full">{statsText}</span>
+              <span className="threed-test2__stats-short">{statsShort}</span>
+            </button>
+          )}
         </div>
       </div>
       {pickerOpen && (

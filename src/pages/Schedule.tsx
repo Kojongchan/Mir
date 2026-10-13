@@ -100,7 +100,7 @@ export function Schedule() {
                 const p = pos(m.date);
                 if (p === null) return null;
                 return (
-                  <div className="sched-marker" key={i} style={{ left: `${p}%` }}>
+                  <div className={`sched-marker${i === 0 ? ' is-first' : ''}${i === markers.length - 1 ? ' is-last' : ''}`} key={i} style={{ left: `${p}%` }}>
                     <span className="sched-dot" />
                     <span className="sched-marker-label">
                       {m.name}<br /><span className="muted">{formatDate(m.date)} · {ddayLabel(m.date)}</span>

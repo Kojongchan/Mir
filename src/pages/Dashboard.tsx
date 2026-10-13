@@ -178,7 +178,7 @@ export function Dashboard() {
 
   // chronological series for charts (lists come newest-first)
   const logsAsc = [...logs].reverse();
-  const progress = info ? Number(info.progress_pct) : 0;
+  const progress = (info && Number(info.progress_pct)) || 0;
   const sinceStart = daysSince(info?.start_date ?? null);
   const latest = logs[0];
   const manpowerData = logsAsc.map((l) => ({ d: l.log_date.slice(5), 인력: l.manpower }));

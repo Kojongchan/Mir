@@ -7396,6 +7396,224 @@ textarea.input {
   color: #7CFC9A;
   font: 11px/1.4 ui-monospace, monospace;
   border-radius: 6px;
+  border: none;
+  text-align: left;
   pointer-events: none;
   z-index: 20;
+}
+.threed-test2__stats-short {
+  display: none;
+}
+
+/* =====================================================================
+   R1 — 휴대폰·태블릿 반응형 마감 (2026-10-13, scripts/responsive-check.mjs 로 전 화면 점검).
+   폰(<=640): 3D 시험 화면을 하단 탭 위로, 2차 화면 도구를 한 줄 가로 스크롤, 마일스톤을 세로 목록,
+   입력칸 높이, 둘로 나뉜 화면(물량·도면·자료관리)을 위아래로. 터치 기기(태블릿 포함): 터치 타깃 최소 크기.
+   표 머리글은 글자 단위로 줄바꿈하지 않음(폭이 모자라면 표가 가로 스크롤). 데스크톱(마우스) 레이아웃은 그대로.
+   ===================================================================== */
+.threed-test__tools {
+  display: contents; /* 넓은 화면: 도구가 바 안에 그대로 */
+}
+.cde-table th,
+.acc-table th,
+.admin-table th,
+.clash-table th,
+.data-table th,
+.map-table th {
+  white-space: nowrap;
+}
+/* 마일스톤 처음·끝 라벨은 안쪽으로(가운데 정렬이면 화면 밖으로 잘림) */
+.sched-marker.is-first .sched-marker-label {
+  left: -6px;
+  transform: none;
+  text-align: left;
+}
+.sched-marker.is-last .sched-marker-label {
+  left: auto;
+  right: -6px;
+  transform: none;
+  text-align: right;
+}
+@media (max-width: 900px) {
+  /* 좁은 화면: 성능 표시는 위로(아래는 패널 시트 자리), 한 줄 요약 — 누르면 전체 */
+  .threed-test2__stats {
+    top: 8px;
+    bottom: auto;
+    font-size: 10px;
+    padding: 4px 8px;
+    pointer-events: auto;
+    cursor: pointer;
+  }
+  .threed-test2__stats:not(.is-open) .threed-test2__stats-full {
+    display: none;
+  }
+  .threed-test2__stats:not(.is-open) .threed-test2__stats-short {
+    display: inline;
+  }
+}
+@media (max-width: 640px) {
+  .threed-test {
+    bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  }
+  .threed-test--v2 .threed-test__bar {
+    flex-wrap: wrap;
+    padding: 6px 8px;
+    row-gap: 4px;
+  }
+  .threed-test--v2 .threed-test__tools {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .threed-test--v2 .threed-test__tools::-webkit-scrollbar {
+    display: none;
+  }
+  .threed-test--v2 .threed-test__tools > * {
+    flex-shrink: 0;
+  }
+  .threed-test--v2 .threed-test__wide,
+  .threed-test--v2 .threed-test__model,
+  .threed-test--v2 .threed-test__bar > .spacer {
+    display: none;
+  }
+  .threed-test--v2 .threed-test2__status {
+    flex: 1 1 100%;
+    max-width: 100%;
+  }
+
+  /* 입력칸 — 16px 글자에 맞는 높이(작으면 글자가 잘림) */
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']),
+  select {
+    min-height: 40px;
+  }
+
+  /* 마일스톤 타임라인 → 세로 목록 */
+  .sched-timeline {
+    padding: 4px 0 4px 8px;
+  }
+  .sched-track {
+    height: auto;
+    background: none;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-left: 16px;
+    border-left: 2px solid var(--border);
+    border-radius: 0;
+  }
+  .sched-today {
+    display: none;
+  }
+  .sched-track .sched-marker {
+    position: relative;
+    left: auto !important;
+    top: auto;
+    transform: none;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .sched-track .sched-dot {
+    flex: none;
+    margin-left: -24px;
+    margin-top: 3px;
+  }
+  .sched-track .sched-marker .sched-marker-label {
+    position: static;
+    transform: none;
+    text-align: left;
+    white-space: normal;
+    font-size: 13px;
+  }
+
+  /* 둘로 나뉜 화면 → 위아래 */
+  .viewer-fill {
+    flex-direction: column;
+  }
+  .viewer-fill > .mod-subtree {
+    width: 100% !important;
+    max-height: 45%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .draw-layout {
+    flex-direction: column;
+    height: auto;
+    min-height: 0;
+  }
+  .draw-list {
+    width: 100%;
+    max-height: 40vh;
+  }
+  .draw-layout > .draw-main {
+    min-height: 60vh;
+  }
+  .acc-fm {
+    flex-direction: column;
+  }
+  .acc-fm-tree {
+    width: 100% !important;
+    max-height: 32%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .acc-fm-toolbar {
+    flex-wrap: wrap;
+  }
+  .acc-fm-search {
+    flex: 1 1 140px;
+    width: auto;
+  }
+}
+/* 터치 기기(폰·태블릿): 손가락으로 누를 수 있는 크기 */
+@media (pointer: coarse) {
+  .theme-toggle {
+    min-width: 40px;
+    min-height: 40px;
+  }
+  /* 칩·보기 전환·행 메뉴·경로 등 꾸밈 없는 버튼도 32px 이상(본문 글자처럼 보이는 링크 버튼은 제외) */
+  button:not(.acc-link) {
+    min-height: 32px;
+    min-width: 32px;
+  }
+  /* 파일명 링크: 글자 모양은 그대로, 누르는 범위만 위아래로 넓힘(음수 여백이라 행 높이는 그대로) */
+  button.acc-link {
+    min-height: 0;
+    min-width: 0;
+    padding-block: 7px;
+    margin-block: -7px;
+  }
+  /* 슬라이더(4D 타임라인 등): 손가락으로 잡을 높이 */
+  input[type='range'] {
+    min-height: 32px;
+  }
+  /* 4D 공정표 행: 누르기 쉬운 높이(간트 막대는 행 안에 있어 함께 늘어남) */
+  .tl-tbody .tr {
+    height: 33px; /* 32 + 아래 선 */
+  }
+  .tl-tbody .td {
+    line-height: 32px;
+  }
+  .tl-tbody .tl-bar {
+    top: 9px;
+    height: 14px;
+  }
+}
+@media (pointer: coarse) and (min-width: 641px) {
+  .btn {
+    min-height: 36px;
+  }
+  .btn.btn--sm {
+    min-height: 32px;
+  }
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file']),
+  select {
+    min-height: 34px;
+  }
 }
