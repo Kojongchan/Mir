@@ -6,6 +6,8 @@
 //                is) and simplified parents carrying the same photos
 //   region     : TILES3D_REGION="<manifest index>:<count>" or DIAG_OPTIONS="region=<index>:<count>" limits the detail
 //                level to that many tiles around one (quick test builds); default: the whole site
+//   reuse      : TILES3D_REUSE=1 or DIAG_OPTIONS="reuse=1" keeps the published run's leaves (far, detail, terrain,
+//                objects.bin) and rebuilds only the coarser structure levels into that run (no second copy)
 //   output     : <prefix>/tiles3d/runs/<id>/{tileset.json, objects.bin, c/*.glb}, then <prefix>/tiles3d/current.json
 // Object ids: numeric entity ids are dbIds; converter-renamed fragments (`entity-N`) use the model's fragment
 // table (meta/alias), so every level carries the owning object's dbId per vertex. Terrain has no object ids.
@@ -26,6 +28,7 @@ const FAR_ERROR = 3;            // metres
 const FAR_ENOUGH = 0.9;         // far keeps this share of the original's triangles → no detail copy needed
 const TERRAIN_ERROR = 2;        // metres: first simplified terrain level (photo patches are ≈ 9 m triangles)
 const PARENT_FACTOR = 3;        // each coarser level allows 3× the error of its children
+const MAX_PARENT_ERROR = 81;    // metres: a whole-site level simplified harder than this prunes everything away
 let prefix = env.MODEL_CACHE_PREFIX || (env.URN ? cacheKey(env.URN) : '');
 if (!/^[A-Za-z0-9]{1,40}$/.test(prefix ?? '')) throw new Error('Invalid cache identifier');
 // TILES3D_LOCAL_DIR: a folder laid out like the bucket (dry runs and tests without R2).
@@ -147,6 +150,25 @@ async function write(groups, name, kind) {
   return { bounds: out.bounds, triangles: out.triangles };
 }
 
+// Reuse: the published run's tileset gives each far leaf (box, error, detail child) and the terrain branch as is.
+const reuse = env.TILES3D_REUSE === '1' || /(?:^|,)\s*reuse=1\b/.test(env.DIAG_OPTIONS || '');
+let previous = null;
+const reusedLeaves = new Map();
+if (reuse) {
+  const current = await getJson(`${prefix}/tiles3d/current.json`);
+  const old = current && /^runs\/[a-zA-Z0-9-]+$/.test(current.run ?? '') && await getJson(`${prefix}/tiles3d/${current.run}/tileset.json`);
+  if (!old) throw new Error('No published tileset to reuse');
+  previous = { current, tileset: old };
+  const fromBox = v => { const [cx, cy, cz, hx, , , , hy, , , , hz] = v.box; return [cx - hx, cy - hy, cz - hz, cx + hx, cy + hy, cz + hz]; };
+  const visit = n => {
+    const m = /^c\/f(\d+)\.glb$/.exec(n.content?.uri ?? '');
+    if (m) reusedLeaves.set(Number(m[1]), { bounds: fromBox(n.boundingVolume), error: n.geometricError, children: n.children ?? [] });
+    else for (const c of n.children ?? []) if (c.extras?.mir !== 'terrain') visit(c);
+  };
+  visit(old.root);
+  console.log(`Reusing ${current.run}: ${reusedLeaves.size} far leaves`);
+}
+
 // Leaves: far content for every tile, the original under it where the far file dropped much.
 const leaves = [];
 let next = 0, done = 0;
@@ -156,6 +178,12 @@ await Promise.all(Array.from({ length: 4 }, async () => {
     if (!validFar(t)) continue;
     const farGroups = await load(i, t.far.n);
     if (!farGroups) continue;
+    if (reuse) {
+      const kept = reusedLeaves.get(i);
+      if (kept) leaves.push({ key: i, centre: centreOf(kept.bounds), bounds: kept.bounds, groups: farGroups, content: `c/f${i}.glb`, error: kept.error, childrenJson: kept.children });
+      if (++done % 100 === 0) console.log(`Leaves ${done}/${tiles.length}`);
+      continue;
+    }
     const far = await write(farGroups, `f${i}`, 'far');
     if (!far) continue;
     growObjects(farGroups.opaque); growObjects(farGroups.transparent);
@@ -186,11 +214,18 @@ async function build(node, depth) {
   if (node.content) return node; // a leaf (far) node, possibly with a detail child
   const kids = [];
   for (const child of node.children) kids.push(await build(child, depth + 1));
-  const error = Math.max(...kids.map(k => k.error || FAR_ERROR)) * PARENT_FACTOR;
-  const opaque = await simplifyGroup(mergeGroups(kids.map(k => k.groups?.opaque)), error);
-  const transparent = await simplifyGroup(mergeGroups(kids.map(k => k.groups?.transparent)), error);
+  const childError = Math.max(...kids.map(k => k.error || FAR_ERROR));
+  let error = Math.min(childError * PARENT_FACTOR, MAX_PARENT_ERROR), opaque, transparent, out;
+  const mergedOpaque = mergeGroups(kids.map(k => k.groups?.opaque)), mergedTransparent = mergeGroups(kids.map(k => k.groups?.transparent));
+  // A level must show something: if the error prunes everything, retry finer (down to the children's own error).
+  for (;;) {
+    opaque = await simplifyGroup(mergedOpaque, error);
+    transparent = await simplifyGroup(mergedTransparent, error);
+    out = await encodeGlb({ opaque, transparent });
+    if (out || error <= childError) break;
+    error = Math.max(childError, error / PARENT_FACTOR);
+  }
   for (const k of kids) delete k.groups; // merged into this level; children keep only their tileset entry
-  const out = await encodeGlb({ opaque, transparent });
   const id = parentId++;
   const content = out ? `c/h${id}.glb` : null;
   if (out) files.set(content, out.glb);
@@ -205,7 +240,7 @@ console.log('Parents', JSON.stringify(stats.parents));
 // Terrain: one leaf per aerial photo, then parents (same photos, simplified surface) up to one root.
 const terrainLeaves = [];
 const textures = []; // KTX2 bytes, indexed across all base files
-for (const [b, name] of (Array.isArray(base) ? base : []).entries()) {
+for (const [b, name] of (Array.isArray(base) && !reuse ? base : []).entries()) {
   if (!/^[\w.-]+\.xkt$/.test(name)) continue;
   const xkt = await getBytes(`${prefix}/xkt/${name}`);
   const decoded = xkt && decodeXkt(xkt, { textures: true });
@@ -250,18 +285,23 @@ console.log('Terrain', JSON.stringify(stats.terrain));
 const toJson = (node, part) => ({
   boundingVolume: boxVolume(node.bounds), geometricError: node.error, refine: 'REPLACE',
   ...(node.content ? { content: { uri: node.content } } : {}),
-  ...(node.children?.length ? { children: node.children.map(c => toJson(c, part)) } : {}),
+  ...(node.childrenJson?.length ? { children: node.childrenJson }
+    : node.children?.length ? { children: node.children.map(c => toJson(c, part)) } : {}),
   ...(part ? { extras: { mir: part } } : {}),
 });
-const top = [structures, terrain].filter(Boolean);
-const rootBounds = [0, 1, 2].map(a => Math.min(...top.map(n => n.bounds[a]))).concat([3, 4, 5].map(a => Math.max(...top.map(n => n.bounds[a]))));
+const terrainJson = terrain ? toJson(terrain, 'terrain') : previous?.tileset.root.children?.find(c => c.extras?.mir === 'terrain') ?? null;
+const fromBox = v => { const [cx, cy, cz, hx, , , , hy, , , , hz] = v.box; return [cx - hx, cy - hy, cz - hz, cx + hx, cy + hy, cz + hz]; };
+const top = [structures.bounds, terrainJson && fromBox(terrainJson.boundingVolume)].filter(Boolean);
+const rootBounds = [0, 1, 2].map(a => Math.min(...top.map(b => b[a]))).concat([3, 4, 5].map(a => Math.max(...top.map(b => b[a]))));
 const tileset = { asset: { version: '1.1', generator: 'MIR build-tiles3d' }, geometricError: 1e6,
   root: { boundingVolume: boxVolume(rootBounds), geometricError: 1e6, refine: 'REPLACE',
-    children: [toJson(structures, 'structure'), ...(terrain ? [toJson(terrain, 'terrain')] : [])] },
-  extras: { mir: { objects: objectCount, detail: region ? { region: region.size } : 'all', terrain: !!terrain } } };
-for (let k = 0; k < objectCount * 6; k++) if (!Number.isFinite(objectBoxes[k])) objectBoxes[k] = NaN;
+    children: [toJson(structures, 'structure'), ...(terrainJson ? [terrainJson] : [])] },
+  extras: { mir: { objects: objectCount, detail: region ? { region: region.size } : 'all', terrain: !!terrainJson } } };
 files.set('tileset.json', gzipSync(JSON.stringify(tileset)));
-files.set('objects.bin', gzipSync(Buffer.from(objectBoxes.buffer)));
+if (!reuse) {
+  for (let k = 0; k < objectCount * 6; k++) if (!Number.isFinite(objectBoxes[k])) objectBoxes[k] = NaN;
+  files.set('objects.bin', gzipSync(Buffer.from(objectBoxes.buffer)));
+}
 
 const total = [...files.values()].reduce((s, b) => s + b.length, 0);
 console.log(`Tileset: ${files.size} files, ${MB(total)} MB; structure root ${triangles(structures.groups?.opaque) + triangles(structures.groups?.transparent)} triangles`);
@@ -270,15 +310,24 @@ if (!localDir) {
   const budget = await checkStorageBudget(tok => client.send(new ListObjectsV2Command({ Bucket, MaxKeys: 1000, ...(tok ? { ContinuationToken: tok } : {}) })), total);
   console.log(`Storage: ${(budget.bytes / 1e9).toFixed(2)} GB now, ${(budget.projectedBytes / 1e9).toFixed(2)} GB with this run (limit ${(budget.limit / 1e9).toFixed(1)} GB; the previous run is removed afterwards)`);
 }
-const run = `runs/${randomUUID()}`;
+const run = previous ? previous.current.run : `runs/${randomUUID()}`;
 const entries = [...files.entries()];
 for (let k = 0; k < entries.length; k += 16) await Promise.all(entries.slice(k, k + 16).map(([path, body]) => client.send(new PutObjectCommand({
   Bucket, Key: `${prefix}/tiles3d/${run}/${path}`, Body: body,
   ContentType: path.endsWith('.glb') ? 'model/gltf-binary' : path.endsWith('.json') ? 'application/json' : 'application/octet-stream',
   ...(path.endsWith('.glb') ? {} : { ContentEncoding: 'gzip' }) }))));
+// Reuse: the run keeps its leaves; old coarser levels this build no longer has are dropped from the list (and below).
+const kept = previous ? previous.current.files.filter(f => !/^c\/h\d+\.glb$/.test(f) && !files.has(f)) : [];
+const published = [...kept, ...files.keys()];
+const publishedStats = previous ? { ...previous.current.stats, parents: stats.parents } : stats;
+const bytes = previous ? previous.current.bytes + total : total; // after a reuse: an upper bound (old parents counted)
 await client.send(new PutObjectCommand({ Bucket, Key: `${prefix}/tiles3d/current.json`, ContentType: 'application/json',
-  Body: JSON.stringify({ v: 1, run, files: [...files.keys()], bytes: total, builtAt: new Date().toISOString(), stats }) }));
-console.log(`Published ${prefix}/tiles3d/${run}`);
+  Body: JSON.stringify({ v: 1, run, files: published, bytes, builtAt: new Date().toISOString(), stats: publishedStats }) }));
+console.log(`Published ${prefix}/tiles3d/${run}${previous ? ' (coarser levels rebuilt in place)' : ''}`);
+if (previous) {
+  const keep = new Set(published);
+  for (const f of previous.current.files) if (!keep.has(f)) await client.send(new DeleteObjectCommand({ Bucket, Key: `${prefix}/tiles3d/${run}/${f}` }));
+}
 let removed = 0, tok;
 do {
   const page = await client.send(new ListObjectsV2Command({ Bucket, Prefix: `${prefix}/tiles3d/runs/`, MaxKeys: 1000, ...(tok ? { ContinuationToken: tok } : {}) }));
