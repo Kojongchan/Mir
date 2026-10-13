@@ -340,17 +340,22 @@ const state = { ready: true, xkt: true, urls: [r2Path('unused.xkt')], tiles,
 
 const { chromium } = await import('playwright-core');
 const browser = await chromium.launch({ args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader', '--enable-precise-memory-info'] });
-const mobile = env.UI_MOBILE === '1';
-results.conditions = { page: PAGE, cpu: Number(env.UI_CPU) || 1, mobile, tiles: env.UI_TILES || 16 };
+// UI_MOBILE=1: a phone (390 × 844, iPhone); UI_MOBILE=tablet: a tablet (820 × 1180, iPad). Both are the mobile tier.
+const mobile = env.UI_MOBILE === '1' || env.UI_MOBILE === 'tablet';
+const tablet = env.UI_MOBILE === 'tablet';
+results.conditions = { page: PAGE, cpu: Number(env.UI_CPU) || 1, mobile: tablet ? 'tablet' : mobile, tiles: env.UI_TILES || 16 };
 const consoleLines = [], pageErrors = [], failed = [], apiCalls = [];
 const modelName = env.UI_MODEL_NAME || '평택-오송 5공구_통합모델.nwd';
 let page, cdp;
 /** A new browser context (empty storage: no tile cache) and page, with Supabase and the API answered locally. */
 async function newPage() {
-  const context = await browser.newContext(mobile
-    ? { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
-        userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' }
-    : { viewport: { width: 1600, height: 900 } });
+  const context = await browser.newContext(tablet
+    ? { viewport: { width: 820, height: 1180 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true,
+        userAgent: 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' }
+    : mobile
+      ? { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true,
+          userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1' }
+      : { viewport: { width: 1600, height: 900 } });
   page = await context.newPage();
   // Main-thread stalls (long tasks) for the whole session.
   await page.addInitScript(() => {
@@ -642,6 +647,8 @@ if (PAGE === 2) {
     if (env.UI_QUALITY) {
       results.quality = [];
       const budgetMB = Number(env.UI_QBUDGET) || 1536;
+      // UI_QERRORS "20_12_8_6": the screen errors (px) to compare, coarse to fine.
+      const errors = env.UI_QERRORS ? env.UI_QERRORS.split('_').map(Number).filter(e => e > 0) : [12, 6, 3, 1.5];
       await closePanels();
       const look = fixedLook() ?? await page.evaluate(() => {
         const v = window.__viewer, t = v.controls.getTarget(v.camera.position.clone());
@@ -665,7 +672,7 @@ if (PAGE === 2) {
       });
       for (const [view, d] of [['near', 120], ['mid', 400], ['far', 1200], ['site', 0]]) {
         await place(d);
-        for (const e of [12, 6, 3, 1.5]) {
+        for (const e of errors) {
           const label = `q-${view}-${e}`;
           await page.evaluate(([e, mb]) => window.__viewer.setDetail(e, mb), [e, budgetMB]);
           const r0 = r2Bytes, start = Date.now();
