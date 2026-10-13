@@ -10,3 +10,4 @@ dist-ssr
 !.vscode/extensions.json
 public/web-ifc/*.wasm
 .ui-check
+public/basis/

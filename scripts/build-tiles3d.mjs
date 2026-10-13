@@ -1,25 +1,31 @@
 // Publish a 3D Tiles 1.1 tileset for the second viewer engine (docs/3D뷰_2차_엔진.md, decision D23) from the
 // model's existing R2 tiles. Read-only on those tiles.
-//   whole site : every tile's far (merged) file → leaf content, then coarser parents (HLOD) up to one root
-//   region     : TILES3D_REGION="<manifest index>:<count>" or DIAG_OPTIONS="region=<index>:<count>"
-//                (default: the tile with most objects, 48 tiles)
-//                gets light → original children under its far leaf
+//   structures : every tile's far (merged) file → leaf content; under it the original (detail) file, unless the far
+//                file already keeps ≥ 90 % of the original's triangles; coarser parents (HLOD) up to one root
+//   terrain    : the always-loaded base files (aerial photo per patch) → one textured leaf per photo (KTX2 kept as
+//                is) and simplified parents carrying the same photos
+//   region     : TILES3D_REGION="<manifest index>:<count>" or DIAG_OPTIONS="region=<index>:<count>" limits the detail
+//                level to that many tiles around one (quick test builds); default: the whole site
 //   output     : <prefix>/tiles3d/runs/<id>/{tileset.json, objects.bin, c/*.glb}, then <prefix>/tiles3d/current.json
 // Object ids: numeric entity ids are dbIds; converter-renamed fragments (`entity-N`) use the model's fragment
-// table (meta/alias), so every level carries the owning object's dbId per vertex.
+// table (meta/alias), so every level carries the owning object's dbId per vertex. Terrain has no object ids.
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { decodeXkt } from './tile-lod-merge.mjs';
-import { packMeshes, mergeGroups, simplifyGroup, encodeGlb, boxVolume, groupSpatially, triangles } from './tiles3d.mjs';
+import { packMeshes, mergeGroups, simplifyGroup, encodeGlb, boxVolume, groupSpatially, triangles, packTerrain, simplifyTerrain,
+  encodeTerrainGlb } from './tiles3d.mjs';
 import { checkStorageBudget } from './storage-budget.mjs';
 import { cacheKey } from './cache-key.mjs';
 
 const env = process.env;
-const FAR_ERROR = 1;      // metres: far v5 (0.25 m simplification, parts < 1 m pruned)
-const LIGHT_ERROR = 0.05; // metres: light v2 (0.1 % relative per island)
-const PARENT_FACTOR = 3;  // each coarser level allows 3× the error of its children
+// Far v5 simplifies by 0.25 m but prunes parts < 1 m and drops thin pieces of large merged tiles; at 3 m the original
+// replaces it from ≈200 m (field PC tier), where the first viewer also switches.
+const FAR_ERROR = 3;            // metres
+const FAR_ENOUGH = 0.9;         // far keeps this share of the original's triangles → no detail copy needed
+const TERRAIN_ERROR = 2;        // metres: first simplified terrain level (photo patches are ≈ 9 m triangles)
+const PARENT_FACTOR = 3;        // each coarser level allows 3× the error of its children
 let prefix = env.MODEL_CACHE_PREFIX || (env.URN ? cacheKey(env.URN) : '');
 if (!/^[A-Za-z0-9]{1,40}$/.test(prefix ?? '')) throw new Error('Invalid cache identifier');
 // TILES3D_LOCAL_DIR: a folder laid out like the bucket (dry runs and tests without R2).
@@ -69,7 +75,8 @@ catch (e) {
   console.log(`Alias ${prefix} -> ${alias.prefix}`);
   prefix = alias.prefix;
 }
-const tiles = (await getJson(`${prefix}/xkt/manifest.json`))?.tiles;
+const manifest = await getJson(`${prefix}/xkt/manifest.json`);
+const tiles = manifest?.tiles, base = manifest?.base;
 if (!Array.isArray(tiles) || !tiles.length) throw new Error('Not a tiled model');
 const pointer = await getJson(`${prefix}/meta/current.json`);
 const objectCount = (pointer?.objects ?? 0) + 1;
@@ -89,24 +96,25 @@ const dbIdsFor = (i, ids) => {
   return ids.map(id => (/^\d+$/.test(id) ? Number(id) : Number(table?.get(Number(/^entity-(\d+)$/.exec(id)?.[1])) ?? 0)));
 };
 const validFar = t => /^merged-far-v[45]$/.test(t.far?.policy ?? '') && /^runs\/[a-zA-Z0-9-]+\/far\d+\.xkt$/.test(t.far?.n ?? '');
-const validLight = t => (t.motion?.policy === 'merged-light-v2' || t.motion?.policy === 'component-border-v1') && /^runs\/[a-zA-Z0-9-]+\/(?:motion|light)?\d+\.xkt$/.test(t.motion?.n ?? '');
-
-// Region with full detail (prototype scope; the whole site gets far + coarser levels).
+// Detail scope: the whole site, or a region for quick test builds.
 const members = t => t.far?.members ?? t.motion?.members ?? 0;
 const centreOf = b => [(b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2];
 // An empty input must not read as tile 0 (Number('') === 0).
 const regionOption = env.TILES3D_REGION || /(?:^|,)\s*region=(\d+:\d+)/.exec(env.DIAG_OPTIONS || '')?.[1];
-let [regionTile, regionCount] = regionOption ? regionOption.split(':').map(Number) : [NaN, NaN];
-if (!(regionTile >= 0 && regionTile < tiles.length)) { regionTile = 0; tiles.forEach((t, i) => { if (members(t) > members(tiles[regionTile])) regionTile = i; }); }
-if (!(regionCount > 0)) regionCount = 48;
-const c0 = centreOf(tiles[regionTile].aabb);
-const region = new Set(tiles.map((t, i) => [i, Math.hypot(...centreOf(t.aabb).map((v, a) => v - c0[a]))])
-  .sort((a, b) => a[1] - b[1]).slice(0, regionCount).map(([i]) => i));
-console.log(`Region: ${region.size} tiles around ${regionTile}`);
+let region = null;
+if (regionOption) {
+  let [regionTile, regionCount] = regionOption.split(':').map(Number);
+  if (!(regionTile >= 0 && regionTile < tiles.length)) { regionTile = 0; tiles.forEach((t, i) => { if (members(t) > members(tiles[regionTile])) regionTile = i; }); }
+  if (!(regionCount > 0)) regionCount = 48;
+  const c0 = centreOf(tiles[regionTile].aabb);
+  region = new Set(tiles.map((t, i) => [i, Math.hypot(...centreOf(t.aabb).map((v, a) => v - c0[a]))])
+    .sort((p, q) => p[1] - q[1]).slice(0, regionCount).map(([i]) => i));
+  console.log(`Detail only for ${region.size} tiles around ${regionTile}`);
+}
 
 const files = new Map(); // relative path → Buffer
-const stats = { far: { files: 0, triangles: 0, bytes: 0 }, light: { files: 0, triangles: 0, bytes: 0 },
-  detail: { files: 0, triangles: 0, bytes: 0 }, parents: [] };
+const stats = { far: { files: 0, triangles: 0, bytes: 0 }, detail: { files: 0, triangles: 0, bytes: 0, skipped: 0 },
+  parents: [], terrain: { leaves: 0, triangles: 0, bytes: 0, textures: 0, textureBytes: 0, parents: [] } };
 const objectBoxes = new Float32Array(objectCount * 6);
 for (let k = 0; k < objectCount; k++) objectBoxes.set([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], k * 6);
 const growObjects = group => {
@@ -121,54 +129,61 @@ const growObjects = group => {
     }
   }
 };
-/** Decode one XKT, write its glb; returns { groups, bounds } or null. */
-async function convert(i, key, name, kind) {
+/** Decode one XKT into packed groups (null if empty). */
+async function load(i, key) {
   const xkt = await getBytes(`${prefix}/xkt/${key}`);
   if (!xkt) return null;
   const decoded = decodeXkt(xkt);
   if (!decoded?.meshes.length) return null;
   const dbIds = dbIdsFor(i, decoded.ids);
-  const groups = packMeshes(decoded.meshes, e => dbIds[e]);
+  return packMeshes(decoded.meshes, e => dbIds[e]);
+}
+/** Write packed groups as c/<name>.glb; returns { bounds, triangles } or null. */
+async function write(groups, name, kind) {
   const out = await encodeGlb(groups);
   if (!out) return null;
   files.set(`c/${name}.glb`, out.glb);
   stats[kind].files++; stats[kind].triangles += out.triangles; stats[kind].bytes += out.glb.length;
-  return { groups, bounds: out.bounds };
+  return { bounds: out.bounds, triangles: out.triangles };
 }
 
-// Leaves: far content for every tile, light/detail children in the region.
+// Leaves: far content for every tile, the original under it where the far file dropped much.
 const leaves = [];
 let next = 0, done = 0;
 await Promise.all(Array.from({ length: 4 }, async () => {
   for (let i = next++; i < tiles.length; i = next++) {
     const t = tiles[i];
     if (!validFar(t)) continue;
-    const far = await convert(i, t.far.n, `f${i}`, 'far');
+    const farGroups = await load(i, t.far.n);
+    if (!farGroups) continue;
+    const far = await write(farGroups, `f${i}`, 'far');
     if (!far) continue;
-    growObjects(far.groups.opaque); growObjects(far.groups.transparent);
-    const node = { key: i, centre: centreOf(far.bounds), bounds: far.bounds, groups: far.groups, content: `c/f${i}.glb`, error: 0, children: [] };
-    if (region.has(i)) {
-      const light = validLight(t) ? await convert(i, t.motion.n, `l${i}`, 'light') : null;
-      const detail = /^[\w.-]+\.xkt$/.test(t.n ?? '') ? await convert(i, t.n, `d${i}`, 'detail') : null;
-      const detailNode = detail && { bounds: detail.bounds, content: `c/d${i}.glb`, error: 0, children: [] };
-      const lightNode = light && { bounds: light.bounds, content: `c/l${i}.glb`, error: detailNode ? LIGHT_ERROR : 0, children: detailNode ? [detailNode] : [] };
-      const child = lightNode ?? detailNode;
-      if (child) { node.children = [child]; node.error = FAR_ERROR; }
-      // Far pruned small parts: the finer levels can reach beyond its box, and culling uses the node's box.
-      for (const b of [light?.bounds, detail?.bounds]) if (b) for (let a = 0; a < 3; a++) {
-        node.bounds[a] = Math.min(node.bounds[a], b[a]); node.bounds[a + 3] = Math.max(node.bounds[a + 3], b[a + 3]);
-      }
+    growObjects(farGroups.opaque); growObjects(farGroups.transparent);
+    const node = { key: i, centre: centreOf(far.bounds), bounds: far.bounds, groups: farGroups, content: `c/f${i}.glb`, error: 0, children: [] };
+    if ((!region || region.has(i)) && /^[\w.-]+\.xkt$/.test(t.n ?? '')) {
+      const detailGroups = await load(i, t.n);
+      const detailTriangles = triangles(detailGroups?.opaque) + triangles(detailGroups?.transparent);
+      if (detailGroups && far.triangles < FAR_ENOUGH * detailTriangles) {
+        growObjects(detailGroups.opaque); growObjects(detailGroups.transparent);
+        const detail = await write(detailGroups, `d${i}`, 'detail');
+        if (detail) {
+          node.children = [{ bounds: detail.bounds, content: `c/d${i}.glb`, error: 0, children: [] }];
+          node.error = FAR_ERROR;
+          // Far pruned small parts: the original can reach beyond its box, and culling uses the node's box.
+          for (let a = 0; a < 3; a++) { node.bounds[a] = Math.min(node.bounds[a], detail.bounds[a]); node.bounds[a + 3] = Math.max(node.bounds[a + 3], detail.bounds[a + 3]); }
+        }
+      } else if (detailGroups) stats.detail.skipped++;
     }
     leaves.push(node);
-    if (++done % 100 === 0) console.log(`Leaves ${done}/${tiles.length} · far ${MB(stats.far.bytes)} MB`);
+    if (++done % 100 === 0) console.log(`Leaves ${done}/${tiles.length} · far ${MB(stats.far.bytes)} MB · detail ${MB(stats.detail.bytes)} MB`);
   }
 }));
-console.log('Leaves', JSON.stringify(stats));
+console.log('Leaves', JSON.stringify({ far: stats.far, detail: stats.detail }));
 
 // Coarser levels: merge each group of ≤8 children and simplify with a larger absolute error.
 let parentId = 0;
 async function build(node, depth) {
-  if (node.content) return node; // a leaf (far) node, possibly with light/detail children
+  if (node.content) return node; // a leaf (far) node, possibly with a detail child
   const kids = [];
   for (const child of node.children) kids.push(await build(child, depth + 1));
   const error = Math.max(...kids.map(k => k.error || FAR_ERROR)) * PARENT_FACTOR;
@@ -184,24 +199,77 @@ async function build(node, depth) {
   const bounds = [0, 1, 2].map(a => Math.min(...kids.map(k => k.bounds[a]))).concat([3, 4, 5].map(a => Math.max(...kids.map(k => k.bounds[a]))));
   return { bounds, content, error, groups: { opaque, transparent }, children: kids };
 }
-const root = await build(groupSpatially(leaves, 8), 0);
+const structures = await build(groupSpatially(leaves, 8), 0);
 console.log('Parents', JSON.stringify(stats.parents));
 
-const toJson = node => ({
+// Terrain: one leaf per aerial photo, then parents (same photos, simplified surface) up to one root.
+const terrainLeaves = [];
+const textures = []; // KTX2 bytes, indexed across all base files
+for (const [b, name] of (Array.isArray(base) ? base : []).entries()) {
+  if (!/^[\w.-]+\.xkt$/.test(name)) continue;
+  const xkt = await getBytes(`${prefix}/xkt/${name}`);
+  const decoded = xkt && decodeXkt(xkt, { textures: true });
+  if (!decoded?.meshes.length) continue;
+  const offset = textures.length;
+  textures.push(...decoded.textures);
+  for (const part of packTerrain(decoded.meshes).values()) {
+    part.texture += offset;
+    const out = await encodeTerrainGlb([part], textures);
+    if (!out) continue;
+    const k = terrainLeaves.length;
+    files.set(`c/t${k}.glb`, out.glb);
+    Object.assign(stats.terrain, { leaves: stats.terrain.leaves + 1, triangles: stats.terrain.triangles + out.triangles, bytes: stats.terrain.bytes + out.glb.length });
+    terrainLeaves.push({ key: k, centre: centreOf(out.bounds), bounds: out.bounds, parts: [part], content: `c/t${k}.glb`, error: 0, children: [] });
+  }
+  console.log(`Terrain ${name} (base ${b}): ${decoded.meshes.length} patches, ${decoded.textures.filter(Boolean).length} photos`);
+}
+stats.terrain.textures = textures.filter(Boolean).length;
+stats.terrain.textureBytes = textures.reduce((n, t) => n + (t?.length ?? 0), 0);
+let terrainId = 0;
+async function buildTerrain(node, depth) {
+  if (node.content) return node;
+  const kids = [];
+  for (const child of node.children) kids.push(await buildTerrain(child, depth + 1));
+  const error = Math.max(...kids.map(k => k.error || TERRAIN_ERROR / PARENT_FACTOR)) * PARENT_FACTOR;
+  const parts = [];
+  for (const k of kids) for (const part of k.parts) parts.push(await simplifyTerrain(part, error));
+  for (const k of kids) delete k.parts;
+  const out = await encodeTerrainGlb(parts, textures);
+  const content = out ? `c/g${terrainId++}.glb` : null;
+  if (out) files.set(content, out.glb);
+  const level = (stats.terrain.parents[depth] ??= { nodes: 0, triangles: 0, bytes: 0, error });
+  level.nodes++; level.triangles += out?.triangles ?? 0; level.bytes += out?.glb.length ?? 0;
+  const bounds = [0, 1, 2].map(a => Math.min(...kids.map(k => k.bounds[a]))).concat([3, 4, 5].map(a => Math.max(...kids.map(k => k.bounds[a]))));
+  return { bounds, content, error, parts, children: kids };
+}
+const terrain = terrainLeaves.length ? await buildTerrain(groupSpatially(terrainLeaves, 8), 0) : null;
+if (terrain) delete terrain.parts;
+console.log('Terrain', JSON.stringify(stats.terrain));
+
+// One tileset: an empty root (always refined) over the structures and the terrain, each tagged for the viewer.
+const toJson = (node, part) => ({
   boundingVolume: boxVolume(node.bounds), geometricError: node.error, refine: 'REPLACE',
   ...(node.content ? { content: { uri: node.content } } : {}),
-  ...(node.children?.length ? { children: node.children.map(toJson) } : {}),
+  ...(node.children?.length ? { children: node.children.map(c => toJson(c, part)) } : {}),
+  ...(part ? { extras: { mir: part } } : {}),
 });
-const tileset = { asset: { version: '1.1', generator: 'MIR build-tiles3d' }, geometricError: root.error * 2, root: toJson(root),
-  extras: { mir: { objects: objectCount, region: { tile: regionTile, count: region.size } } } };
+const top = [structures, terrain].filter(Boolean);
+const rootBounds = [0, 1, 2].map(a => Math.min(...top.map(n => n.bounds[a]))).concat([3, 4, 5].map(a => Math.max(...top.map(n => n.bounds[a]))));
+const tileset = { asset: { version: '1.1', generator: 'MIR build-tiles3d' }, geometricError: 1e6,
+  root: { boundingVolume: boxVolume(rootBounds), geometricError: 1e6, refine: 'REPLACE',
+    children: [toJson(structures, 'structure'), ...(terrain ? [toJson(terrain, 'terrain')] : [])] },
+  extras: { mir: { objects: objectCount, detail: region ? { region: region.size } : 'all', terrain: !!terrain } } };
 for (let k = 0; k < objectCount * 6; k++) if (!Number.isFinite(objectBoxes[k])) objectBoxes[k] = NaN;
 files.set('tileset.json', gzipSync(JSON.stringify(tileset)));
 files.set('objects.bin', gzipSync(Buffer.from(objectBoxes.buffer)));
 
 const total = [...files.values()].reduce((s, b) => s + b.length, 0);
-console.log(`Tileset: ${files.size} files, ${MB(total)} MB; root ${triangles(root.groups?.opaque) + triangles(root.groups?.transparent)} triangles`);
-delete root.groups;
-if (!localDir) await checkStorageBudget(tok => client.send(new ListObjectsV2Command({ Bucket, MaxKeys: 1000, ...(tok ? { ContinuationToken: tok } : {}) })), total);
+console.log(`Tileset: ${files.size} files, ${MB(total)} MB; structure root ${triangles(structures.groups?.opaque) + triangles(structures.groups?.transparent)} triangles`);
+delete structures.groups;
+if (!localDir) {
+  const budget = await checkStorageBudget(tok => client.send(new ListObjectsV2Command({ Bucket, MaxKeys: 1000, ...(tok ? { ContinuationToken: tok } : {}) })), total);
+  console.log(`Storage: ${(budget.bytes / 1e9).toFixed(2)} GB now, ${(budget.projectedBytes / 1e9).toFixed(2)} GB with this run (limit ${(budget.limit / 1e9).toFixed(1)} GB; the previous run is removed afterwards)`);
+}
 const run = `runs/${randomUUID()}`;
 const entries = [...files.entries()];
 for (let k = 0; k < entries.length; k += 16) await Promise.all(entries.slice(k, k + 16).map(([path, body]) => client.send(new PutObjectCommand({

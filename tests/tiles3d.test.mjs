@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { Vector3 } from 'three';
-import { packMeshes, encodeGlb, simplifyGroup, mergeGroups, groupSpatially, boxVolume, triangles } from '../scripts/tiles3d.mjs';
+import { packMeshes, encodeGlb, simplifyGroup, mergeGroups, groupSpatially, boxVolume, triangles, packTerrain, simplifyTerrain,
+  encodeTerrainGlb } from '../scripts/tiles3d.mjs';
 
 const cube = (x, y, z, s) => {
   const world = Float64Array.from([[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]].flatMap(([a, b, c]) => [x + a * s, y + b * s, z + c * s]));
@@ -65,4 +66,50 @@ test('coarser levels prune parts below the error and keep dbIds; tree nodes have
   const walk = n => { if (!n.children) return 1; assert.ok(n.children.length <= 8); return n.children.reduce((s, c) => s + walk(c), 0); };
   assert.equal(walk(tree), 70);
   assert.deepEqual(boxVolume([0, 0, 0, 2, 4, 6]).box, [1, 2, 3, 1, 0, 0, 0, 2, 0, 0, 0, 3]);
+});
+
+/** A flat terrain patch: n×n quads over [x0, x0+size]², uv = planar photo mapping. */
+const patch = (x0, y0, size, n, texture, entity) => {
+  const world = [], uv = [], tri = [];
+  for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) {
+    const x = x0 + size * i / n, y = y0 + size * j / n;
+    world.push(x, y, 50); uv.push((x % 1000) / 1000, (y % 1000) / 1000);
+  }
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const a = j * (n + 1) + i;
+    tri.push(a, a + 1, a + n + 2, a, a + n + 2, a + n + 1);
+  }
+  return { entity, world: Float64Array.from(world), tri: Uint32Array.from(tri), uv: Float32Array.from(uv), texture, rgba: [255, 255, 255, 255], textured: true };
+};
+const fakeKtx2 = () => Buffer.from([0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+
+test('terrain: patches of one photo are welded into one part, other photos stay apart', () => {
+  // Two neighbouring patches on photo 0 share an edge; one patch on photo 1; an untextured mesh is ignored.
+  const parts = packTerrain([patch(0, 0, 100, 4, 0, 0), patch(100, 0, 100, 4, 0, 1), patch(0, 100, 100, 4, 1, 2), { ...cube(0, 0, 0, 1), uv: null, texture: -1 }]);
+  assert.deepEqual([...parts.keys()].sort(), [0, 1]);
+  const p0 = parts.get(0);
+  assert.equal(p0.idx.length / 3, 2 * 32);
+  assert.equal(p0.pos.length / 3, 2 * 25 - 5, 'the shared edge (5 vertices) is welded');
+  assert.equal(p0.uv.length / 2, p0.pos.length / 3);
+});
+
+test('terrain: simplification keeps photo borders; the glb embeds each photo once as KTX2', async () => {
+  const parts = [...packTerrain([patch(0, 0, 200, 16, 0, 0), patch(200, 0, 200, 16, 1, 1)]).values()];
+  const coarse = await Promise.all(parts.map(p => simplifyTerrain(p, 1)));
+  for (const [k, c] of coarse.entries()) {
+    assert.ok(c.idx.length < parts[k].idx.length, 'a flat patch simplifies');
+    // Border vertices (x = 200 for both photos) survive, so the two photos still meet.
+    const border = p => { const xs = new Set(); for (let v = 0; v < p.pos.length / 3; v++) if (p.pos[v * 3] === 200) xs.add(p.pos[v * 3 + 1]); return xs.size; };
+    assert.equal(border(c), border(parts[k]));
+  }
+  const out = await encodeTerrainGlb(coarse, [fakeKtx2(), fakeKtx2()]);
+  const json = JSON.parse(out.glb.subarray(20, 20 + out.glb.readUInt32LE(12)).toString());
+  assert.equal(json.meshes[0].primitives.length, 2);
+  assert.ok(json.extensionsRequired.includes('KHR_texture_basisu'));
+  assert.deepEqual(json.images.map(i => i.mimeType), ['image/ktx2', 'image/ktx2']);
+  assert.deepEqual(json.textures.map(t => t.extensions.KHR_texture_basisu.source), [0, 1]);
+  for (const p of json.meshes[0].primitives) assert.deepEqual(Object.keys(p.attributes).sort(), ['NORMAL', 'POSITION', 'TEXCOORD_0']);
+  assert.equal(out.textureBytes, 32);
+  // Photos missing (not KTX2) are left out rather than drawn untextured.
+  assert.equal((await encodeTerrainGlb(coarse, [null, null])), null);
 });

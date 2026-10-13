@@ -210,6 +210,7 @@ createRoot(document.getElementById('root')!).render(
 `);
 fs.writeFileSync(path.join(hdir, 'stubRole.ts'), 'export function useProjectRole() { return { role: \'admin\', isSystemAdmin: true, canView: true, canEdit: true, canManage: true, loading: false }; }\n');
 {
+  await import('./copy-wasm.mjs'); // public/basis (KTX2 terrain photos) is not committed
   const { build } = await import('vite');
   const react = (await import('@vitejs/plugin-react')).default;
   process.env.VITE_SUPABASE_URL = 'http://x.test';

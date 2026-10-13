@@ -4,6 +4,7 @@
 //   encodeGlb       group(s) → .glb: int16 positions (KHR_mesh_quantization) + EXT_meshopt_compression,
 //                   per-vertex _FEATURE_ID_0 = dbId (EXT_mesh_features), no normals (viewer shades flat)
 //   groupSpatially  items → tree of ≤ maxChildren per node (recursive median splits)
+//   packTerrain / simplifyTerrain / encodeTerrainGlb  textured terrain (aerial photo per patch, KTX2 kept as is)
 // Coordinates: tileset frame = decoded XKT frame (Z-up, metres). glTF is Y-up, so content stores (x, z, −y).
 import { MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 
@@ -211,6 +212,178 @@ export async function encodeGlb({ opaque, transparent }) {
   const jsonHead = Buffer.alloc(8); jsonHead.writeUInt32LE(jsonBuf.length, 0); jsonHead.writeUInt32LE(0x4e4f534a, 4);
   const binHead = Buffer.alloc(8); binHead.writeUInt32LE(bin.length, 0); binHead.writeUInt32LE(0x004e4942, 4);
   return { glb: Buffer.concat([head, jsonHead, jsonBuf, binHead, bin]), triangles: totalTriangles, vertices: totalVertices, bounds: b };
+}
+
+// ── Terrain (textured, no object ids) ─────────────────────────────────────────────────────────────
+
+/**
+ * Terrain meshes → one part per colour texture: vertices welded by position + uv (patches of one photo share
+ * edges, so a coarser level can simplify across them). Meshes without uv or texture are skipped.
+ * @returns {Map<number, { texture: number, pos: Float64Array, uv: Float32Array, idx: Uint32Array }>}
+ */
+export function packTerrain(meshes) {
+  const byTexture = new Map();
+  for (const m of meshes) {
+    if (!m.uv || !(m.texture >= 0)) continue;
+    let list = byTexture.get(m.texture);
+    if (!list) byTexture.set(m.texture, list = []);
+    list.push(m);
+  }
+  const parts = new Map();
+  for (const [texture, list] of byTexture) {
+    const index = new Map(), pos = [], uv = [], idx = [];
+    for (const m of list) {
+      const local = new Uint32Array(m.world.length / 3);
+      for (let v = 0; v < local.length; v++) {
+        const key = `${m.world[v * 3]},${m.world[v * 3 + 1]},${m.world[v * 3 + 2]},${m.uv[v * 2]},${m.uv[v * 2 + 1]}`;
+        let r = index.get(key);
+        if (r === undefined) { r = pos.length / 3; index.set(key, r); pos.push(m.world[v * 3], m.world[v * 3 + 1], m.world[v * 3 + 2]); uv.push(m.uv[v * 2], m.uv[v * 2 + 1]); }
+        local[v] = r;
+      }
+      for (const i of m.tri) idx.push(local[i]);
+    }
+    parts.set(texture, { texture, pos: Float64Array.from(pos), uv: Float32Array.from(uv), idx: Uint32Array.from(idx) });
+  }
+  return parts;
+}
+
+/** Coarser terrain part: simplify with an absolute error (metres), borders kept; uv follows the kept vertices. */
+export async function simplifyTerrain(part, errorMeters) {
+  if (!part || part.idx.length < 3) return part;
+  await MeshoptSimplifier.ready;
+  const b = boundsOf({ pos: part.pos });
+  const local = new Float32Array(part.pos.length);
+  for (let i = 0; i < local.length; i++) local[i] = part.pos[i] - b[i % 3];
+  let result;
+  // Borders stay: neighbouring photos are simplified separately and must still meet without cracks.
+  try { [result] = MeshoptSimplifier.simplify(part.idx, local, 3, 3, errorMeters, ['ErrorAbsolute', 'LockBorder']); }
+  catch { return part; }
+  if (!result || result.length < 3) return part;
+  const remap = new Int32Array(part.pos.length / 3).fill(-1);
+  let n = 0;
+  for (const v of result) if (remap[v] < 0) remap[v] = n++;
+  const out = { texture: part.texture, pos: new Float64Array(n * 3), uv: new Float32Array(n * 2), idx: new Uint32Array(result.length) };
+  for (let v = 0; v < remap.length; v++) {
+    const r = remap[v];
+    if (r < 0) continue;
+    out.pos.set(part.pos.subarray(v * 3, v * 3 + 3), r * 3);
+    out.uv.set(part.uv.subarray(v * 2, v * 2 + 2), r * 2);
+  }
+  for (let k = 0; k < result.length; k++) out.idx[k] = remap[result[k]];
+  return out;
+}
+
+/** Area-weighted vertex normals in the tileset frame (Z-up), as int8 for the glTF frame (x, z, −y). */
+function terrainNormals(part) {
+  const nv = part.pos.length / 3, acc = new Float64Array(nv * 3), p = part.pos;
+  for (let i = 0; i < part.idx.length; i += 3) {
+    const [a, b, c] = [part.idx[i], part.idx[i + 1], part.idx[i + 2]];
+    const ab = [p[b * 3] - p[a * 3], p[b * 3 + 1] - p[a * 3 + 1], p[b * 3 + 2] - p[a * 3 + 2]];
+    const ac = [p[c * 3] - p[a * 3], p[c * 3 + 1] - p[a * 3 + 1], p[c * 3 + 2] - p[a * 3 + 2]];
+    const n = [ab[1] * ac[2] - ab[2] * ac[1], ab[2] * ac[0] - ab[0] * ac[2], ab[0] * ac[1] - ab[1] * ac[0]];
+    if (n[2] < 0) { n[0] = -n[0]; n[1] = -n[1]; n[2] = -n[2]; } // terrain faces up (winding varies by source)
+    for (const v of [a, b, c]) { acc[v * 3] += n[0]; acc[v * 3 + 1] += n[1]; acc[v * 3 + 2] += n[2]; }
+  }
+  const out = new Int8Array(nv * 4);
+  for (let v = 0; v < nv; v++) {
+    const x = acc[v * 3], y = acc[v * 3 + 1], z = acc[v * 3 + 2], len = Math.hypot(x, y, z) || 1;
+    out[v * 4] = Math.round(x / len * 127); out[v * 4 + 1] = Math.round(z / len * 127); out[v * 4 + 2] = Math.round(-y / len * 127);
+  }
+  return out;
+}
+
+/**
+ * One terrain .glb: a primitive per photo (KTX2 texture embedded once, KHR_texture_basisu), int16 positions,
+ * int8 normals, float uv, meshopt-compressed. No object ids: the viewer keeps it out of selection.
+ * @param {{ texture: number, pos: Float64Array, uv: Float32Array, idx: Uint32Array }[]} parts
+ * @param {(Buffer|null)[]} textures KTX2 bytes by texture index
+ */
+export async function encodeTerrainGlb(parts, textures) {
+  await MeshoptEncoder.ready;
+  const list = parts.filter(p => p && p.idx.length >= 3 && textures[p.texture]);
+  if (!list.length) return null;
+  const b = boundsOf(...list.map(p => ({ pos: p.pos })));
+  const c = [0, 1, 2].map(a => (b[a] + b[a + 3]) / 2), h = [0, 1, 2].map(a => Math.max((b[a + 3] - b[a]) / 2, 1e-4));
+  const views = [], accessors = [], compressedParts = [];
+  let fallbackLength = 0, compressedLength = 0;
+  const align = n => (4 - (n % 4)) % 4;
+  const push = bytes => {
+    const at = compressedLength;
+    compressedParts.push(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+    const pad = align(bytes.byteLength);
+    if (pad) compressedParts.push(Buffer.alloc(pad));
+    compressedLength += bytes.byteLength + pad;
+    return at;
+  };
+  const addView = (raw, count, stride, mode, target) => {
+    const encoded = MeshoptEncoder.encodeGltfBuffer(raw, count, stride, mode);
+    const at = push(encoded);
+    views.push({ buffer: 1, byteOffset: fallbackLength, byteLength: raw.length, ...(mode === 'ATTRIBUTES' ? { byteStride: stride } : {}), target,
+      extensions: { EXT_meshopt_compression: { buffer: 0, byteOffset: at, byteLength: encoded.length, byteStride: stride, count, mode } } });
+    fallbackLength += raw.length + align(raw.length);
+    return views.length - 1;
+  };
+  const bytes = a => new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+  const images = [], textureList = [], materials = [], primitives = [];
+  let totalTriangles = 0, totalVertices = 0, textureBytes = 0;
+  for (const part of list) {
+    const ktx = textures[part.texture];
+    views.push({ buffer: 0, byteOffset: push(ktx), byteLength: ktx.length });
+    images.push({ bufferView: views.length - 1, mimeType: 'image/ktx2' });
+    textureList.push({ sampler: 0, extensions: { KHR_texture_basisu: { source: images.length - 1 } } });
+    materials.push({ pbrMetallicRoughness: { baseColorTexture: { index: textureList.length - 1 }, metallicFactor: 0, roughnessFactor: 1 }, doubleSided: true });
+    textureBytes += ktx.length;
+    const nv = part.pos.length / 3;
+    const idx = Uint32Array.from(part.idx);
+    const [remap, unique] = MeshoptEncoder.reorderMesh(idx, true, true);
+    const order = new Uint32Array(unique);
+    for (let v = 0; v < Math.min(nv, remap.length); v++) if (remap[v] < unique) order[remap[v]] = v;
+    const normals = terrainNormals(part);
+    const pos = new Int16Array(unique * 4), nrm = new Int8Array(unique * 4), uv = new Float32Array(unique * 2);
+    const q = (v, a) => Math.max(-32767, Math.min(32767, Math.round((v - c[a]) / h[a] * 32767)));
+    const min = [32767, 32767, 32767], max = [-32767, -32767, -32767];
+    for (let r = 0; r < unique; r++) {
+      const v = order[r];
+      const x = q(part.pos[v * 3], 0), y = q(part.pos[v * 3 + 2], 2), z = -q(part.pos[v * 3 + 1], 1);
+      pos[r * 4] = x; pos[r * 4 + 1] = y; pos[r * 4 + 2] = z;
+      if (x < min[0]) min[0] = x; if (y < min[1]) min[1] = y; if (z < min[2]) min[2] = z;
+      if (x > max[0]) max[0] = x; if (y > max[1]) max[1] = y; if (z > max[2]) max[2] = z;
+      nrm.set(normals.subarray(v * 4, v * 4 + 4), r * 4);
+      uv[r * 2] = part.uv[v * 2]; uv[r * 2 + 1] = part.uv[v * 2 + 1];
+    }
+    const useShort = unique < 65536;
+    const vPos = addView(bytes(pos), unique, 8, 'ATTRIBUTES', 34962);
+    const vNrm = addView(bytes(nrm), unique, 4, 'ATTRIBUTES', 34962);
+    const vUv = addView(bytes(uv), unique, 8, 'ATTRIBUTES', 34962);
+    const vIdx = addView(bytes(useShort ? Uint16Array.from(idx) : idx), idx.length, useShort ? 2 : 4, 'TRIANGLES', 34963);
+    accessors.push({ bufferView: vPos, componentType: SHORT, normalized: true, count: unique, type: 'VEC3', min, max });
+    accessors.push({ bufferView: vNrm, componentType: 5120, normalized: true, count: unique, type: 'VEC3' });
+    accessors.push({ bufferView: vUv, componentType: FLOAT, count: unique, type: 'VEC2' });
+    accessors.push({ bufferView: vIdx, componentType: useShort ? USHORT : UINT, count: idx.length, type: 'SCALAR' });
+    const a = accessors.length - 4;
+    primitives.push({ attributes: { POSITION: a, NORMAL: a + 1, TEXCOORD_0: a + 2 }, indices: a + 3, material: materials.length - 1, mode: 4 });
+    totalTriangles += idx.length / 3; totalVertices += unique;
+  }
+  const json = {
+    asset: { version: '2.0', generator: 'MIR tiles3d terrain' },
+    extensionsUsed: ['KHR_mesh_quantization', 'EXT_meshopt_compression', 'KHR_texture_basisu'],
+    extensionsRequired: ['KHR_mesh_quantization', 'EXT_meshopt_compression', 'KHR_texture_basisu'],
+    scene: 0, scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0, translation: [c[0], c[2], -c[1]], scale: [h[0], h[2], h[1]], extras: { mir: 'terrain' } }],
+    meshes: [{ primitives }], materials, textures: textureList, images,
+    samplers: [{ magFilter: 9729, minFilter: 9987, wrapS: 10497, wrapT: 10497 }],
+    accessors, bufferViews: views,
+    buffers: [{ byteLength: compressedLength }, { byteLength: fallbackLength, extensions: { EXT_meshopt_compression: { fallback: true } } }],
+  };
+  const bin = Buffer.concat(compressedParts);
+  let jsonBuf = Buffer.from(JSON.stringify(json));
+  if (jsonBuf.length % 4) jsonBuf = Buffer.concat([jsonBuf, Buffer.alloc(4 - (jsonBuf.length % 4), 0x20)]);
+  const total = 12 + 8 + jsonBuf.length + 8 + bin.length;
+  const head = Buffer.alloc(12);
+  head.writeUInt32LE(0x46546c67, 0); head.writeUInt32LE(2, 4); head.writeUInt32LE(total, 8);
+  const jsonHead = Buffer.alloc(8); jsonHead.writeUInt32LE(jsonBuf.length, 0); jsonHead.writeUInt32LE(0x4e4f534a, 4);
+  const binHead = Buffer.alloc(8); binHead.writeUInt32LE(bin.length, 0); binHead.writeUInt32LE(0x004e4942, 4);
+  return { glb: Buffer.concat([head, jsonHead, jsonBuf, binHead, bin]), triangles: totalTriangles, vertices: totalVertices, textureBytes, bounds: b };
 }
 
 /** 3D Tiles box bounding volume (centre + half axes) from [minX, minY, minZ, maxX, maxY, maxZ]. */

@@ -352,15 +352,29 @@ export function xktEntityBoxes(input) {
   return { ids, boxes, steps };
 }
 
+/** Bytes of one KTX2 file (header, data format, key/values, supercompression data, levels) inside a padded slot. */
+function ktx2Length(b) {
+  if (b.length < 80 || b.readUInt32LE(0) !== 0x58544bab) return 0; // «KTX
+  const levels = Math.max(1, b.readUInt32LE(40));
+  let end = Math.max(b.readUInt32LE(48) + b.readUInt32LE(52), b.readUInt32LE(56) + b.readUInt32LE(60),
+    Number(b.readBigUInt64LE(64) + b.readBigUInt64LE(72)), 80 + levels * 24);
+  for (let l = 0; l < levels; l++) end = Math.max(end, Number(b.readBigUInt64LE(80 + l * 24) + b.readBigUInt64LE(88 + l * 24)));
+  return end <= b.length ? end : 0;
+}
+
 /**
  * Every triangle mesh of an XKT v12 file as world positions + indices, with its entity and material colour
  * (r, g, b, opacity 0–255) — for re-encoding into other formats. Reused geometry is expanded; lines/points
  * are skipped. `textured` marks meshes whose colour came from a texture (their factor is white).
+ * With `{ textures: true }` each mesh also carries `uv` (Float32Array or null) and `texture` (its colour texture
+ * index, −1 = none), and the result has `textures`: each KTX2 file without the slot padding (null if not KTX2).
  */
-export function decodeXkt(input) {
+export function decodeXkt(input, { textures: withTextures = false } = {}) {
   const raw = readTables(Buffer.from(input));
   if (!raw) return null;
   const positions = view(raw[4], Uint16Array), indices = view(raw[8], Uint32Array);
+  const uvs = withTextures ? view(raw[7], Float32Array) : null, up = withTextures ? view(raw[18], Uint32Array) : null;
+  const sets = withTextures ? view(raw[10], Int32Array) : null;
   const matrices = view(raw[11], Float32Array), reuseDecode = view(raw[12], Float32Array), primitive = view(raw[13], Uint8Array);
   const pp = view(raw[15], Uint32Array), ip = view(raw[19], Uint32Array);
   const mg = view(raw[21], Uint32Array), mm = view(raw[22], Uint32Array), meshSet = view(raw[23], Int32Array);
@@ -403,11 +417,24 @@ export function decodeXkt(input) {
         }
         const tri = indices.slice(i0, i1);
         if (tri.length < 3 || !tri.every(i => i < nv)) continue;
-        meshes.push({ entity: e, world, tri, rgba: colourOf(m), textured: (meshSet[m] ?? -1) >= 0 });
+        const mesh = { entity: e, world, tri, rgba: colourOf(m), textured: (meshSet[m] ?? -1) >= 0 };
+        if (withTextures) {
+          const [u0, u1] = span(up, g, uvs.length);
+          mesh.uv = u1 - u0 === nv * 2 ? uvs.slice(u0, u1) : null;
+          mesh.texture = mesh.textured ? (sets[meshSet[m] * 5] ?? -1) : -1;
+        }
+        meshes.push(mesh);
       }
     }
   }
-  return { ids, meshes };
+  if (!withTextures) return { ids, meshes };
+  const data = raw[1], portions = view(raw[2], Uint32Array);
+  const textures = Array.from(portions, (start, t) => {
+    const slot = data.subarray(start, t + 1 < portions.length ? portions[t + 1] : data.length);
+    const n = ktx2Length(slot);
+    return n ? Buffer.from(slot.subarray(0, n)) : null;
+  });
+  return { ids, meshes, textures };
 }
 
 /** Decoded world positions of a merged (single-tile, non-reused) file — for validation and tests. */

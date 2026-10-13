@@ -43,6 +43,7 @@ export function ThreeDTest2() {
   // A model without tiles: whether it is converted at all (tiles come from the converted model) and a build job.
   const [missing, setMissing] = useState<{ file: PickedAccFile; converted: boolean } | null>(null);
   const [job, setJob] = useState<{ since: string; note: string } | null>(null);
+  const [terrainOn, setTerrainOn] = useState(true);
   const [tier, setTier] = useState<DeviceTier | 'auto'>('auto');
   const [selectedDb, setSelectedDb] = useState<number | null>(null);
   const [revealDb, setRevealDb] = useState<number | null>(null);
@@ -241,6 +242,8 @@ export function ThreeDTest2() {
           </button>
           <button className="btn btn--sm" onClick={() => viewerRef.current?.frameAll()} disabled={!modelName}>전체 맞춤</button>
           <button className="btn btn--sm" onClick={() => selectedDb !== null && void zoomTo([selectedDb])} disabled={selectedDb === null}>선택 확대</button>
+          <button className={`btn btn--sm${terrainOn ? ' btn--primary' : ''}`} disabled={!modelName} title="지형(항공사진) 표시"
+            onClick={() => { const next = !terrainOn; setTerrainOn(next); viewerRef.current?.setTerrainVisible(next); }}>지형</button>
           <label className="threed-test2__tier" title="기기 등급: 화면 오차(px)와 메모리 상한을 정합니다">
             기기
             <select value={tier} onChange={e => {

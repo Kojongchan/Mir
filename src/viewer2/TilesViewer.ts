@@ -1,7 +1,9 @@
 import {
-  AmbientLight, Box3, Clock, Color, DirectionalLight, Group, Matrix4, Mesh, PerspectiveCamera, Quaternion, Raycaster,
-  Scene, Sphere, Spherical, Vector2, Vector3, Vector4, WebGLRenderer, WebGLRenderTarget, type Material, type Object3D,
+  AmbientLight, Box3, Clock, Color, DirectionalLight, DoubleSide, Group, Matrix4, Mesh, MeshLambertMaterial, PerspectiveCamera,
+  Quaternion, Raycaster, Scene, Sphere, Spherical, Vector2, Vector3, Vector4, WebGLRenderer, WebGLRenderTarget, type Material,
+  type MeshStandardMaterial, type Object3D,
 } from 'three';
+import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import CameraControls from 'camera-controls';
 import { TilesRenderer } from '3d-tiles-renderer';
 import { GLTFExtensionsPlugin } from '3d-tiles-renderer/plugins';
@@ -75,6 +77,9 @@ export class TilesViewer {
   private urls: Record<string, string> = {};
   /** Failed tiles are retried with a growing delay (a dropped request on a field network must not leave a hole). */
   private retry = { at: 0, delay: 2000 };
+  /** Terrain tiles on screen (aerial photo, no object ids) and whether the terrain is shown. */
+  private readonly terrainScenes = new Set<Object3D>();
+  private terrainShown = true;
   /** CSS px at the bottom covered by a panel (a phone's bottom sheet). */
   private inset = 0;
   /** Tileset bounds in the scene frame (set when the tileset loads). */
@@ -121,7 +126,10 @@ export class TilesViewer {
     this.surface = { opaque: createSurfaceMaterial(this.state, false), transparent: createSurfaceMaterial(this.state, true) };
     this.pickMaterial = createPickMaterial(this.state);
     const tiles = new TilesRenderer(`${BASE}tileset.json`);
-    tiles.registerPlugin(new GLTFExtensionsPlugin({ meshoptDecoder: MeshoptDecoder }));
+    // Terrain photos are KTX2 (Basis): transcoded in workers to the GPU's compressed format. The plugin disposes
+    // the loader with these tiles, so each opened tileset gets its own.
+    const ktxLoader = new KTX2Loader().setTranscoderPath('/basis/').detectSupport(this.renderer);
+    tiles.registerPlugin(new GLTFExtensionsPlugin({ meshoptDecoder: MeshoptDecoder, ktxLoader }));
     // Relative paths resolve against the stand-in origin for the root, but the library resolves child content against
     // the *processed* (signed) tileset URL, i.e. the run folder in R2 without a signature: map both to signed URLs.
     const runFolder = (urls['tileset.json'] ?? '').split('?')[0].replace(/tileset\.json$/, '');
@@ -138,7 +146,8 @@ export class TilesViewer {
     this.applyProfile(tiles);
     tiles.setCamera(this.camera);
     tiles.setResolutionFromRenderer(this.camera, this.renderer);
-    tiles.addEventListener('load-model', ({ scene }) => this.adopt(scene));
+    tiles.addEventListener('load-model', ({ scene, tile }) => this.adopt(scene, tile));
+    tiles.addEventListener('dispose-model', ({ scene }) => this.release(scene));
     tiles.addEventListener('needs-update', () => { this.needsUpdate = true; this.dirty = true; });
     tiles.addEventListener('tile-visibility-change', () => { this.dirty = true; });
     tiles.addEventListener('load-tileset', () => {
@@ -241,13 +250,15 @@ export class TilesViewer {
    */
   frameAll(animate = true): void {
     if (!this.bounds) return;
-    type TileNode = { boundingVolume?: { box?: number[] }; children?: TileNode[] };
+    type TileNode = { boundingVolume?: { box?: number[] }; children?: TileNode[]; extras?: { mir?: string } };
     const boxes: number[][] = [];
     const visit = (t: TileNode, depth: number) => {
       if (t.boundingVolume?.box) boxes.push(t.boundingVolume.box);
       if (depth < 3) for (const c of t.children ?? []) visit(c, depth + 1);
     };
-    const root = (this.tiles as unknown as { root: TileNode | null } | null)?.root;
+    // The site is the structures: the terrain (several km of photo) would shrink them to a line.
+    const top = (this.tiles as unknown as { root: TileNode | null } | null)?.root;
+    const root = top?.children?.find(c => c.extras?.mir === 'structure') ?? top;
     if (root) visit(root, 0);
     if (!boxes.length) {
       const { center: c, radius } = this.bounds, d = radius * 1.6;
@@ -314,6 +325,7 @@ export class TilesViewer {
 
   private closeTiles() {
     this.bounds = null;
+    this.terrainScenes.clear();
     if (this.tiles) { this.world.remove(this.tiles.group); this.tiles.dispose(); this.tiles = null; }
     this.surface?.opaque.dispose(); this.surface?.transparent.dispose(); this.pickMaterial?.dispose();
     this.state?.texture.dispose();
@@ -329,15 +341,37 @@ export class TilesViewer {
     tiles.downloadQueue.maxJobsPerOrigin = p.downloadJobs;
   }
 
-  /** Shared state-aware materials instead of the loader's per-tile ones (those stay in the tile's disposal list). */
-  private adopt(scene: Object3D) {
+  /**
+   * Structures: shared state-aware materials instead of the loader's per-tile ones (those stay in the tile's disposal
+   * list). Terrain (tagged in the tileset): a lit photo material per primitive, released with the tile.
+   */
+  private adopt(scene: Object3D, tile?: unknown) {
     if (!this.surface) return;
+    const terrain = (tile as { extras?: { mir?: string } } | undefined)?.extras?.mir === 'terrain';
     scene.traverse(o => {
       const mesh = o as Mesh;
-      if (!mesh.isMesh) return;
-      const transparent = !Array.isArray(mesh.material) && mesh.material.transparent;
-      mesh.material = transparent ? this.surface!.transparent : this.surface!.opaque;
+      if (!mesh.isMesh || Array.isArray(mesh.material)) return;
+      if (terrain) {
+        const photo = (mesh.material as MeshStandardMaterial).map;
+        mesh.material = new MeshLambertMaterial({ map: photo, side: DoubleSide });
+        return;
+      }
+      mesh.material = mesh.material.transparent ? this.surface!.transparent : this.surface!.opaque;
     });
+    if (terrain) { this.terrainScenes.add(scene); scene.visible = this.terrainShown; }
+    this.dirty = true;
+  }
+
+  /** A tile left the cache: dispose the terrain materials made in adopt (the library disposes its own). */
+  private release(scene: Object3D) {
+    if (!this.terrainScenes.delete(scene)) return;
+    scene.traverse(o => { const mesh = o as Mesh; if (mesh.isMesh && !Array.isArray(mesh.material)) mesh.material.dispose(); });
+  }
+
+  /** Show or hide the terrain (aerial photo surface); tiles loaded later follow. */
+  setTerrainVisible(shown: boolean): void {
+    this.terrainShown = shown;
+    for (const scene of this.terrainScenes) scene.visible = shown;
     this.dirty = true;
   }
 
