@@ -26,6 +26,8 @@ test('the manifest decides what is in use: every .xkt string anywhere in it', ()
   const refs = referencedXkt(MODEL, manifest);
   assert.deepEqual([...refs].sort(), live.map(o => o.key).sort());
   assert.throws(() => referencedXkt(MODEL, { tiles: [{ n: '../other/x.xkt' }] }), /Unsafe/);
+  // chunkInfo is keyed by file name: a file listed only there is kept too.
+  assert.ok(referencedXkt(MODEL, { ...manifest, chunkInfo: { 'x9.xkt': { byteLength: 1 } } }).has(`${MODEL}/xkt/x9.xkt`));
 });
 
 test('cleanup removes only old generations of the model and the approved exact groups', () => {

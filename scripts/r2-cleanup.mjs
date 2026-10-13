@@ -18,7 +18,7 @@ export const EXACT = [
 /** Files changed this recently are never removed (a job may have written them before updating the manifest). */
 export const MIN_AGE_MS = 6 * 3600 * 1000;
 
-/** Every `.xkt` path anywhere in the manifest, as bucket keys. */
+/** Every `.xkt` path anywhere in the manifest — values and object keys (chunkInfo is keyed by file) — as bucket keys. */
 export function referencedXkt(prefix, manifest) {
   const refs = new Set();
   const walk = v => {
@@ -28,7 +28,7 @@ export function referencedXkt(prefix, manifest) {
         refs.add(`${prefix}/xkt/${v}`);
       }
     } else if (Array.isArray(v)) v.forEach(walk);
-    else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+    else if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) { walk(k); walk(x); }
   };
   walk(manifest);
   return refs;
@@ -106,6 +106,8 @@ async function main() {
     folders.set(folder, (folders.get(folder) ?? 0) + 1);
   }
   for (const [folder, n] of folders) console.log(`  old generation in ${folder}: ${n} files`);
+  for (const d of plan.deletions.filter(x => x.key.startsWith(`${MODEL}/`)).slice(0, 40))
+    console.log(`    ${d.key.slice(MODEL.length + 1)} (${(d.bytes / 1048576).toFixed(1)} MB, modified ${objects.find(o => o.key === d.key).modified.toISOString()})`);
   for (const d of plan.deletions.filter(x => !x.key.startsWith(`${MODEL}/`)))
     console.log(`  ${d.key} (${GB(d.bytes)} GB, modified ${objects.find(o => o.key === d.key).modified.toISOString()})`);
   for (const s of plan.skipped) console.log(`Skipped: ${s}`);
