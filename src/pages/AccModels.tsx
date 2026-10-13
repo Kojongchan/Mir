@@ -58,14 +58,14 @@ const VIEWER_VER = '7.*';
 const VIEWER_CSS = `https://developer.api.autodesk.com/modelderivative/v2/viewers/${VIEWER_VER}/style.min.css`;
 const VIEWER_JS = `https://developer.api.autodesk.com/modelderivative/v2/viewers/${VIEWER_VER}/viewer3D.min.js`;
 
-// ACC 와 동일 계열의 표준 도구 묶음. 번들에 없는 id 는 뷰어가 조용히 무시한다.
+// ACC 와 동일 계열의 표준 도구 묶음. id 는 뷰어 등록명과 철자까지 같아야 한다(다르면 페이지 오류를 내고 그 도구만 빠짐).
 const VIEWER_EXTENSIONS = [
   'Autodesk.Measure', // 거리/면적/각도 측정
   'Autodesk.Section', // 단면(섹션) 자르기
   'Autodesk.Explode', // 분해
   'Autodesk.Viewing.MarkupsCore', // 마크업(주석) 코어
   'Autodesk.Viewing.MarkupsGui', // 마크업 UI
-  'Autodesk.BIMWalk', // 1인칭 워크
+  'Autodesk.BimWalk', // 1인칭 워크 (뷰어 등록 id 는 'BimWalk' — 'BIMWalk' 이면 "Has it been registered?" 오류로 빠짐)
   'Autodesk.Viewing.ZoomWindow', // 영역 줌
   'Autodesk.FullScreen', // 전체화면
   'Autodesk.DocumentBrowser', // 시트/뷰 탐색
