@@ -86,9 +86,11 @@ export class TilesViewer {
   private tileCache: TileCacheStats | null = null;
   /**
    * Load ancestors: coarser levels of a view are fetched and shown first while its own tiles load (progressive), at
-   * the cost of more requests before the final tiles arrive.
+   * the cost of requests before the final tiles arrive. Off: each view loads its own tiles; what was on screen stays
+   * until they replace it. Measured (ui-check run 194, 400 ms per request, two hosts): a fly-in from 1200 m to 40 m
+   * and back settled in 37 s instead of 45 s.
    */
-  private ancestors = true;
+  private ancestors = false;
   /** Failed tiles are retried with a growing delay (a dropped request on a field network must not leave a hole). */
   private retry = { at: 0, delay: 2000 };
   /** Terrain tiles on screen (aerial photo, no object ids) and whether the terrain is shown. */

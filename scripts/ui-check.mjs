@@ -51,6 +51,21 @@ async function r2Get(Key) {
   } catch (e) { if (missing(e)) return null; throw e; }
 }
 const unzip = buf => (buf[0] === 0x1f && buf[1] === 0x8b ? gunzipSync(buf) : buf);
+// The store as a browser meets it: the protocol it negotiates on both host names (HTTP/2 multiplexes; HTTP/1.1 is
+// limited to 6 connections per host) and the bucket's region. Host names and account ids are not recorded.
+if (client) {
+  const tls = await import('node:tls');
+  const alpn = host => new Promise(resolve => {
+    const socket = tls.connect({ host, port: 443, servername: host, ALPNProtocols: ['h2', 'http/1.1'] }, () => { resolve(socket.alpnProtocol || 'none'); socket.end(); });
+    socket.on('error', e => resolve(`error ${e.code}`));
+    setTimeout(() => { resolve('timeout'); socket.destroy(); }, 10000);
+  });
+  const host = `${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
+  results.network = { pathHost: await alpn(host), bucketHost: await alpn(`${Bucket}.${host}`) };
+  try { results.network.region = (await client.send(new s3.GetBucketLocationCommand({ Bucket }))).LocationConstraint ?? null; }
+  catch (e) { results.network.region = `error ${e.name}`; }
+  console.log('[ui-check] network', JSON.stringify(results.network));
+}
 const parse = buf => JSON.parse(unzip(buf).toString());
 
 function loadTs(file) {

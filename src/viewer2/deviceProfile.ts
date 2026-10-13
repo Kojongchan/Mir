@@ -3,7 +3,8 @@
  *  errorTarget  screen-space error (px) before a finer level loads — larger = coarser, lighter
  *  maxBytes     loaded tile content kept in memory (LRU; unused tiles go first above minBytes)
  *  pixelRatio   cap on the device pixel ratio (fill cost grows with its square)
- *  parseJobs / downloadJobs  concurrent tile parses / downloads (parsing runs on the main thread)
+ *  parseJobs / downloadJobs  concurrent tile parses / downloads (parsing runs on the main thread; tiles come from two
+ *               host names, 6 HTTP/1.1 connections each, and loading is bound by request latency)
  */
 export type DeviceTier = 'high' | 'pc' | 'mobile';
 export type DeviceProfile = { tier: DeviceTier; label: string; errorTarget: number; maxBytes: number; minBytes: number;
@@ -16,8 +17,8 @@ const MB = 1048576;
 // shows as speckle on track decks. Phones keep 20 px until measured at phone size.
 export const PROFILES: Record<DeviceTier, DeviceProfile> = {
   high: { tier: 'high', label: '고성능 PC', errorTarget: 1.5, maxBytes: 1024 * MB, minBytes: 768 * MB, pixelRatio: 2, parseJobs: 4, downloadJobs: 12 },
-  pc: { tier: 'pc', label: '현장 PC', errorTarget: 3, maxBytes: 384 * MB, minBytes: 256 * MB, pixelRatio: 1.25, parseJobs: 2, downloadJobs: 8 },
-  mobile: { tier: 'mobile', label: '모바일·태블릿', errorTarget: 20, maxBytes: 160 * MB, minBytes: 96 * MB, pixelRatio: 1.5, parseJobs: 1, downloadJobs: 6 },
+  pc: { tier: 'pc', label: '현장 PC', errorTarget: 3, maxBytes: 384 * MB, minBytes: 256 * MB, pixelRatio: 1.25, parseJobs: 2, downloadJobs: 12 },
+  mobile: { tier: 'mobile', label: '모바일·태블릿', errorTarget: 20, maxBytes: 160 * MB, minBytes: 96 * MB, pixelRatio: 1.5, parseJobs: 1, downloadJobs: 8 },
 };
 
 /**
