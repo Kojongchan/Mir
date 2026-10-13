@@ -190,10 +190,11 @@ export function proxyBoxes(group, survivors, errorMeters) {
  * Objects are separate vertex islands, so simplification never joins two objects; dbIds stay per vertex.
  * Long needle triangles that collapsed thin parts leave behind are dropped (they flash when flat-shaded): by default
  * every triangle longer than the error and flatter than 1:25; with `minHeight` (metres) only those thinner than that,
- * so long thin faces (rails, deck edges, parapets) of the finer copies stay.
+ * so long thin faces (rails, deck edges, parapets) of the finer copies stay (0: keep every triangle). `lockBorder` keeps
+ * every border vertex in place, so patches that meet along a seam without shared vertices stay closed.
  * Long objects that disappeared come back as oriented boxes (proxyBoxes), so a far view is not full of gaps.
  */
-export async function simplifyGroup(group, errorMeters, { ratio = 0.01, minHeight } = {}) {
+export async function simplifyGroup(group, errorMeters, { ratio = 0.01, minHeight, lockBorder = false } = {}) {
   if (!group || group.idx.length < 3) return group;
   await MeshoptSimplifier.ready;
   const b = boundsOf(group);
@@ -201,7 +202,7 @@ export async function simplifyGroup(group, errorMeters, { ratio = 0.01, minHeigh
   for (let i = 0; i < local.length; i++) local[i] = group.pos[i] - b[i % 3];
   const target = Math.max(3, Math.floor(group.idx.length * ratio / 3) * 3);
   let result;
-  try { [result] = MeshoptSimplifier.simplify(group.idx, local, 3, target, errorMeters, ['ErrorAbsolute', 'Prune']); }
+  try { [result] = MeshoptSimplifier.simplify(group.idx, local, 3, target, errorMeters, ['ErrorAbsolute', 'Prune', ...(lockBorder ? ['LockBorder'] : [])]); }
   catch { return group; }
   if (!result || result.length < 3) return null;
   const kept = [];

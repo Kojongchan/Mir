@@ -202,3 +202,27 @@ test('finer copies keep long thin faces wider than the error; the coarse rule dr
   assert.ok(!hasStrip(await simplifyGroup(group, 0.3)), 'flatter than 1:25: dropped, and the object survives, so no box');
   assert.ok(hasStrip(await simplifyGroup(weldGroup(group), 0.3, { minHeight: 0.03 })));
 });
+
+test('locked borders keep a seam between two separately tessellated patches closed', async () => {
+  // Two patches of one object meet along a wavy seam, each sampled differently there (no shared vertices).
+  const seam = y => 0.4 * Math.sin(y * 0.7);
+  const patch = (side, n) => {
+    const world = [], tri = [];
+    for (let j = 0; j <= n; j++) for (let i = 0; i <= 4; i++) {
+      const y = 20 * j / n, x0 = seam(y);
+      world.push(side < 0 ? x0 - 10 + 10 * i / 4 : x0 + 10 * i / 4, y, 0);
+    }
+    for (let j = 0; j < n; j++) for (let i = 0; i < 4; i++) { const a = j * 5 + i; tri.push(a, a + 1, a + 6, a, a + 6, a + 5); }
+    return { entity: 0, world: Float64Array.from(world), tri: Uint32Array.from(tri), rgba: [0, 128, 0, 255], textured: false };
+  };
+  const group = weldGroup(packMeshes([patch(-1, 40), patch(1, 27)], () => 1).opaque);
+  const seamPoints = [];
+  for (let v = 0; v < group.ids.length; v++) {
+    const [x, y] = [group.pos[v * 3], group.pos[v * 3 + 1]];
+    if (Math.abs(x - seam(y)) < 1e-6) seamPoints.push(`${x.toFixed(4)},${y.toFixed(4)}`);
+  }
+  const kept = g => new Set(Array.from({ length: g.ids.length }, (_, v) => `${g.pos[v * 3].toFixed(4)},${g.pos[v * 3 + 1].toFixed(4)}`));
+  const free = kept(await simplifyGroup(group, 0.3, { minHeight: 0 })), locked = kept(await simplifyGroup(group, 0.3, { minHeight: 0, lockBorder: true }));
+  assert.ok(seamPoints.some(p => !free.has(p)), 'free simplification moves the seam (a crack can open)');
+  assert.ok(seamPoints.every(p => locked.has(p)), 'locked borders keep every seam point');
+});

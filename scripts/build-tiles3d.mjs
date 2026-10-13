@@ -212,9 +212,12 @@ await Promise.all(Array.from({ length: 4 }, async () => {
         let top = { bounds: detail.bounds, content: `c/d${i}.glb`, error: 0, children: [] }, topGroups = groups, topTriangles = detail.triangles;
         for (const [k, error] of [...MID_ERRORS.entries()].reverse()) {
           const s = stats.mid[error];
-          // Only true slivers go (thinner than a tenth of the error): long thin faces of rails, edges and parapets stay.
-          const mid = { opaque: await simplifyGroup(groups.opaque, error, { minHeight: error * 0.1 }),
-            transparent: await simplifyGroup(groups.transparent, error, { minHeight: error * 0.1 }) };
+          // Borders locked and every triangle kept: objects are patches whose seams do not share vertices (tile 931: 85 %
+          // of edges shared), and patches simplified on their own opened cracks along the seams that showed the layer
+          // under them as white streaks (user screenshot, 0.1 m copy at 115 m: 42 hole pixels vs 21 in the original,
+          // locked 20). Long thin triangles along locked borders are part of the surface, not slivers.
+          const copyOf = g => simplifyGroup(g, error, { minHeight: 0, lockBorder: true });
+          const mid = { opaque: await copyOf(groups.opaque), transparent: await copyOf(groups.transparent) };
           const n = triangles(mid.opaque) + triangles(mid.transparent);
           const out = n && n <= MID_ENOUGH * topTriangles ? await write(mid, `m${k}-${i}`, s) : null;
           if (!out) { s.skipped++; continue; }
