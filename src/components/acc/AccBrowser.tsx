@@ -580,7 +580,7 @@ export function AccBrowser({
                   <td className="acc-name">📁 {f.name}</td>
                   <td />
                   <td />
-                  <td className="right muted">폴더</td>
+                  <td className="right muted nowrap">폴더</td>
                 </tr>
               ))}
               {viewItems.map((it) => {

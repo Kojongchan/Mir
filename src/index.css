@@ -3818,8 +3818,14 @@ button.danger:hover:not(:disabled) {
   white-space: nowrap;
   font-weight: var(--fw-semibold);
 }
+/* 이름이 우선: 코드(발주처/분류 등 긴 글이 들어오기도 함)가 먼저 줄어들고, 좁으면 숨김 */
 .project-switcher__code {
-  flex-shrink: 0;
+  flex-shrink: 10;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--text-caption);
   font-weight: var(--fw-medium);
   color: var(--color-text-secondary);
@@ -6770,6 +6776,9 @@ textarea.input {
   }
   .project-switcher {
     max-width: 52vw;
+  }
+  .project-switcher__code {
+    display: none;
   }
 }
 .bottom-tab {
