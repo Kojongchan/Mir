@@ -218,7 +218,12 @@
 }
 
 /* ===================== 다크 테마 — 토큰만 재정의(규칙은 공유) ===================== */
+/* 브라우저 기본 모양의 입력칸·선택칸·스크롤바도 테마를 따름(없으면 다크에서 흰 칸으로 남음) */
+:root {
+  color-scheme: light;
+}
 :root[data-theme='dark'] {
+  color-scheme: dark;
   /* ── Surface / Text / Border (§1.2) ── */
   --color-bg-page: #09090b;
   --color-bg-surface: #18181b;

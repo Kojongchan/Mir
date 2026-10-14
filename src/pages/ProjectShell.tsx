@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { Outlet, useNavigate, useParams } from 'react-router-dom';
 import { BrandLogo } from '../components/BrandLogo';
 import { ThemeToggle } from '../components/ThemeToggle';
@@ -7,6 +7,7 @@ import { NotificationBell } from '../components/NotificationBell';
 import { BottomTabBar } from '../components/BottomTabBar';
 import { TopUserMenu } from '../components/TopUserMenu';
 import { UiIcon } from '../components/icons/UiIcon';
+import { RouteFallback } from '../components/RouteFallback';
 import { getProject, type Project } from '../lib/api';
 
 const RAIL_KEY = 'mir.sidebar.collapsed';
@@ -75,7 +76,10 @@ export function ProjectShell() {
       <div className="portal-body" data-sidebar={collapsed ? 'collapsed' : 'expanded'}>
         <ProjectNav />
         <main className="portal-main">
-          <Outlet context={{ project }} />
+          {/* 화면 청크를 받는 동안 상단바·메뉴는 그대로, 본문 자리만 자리표시 */}
+          <Suspense fallback={<RouteFallback />}>
+            <Outlet context={{ project }} />
+          </Suspense>
         </main>
       </div>
 
