@@ -3,13 +3,14 @@ import { supabase } from '../lib/supabase';
 import { errMessage, readApiJson } from '../lib/errors';
 import { ModelTree, type TreeData } from './ModelTree';
 import type { ObjectProps } from '../components/model/PropertyPanel';
+import { openPropsCache, propsCacheOf, propsKey } from './propsCache';
 
 /** Model index from the cache state (`meta`): tree URL and property shards (scripts/build-meta-index.mjs). */
 export type MetaInfo = { tree: string; shardSize: number; shardCount: number; objects?: number; alias?: string };
 type Pending = { query: string; key: string; onProgress: (done: number, total: number) => void; resolve: (ids: number[]) => void; reject: (e: Error) => void };
 type Shard = Record<string, ObjectProps>;
 type MetaState = {
-  urn: string; shardSize: number; shardCount: number;
+  urn: string; shardSize: number; shardCount: number; cacheName: string | null;
   /** Parsed shards in memory (the most recent PARSED_KEPT), and shards known to be in the browser cache. */
   shards: Map<number, Promise<Shard>>; stored: Set<number>;
   cache: Promise<Cache | null>;
@@ -28,30 +29,6 @@ const PARSED_KEPT = 48;
 const PREFETCH_JOBS = 2;
 
 /**
- * Property shards kept in this browser (Cache Storage), one cache per model, cleared when its index is rebuilt (the
- * index generation is in the signed tree URL: …/<model>/meta/runs/<gen>/tree.json). Signed URLs change every session,
- * so the HTTP cache never hits.
- */
-const PROPS_MARKER = 'https://props-cache.mir.invalid/__gen';
-const propsKey = (k: number) => `https://props-cache.mir.invalid/p/${k}`;
-function openPropsCache(treeUrl: string): Promise<Cache | null> {
-  const m = /\/([A-Za-z0-9]{1,40})\/meta\/(runs\/[A-Za-z0-9-]+)\/tree\.json(?:\?|$)/.exec(treeUrl);
-  if (!m || typeof caches === 'undefined') return Promise.resolve(null);
-  const [, model, gen] = m;
-  return (async () => {
-    try {
-      const name = `mir-props:${model}`;
-      let cache = await caches.open(name);
-      const marker = await cache.match(PROPS_MARKER);
-      const current = marker && (await marker.text()) === gen;
-      if (marker && !current) { await caches.delete(name); cache = await caches.open(name); }
-      if (!current) await cache.put(PROPS_MARKER, new Response(gen));
-      return cache;
-    } catch { return null; } // storage blocked (private mode, quota)
-  })();
-}
-
-/**
  * Model tree, per-object properties and property-value search (a worker loads every shard once) for the open model.
  * Properties come in shards of 1,024 objects. A click used to wait for one API call (sign) and one download per new
  * shard of the object and of each of its parents; now the shard URLs are signed once per hour, shards stay in this
@@ -62,14 +39,15 @@ export function useModelIndex() {
   const [tree, setTree] = useState<ModelTree | null>(null);
   const [note, setNote] = useState('');
   const metaRef = useRef<MetaState | null>(null);
-  const searchRef = useRef<{ worker: Worker; seq: number; urls?: { key: string; at: number; list: Promise<string[]> }; pending: Map<number, Pending> } | null>(null);
+  const searchRef = useRef<{ worker: Worker; seq: number; pending: Map<number, Pending> } | null>(null);
   useEffect(() => () => { searchRef.current?.worker.terminate(); searchRef.current = null; }, []);
 
   const reset = useCallback(() => { metaRef.current = null; setTree(null); setNote(''); }, []);
 
   const open = useCallback(async (urn: string, meta: MetaInfo | undefined) => {
     if (!meta) { setNote('이 모델은 아직 모델 트리·속성 색인이 없습니다.'); return; }
-    const state: MetaState = { urn, shardSize: meta.shardSize, shardCount: meta.shardCount, shards: new Map(), stored: new Set(),
+    const state: MetaState = { urn, shardSize: meta.shardSize, shardCount: meta.shardCount, cacheName: propsCacheOf(meta.tree)?.name ?? null,
+      shards: new Map(), stored: new Set(),
       cache: openPropsCache(meta.tree), urls: null, prefetching: false };
     metaRef.current = state;
     setNote('모델 트리 불러오는 중…');
@@ -158,18 +136,12 @@ export function useModelIndex() {
         const p = msg.seq === undefined ? undefined : state.pending.get(msg.seq);
         if (!p) return;
         if (msg.type === 'need-urls') {
+          // The shard URLs signed for the property panel, and its browser cache (the worker reads and fills it too).
           try {
-            if (state.urls?.key !== p.key || Date.now() - state.urls.at > 10 * 60_000) {
-              const list = (async () => {
-                const r = await fetch(`/api/aps-convert?urn=${encodeURIComponent(p.key)}&metaShards=all`, { headers: await authHeaders() });
-                const j = await readApiJson<{ urls?: string[]; error?: string }>(r);
-                if (!r.ok || !j.urls) throw new Error(j.error ?? '속성 색인 조회 실패');
-                return j.urls;
-              })();
-              state.urls = { key: p.key, at: Date.now(), list };
-              list.catch(() => { if (state.urls?.list === list) state.urls = undefined; });
-            }
-            worker.postMessage({ type: 'search', key: p.key, urls: await state.urls.list, query: p.query, seq: msg.seq });
+            const meta = metaRef.current;
+            if (!meta || meta.urn !== p.key) throw new Error('다른 모델이 열렸습니다.');
+            await meta.cache; // generation checked before the worker uses the cache
+            worker.postMessage({ type: 'search', key: p.key, urls: await shardUrls(meta), cacheName: meta.cacheName, query: p.query, seq: msg.seq });
           } catch (err) { state.pending.delete(msg.seq!); p.reject(err as Error); }
           return;
         }
@@ -188,7 +160,7 @@ export function useModelIndex() {
       w!.pending.set(seq, { query, key: meta.urn, onProgress, resolve, reject });
       w!.worker.postMessage({ type: 'search', key: meta.urn, query, seq });
     });
-  }, []);
+  }, [shardUrls]);
 
   return { tree, note, open, reset, loadProps, searchValues, prefetch };
 }
