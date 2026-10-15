@@ -66,23 +66,31 @@ const HIDE = /* glsl */`
 /**
  * Second colour output (location 1) for outlines (outline.ts): the object's dbId, 24 bit RGB as in picking (0 = no
  * object: terrain), and in alpha the view distance over OUTLINE_RANGE metres (outlines fade with distance). Ignored
- * when drawing to a target without that attachment (picking, the plain canvas). Lambert materials have vViewPosition.
+ * when drawing to a target without that attachment (picking, the plain canvas). The distance has its own varying: this
+ * code goes before the material's own declarations (vViewPosition is declared after it).
  */
 export const OUTLINE_RANGE = 2000;
+const ID_VARYINGS = 'flat varying int vOutlineId;\nvarying float vOutlineDepth;\n';
 export const ID_OUTPUT = /* glsl */`
 layout(location = 1) out highp vec4 mirOutlineId;
-flat varying int vOutlineId;
+${ID_VARYINGS}
 void writeOutlineId(int id) {
   mirOutlineId = vec4(float((id >> 16) & 255) / 255.0, float((id >> 8) & 255) / 255.0, float(id & 255) / 255.0,
-    clamp(-vViewPosition.z / ${OUTLINE_RANGE}.0, 0.0, 1.0));
+    clamp(vOutlineDepth / ${OUTLINE_RANGE}.0, 0.0, 1.0));
 }
 `;
+/** Vertex side of ID_OUTPUT: the id (an expression) after begin_vertex, the view distance after project_vertex. */
+function withIdVaryings(vertexShader: string, id: string): string {
+  return ID_VARYINGS + vertexShader
+    .replace('#include <begin_vertex>', `#include <begin_vertex>\n  vOutlineId = ${id};`)
+    .replace('#include <project_vertex>', '#include <project_vertex>\n  vOutlineDepth = -mvPosition.z;');
+}
 
 /** Terrain (aerial photo) material with the outline id output (0: terrain is one surface). */
 export function createTerrainMaterial(photo: Texture | null): MeshLambertMaterial {
   const material = new MeshLambertMaterial({ map: photo, side: DoubleSide });
   material.onBeforeCompile = shader => {
-    shader.vertexShader = 'flat varying int vOutlineId;\n' + shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vOutlineId = 0;');
+    shader.vertexShader = withIdVaryings(shader.vertexShader, '0');
     shader.fragmentShader = ID_OUTPUT + shader.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  writeOutlineId(0);');
   };
   material.customProgramCacheKey = () => 'mir-terrain';
@@ -100,8 +108,7 @@ export function createSurfaceMaterial(state: ObjectStateTexture, transparent: bo
     shader.vertexShader = STATE_VERTEX + shader.vertexShader
       .replace('#include <begin_vertex>', '#include <begin_vertex>\n  vObjectState = readObjectState();')
       .replace('#include <project_vertex>', `#include <project_vertex>\n${HIDE}`);
-    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vOutlineId = int(_feature_id_0 + 0.5);');
-    shader.vertexShader = 'flat varying int vOutlineId;\n' + shader.vertexShader;
+    shader.vertexShader = withIdVaryings(shader.vertexShader, 'int(_feature_id_0 + 0.5)');
     shader.fragmentShader = 'varying vec4 vObjectState;\n' + ID_OUTPUT + shader.fragmentShader
       .replace('#include <color_fragment>', '#include <color_fragment>\n  diffuseColor.rgb = mix(diffuseColor.rgb, vObjectState.rgb, step(0.5, vObjectState.a));')
       .replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  writeOutlineId(vOutlineId);');
