@@ -45,6 +45,13 @@ export function ThreeDTest2() {
   const [status, setStatus] = useState('');
   const [modelName, setModelName] = useState('');
   const [stats, setStats] = useState<ViewerStats | null>(null);
+  // Property shards download in the background once the view has first settled (tiles first), per opened model.
+  const prefetchedFor = useRef<object | null>(null);
+  useEffect(() => {
+    if (!tree || prefetchedFor.current === tree || !stats || stats.settledMs === null || stats.downloading > 0) return;
+    prefetchedFor.current = tree;
+    void index.prefetch();
+  }, [tree, stats, index]);
   // A model without tiles: whether it is converted at all (tiles come from the converted model) and a build job.
   const [missing, setMissing] = useState<{ file: PickedAccFile; converted: boolean } | null>(null);
   const [job, setJob] = useState<{ since: string; note: string } | null>(null);

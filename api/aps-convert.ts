@@ -296,12 +296,13 @@ export default async function handler(req: Request): Promise<Response> {
     const urn = url.searchParams.get('urn') ?? '';
     if (!urn) return json({ error: 'urn 필요' }, 400);
     // One property shard (objects [k*size, (k+1)*size)) of the model index: a short-lived signed URL.
-    // Every property shard at once (property-value search loads the whole index once per session).
+    // Every property shard at once (property-value search, and page 2 signs them once an hour instead of one call per
+    // shard per click).
     if (url.searchParams.get('metaShards') === 'all') {
       const dir = await resolveCacheDir(urn);
       const m = await readMetaPointer(dir);
       if (!m) return json({ error: '이 모델의 속성 색인이 아직 없습니다.' }, 404);
-      const urls = await Promise.all(Array.from({ length: m.shardCount }, (_, k) => r2PresignGet(`${dir}/meta/${m.gen}/p/${k}.json`, 900)));
+      const urls = await Promise.all(Array.from({ length: m.shardCount }, (_, k) => r2PresignGet(`${dir}/meta/${m.gen}/p/${k}.json`, 3600)));
       return json({ urls });
     }
     // Second viewer engine (D23): the published 3D Tiles run's files, each with a signed URL. The tileset refers to

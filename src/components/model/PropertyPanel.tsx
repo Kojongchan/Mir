@@ -47,7 +47,7 @@ export function PropertyPanel({ tree, selected, unindexed, loadProps, searchValu
   const [valueError, setValueError] = useState<{ term: string; message: string } | null>(null);
   const [valueProgress, setValueProgress] = useState('');
   const [highlighted, setHighlighted] = useState(false);
-  const [sections, setSections] = useState<{ id: number; list: Section[]; loading: boolean; error?: string } | null>(null);
+  const [sections, setSections] = useState<{ id: number; list: Section[]; loading: boolean; more?: boolean; error?: string } | null>(null);
 
   // Search after typing pauses.
   useEffect(() => {
@@ -76,22 +76,28 @@ export function PropertyPanel({ tree, selected, unindexed, loadProps, searchValu
   }, [tree, term, valueDone, valueHits]);
   useEffect(() => { setHighlighted(false); onHighlight(null); }, [result, onHighlight]);
 
-  // The selected object, then its parents (nearest first) that carry more than the Item basics.
+  // The selected object, then its parents (nearest first) that carry more than the Item basics. Each shows as soon as
+  // its properties arrive (the object's own first), instead of waiting for the slowest parent.
   useEffect(() => {
     if (selected === null) { setSections(null); return; }
     let alive = true;
     const chain = tree.path(selected).reverse();
+    const rows: ({ id: number; data: ObjectProps | null } | undefined)[] = new Array(chain.length);
+    const publish = () => {
+      const list = rows.flatMap((row, i) => {
+        if (!row) return [];
+        const groups = groupsOf(row.data);
+        const section = { id: row.id, groups, ext: row.data?.x, rich: groups.some(([c]) => c !== 'Item' && c !== '항목') };
+        return i === 0 || section.rich ? [section] : [];
+      });
+      setSections({ id: selected, list, loading: !rows[0], more: rows.includes(undefined) });
+    };
     setSections({ id: selected, list: [], loading: true });
-    Promise.all(chain.map(id => loadProps(id).then(data => ({ id, data }))))
-      .then(rows => {
-        if (!alive) return;
-        const list = rows.map(({ id, data }) => {
-          const groups = groupsOf(data);
-          return { id, groups, ext: data?.x, rich: groups.some(([c]) => c !== 'Item' && c !== '항목') };
-        }).filter((s, i) => i === 0 || s.rich);
-        setSections({ id: selected, list, loading: false });
-      })
-      .catch(e => { if (alive) setSections({ id: selected, list: [], loading: false, error: (e as Error).message }); });
+    chain.forEach((id, i) => {
+      loadProps(id)
+        .then(data => { if (!alive) return; rows[i] = { id, data }; publish(); })
+        .catch(e => { if (alive && i === 0) setSections({ id: selected, list: [], loading: false, error: (e as Error).message }); });
+    });
     return () => { alive = false; };
   }, [selected, tree, loadProps]);
 
@@ -151,7 +157,7 @@ export function PropertyPanel({ tree, selected, unindexed, loadProps, searchValu
             </nav>
             {sections?.error && <p className="muted">속성을 불러오지 못했습니다: {sections.error}</p>}
             {sections?.loading && <p className="muted">속성 불러오는 중…</p>}
-            {sections && !sections.loading && !sections.list.some(s => s.groups.length) && <p className="muted">표시할 속성이 없습니다.</p>}
+            {sections && !sections.loading && !sections.more && !sections.list.some(s => s.groups.length) && <p className="muted">표시할 속성이 없습니다.</p>}
             {sections?.list.map((section, si) => (
               <section key={section.id} className="prop-panel__section">
                 {si > 0 && (
