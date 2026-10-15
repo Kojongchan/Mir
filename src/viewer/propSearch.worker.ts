@@ -10,6 +10,17 @@ let index: PropSearchIndex | null = null;
 let indexKey = '';
 let loading: Promise<void> | null = null;
 
+/** A shard download: tried three times (network error, 5xx, or no answer in 30 s), else the search fails. */
+async function download(url: string): Promise<Response> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+      if (r.status < 500 || attempt === 3) return r;
+    } catch (err) { if (attempt === 3) throw err; }
+    await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+  }
+}
+
 async function load(urls: string[], key: string, cacheName: string | null | undefined) {
   const cache = cacheName && typeof caches !== 'undefined' ? await caches.open(cacheName).catch(() => null) : null;
   const next = new PropSearchIndex();
@@ -18,7 +29,7 @@ async function load(urls: string[], key: string, cacheName: string | null | unde
     for (let i = k++; i < urls.length; i = k++) {
       let r = cache ? await cache.match(propsKey(i)).catch(() => undefined) : undefined;
       if (!r) {
-        r = await fetch(urls[i]);
+        r = await download(urls[i]);
         if (r.ok && cache) cache.put(propsKey(i), r.clone()).catch(() => {});
       }
       if (r.ok) next.addShard(await r.json() as Shard);
@@ -27,7 +38,7 @@ async function load(urls: string[], key: string, cacheName: string | null | unde
       if (done % 10 === 0 || done === urls.length) postMessage({ type: 'progress', done, total: urls.length });
     }
   };
-  await Promise.all(Array.from({ length: 8 }, worker));
+  await Promise.all(Array.from({ length: 8 }, worker)); // on a failure the other loops finish their shards unused
   next.seal();
   index = next; indexKey = key;
 }
