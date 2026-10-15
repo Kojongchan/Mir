@@ -1,3 +1,4 @@
+import { OUTLINE_RANGE } from './objectState';
 import {
   Mesh, NoColorSpace, OrthographicCamera, PlaneGeometry, SRGBColorSpace, Scene, ShaderMaterial, WebGLRenderTarget,
   type Camera, type WebGLRenderer,
@@ -8,7 +9,8 @@ import {
  * picture and each pixel's object id (objectState.ts ID_OUTPUT; terrain 0, sky the clear colour) — and one full-screen
  * pass copies the picture to the canvas, darkening pixels whose neighbour shows another object. White structures
  * that meet, overlap or stand in front of each other read as separate shapes, at one pixel whatever their size or
- * level of detail, for one extra pass over the screen (no extra geometry).
+ * level of detail, for one extra pass over the screen (no extra geometry). Specks of small parts get none and the lines
+ * fade with distance (ui-check run 204: at 400 m every small part on a deck drew a grey dot).
  */
 export class OutlinePass {
   private readonly target: WebGLRenderTarget;
@@ -34,15 +36,20 @@ export class OutlinePass {
         uniform sampler2D ids;
         uniform float strength;
         varying vec2 vUv;
+        float differs(vec3 id, ivec2 q, ivec2 size) {
+          return step(0.002, distance(id, texelFetch(ids, clamp(q, ivec2(0), size), 0).rgb));
+        }
         void main() {
           ivec2 p = ivec2(gl_FragCoord.xy), size = textureSize(ids, 0) - 1;
-          vec3 id = texelFetch(ids, p, 0).rgb;
-          float edge = 0.0;
-          // A pixel next to another object (right, up, left, down) is on its outline.
-          edge = max(edge, step(0.002, distance(id, texelFetch(ids, min(p + ivec2(1, 0), size), 0).rgb)));
-          edge = max(edge, step(0.002, distance(id, texelFetch(ids, min(p + ivec2(0, 1), size), 0).rgb)));
-          edge = max(edge, step(0.002, distance(id, texelFetch(ids, max(p - ivec2(1, 0), ivec2(0)), 0).rgb)));
-          edge = max(edge, step(0.002, distance(id, texelFetch(ids, max(p - ivec2(0, 1), ivec2(0)), 0).rgb)));
+          vec4 here = texelFetch(ids, p, 0);
+          // Neighbours (right, up, left, down) showing another object. A pixel among mostly other objects is a speck
+          // of a small part (sub-pixel detail far away): no outline there, or a deck reads as grey noise.
+          float n = differs(here.rgb, p + ivec2(1, 0), size) + differs(here.rgb, p + ivec2(0, 1), size)
+            + differs(here.rgb, p - ivec2(1, 0), size) + differs(here.rgb, p - ivec2(0, 1), size);
+          float edge = step(0.5, n) * step(n, 2.5);
+          // Fade from 250 m to 1.2 km (alpha: view distance / ${OUTLINE_RANGE} m).
+          float metres = here.a * ${OUTLINE_RANGE}.0;
+          edge *= mix(1.0, 0.25, smoothstep(250.0, 1200.0, metres));
           vec4 colour = texture2D(picture, vUv);
           gl_FragColor = vec4(mix(colour.rgb, colour.rgb * 0.35, edge * strength), 1.0);
           #include <colorspace_fragment>

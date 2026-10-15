@@ -65,13 +65,16 @@ const HIDE = /* glsl */`
 
 /**
  * Second colour output (location 1) for outlines (outline.ts): the object's dbId, 24 bit RGB as in picking (0 = no
- * object: terrain). Ignored when drawing to a target without that attachment (picking, the plain canvas).
+ * object: terrain), and in alpha the view distance over OUTLINE_RANGE metres (outlines fade with distance). Ignored
+ * when drawing to a target without that attachment (picking, the plain canvas). Lambert materials have vViewPosition.
  */
+export const OUTLINE_RANGE = 2000;
 export const ID_OUTPUT = /* glsl */`
 layout(location = 1) out highp vec4 mirOutlineId;
 flat varying int vOutlineId;
 void writeOutlineId(int id) {
-  mirOutlineId = vec4(float((id >> 16) & 255) / 255.0, float((id >> 8) & 255) / 255.0, float(id & 255) / 255.0, 1.0);
+  mirOutlineId = vec4(float((id >> 16) & 255) / 255.0, float((id >> 8) & 255) / 255.0, float(id & 255) / 255.0,
+    clamp(-vViewPosition.z / ${OUTLINE_RANGE}.0, 0.0, 1.0));
 }
 `;
 
