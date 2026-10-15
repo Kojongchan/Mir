@@ -7438,6 +7438,46 @@ textarea.input {
 .threed-test2__stats-short {
   display: none;
 }
+/* 색 구분 범례 — 화면 위 가운데, 줄바꿈되는 작은 칩 */
+.threed-test2__legend {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(70%, 760px);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px 10px;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
+  border: 1px solid var(--color-border-default);
+  border-radius: 8px;
+  font-size: 11px;
+  z-index: 15;
+  pointer-events: none;
+}
+.threed-test2__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.threed-test2__legend-item i {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+@media (max-width: 900px) {
+  .threed-test2__legend {
+    top: 40px;
+    max-width: calc(100% - 16px);
+  }
+}
 
 /* =====================================================================
    R1 — 휴대폰·태블릿 반응형 마감 (2026-10-13, scripts/responsive-check.mjs 로 전 화면 점검).

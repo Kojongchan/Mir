@@ -14,7 +14,7 @@ import { gunzipSync } from 'node:zlib';
 import ts from 'typescript';
 
 const env = process.env;
-// UI_OPTIONS "page=2,cpu=4,mobile=1,tiles=all" (one workflow input) → UI_PAGE / UI_CPU / UI_MOBILE / UI_TILES.
+// UI_OPTIONS "page=2,cpu=4,mobile=1,tiles=all" (one workflow input) → UI_PAGE / UI_CPU / UI_MOBILE / UI_TILES (any key → UI_<KEY>).
 for (const part of (env.UI_OPTIONS || '').split(',')) {
   const [k, v] = part.split('=').map(x => x?.trim());
   if (k && v && /^[a-z]+$/.test(k) && /^[\w.]+$/.test(v)) env[`UI_${k.toUpperCase()}`] = v;
@@ -661,7 +661,8 @@ if (PAGE === 2) {
       const place = d => placeAt(look, d);
       const timing = () => page.evaluate(() => {
         const v = window.__viewer, gl = v.renderer.getContext(), px = new Uint8Array(4);
-        const draw = () => { v.renderer.render(v.scene, v.camera); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); };
+        // The whole frame as on screen (outlines included when on).
+        const draw = () => { if (v.draw) v.draw(); else v.renderer.render(v.scene, v.camera); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); };
         draw();
         let t = performance.now();
         for (let k = 0; k < 3; k++) draw();
@@ -687,6 +688,22 @@ if (PAGE === 2) {
           results.quality.push(row);
           log('quality', JSON.stringify(row));
           await shot(`q-${view}-${String(e).replace('.', '_')}.png`);
+          // UI_LOOKS "off_category_file": the same view with outlines off, or painted by classification / file
+          // (outlines stay on), each with its frame time; then back to outlines on, model colours.
+          for (const look of (env.UI_LOOKS || '').split('_').filter(Boolean)) {
+            const outlineBtn = page.getByRole('button', { name: '외곽선', exact: true }), colour = page.locator('select:has(option[value="category"])');
+            const pressed = async () => (await outlineBtn.getAttribute('aria-pressed')) === 'true';
+            if (look === 'off') { if (await pressed()) await outlineBtn.click(); }
+            else if (look === 'category' || look === 'file') await colour.selectOption(look);
+            await sleep(600);
+            const t = await timing();
+            row.looks = { ...(row.looks ?? {}), [look]: t };
+            await shot(`q-${view}-${String(e).replace('.', '_')}-${look}.png`);
+            if (!(await pressed())) await outlineBtn.click();
+            await colour.selectOption('model');
+            await sleep(300);
+          }
+          if (env.UI_LOOKS) log('looks', JSON.stringify(row.looks));
           save();
         }
       }

@@ -11,6 +11,7 @@ import { PropertyPanel } from '../components/model/PropertyPanel';
 import { useModelIndex, type MetaInfo } from '../viewer/useModelIndex';
 import { TilesViewer, type ViewerStats } from '../viewer2/TilesViewer';
 import { PROFILES, QUALITIES, type DeviceTier, type Quality } from '../viewer2/deviceProfile';
+import { COLOR_MODES, paintFor, type ColorMode } from '../viewer2/colorModes';
 
 const authHeaders = async () => {
   const { data } = await supabase.auth.getSession();
@@ -28,6 +29,14 @@ const QUALITY_KEY = 'mir.viewer2.quality';
 const storedQuality = (): Quality => {
   try { const q = localStorage.getItem(QUALITY_KEY); return q && q in QUALITIES ? (q as Quality) : 'standard'; } catch { return 'standard'; }
 };
+
+/** Outlines between objects (on unless turned off) and the colour mode, remembered in this browser. */
+const OUTLINE_KEY = 'mir.viewer2.outlines', COLOR_KEY = 'mir.viewer2.colorMode';
+const storedOutlines = () => { try { return localStorage.getItem(OUTLINE_KEY) !== '0'; } catch { return true; } };
+const storedColorMode = (): ColorMode => {
+  try { const m = localStorage.getItem(COLOR_KEY); return m && m in COLOR_MODES ? (m as ColorMode) : 'model'; } catch { return 'model'; }
+};
+const remember = (key: string, value: string) => { try { localStorage.setItem(key, value); } catch { /* private mode */ } };
 
 export function ThreeDTest2() {
   const { projectId = '' } = useParams();
@@ -59,6 +68,8 @@ export function ThreeDTest2() {
   const [capturing, setCapturing] = useState(false);
   const [tier, setTier] = useState<DeviceTier | 'auto'>('auto');
   const [quality, setQuality] = useState<Quality>(storedQuality);
+  const [outlines, setOutlines] = useState(storedOutlines);
+  const [colorMode, setColorMode] = useState<ColorMode>(storedColorMode);
   const [selectedDb, setSelectedDb] = useState<number | null>(null);
   const [revealDb, setRevealDb] = useState<number | null>(null);
   const [hiddenNodes, setHiddenNodes] = useState<ReadonlySet<number>>(new Set());
@@ -74,6 +85,7 @@ export function ThreeDTest2() {
     try { viewer = new TilesViewer(canvasRef.current); }
     catch (e) { setInitError(errMessage(e)); return; }
     viewer.setQuality(storedQuality());
+    viewer.setOutlines(storedOutlines());
     viewer.onStats = next => setStats(prev => prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
     viewerRef.current = viewer;
     return () => { viewer.dispose(); viewerRef.current = null; };
@@ -102,6 +114,9 @@ export function ThreeDTest2() {
   const highlighted = useMemo(() => expand(highlightIds ?? []), [highlightIds, expand]);
   const hidden = useMemo(() => expand(hiddenNodes), [hiddenNodes, expand]);
   useEffect(() => { viewerRef.current?.setStates(selected, highlighted, hidden); }, [selected, highlighted, hidden]);
+  // Colour mode → per-object paint under the states (again for each opened model: its tree arrives after the tiles).
+  const painted = useMemo(() => (tree ? paintFor(tree, colorMode) : null), [tree, colorMode]);
+  useEffect(() => { viewerRef.current?.setPaint(painted?.paint ?? null); }, [painted]);
 
   /** Per-object boxes (objects.bin, tileset frame) for zooming; loaded on first use. */
   const zoomTo = useCallback(async (ids: number[]) => {
@@ -309,6 +324,15 @@ export function ThreeDTest2() {
               {(Object.keys(QUALITIES) as Quality[]).map(q => <option key={q} value={q}>{QUALITIES[q].label}</option>)}
             </select>
           </label>
+          <button className={`btn btn--sm${outlines ? ' btn--primary' : ''}`} aria-pressed={outlines}
+            title="객체 사이 경계선: 붙어 있거나 겹친 같은 색 구조물을 구분합니다"
+            onClick={() => { const next = !outlines; setOutlines(next); viewerRef.current?.setOutlines(next); remember(OUTLINE_KEY, next ? '1' : '0'); }}>외곽선</button>
+          <label className="threed-test2__tier" title="색 구분: 파일별 또는 분류(Revit 범주·도면층)별로 칠합니다">
+            색
+            <select value={colorMode} onChange={e => { const m = e.target.value as ColorMode; setColorMode(m); remember(COLOR_KEY, m); }}>
+              {(Object.keys(COLOR_MODES) as ColorMode[]).map(m => <option key={m} value={m}>{COLOR_MODES[m]}</option>)}
+            </select>
+          </label>
           {tree && (
             <>
               <button className={`btn btn--sm${treeOpen ? ' btn--primary' : ''}`} onClick={() => { setTreeOpen(o => !o); if (narrowScreen()) setPropsOpen(false); }}>모델 트리</button>
@@ -376,6 +400,16 @@ export function ThreeDTest2() {
                 onSelect={(id, zoom) => { setRevealDb(id); selectNode(id, zoom); }}
                 onZoom={ids => void zoomTo(ids)} onHighlight={setHighlightIds} />
             </aside>
+          )}
+          {painted && (
+            <div className="threed-test2__legend" aria-label={`색 구분: ${COLOR_MODES[colorMode]}`}>
+              {painted.legend.map(g => (
+                <span key={g.name} className="threed-test2__legend-item" title={`${g.name} · 객체 ${g.count.toLocaleString()}개`}>
+                  <i style={{ background: `rgb(${g.rgb.join(',')})` }} />{g.name}
+                </span>
+              ))}
+              {painted.others > 0 && <span className="threed-test2__legend-item muted"><i style={{ background: 'rgb(176,176,176)' }} />기타 {painted.others}개</span>}
+            </div>
           )}
           {statsText && (
             <button type="button" className={`threed-test2__stats${statsOpen ? ' is-open' : ''}`} onClick={() => setStatsOpen(o => !o)}

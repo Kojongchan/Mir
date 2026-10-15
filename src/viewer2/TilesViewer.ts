@@ -1,5 +1,5 @@
 import {
-  AmbientLight, Box3, Clock, Color, DirectionalLight, DoubleSide, Group, Matrix4, Mesh, MeshLambertMaterial, PerspectiveCamera,
+  AmbientLight, Box3, Clock, Color, DirectionalLight, Group, Matrix4, Mesh, PerspectiveCamera,
   Quaternion, Raycaster, Scene, Sphere, Spherical, Vector2, Vector3, Vector4, WebGLRenderer, WebGLRenderTarget, type Material,
   type MeshStandardMaterial, type Object3D,
 } from 'three';
@@ -8,7 +8,8 @@ import CameraControls from 'camera-controls';
 import { TilesRenderer } from '3d-tiles-renderer';
 import { GLTFExtensionsPlugin } from '3d-tiles-renderer/plugins';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
-import { ObjectStateTexture, createPickMaterial, createSurfaceMaterial } from './objectState';
+import { ObjectStateTexture, createPickMaterial, createSurfaceMaterial, createTerrainMaterial } from './objectState';
+import { OutlinePass } from './outline';
 import { PROFILES, detailOf, probeDevice, type DeviceProfile, type DeviceTier, type Quality } from './deviceProfile';
 import { runOf, tileCachePlugin, type TileCacheStats } from './tileCache';
 
@@ -104,6 +105,9 @@ export class TilesViewer {
   private frame = { calls: 0, triangles: 0 };
   /** Screen error (px) and cache budget (MB) set directly, over the tier and quality (null = from those). */
   private detail: { errorTarget: number | null; cacheMB: number | null } = { errorTarget: null, cacheMB: null };
+  /** Outlines between objects (outline.ts); null = the scene draws straight to the canvas. */
+  private outline: OutlinePass | null = null;
+  private readonly samples: number;
 
   constructor(private readonly canvas: HTMLCanvasElement, tier?: DeviceTier) {
     // No reverse-Z: with three r171 it drew nothing in Chromium's software GL. A logarithmic depth buffer on every
@@ -118,6 +122,8 @@ export class TilesViewer {
     this.renderer = new WebGLRenderer({ canvas, antialias: device.antialias, powerPreference: 'high-performance',
       logarithmicDepthBuffer: true });
     this.detectedTier = device.tier;
+    this.samples = device.antialias ? 4 : 0;
+    this.outline = new OutlinePass(this.samples);
     this.profile = PROFILES[tier ?? device.tier];
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, this.profile.pixelRatio));
     this.scene.background = new Color(0.78, 0.84, 0.9);
@@ -244,6 +250,27 @@ export class TilesViewer {
   setStates(selected: Iterable<number>, highlighted: Iterable<number>, hidden: Iterable<number>): void {
     this.state?.apply(selected, highlighted, hidden);
     this.dirty = true;
+  }
+
+  /** Colour per object (colour modes: rgba per dbId, a = 255 painted) under selection and highlight; null = as modelled. */
+  setPaint(paint: Uint8Array | null): void {
+    this.state?.setPaint(paint);
+    this.dirty = true;
+  }
+
+  /** Outlines between objects on or off. */
+  setOutlines(on: boolean): void {
+    if (on === !!this.outline) return;
+    if (on) { this.outline = new OutlinePass(this.samples); this.fit(); }
+    else { this.outline?.dispose(); this.outline = null; }
+    this.dirty = true;
+  }
+
+  /** Draw the scene to the canvas now (with outlines when on); returns the scene's draw calls and triangles. */
+  draw(): { calls: number; triangles: number } {
+    if (this.outline) return this.outline.render(this.renderer, this.scene, this.camera);
+    this.renderer.render(this.scene, this.camera);
+    return { calls: this.renderer.info.render.calls, triangles: this.renderer.info.render.triangles };
   }
 
   /** Keep the view centred above a panel covering the bottom `px` CSS pixels (0 = none). */
@@ -391,6 +418,7 @@ export class TilesViewer {
     this.closeTiles();
     this.controls.dispose();
     this.pickTarget.dispose();
+    this.outline?.dispose();
     this.renderer.dispose();
   }
 
@@ -425,7 +453,7 @@ export class TilesViewer {
       if (!mesh.isMesh || Array.isArray(mesh.material)) return;
       if (terrain) {
         const photo = (mesh.material as MeshStandardMaterial).map;
-        mesh.material = new MeshLambertMaterial({ map: photo, side: DoubleSide });
+        mesh.material = createTerrainMaterial(photo ?? null);
         return;
       }
       mesh.material = mesh.material.transparent ? this.surface!.transparent : this.surface!.opaque;
@@ -483,7 +511,7 @@ export class TilesViewer {
       }
       this.controls.update(0);
       this.camera.updateMatrixWorld();
-      this.renderer.render(this.scene, this.camera);
+      this.draw();
       // The drawing buffer is read in this task, before the browser composites (no preserveDrawingBuffer needed).
       return await new Promise<Blob>((resolve, reject) => this.canvas.toBlob(b => (b ? resolve(b) : reject(new Error('이미지를 만들지 못했습니다.'))), 'image/png'));
     } finally {
@@ -582,6 +610,8 @@ export class TilesViewer {
     const el = this.canvas.parentElement ?? this.canvas;
     const w = Math.max(1, el.clientWidth), h = Math.max(1, el.clientHeight);
     this.renderer.setSize(w, h, false);
+    const size = this.renderer.getDrawingBufferSize(new Vector2());
+    this.outline?.setSize(size.x, size.y);
     this.applyView();
     this.tiles?.setResolutionFromRenderer(this.camera, this.renderer);
     this.needsUpdate = this.dirty = true;
@@ -617,8 +647,7 @@ export class TilesViewer {
     if (this.onStats && now - this.lastStats > 500) { this.lastStats = now; this.onStats(this.stats()); }
     if (!this.dirty) return;
     this.dirty = false;
-    this.renderer.render(this.scene, this.camera);
-    this.frame = { calls: this.renderer.info.render.calls, triangles: this.renderer.info.render.triangles };
+    this.frame = this.draw();
     this.frames++;
     this.frameTimes.push(now);
     while (this.frameTimes.length > 2 && now - this.frameTimes[0] > 1000) this.frameTimes.shift();

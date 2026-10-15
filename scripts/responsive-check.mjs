@@ -3,7 +3,7 @@
 // overflow, elements that run past the screen edge (outside any scrolling box), touch targets smaller than 32 px, and
 // screenshots. The 3D page 2 opens the small test model (RC_TILES_DIR, laid out like the bucket, e.g. the ui-check
 // fixture) when given.
-//   node scripts/responsive-check.mjs [outDir]   RC_ONLY="phone,tablet" RC_PAGES="model-test-2,issues"
+//   node scripts/responsive-check.mjs [outDir]   RC_ONLY="phone,tablet" RC_PAGES="model-test-2,issues" RC_STORAGE='{"k":"v"}'
 /* global window, document, getComputedStyle, innerWidth, innerHeight */ // page.evaluate callbacks run in the browser
 import http from 'node:http';
 import fs from 'node:fs';
@@ -177,6 +177,8 @@ const report = {};
 for (const vp of only) {
   const context = await browser.newContext(VIEWPORTS[vp]);
   await context.addInitScript(([key, s]) => { window.localStorage.setItem(key, JSON.stringify(s)); }, ['sb-x-auth-token', session]);
+  // RC_STORAGE='{"mir.viewer2.colorMode":"file"}': browser settings to start with (viewer options and the like).
+  if (env.RC_STORAGE) await context.addInitScript(items => { for (const [k, v] of Object.entries(items)) window.localStorage.setItem(k, v); }, JSON.parse(env.RC_STORAGE));
   await context.route('http://x.test/**', routeSupabase);
   await context.route('**/api/**', routeApi);
   const page = await context.newPage();
