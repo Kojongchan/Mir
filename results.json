@@ -1,0 +1,3426 @@
+{
+ "started": "2026-10-15T01:33:22.659Z",
+ "network": {
+  "pathHost": "http/1.1",
+  "bucketHost": "http/1.1",
+  "region": "APAC"
+ },
+ "index": {
+  "objects": 252851,
+  "shards": 247,
+  "gzMB": 7.9,
+  "rawMB": 525.4,
+  "maxShardRawMB": 3.7,
+  "downloadMs": 9199
+ },
+ "valueIndex": {
+  "objects": 252851,
+  "vocab": 914764,
+  "vocabMChars": 25.3,
+  "entries": 11826995,
+  "buildMs": 15585,
+  "parseMs": 4391,
+  "heapBuildMB": 193.7,
+  "heapMB": 48.3,
+  "packedMB": 47
+ },
+ "valueSearch": [
+  {
+   "q": "concrete",
+   "hits": 6602,
+   "ms": 39
+  },
+  {
+   "q": "콘크리트",
+   "hits": 11233,
+   "ms": 27
+  },
+  {
+   "q": "sm490",
+   "hits": 0,
+   "ms": 15
+  },
+  {
+   "q": "철근",
+   "hits": 1515,
+   "ms": 27
+  },
+  {
+   "q": "level 1",
+   "hits": 118359,
+   "ms": 41
+  },
+  {
+   "q": "a3_level7 p44",
+   "hits": 14,
+   "ms": 54
+  },
+  {
+   "q": "527265",
+   "hits": 1,
+   "ms": 32
+  },
+  {
+   "q": "간격띄우기 130.851611",
+   "hits": 1,
+   "ms": 44
+  },
+  {
+   "q": "guid b775e975-0548-4ea2-a1dd-000b4386c2bd",
+   "hits": 1,
+   "ms": 41
+  },
+  {
+   "q": "external 46/0/0/23/0/37003/0",
+   "hits": 1,
+   "ms": 64
+  },
+  {
+   "q": "value 1653161",
+   "hits": 1,
+   "ms": 56
+  }
+ ],
+ "categories": [
+  [
+   "Item",
+   252851
+  ],
+  [
+   "요소 ID",
+   118712
+  ],
+  [
+   "요소",
+   118685
+  ],
+  [
+   "생성 공정",
+   118685
+  ],
+  [
+   "사용자",
+   114683
+  ],
+  [
+   "요소 특성",
+   110943
+  ],
+  [
+   "CreatedPhaseId",
+   110943
+  ],
+  [
+   "Id",
+   110943
+  ],
+  [
+   "WorksetId",
+   110943
+  ],
+  [
+   "Document",
+   110943
+  ],
+  [
+   "Category",
+   110943
+  ],
+  [
+   "DemolishedPhaseId",
+   107089
+  ],
+  [
+   "PartMaker",
+   107028
+  ],
+  [
+   "OriginalCategoryId",
+   107028
+  ],
+  [
+   "Revit 재질",
+   44772
+  ],
+  [
+   "재료",
+   17887
+  ],
+  [
+   "LevelId",
+   6015
+  ],
+  [
+   "레벨",
+   4481
+  ],
+  [
+   "베이스 레벨",
+   4191
+  ],
+  [
+   "Revit 유형",
+   3913
+  ],
+  [
+   "FacingOrientation",
+   3911
+  ],
+  [
+   "HandOrientation",
+   3911
+  ],
+  [
+   "Symbol",
+   3911
+  ],
+  [
+   "StructuralMaterialId",
+   3894
+  ],
+  [
+   "Location",
+   3655
+  ],
+  [
+   "General",
+   1367
+  ],
+  [
+   "Entity Handle",
+   1367
+  ],
+  [
+   "3D Visualization",
+   1241
+  ],
+  [
+   "유형",
+   972
+  ],
+  [
+   "코리더 ID",
+   790
+  ],
+  [
+   "코리더 모형 정보",
+   790
+  ],
+  [
+   "코리더 쉐이프 정보",
+   790
+  ],
+  [
+   "패밀리",
+   638
+  ],
+  [
+   "Solid History",
+   599
+  ],
+  [
+   "보강 철근 피복 - 상단 면",
+   436
+  ],
+  [
+   "보강 철근 피복",
+   369
+  ],
+  [
+   "참조 레벨",
+   308
+  ],
+  [
+   "구조 재료",
+   172
+  ],
+  [
+   "보강 철근 피복 - 다른 면",
+   154
+  ],
+  [
+   "속성정보",
+   96
+  ]
+ ],
+ "labels": [
+  [
+   "DemolishedPhaseId › IntegerValue",
+   531272
+  ],
+  [
+   "Item › Type",
+   252851
+  ],
+  [
+   "Item › Icon",
+   252851
+  ],
+  [
+   "Item › Source File",
+   252802
+  ],
+  [
+   "Item › Name",
+   159181
+  ],
+  [
+   "Item › GUID",
+   120100
+  ],
+  [
+   "요소 ID › Value",
+   118712
+  ],
+  [
+   "요소 › 이름",
+   118685
+  ],
+  [
+   "요소 › 범주",
+   118685
+  ],
+  [
+   "요소 › 범주 ID",
+   118685
+  ],
+  [
+   "요소 › ID",
+   118685
+  ],
+  [
+   "요소 › 생성 공정",
+   118685
+  ],
+  [
+   "요소 › 작업 세트",
+   118685
+  ],
+  [
+   "생성 공정 › 이름",
+   118685
+  ],
+  [
+   "생성 공정 › 범주",
+   118685
+  ],
+  [
+   "생성 공정 › 범주 ID",
+   118685
+  ],
+  [
+   "생성 공정 › ID",
+   118685
+  ],
+  [
+   "생성 공정 › 작업 세트",
+   118685
+  ],
+  [
+   "요소 › 유형",
+   118682
+  ],
+  [
+   "요소 › 패밀리",
+   118682
+  ],
+  [
+   "요소 › IfcGUID",
+   118682
+  ],
+  [
+   "요소 › IFC로 내보내기",
+   118682
+  ],
+  [
+   "요소 › 체적",
+   115244
+  ],
+  [
+   "사용자 › A3_Level6",
+   114683
+  ],
+  [
+   "사용자 › A3_Level1",
+   114683
+  ],
+  [
+   "사용자 › A2_개정일자",
+   114683
+  ],
+  [
+   "사용자 › A2_객체관리기관",
+   114683
+  ],
+  [
+   "사용자 › A2_객체버전",
+   114683
+  ],
+  [
+   "사용자 › A2_객체저작자",
+   114683
+  ],
+  [
+   "사용자 › A2_최초생성일자",
+   114683
+  ],
+  [
+   "사용자 › A4_기준점",
+   114683
+  ],
+  [
+   "사용자 › A5_실시공정시작일",
+   114683
+  ],
+  [
+   "사용자 › A1_객체명칭",
+   114682
+  ],
+  [
+   "사용자 › A1_객체형상",
+   114682
+  ],
+  [
+   "사용자 › A5_실시공정종료일",
+   114681
+  ],
+  [
+   "사용자 › A3_Level2/3/4",
+   114674
+  ],
+  [
+   "사용자 › A5_계획공정시작일",
+   114651
+  ],
+  [
+   "사용자 › A5_계획공정종료일",
+   114651
+  ],
+  [
+   "사용자 › A3_Level5",
+   114623
+  ],
+  [
+   "사용자 › A1_객체재료",
+   114362
+  ],
+  [
+   "사용자 › A3_Level7",
+   113891
+  ],
+  [
+   "사용자 › A3_WBS CODE (IPS)",
+   113838
+  ],
+  [
+   "사용자 › A3_Level8",
+   113801
+  ],
+  [
+   "사용자 › A3_C-WBS CODE",
+   111738
+  ],
+  [
+   "요소 특성 › ViewSpecific",
+   110943
+  ],
+  [
+   "요소 특성 › UniqueId",
+   110943
+  ],
+  [
+   "요소 특성 › IsTransient",
+   110943
+  ],
+  [
+   "요소 특성 › IsModifiable",
+   110943
+  ],
+  [
+   "요소 특성 › Name",
+   110943
+  ],
+  [
+   "CreatedPhaseId › IntegerValue",
+   110943
+  ],
+  [
+   "Id › IntegerValue",
+   110943
+  ],
+  [
+   "WorksetId › IntegerValue",
+   110943
+  ],
+  [
+   "Document › MassDisplayTemporaryOverride",
+   110943
+  ],
+  [
+   "Document › IsModelInCloud",
+   110943
+  ],
+  [
+   "Document › IsDetached",
+   110943
+  ],
+  [
+   "Document › IsWorkshared",
+   110943
+  ],
+  [
+   "Document › IsLinked",
+   110943
+  ],
+  [
+   "Document › IsReadOnlyFile",
+   110943
+  ],
+  [
+   "Document › IsModified",
+   110943
+  ],
+  [
+   "Document › IsModifiable",
+   110943
+  ]
+ ],
+ "leafPanels": {
+  "sampled": 400,
+  "leaves": 122541,
+  "leafRich": 98,
+  "noRichAnywhere": 0,
+  "richParents": {
+   "2": 337,
+   "3": 11,
+   "4": 33,
+   "5": 17,
+   "6": 2
+  },
+  "firstRichDepth": {
+   "1": 365,
+   "2": 19,
+   "3": 16
+  },
+  "depth": {
+   "4": 7,
+   "6": 1,
+   "7": 12,
+   "8": 343,
+   "9": 19,
+   "10": 18
+  },
+  "examples": [
+   [
+    {
+     "id": 129477,
+     "name": "솔리드",
+     "type": "솔리드",
+     "cats": {
+      "Item": 3
+     },
+     "sample": []
+    },
+    {
+     "id": 129476,
+     "name": "부품",
+     "type": "일반 모델: PT-4_강지보: PT-4_강지보",
+     "cats": {
+      "Item": 5,
+      "요소": 19,
+      "사용자": 22,
+      "생성 공정": 5,
+      "요소 특성": 6,
+      "PartMaker": 5,
+      "OriginalCategoryId": 1,
+      "DemolishedPhaseId": 5,
+      "CreatedPhaseId": 1,
+      "Id": 1,
+      "WorksetId": 1,
+      "Document": 13,
+      "Category": 10,
+      "요소 ID": 1
+     },
+     "sample": [
+      "요소 › 이름 = 부품",
+      "요소 › 유형 = PT-4_강지보",
+      "요소 › 패밀리 = PT-4_강지보",
+      "요소 › 범주 = 일반 모델"
+     ]
+    },
+    {
+     "id": 29865,
+     "name": "PO05_F_AC_TUN02_N24.nwc",
+     "type": "File",
+     "cats": {
+      "Item": 4,
+      "프로젝트": 6,
+      "구역": 6,
+      "ID": 3
+     },
+     "sample": [
+      "프로젝트 › 클라이언트 이름 = 소유자",
+      "프로젝트 › 프로젝트 발행 날짜 = 발행 날짜",
+      "프로젝트 › 프로젝트 번호 = 0001",
+      "프로젝트 › 프로젝트 상태 = 프로젝트 상태"
+     ]
+    }
+   ],
+   [
+    {
+     "id": 133977,
+     "name": "솔리드",
+     "type": "솔리드",
+     "cats": {
+      "Item": 3
+     },
+     "sample": []
+    },
+    {
+     "id": 133976,
+     "name": "부품",
+     "type": "일반 모델: PT-4_강지보: PT-4_강지보",
+     "cats": {
+      "Item": 5,
+      "요소": 19,
+      "사용자": 22,
+      "생성 공정": 5,
+      "요소 특성": 6,
+      "PartMaker": 5,
+      "OriginalCategoryId": 1,
+      "DemolishedPhaseId": 5,
+      "CreatedPhaseId": 1,
+      "Id": 1,
+      "WorksetId": 1,
+      "Document": 13,
+      "Category": 10,
+      "요소 ID": 1
+     },
+     "sample": [
+      "요소 › 이름 = 부품",
+      "요소 › 유형 = PT-4_강지보",
+      "요소 › 패밀리 = PT-4_강지보",
+      "요소 › 범주 = 일반 모델"
+     ]
+    },
+    {
+     "id": 29865,
+     "name": "PO05_F_AC_TUN02_N24.nwc",
+     "type": "File",
+     "cats": {
+      "Item": 4,
+      "프로젝트": 6,
+      "구역": 6,
+      "ID": 3
+     },
+     "sample": [
+      "프로젝트 › 클라이언트 이름 = 소유자",
+      "프로젝트 › 프로젝트 발행 날짜 = 발행 날짜",
+      "프로젝트 › 프로젝트 번호 = 0001",
+      "프로젝트 › 프로젝트 상태 = 프로젝트 상태"
+     ]
+    }
+   ],
+   [
+    {
+     "id": 153135,
+     "name": "솔리드",
+     "type": "솔리드",
+     "cats": {
+      "Item": 3
+     },
+     "sample": []
+    },
+    {
+     "id": 153134,
+     "name": "부품",
+     "type": "일반 모델: PT-4_강지보: PT-4_강지보",
+     "cats": {
+      "Item": 5,
+      "요소": 19,
+      "사용자": 22,
+      "생성 공정": 5,
+      "요소 특성": 6,
+      "PartMaker": 5,
+      "OriginalCategoryId": 1,
+      "DemolishedPhaseId": 5,
+      "CreatedPhaseId": 1,
+      "Id": 1,
+      "WorksetId": 1,
+      "Document": 13,
+      "Category": 10,
+      "요소 ID": 1
+     },
+     "sample": [
+      "요소 › 이름 = 부품",
+      "요소 › 유형 = PT-4_강지보",
+      "요소 › 패밀리 = PT-4_강지보",
+      "요소 › 범주 = 일반 모델"
+     ]
+    },
+    {
+     "id": 29865,
+     "name": "PO05_F_AC_TUN02_N24.nwc",
+     "type": "File",
+     "cats": {
+      "Item": 4,
+      "프로젝트": 6,
+      "구역": 6,
+      "ID": 3
+     },
+     "sample": [
+      "프로젝트 › 클라이언트 이름 = 소유자",
+      "프로젝트 › 프로젝트 발행 날짜 = 발행 날짜",
+      "프로젝트 › 프로젝트 번호 = 0001",
+      "프로젝트 › 프로젝트 상태 = 프로젝트 상태"
+     ]
+    }
+   ],
+   [
+    {
+     "id": 148733,
+     "name": "솔리드",
+     "type": "솔리드",
+     "cats": {
+      "Item": 3
+     },
+     "sample": []
+    },
+    {
+     "id": 148732,
+     "name": "부품",
+     "type": "일반 모델: PT-4_강지보: PT-4_강지보",
+     "cats": {
+      "Item": 5,
+      "요소": 19,
+      "사용자": 22,
+      "생성 공정": 5,
+      "요소 특성": 6,
+      "PartMaker": 5,
+      "OriginalCategoryId": 1,
+      "DemolishedPhaseId": 5,
+      "CreatedPhaseId": 1,
+      "Id": 1,
+      "WorksetId": 1,
+      "Document": 13,
+      "Category": 10,
+      "요소 ID": 1
+     },
+     "sample": [
+      "요소 › 이름 = 부품",
+      "요소 › 유형 = PT-4_강지보",
+      "요소 › 패밀리 = PT-4_강지보",
+      "요소 › 범주 = 일반 모델"
+     ]
+    },
+    {
+     "id": 29865,
+     "name": "PO05_F_AC_TUN02_N24.nwc",
+     "type": "File",
+     "cats": {
+      "Item": 4,
+      "프로젝트": 6,
+      "구역": 6,
+      "ID": 3
+     },
+     "sample": [
+      "프로젝트 › 클라이언트 이름 = 소유자",
+      "프로젝트 › 프로젝트 발행 날짜 = 발행 날짜",
+      "프로젝트 › 프로젝트 번호 = 0001",
+      "프로젝트 › 프로젝트 상태 = 프로젝트 상태"
+     ]
+    }
+   ],
+   [
+    {
+     "id": 212607,
+     "name": "솔리드",
+     "type": "솔리드",
+     "cats": {
+      "Item": 3
+     },
+     "sample": []
+    },
+    {
+     "id": 212606,
+     "name": "부품",
+     "type": "일반 모델: PT-4_강지보: PT-4_강지보",
+     "cats": {
+      "Item": 5,
+      "요소": 19,
+      "사용자": 22,
+      "생성 공정": 5,
+      "요소 특성": 6,
+      "PartMaker": 5,
+      "OriginalCategoryId": 1,
+      "DemolishedPhaseId": 5,
+      "CreatedPhaseId": 1,
+      "Id": 1,
+      "WorksetId": 1,
+      "Document": 13,
+      "Category": 10,
+      "요소 ID": 1
+     },
+     "sample": [
+      "요소 › 이름 = 부품",
+      "요소 › 유형 = PT-4_강지보",
+      "요소 › 패밀리 = PT-4_강지보",
+      "요소 › 범주 = 일반 모델"
+     ]
+    },
+    {
+     "id": 29865,
+     "name": "PO05_F_AC_TUN02_N24.nwc",
+     "type": "File",
+     "cats": {
+      "Item": 4,
+      "프로젝트": 6,
+      "구역": 6,
+      "ID": 3
+     },
+     "sample": [
+      "프로젝트 › 클라이언트 이름 = 소유자",
+      "프로젝트 › 프로젝트 발행 날짜 = 발행 날짜",
+      "프로젝트 › 프로젝트 번호 = 0001",
+      "프로젝트 › 프로젝트 상태 = 프로젝트 상태"
+     ]
+    }
+   ],
+   [
+    {
+     "id": 135955,
+     "name": "솔리드",
+     "type": "솔리드",
+     "cats": {
+      "Item": 3
+     },
+     "sample": []
+    },
+    {
+     "id": 135954,
+     "name": "부품",
+     "type": "일반 모델: PT-4_강지보: PT-4_강지보",
+     "cats": {
+      "Item": 5,
+      "요소": 19,
+      "사용자": 22,
+      "생성 공정": 5,
+      "요소 특성": 6,
+      "PartMaker": 5,
+      "OriginalCategoryId": 1,
+      "DemolishedPhaseId": 5,
+      "CreatedPhaseId": 1,
+      "Id": 1,
+      "WorksetId": 1,
+      "Document": 13,
+      "Category": 10,
+      "요소 ID": 1
+     },
+     "sample": [
+      "요소 › 이름 = 부품",
+      "요소 › 유형 = PT-4_강지보",
+      "요소 › 패밀리 = PT-4_강지보",
+      "요소 › 범주 = 일반 모델"
+     ]
+    },
+    {
+     "id": 29865,
+     "name": "PO05_F_AC_TUN02_N24.nwc",
+     "type": "File",
+     "cats": {
+      "Item": 4,
+      "프로젝트": 6,
+      "구역": 6,
+      "ID": 3
+     },
+     "sample": [
+      "프로젝트 › 클라이언트 이름 = 소유자",
+      "프로젝트 › 프로젝트 발행 날짜 = 발행 날짜",
+      "프로젝트 › 프로젝트 번호 = 0001",
+      "프로젝트 › 프로젝트 상태 = 프로젝트 상태"
+     ]
+    }
+   ],
+   [
+    {
+     "id": 21037,
+     "name": "#21037",
+     "type": "",
+     "cats": {
+      "Item": 5,
+      "Revit 재질": 21
+     },
+     "sample": [
+      "Revit 재질 › Name = #록볼트_튜브",
+      "Revit 재질 › Color = 120, 120, 120",
+      "Revit 재질 › Shininess = 64",
+      "Revit 재질 › Smoothness = 50"
+     ]
+    },
+    {
+     "id": 21035,
+     "name": "PD-3-1_록볼트_1",
+     "type": "일반 모델: PD-3-1_록볼트_1: PD-3-1_록볼트_1",
+     "cats": {
+      "Item": 5,
+      "요소": 15,
+      "사용자": 23,
+      "생성 공정": 5,
+      "요소 ID": 1
+     },
+     "sample": [
+      "요소 › 이름 = PD-3-1_록볼트_1",
+      "요소 › 유형 = PD-3-1_록볼트_1",
+      "요소 › 패밀리 = PD-3-1_록볼트_1",
+      "요소 › 범주 = 일반 모델"
+     ]
+    },
+    {
+     "id": 20983,
+     "name": "PD-3-1_록볼트_1",
+     "type": "유형",
+     "cats": {
+      "Item": 4,
+      "유형": 9
+     },
+     "sample": [
+      "유형 › 이름 = PD-3-1_록볼트_1",
+      "유형 › 범주 = 일반 모델",
+      "유형 › 범주 ID = -2000151",
+      "유형 › ID = 247572"
+     ]
+    },
+    {
+     "id": 20982,
+     "name": "PD-3-1_록볼트_1",
+     "type": "패밀리",
+     "cats": {
+      "Item": 4,
+      "패밀리": 13
+     },
+     "sample": [
+      "패밀리 › 이름 = PD-3-1_록볼트_1",
+      "패밀리 › 범주 = PD-3-1_록볼트_1",
+      "패밀리 › ID = 247515",
+      "패밀리 › 공유 = 0"
+     ]
+    },
+    {
+     "id": 16672,
+     "name": "PO05_F_AC_TUN01_R24.rvt",
+     "type": "File",
+     "cats": {
+      "Item": 4,
+      "프로젝트": 6,
+      "구역": 6,
+      "ID": 3
+     },
+     "sample": [
+      "프로젝트 › 클라이언트 이름 = 소유자",
+      "프로젝트 › 프로젝트 발행 날짜 = 발행 날짜",
+      "프로젝트 › 프로젝트 번호 = 0001",
+      "프로젝트 › 프로젝트 상태 = 프로젝트 상태"
+     ]
+    }
+   ],
+   [
+    {
+     "id": 134113,
+     "name": "솔리드",
+     "type": "솔리드",
+     "cats": {
+      "Item": 3
+     },
+     "sample": []
+    },
+    {
+     "id": 134112,
+     "name": "부품",
+     "type": "일반 모델: PT-4_강지보: PT-4_강지보",
+     "cats": {
+      "Item": 5,
+      "요소": 19,
+      "사용자": 22,
+      "생성 공정": 5,
+      "요소 특성": 6,
+      "PartMaker": 5,
+      "OriginalCategoryId": 1,
+      "DemolishedPhaseId": 5,
+      "CreatedPhaseId": 1,
+      "Id": 1,
+      "WorksetId": 1,
+      "Document": 13,
+      "Category": 10,
+      "요소 ID": 1
+     },
+     "sample": [
+      "요소 › 이름 = 부품",
+      "요소 › 유형 = PT-4_강지보",
+      "요소 › 패밀리 = PT-4_강지보",
+      "요소 › 범주 = 일반 모델"
+     ]
+    },
+    {
+     "id": 29865,
+     "name": "PO05_F_AC_TUN02_N24.nwc",
+     "type": "File",
+     "cats": {
+      "Item": 4,
+      "프로젝트": 6,
+      "구역": 6,
+      "ID": 3
+     },
+     "sample": [
+      "프로젝트 › 클라이언트 이름 = 소유자",
+      "프로젝트 › 프로젝트 발행 날짜 = 발행 날짜",
+      "프로젝트 › 프로젝트 번호 = 0001",
+      "프로젝트 › 프로젝트 상태 = 프로젝트 상태"
+     ]
+    }
+   ]
+  ]
+ },
+ "tileTop": [
+  {
+   "i": 702,
+   "members": 9223,
+   "MB": 0,
+   "centre": [
+    4291,
+    -2807,
+    -52
+   ]
+  },
+  {
+   "i": 625,
+   "members": 9044,
+   "MB": 0,
+   "centre": [
+    4077,
+    -2619,
+    -57
+   ]
+  },
+  {
+   "i": 697,
+   "members": 4951,
+   "MB": 0,
+   "centre": [
+    4301,
+    -2823,
+    -51
+   ]
+  },
+  {
+   "i": 698,
+   "members": 4935,
+   "MB": 0,
+   "centre": [
+    4301,
+    -2823,
+    -51
+   ]
+  },
+  {
+   "i": 620,
+   "members": 4903,
+   "MB": 0,
+   "centre": [
+    3998,
+    -2547,
+    -59
+   ]
+  },
+  {
+   "i": 621,
+   "members": 4879,
+   "MB": 0,
+   "centre": [
+    3998,
+    -2547,
+    -59
+   ]
+  },
+  {
+   "i": 622,
+   "members": 4679,
+   "MB": 0,
+   "centre": [
+    3998,
+    -2547,
+    -59
+   ]
+  },
+  {
+   "i": 623,
+   "members": 4623,
+   "MB": 0,
+   "centre": [
+    3998,
+    -2547,
+    -59
+   ]
+  }
+ ],
+ "scene": {
+  "tiles": 1073,
+  "used": 16,
+  "target": 702,
+  "centre": [
+   4291,
+   -2807,
+   -52
+  ],
+  "bytesMB": 0,
+  "base": 1,
+  "inst": 0
+ },
+ "alias": {
+  "tiles": 1035,
+  "subsetTiles": 16,
+  "subsetPairs": 3012
+ },
+ "conditions": {
+  "page": 2,
+  "cpu": 1,
+  "mobile": false,
+  "tiles": 16
+ },
+ "timeline": [
+  {
+   "s": 39,
+   "label": "open",
+   "st": {
+    "fps": 0,
+    "frames": 8,
+    "drawCalls": 57,
+    "triangles": 226110,
+    "geometries": 56,
+    "tilesVisible": 2,
+    "tilesLoaded": 2,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 58,
+    "usedMB": 58,
+    "heapMB": 92,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 41,
+   "label": "open",
+   "st": {
+    "fps": 0,
+    "frames": 8,
+    "drawCalls": 57,
+    "triangles": 226110,
+    "geometries": 56,
+    "tilesVisible": 2,
+    "tilesLoaded": 2,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 58,
+    "usedMB": 58,
+    "heapMB": 92,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 53,
+   "label": "after-orbit",
+   "st": {
+    "fps": 0,
+    "frames": 178,
+    "drawCalls": 57,
+    "triangles": 226110,
+    "geometries": 56,
+    "tilesVisible": 2,
+    "tilesLoaded": 2,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 58,
+    "usedMB": 58,
+    "heapMB": 93,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 55,
+   "label": "after-orbit",
+   "st": {
+    "fps": 0,
+    "frames": 178,
+    "drawCalls": 57,
+    "triangles": 226110,
+    "geometries": 56,
+    "tilesVisible": 2,
+    "tilesLoaded": 2,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 58,
+    "usedMB": 58,
+    "heapMB": 93,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 59,
+   "label": "search-zoom",
+   "st": {
+    "fps": 4,
+    "frames": 226,
+    "drawCalls": 57,
+    "triangles": 226110,
+    "geometries": 56,
+    "tilesVisible": 2,
+    "tilesLoaded": 32,
+    "downloading": 19,
+    "parsing": 15,
+    "failed": 0,
+    "cacheMB": 108,
+    "usedMB": 90,
+    "heapMB": 187,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 61,
+   "label": "search-zoom",
+   "st": {
+    "fps": 2,
+    "frames": 232,
+    "drawCalls": 57,
+    "triangles": 226110,
+    "geometries": 56,
+    "tilesVisible": 2,
+    "tilesLoaded": 44,
+    "downloading": 10,
+    "parsing": 39,
+    "failed": 0,
+    "cacheMB": 126,
+    "usedMB": 108,
+    "heapMB": 207,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 63,
+   "label": "search-zoom",
+   "st": {
+    "fps": 3,
+    "frames": 237,
+    "drawCalls": 57,
+    "triangles": 226110,
+    "geometries": 56,
+    "tilesVisible": 2,
+    "tilesLoaded": 54,
+    "downloading": 0,
+    "parsing": 39,
+    "failed": 0,
+    "cacheMB": 155,
+    "usedMB": 137,
+    "heapMB": 243,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 65,
+   "label": "search-zoom",
+   "st": {
+    "fps": 2,
+    "frames": 242,
+    "drawCalls": 57,
+    "triangles": 226110,
+    "geometries": 56,
+    "tilesVisible": 2,
+    "tilesLoaded": 64,
+    "downloading": 0,
+    "parsing": 29,
+    "failed": 0,
+    "cacheMB": 173,
+    "usedMB": 155,
+    "heapMB": 268,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 67,
+   "label": "search-zoom",
+   "st": {
+    "fps": 4,
+    "frames": 249,
+    "drawCalls": 57,
+    "triangles": 226110,
+    "geometries": 56,
+    "tilesVisible": 2,
+    "tilesLoaded": 78,
+    "downloading": 0,
+    "parsing": 15,
+    "failed": 0,
+    "cacheMB": 184,
+    "usedMB": 166,
+    "heapMB": 275,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 69,
+   "label": "search-zoom",
+   "st": {
+    "fps": 2,
+    "frames": 254,
+    "drawCalls": 94,
+    "triangles": 3725574,
+    "geometries": 93,
+    "tilesVisible": 35,
+    "tilesLoaded": 87,
+    "downloading": 0,
+    "parsing": 6,
+    "failed": 0,
+    "cacheMB": 211,
+    "usedMB": 192,
+    "heapMB": 312,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 71,
+   "label": "search-zoom",
+   "st": {
+    "fps": 0,
+    "frames": 259,
+    "drawCalls": 42,
+    "triangles": 3633803,
+    "geometries": 95,
+    "tilesVisible": 36,
+    "tilesLoaded": 93,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 226,
+    "usedMB": 149,
+    "heapMB": 325,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 73,
+   "label": "search-zoom",
+   "st": {
+    "fps": 0,
+    "frames": 259,
+    "drawCalls": 42,
+    "triangles": 3633803,
+    "geometries": 95,
+    "tilesVisible": 36,
+    "tilesLoaded": 93,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 226,
+    "usedMB": 149,
+    "heapMB": 325,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 95,
+   "label": "zoom",
+   "st": {
+    "fps": 0,
+    "frames": 291,
+    "drawCalls": 42,
+    "triangles": 4438165,
+    "geometries": 98,
+    "tilesVisible": 36,
+    "tilesLoaded": 96,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 246,
+    "usedMB": 163,
+    "heapMB": 370,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 97,
+   "label": "zoom",
+   "st": {
+    "fps": 0,
+    "frames": 291,
+    "drawCalls": 42,
+    "triangles": 4438165,
+    "geometries": 98,
+    "tilesVisible": 36,
+    "tilesLoaded": 96,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 246,
+    "usedMB": 163,
+    "heapMB": 371,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 127,
+   "label": "q-near-6",
+   "st": {
+    "fps": 6,
+    "frames": 309,
+    "drawCalls": 56,
+    "triangles": 3518353,
+    "geometries": 118,
+    "tilesVisible": 48,
+    "tilesLoaded": 113,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 260,
+    "usedMB": 148,
+    "heapMB": 383,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 129,
+   "label": "q-near-6",
+   "st": {
+    "fps": 0,
+    "frames": 309,
+    "drawCalls": 56,
+    "triangles": 3518353,
+    "geometries": 118,
+    "tilesVisible": 48,
+    "tilesLoaded": 113,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 260,
+    "usedMB": 148,
+    "heapMB": 383,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 147,
+   "label": "q-near-3",
+   "st": {
+    "fps": 0,
+    "frames": 310,
+    "drawCalls": 56,
+    "triangles": 3518353,
+    "geometries": 118,
+    "tilesVisible": 48,
+    "tilesLoaded": 113,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 260,
+    "usedMB": 148,
+    "heapMB": 379,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 149,
+   "label": "q-near-3",
+   "st": {
+    "fps": 0,
+    "frames": 310,
+    "drawCalls": 56,
+    "triangles": 3518353,
+    "geometries": 118,
+    "tilesVisible": 48,
+    "tilesLoaded": 113,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 260,
+    "usedMB": 148,
+    "heapMB": 379,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 155,
+   "label": "q-mid-6",
+   "st": {
+    "fps": 16,
+    "frames": 336,
+    "drawCalls": 103,
+    "triangles": 2808068,
+    "geometries": 192,
+    "tilesVisible": 69,
+    "tilesLoaded": 144,
+    "downloading": 19,
+    "parsing": 5,
+    "failed": 0,
+    "cacheMB": 288,
+    "usedMB": 118,
+    "heapMB": 419,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 157,
+   "label": "q-mid-6",
+   "st": {
+    "fps": 1,
+    "frames": 340,
+    "drawCalls": 102,
+    "triangles": 2770024,
+    "geometries": 194,
+    "tilesVisible": 68,
+    "tilesLoaded": 152,
+    "downloading": 14,
+    "parsing": 34,
+    "failed": 0,
+    "cacheMB": 289,
+    "usedMB": 118,
+    "heapMB": 422,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 159,
+   "label": "q-mid-6",
+   "st": {
+    "fps": 1,
+    "frames": 341,
+    "drawCalls": 102,
+    "triangles": 2770024,
+    "geometries": 194,
+    "tilesVisible": 68,
+    "tilesLoaded": 154,
+    "downloading": 0,
+    "parsing": 46,
+    "failed": 0,
+    "cacheMB": 289,
+    "usedMB": 118,
+    "heapMB": 423,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 161,
+   "label": "q-mid-6",
+   "st": {
+    "fps": 1,
+    "frames": 344,
+    "drawCalls": 100,
+    "triangles": 2735900,
+    "geometries": 195,
+    "tilesVisible": 66,
+    "tilesLoaded": 160,
+    "downloading": 0,
+    "parsing": 40,
+    "failed": 0,
+    "cacheMB": 289,
+    "usedMB": 118,
+    "heapMB": 423,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 163,
+   "label": "q-mid-6",
+   "st": {
+    "fps": 1,
+    "frames": 345,
+    "drawCalls": 100,
+    "triangles": 2735900,
+    "geometries": 195,
+    "tilesVisible": 66,
+    "tilesLoaded": 162,
+    "downloading": 0,
+    "parsing": 38,
+    "failed": 0,
+    "cacheMB": 289,
+    "usedMB": 118,
+    "heapMB": 420,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 165,
+   "label": "q-mid-6",
+   "st": {
+    "fps": 0,
+    "frames": 346,
+    "drawCalls": 107,
+    "triangles": 2771363,
+    "geometries": 204,
+    "tilesVisible": 73,
+    "tilesLoaded": 164,
+    "downloading": 0,
+    "parsing": 36,
+    "failed": 0,
+    "cacheMB": 290,
+    "usedMB": 118,
+    "heapMB": 420,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 167,
+   "label": "q-mid-6",
+   "st": {
+    "fps": 1,
+    "frames": 348,
+    "drawCalls": 114,
+    "triangles": 2827849,
+    "geometries": 212,
+    "tilesVisible": 80,
+    "tilesLoaded": 168,
+    "downloading": 0,
+    "parsing": 32,
+    "failed": 0,
+    "cacheMB": 290,
+    "usedMB": 118,
+    "heapMB": 421,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 169,
+   "label": "q-mid-6",
+   "st": {
+    "fps": 1,
+    "frames": 349,
+    "drawCalls": 121,
+    "triangles": 2894134,
+    "geometries": 220,
+    "tilesVisible": 87,
+    "tilesLoaded": 170,
+    "downloading": 0,
+    "parsing": 30,
+    "failed": 0,
+    "cacheMB": 290,
+    "usedMB": 118,
+    "heapMB": 421,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 171,
+   "label": "q-mid-6",
+   "st": {
+    "fps": 0,
+    "frames": 350,
+    "drawCalls": 121,
+    "triangles": 2894134,
+    "geometries": 220,
+    "tilesVisible": 87,
+    "tilesLoaded": 172,
+    "downloading": 0,
+    "parsing": 28,
+    "failed": 0,
+    "cacheMB": 290,
+    "usedMB": 118,
+    "heapMB": 421,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 173,
+   "label": "q-mid-6",
+   "st": {
+    "fps": 1,
+    "frames": 352,
+    "drawCalls": 128,
+    "triangles": 2913029,
+    "geometries": 228,
+    "tilesVisible": 94,
+    "tilesLoaded": 176,
+    "downloading": 0,
+    "parsing": 24,
+    "failed": 0,
+    "cacheMB": 291,
+    "usedMB": 118,
+    "heapMB": 422,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 175,
+   "label": "q-mid-6",
+   "st": {
+    "fps": 1,
+    "frames": 354,
+    "drawCalls": 128,
+    "triangles": 2913029,
+    "geometries": 228,
+    "tilesVisible": 94,
+    "tilesLoaded": 180,
+    "downloading": 0,
+    "parsing": 20,
+    "failed": 0,
+    "cacheMB": 291,
+    "usedMB": 119,
+    "heapMB": 423,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 177,
+   "label": "q-mid-6",
+   "st": {
+    "fps": 0,
+    "frames": 356,
+    "drawCalls": 135,
+    "triangles": 2968701,
+    "geometries": 237,
+    "tilesVisible": 101,
+    "tilesLoaded": 184,
+    "downloading": 0,
+    "parsing": 16,
+    "failed": 0,
+    "cacheMB": 292,
+    "usedMB": 119,
+    "heapMB": 424,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 179,
+   "label": "q-mid-6",
+   "st": {
+    "fps": 1,
+    "frames": 360,
+    "drawCalls": 137,
+    "triangles": 2934006,
+    "geometries": 241,
+    "tilesVisible": 103,
+    "tilesLoaded": 192,
+    "downloading": 0,
+    "parsing": 8,
+    "failed": 0,
+    "cacheMB": 295,
+    "usedMB": 121,
+    "heapMB": 428,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 181,
+   "label": "q-mid-6",
+   "st": {
+    "fps": 1,
+    "frames": 363,
+    "drawCalls": 137,
+    "triangles": 2934006,
+    "geometries": 241,
+    "tilesVisible": 103,
+    "tilesLoaded": 198,
+    "downloading": 0,
+    "parsing": 2,
+    "failed": 0,
+    "cacheMB": 295,
+    "usedMB": 122,
+    "heapMB": 429,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 183,
+   "label": "q-mid-6",
+   "st": {
+    "fps": 0,
+    "frames": 365,
+    "drawCalls": 138,
+    "triangles": 2966388,
+    "geometries": 247,
+    "tilesVisible": 106,
+    "tilesLoaded": 200,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 295,
+    "usedMB": 121,
+    "heapMB": 429,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 185,
+   "label": "q-mid-6",
+   "st": {
+    "fps": 0,
+    "frames": 365,
+    "drawCalls": 138,
+    "triangles": 2966388,
+    "geometries": 247,
+    "tilesVisible": 106,
+    "tilesLoaded": 200,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 295,
+    "usedMB": 121,
+    "heapMB": 429,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 199,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 15,
+    "frames": 391,
+    "drawCalls": 151,
+    "triangles": 3993268,
+    "geometries": 260,
+    "tilesVisible": 125,
+    "tilesLoaded": 229,
+    "downloading": 23,
+    "parsing": 1,
+    "failed": 0,
+    "cacheMB": 329,
+    "usedMB": 164,
+    "heapMB": 477,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 201,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 1,
+    "frames": 394,
+    "drawCalls": 156,
+    "triangles": 4459489,
+    "geometries": 271,
+    "tilesVisible": 130,
+    "tilesLoaded": 237,
+    "downloading": 24,
+    "parsing": 19,
+    "failed": 0,
+    "cacheMB": 337,
+    "usedMB": 169,
+    "heapMB": 489,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 203,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 1,
+    "frames": 397,
+    "drawCalls": 160,
+    "triangles": 4771143,
+    "geometries": 280,
+    "tilesVisible": 134,
+    "tilesLoaded": 243,
+    "downloading": 18,
+    "parsing": 45,
+    "failed": 0,
+    "cacheMB": 340,
+    "usedMB": 171,
+    "heapMB": 497,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 205,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 1,
+    "frames": 399,
+    "drawCalls": 162,
+    "triangles": 4912056,
+    "geometries": 284,
+    "tilesVisible": 136,
+    "tilesLoaded": 247,
+    "downloading": 0,
+    "parsing": 67,
+    "failed": 0,
+    "cacheMB": 341,
+    "usedMB": 171,
+    "heapMB": 494,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 207,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 0,
+    "frames": 400,
+    "drawCalls": 164,
+    "triangles": 4985607,
+    "geometries": 288,
+    "tilesVisible": 138,
+    "tilesLoaded": 249,
+    "downloading": 0,
+    "parsing": 65,
+    "failed": 0,
+    "cacheMB": 341,
+    "usedMB": 171,
+    "heapMB": 495,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 209,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 1,
+    "frames": 402,
+    "drawCalls": 167,
+    "triangles": 5251845,
+    "geometries": 294,
+    "tilesVisible": 141,
+    "tilesLoaded": 253,
+    "downloading": 0,
+    "parsing": 61,
+    "failed": 0,
+    "cacheMB": 345,
+    "usedMB": 175,
+    "heapMB": 500,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 211,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 1,
+    "frames": 403,
+    "drawCalls": 169,
+    "triangles": 5372429,
+    "geometries": 298,
+    "tilesVisible": 143,
+    "tilesLoaded": 255,
+    "downloading": 0,
+    "parsing": 59,
+    "failed": 0,
+    "cacheMB": 345,
+    "usedMB": 175,
+    "heapMB": 500,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 213,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 1,
+    "frames": 405,
+    "drawCalls": 172,
+    "triangles": 5516780,
+    "geometries": 304,
+    "tilesVisible": 146,
+    "tilesLoaded": 259,
+    "downloading": 0,
+    "parsing": 55,
+    "failed": 0,
+    "cacheMB": 346,
+    "usedMB": 175,
+    "heapMB": 500,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 215,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 0,
+    "frames": 406,
+    "drawCalls": 172,
+    "triangles": 5516780,
+    "geometries": 304,
+    "tilesVisible": 146,
+    "tilesLoaded": 261,
+    "downloading": 0,
+    "parsing": 53,
+    "failed": 0,
+    "cacheMB": 347,
+    "usedMB": 176,
+    "heapMB": 501,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 217,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 0,
+    "frames": 407,
+    "drawCalls": 173,
+    "triangles": 5572741,
+    "geometries": 306,
+    "tilesVisible": 147,
+    "tilesLoaded": 263,
+    "downloading": 0,
+    "parsing": 51,
+    "failed": 0,
+    "cacheMB": 348,
+    "usedMB": 177,
+    "heapMB": 502,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 219,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 1,
+    "frames": 409,
+    "drawCalls": 176,
+    "triangles": 5617953,
+    "geometries": 311,
+    "tilesVisible": 150,
+    "tilesLoaded": 267,
+    "downloading": 0,
+    "parsing": 47,
+    "failed": 0,
+    "cacheMB": 348,
+    "usedMB": 178,
+    "heapMB": 503,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 221,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 1,
+    "frames": 410,
+    "drawCalls": 178,
+    "triangles": 5655678,
+    "geometries": 315,
+    "tilesVisible": 152,
+    "tilesLoaded": 269,
+    "downloading": 0,
+    "parsing": 45,
+    "failed": 0,
+    "cacheMB": 348,
+    "usedMB": 178,
+    "heapMB": 503,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 223,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 1,
+    "frames": 412,
+    "drawCalls": 180,
+    "triangles": 5686001,
+    "geometries": 319,
+    "tilesVisible": 154,
+    "tilesLoaded": 273,
+    "downloading": 0,
+    "parsing": 41,
+    "failed": 0,
+    "cacheMB": 349,
+    "usedMB": 179,
+    "heapMB": 504,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 225,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 1,
+    "frames": 413,
+    "drawCalls": 181,
+    "triangles": 5706794,
+    "geometries": 321,
+    "tilesVisible": 155,
+    "tilesLoaded": 275,
+    "downloading": 0,
+    "parsing": 39,
+    "failed": 0,
+    "cacheMB": 349,
+    "usedMB": 179,
+    "heapMB": 504,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 227,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 1,
+    "frames": 415,
+    "drawCalls": 182,
+    "triangles": 5728178,
+    "geometries": 323,
+    "tilesVisible": 156,
+    "tilesLoaded": 279,
+    "downloading": 0,
+    "parsing": 35,
+    "failed": 0,
+    "cacheMB": 350,
+    "usedMB": 179,
+    "heapMB": 505,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 229,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 1,
+    "frames": 417,
+    "drawCalls": 186,
+    "triangles": 5778967,
+    "geometries": 330,
+    "tilesVisible": 160,
+    "tilesLoaded": 283,
+    "downloading": 0,
+    "parsing": 31,
+    "failed": 0,
+    "cacheMB": 350,
+    "usedMB": 180,
+    "heapMB": 506,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 231,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 1,
+    "frames": 418,
+    "drawCalls": 187,
+    "triangles": 5788487,
+    "geometries": 332,
+    "tilesVisible": 161,
+    "tilesLoaded": 285,
+    "downloading": 0,
+    "parsing": 29,
+    "failed": 0,
+    "cacheMB": 353,
+    "usedMB": 183,
+    "heapMB": 510,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 233,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 0,
+    "frames": 419,
+    "drawCalls": 187,
+    "triangles": 5788487,
+    "geometries": 332,
+    "tilesVisible": 161,
+    "tilesLoaded": 287,
+    "downloading": 0,
+    "parsing": 27,
+    "failed": 0,
+    "cacheMB": 354,
+    "usedMB": 183,
+    "heapMB": 510,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 235,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 1,
+    "frames": 420,
+    "drawCalls": 187,
+    "triangles": 5788487,
+    "geometries": 332,
+    "tilesVisible": 161,
+    "tilesLoaded": 289,
+    "downloading": 0,
+    "parsing": 25,
+    "failed": 0,
+    "cacheMB": 354,
+    "usedMB": 183,
+    "heapMB": 511,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 237,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 1,
+    "frames": 422,
+    "drawCalls": 188,
+    "triangles": 5815182,
+    "geometries": 334,
+    "tilesVisible": 162,
+    "tilesLoaded": 293,
+    "downloading": 0,
+    "parsing": 21,
+    "failed": 0,
+    "cacheMB": 355,
+    "usedMB": 184,
+    "heapMB": 513,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 239,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 2,
+    "frames": 424,
+    "drawCalls": 190,
+    "triangles": 5881143,
+    "geometries": 339,
+    "tilesVisible": 165,
+    "tilesLoaded": 297,
+    "downloading": 0,
+    "parsing": 17,
+    "failed": 0,
+    "cacheMB": 356,
+    "usedMB": 185,
+    "heapMB": 514,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 241,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 1,
+    "frames": 426,
+    "drawCalls": 194,
+    "triangles": 6012407,
+    "geometries": 346,
+    "tilesVisible": 169,
+    "tilesLoaded": 301,
+    "downloading": 0,
+    "parsing": 13,
+    "failed": 0,
+    "cacheMB": 357,
+    "usedMB": 185,
+    "heapMB": 515,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 243,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 2,
+    "frames": 429,
+    "drawCalls": 197,
+    "triangles": 6255543,
+    "geometries": 352,
+    "tilesVisible": 172,
+    "tilesLoaded": 307,
+    "downloading": 0,
+    "parsing": 7,
+    "failed": 0,
+    "cacheMB": 367,
+    "usedMB": 195,
+    "heapMB": 529,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 245,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 1,
+    "frames": 431,
+    "drawCalls": 196,
+    "triangles": 6290480,
+    "geometries": 353,
+    "tilesVisible": 172,
+    "tilesLoaded": 311,
+    "downloading": 0,
+    "parsing": 3,
+    "failed": 0,
+    "cacheMB": 369,
+    "usedMB": 197,
+    "heapMB": 531,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 247,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 0,
+    "frames": 432,
+    "drawCalls": 196,
+    "triangles": 6366547,
+    "geometries": 354,
+    "tilesVisible": 172,
+    "tilesLoaded": 313,
+    "downloading": 0,
+    "parsing": 1,
+    "failed": 0,
+    "cacheMB": 372,
+    "usedMB": 199,
+    "heapMB": 535,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 249,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 1,
+    "frames": 434,
+    "drawCalls": 190,
+    "triangles": 6344857,
+    "geometries": 355,
+    "tilesVisible": 172,
+    "tilesLoaded": 314,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 373,
+    "usedMB": 193,
+    "heapMB": 536,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 251,
+   "label": "q-mid-3",
+   "st": {
+    "fps": 0,
+    "frames": 434,
+    "drawCalls": 190,
+    "triangles": 6344857,
+    "geometries": 355,
+    "tilesVisible": 172,
+    "tilesLoaded": 314,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 373,
+    "usedMB": 193,
+    "heapMB": 536,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 279,
+   "label": "q-far-6",
+   "st": {
+    "fps": 7,
+    "frames": 455,
+    "drawCalls": 105,
+    "triangles": 1301357,
+    "geometries": 410,
+    "tilesVisible": 43,
+    "tilesLoaded": 337,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 386,
+    "usedMB": 78,
+    "heapMB": 549,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 281,
+   "label": "q-far-6",
+   "st": {
+    "fps": 0,
+    "frames": 455,
+    "drawCalls": 105,
+    "triangles": 1301357,
+    "geometries": 410,
+    "tilesVisible": 43,
+    "tilesLoaded": 337,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 386,
+    "usedMB": 78,
+    "heapMB": 549,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 288,
+   "label": "q-far-3",
+   "st": {
+    "fps": 22,
+    "frames": 487,
+    "drawCalls": 193,
+    "triangles": 2189031,
+    "geometries": 454,
+    "tilesVisible": 127,
+    "tilesLoaded": 373,
+    "downloading": 24,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 397,
+    "usedMB": 94,
+    "heapMB": 569,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 290,
+   "label": "q-far-3",
+   "st": {
+    "fps": 1,
+    "frames": 490,
+    "drawCalls": 199,
+    "triangles": 2274381,
+    "geometries": 462,
+    "tilesVisible": 134,
+    "tilesLoaded": 379,
+    "downloading": 20,
+    "parsing": 39,
+    "failed": 0,
+    "cacheMB": 398,
+    "usedMB": 94,
+    "heapMB": 573,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 292,
+   "label": "q-far-3",
+   "st": {
+    "fps": 2,
+    "frames": 493,
+    "drawCalls": 199,
+    "triangles": 2274381,
+    "geometries": 462,
+    "tilesVisible": 134,
+    "tilesLoaded": 385,
+    "downloading": 0,
+    "parsing": 60,
+    "failed": 0,
+    "cacheMB": 399,
+    "usedMB": 95,
+    "heapMB": 576,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 294,
+   "label": "q-far-3",
+   "st": {
+    "fps": 1,
+    "frames": 495,
+    "drawCalls": 208,
+    "triangles": 2409562,
+    "geometries": 472,
+    "tilesVisible": 141,
+    "tilesLoaded": 389,
+    "downloading": 0,
+    "parsing": 56,
+    "failed": 0,
+    "cacheMB": 400,
+    "usedMB": 96,
+    "heapMB": 577,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 296,
+   "label": "q-far-3",
+   "st": {
+    "fps": 2,
+    "frames": 498,
+    "drawCalls": 217,
+    "triangles": 2484037,
+    "geometries": 482,
+    "tilesVisible": 148,
+    "tilesLoaded": 395,
+    "downloading": 0,
+    "parsing": 50,
+    "failed": 0,
+    "cacheMB": 401,
+    "usedMB": 96,
+    "heapMB": 570,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 298,
+   "label": "q-far-3",
+   "st": {
+    "fps": 1,
+    "frames": 501,
+    "drawCalls": 226,
+    "triangles": 2564764,
+    "geometries": 492,
+    "tilesVisible": 155,
+    "tilesLoaded": 401,
+    "downloading": 0,
+    "parsing": 44,
+    "failed": 0,
+    "cacheMB": 403,
+    "usedMB": 98,
+    "heapMB": 573,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 300,
+   "label": "q-far-3",
+   "st": {
+    "fps": 3,
+    "frames": 506,
+    "drawCalls": 233,
+    "triangles": 2636686,
+    "geometries": 500,
+    "tilesVisible": 162,
+    "tilesLoaded": 411,
+    "downloading": 0,
+    "parsing": 34,
+    "failed": 0,
+    "cacheMB": 404,
+    "usedMB": 99,
+    "heapMB": 575,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 302,
+   "label": "q-far-3",
+   "st": {
+    "fps": 3,
+    "frames": 511,
+    "drawCalls": 233,
+    "triangles": 2636686,
+    "geometries": 500,
+    "tilesVisible": 162,
+    "tilesLoaded": 421,
+    "downloading": 0,
+    "parsing": 24,
+    "failed": 0,
+    "cacheMB": 405,
+    "usedMB": 100,
+    "heapMB": 577,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 304,
+   "label": "q-far-3",
+   "st": {
+    "fps": 2,
+    "frames": 515,
+    "drawCalls": 240,
+    "triangles": 2691734,
+    "geometries": 509,
+    "tilesVisible": 169,
+    "tilesLoaded": 429,
+    "downloading": 0,
+    "parsing": 16,
+    "failed": 0,
+    "cacheMB": 405,
+    "usedMB": 100,
+    "heapMB": 577,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 306,
+   "label": "q-far-3",
+   "st": {
+    "fps": 3,
+    "frames": 521,
+    "drawCalls": 262,
+    "triangles": 2830005,
+    "geometries": 537,
+    "tilesVisible": 191,
+    "tilesLoaded": 441,
+    "downloading": 0,
+    "parsing": 4,
+    "failed": 0,
+    "cacheMB": 408,
+    "usedMB": 102,
+    "heapMB": 581,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 308,
+   "label": "q-far-3",
+   "st": {
+    "fps": 1,
+    "frames": 524,
+    "drawCalls": 263,
+    "triangles": 2864793,
+    "geometries": 540,
+    "tilesVisible": 192,
+    "tilesLoaded": 445,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 408,
+    "usedMB": 102,
+    "heapMB": 582,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 310,
+   "label": "q-far-3",
+   "st": {
+    "fps": 0,
+    "frames": 524,
+    "drawCalls": 263,
+    "triangles": 2864793,
+    "geometries": 540,
+    "tilesVisible": 192,
+    "tilesLoaded": 445,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 408,
+    "usedMB": 102,
+    "heapMB": 581,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 323,
+   "label": "q-site-6",
+   "st": {
+    "fps": 0,
+    "frames": 526,
+    "drawCalls": 57,
+    "triangles": 226110,
+    "geometries": 550,
+    "tilesVisible": 2,
+    "tilesLoaded": 445,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 408,
+    "usedMB": 58,
+    "heapMB": 581,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 325,
+   "label": "q-site-6",
+   "st": {
+    "fps": 0,
+    "frames": 526,
+    "drawCalls": 57,
+    "triangles": 226110,
+    "geometries": 550,
+    "tilesVisible": 2,
+    "tilesLoaded": 445,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 408,
+    "usedMB": 58,
+    "heapMB": 581,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 327,
+   "label": "q-site-3",
+   "st": {
+    "fps": 0,
+    "frames": 527,
+    "drawCalls": 78,
+    "triangles": 829241,
+    "geometries": 550,
+    "tilesVisible": 9,
+    "tilesLoaded": 445,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 408,
+    "usedMB": 69,
+    "heapMB": 582,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "s": 329,
+   "label": "q-site-3",
+   "st": {
+    "fps": 0,
+    "frames": 527,
+    "drawCalls": 78,
+    "triangles": 829241,
+    "geometries": 550,
+    "tilesVisible": 9,
+    "tilesLoaded": 445,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 408,
+    "usedMB": 69,
+    "heapMB": 582,
+    "tier": "pc",
+    "errorTarget": 3,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  }
+ ],
+ "v2": [
+  {
+   "label": "open",
+   "s": 37,
+   "r2MB": 6.9,
+   "heapMB": 92,
+   "longTasks": {
+    "n": 4,
+    "ms": 551,
+    "max": 316
+   },
+   "viewer": {
+    "fps": 0,
+    "frames": 8,
+    "drawCalls": 57,
+    "triangles": 226110,
+    "geometries": 56,
+    "tilesVisible": 2,
+    "tilesLoaded": 2,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 58,
+    "usedMB": 58,
+    "heapMB": 92,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   },
+   "settled": true
+  },
+  {
+   "label": "overview",
+   "s": 41,
+   "r2MB": 6.9,
+   "heapMB": 92,
+   "longTasks": {
+    "n": 4,
+    "ms": 551,
+    "max": 316
+   },
+   "viewer": {
+    "fps": 0,
+    "frames": 8,
+    "drawCalls": 57,
+    "triangles": 226110,
+    "geometries": 56,
+    "tilesVisible": 2,
+    "tilesLoaded": 2,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 58,
+    "usedMB": 58,
+    "heapMB": 92,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "label": "orbit",
+   "ms": 9844,
+   "fps": 17,
+   "longTaskMs": 121
+  },
+  {
+   "label": "search-zoom",
+   "s": 84,
+   "r2MB": 37,
+   "heapMB": 319,
+   "longTasks": {
+    "n": 6,
+    "ms": 1108,
+    "max": 436
+   },
+   "viewer": {
+    "fps": 0,
+    "frames": 259,
+    "drawCalls": 42,
+    "triangles": 3633803,
+    "geometries": 95,
+    "tilesVisible": 36,
+    "tilesLoaded": 93,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 226,
+    "usedMB": 149,
+    "heapMB": 319,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  },
+  {
+   "label": "zoomed",
+   "s": 97,
+   "r2MB": 40.4,
+   "heapMB": 371,
+   "longTasks": {
+    "n": 9,
+    "ms": 6443,
+    "max": 3001
+   },
+   "viewer": {
+    "fps": 0,
+    "frames": 291,
+    "drawCalls": 42,
+    "triangles": 4438165,
+    "geometries": 98,
+    "tilesVisible": 36,
+    "tilesLoaded": 96,
+    "downloading": 0,
+    "parsing": 0,
+    "failed": 0,
+    "cacheMB": 246,
+    "usedMB": 163,
+    "heapMB": 371,
+    "tier": "pc",
+    "errorTarget": 6,
+    "firstFrameMs": 1080,
+    "settledMs": 1763,
+    "cacheHits": 0
+   }
+  }
+ ],
+ "tiles3d": {
+  "run": "runs/af9cc927-6bd6-42c8-8108-707bc6e261ba",
+  "files": 3634,
+  "MB": 1566.7,
+  "builtAt": "2026-10-15T01:31:11.119Z",
+  "stats": {
+   "far": {
+    "files": 0,
+    "triangles": 0,
+    "bytes": 0
+   },
+   "detail": {
+    "files": 1073,
+    "triangles": 361392313,
+    "bytes": 1172283648,
+    "vertices": 217373501,
+    "weldedVertices": 208265242
+   },
+   "mid": {
+    "1": {
+     "files": 748,
+     "triangles": 13617752,
+     "bytes": 63958084,
+     "skipped": 325
+    },
+    "0.3": {
+     "files": 99,
+     "triangles": 3285587,
+     "bytes": 13302772,
+     "skipped": 974
+    },
+    "0.1": {
+     "files": 1071,
+     "triangles": 69791856,
+     "bytes": 330859856,
+     "skipped": 2
+    }
+   },
+   "parents": [
+    {
+     "nodes": 1,
+     "triangles": 85289,
+     "bytes": 231480,
+     "error": 81
+    },
+    {
+     "nodes": 8,
+     "triangles": 674429,
+     "bytes": 1962184,
+     "error": 27
+    },
+    {
+     "nodes": 64,
+     "triangles": 1402066,
+     "bytes": 5467824,
+     "error": 9
+    },
+    {
+     "nodes": 512,
+     "triangles": 6007943,
+     "bytes": 25613712,
+     "error": 3
+    }
+   ],
+   "terrain": {
+    "leaves": 54,
+    "triangles": 1153448,
+    "bytes": 13672216,
+    "textures": 54,
+    "textureBytes": 4921871,
+    "parents": [
+     {
+      "nodes": 1,
+      "triangles": 140579,
+      "bytes": 6580244,
+      "error": 6
+     },
+     {
+      "nodes": 8,
+      "triangles": 152189,
+      "bytes": 6793336,
+      "error": 2
+     }
+    ]
+   }
+  },
+  "unsignable": 0
+ },
+ "v2search": "15건",
+ "v2pick": "@거푸집\n솔리드",
+ "quality": [
+  {
+   "view": "near",
+   "error": 6,
+   "settled": true,
+   "loadS": 2,
+   "downloadMB": 3.1,
+   "triangles": 3518353,
+   "drawCalls": 56,
+   "tilesVisible": 48,
+   "tilesLoaded": 113,
+   "usedMB": 148,
+   "cacheMB": 260,
+   "heapMB": 383,
+   "longTasks": {
+    "n": 0,
+    "ms": 0,
+    "max": 0
+   },
+   "frameMs": 894,
+   "updateMs": 0.5
+  },
+  {
+   "view": "near",
+   "error": 3,
+   "settled": true,
+   "loadS": 2,
+   "downloadMB": 0,
+   "triangles": 3518353,
+   "drawCalls": 56,
+   "tilesVisible": 48,
+   "tilesLoaded": 113,
+   "usedMB": 148,
+   "cacheMB": 260,
+   "heapMB": 379,
+   "longTasks": {
+    "n": 0,
+    "ms": 0,
+    "max": 0
+   },
+   "frameMs": 889,
+   "updateMs": 0.6
+  },
+  {
+   "view": "mid",
+   "error": 6,
+   "settled": true,
+   "loadS": 30,
+   "downloadMB": 7.7,
+   "triangles": 2966388,
+   "drawCalls": 138,
+   "tilesVisible": 106,
+   "tilesLoaded": 200,
+   "usedMB": 121,
+   "cacheMB": 295,
+   "heapMB": 429,
+   "longTasks": {
+    "n": 0,
+    "ms": 0,
+    "max": 0
+   },
+   "frameMs": 704,
+   "updateMs": 0.5
+  },
+  {
+   "view": "mid",
+   "error": 3,
+   "settled": true,
+   "loadS": 52.1,
+   "downloadMB": 16.6,
+   "triangles": 6344857,
+   "drawCalls": 190,
+   "tilesVisible": 172,
+   "tilesLoaded": 314,
+   "usedMB": 193,
+   "cacheMB": 373,
+   "heapMB": 536,
+   "longTasks": {
+    "n": 0,
+    "ms": 0,
+    "max": 0
+   },
+   "frameMs": 1292,
+   "updateMs": 0.7
+  },
+  {
+   "view": "far",
+   "error": 6,
+   "settled": true,
+   "loadS": 2,
+   "downloadMB": 2.4,
+   "triangles": 1301357,
+   "drawCalls": 105,
+   "tilesVisible": 43,
+   "tilesLoaded": 337,
+   "usedMB": 78,
+   "cacheMB": 386,
+   "heapMB": 549,
+   "longTasks": {
+    "n": 0,
+    "ms": 0,
+    "max": 0
+   },
+   "frameMs": 280,
+   "updateMs": 0.4
+  },
+  {
+   "view": "far",
+   "error": 3,
+   "settled": true,
+   "loadS": 22,
+   "downloadMB": 6.2,
+   "triangles": 2864793,
+   "drawCalls": 263,
+   "tilesVisible": 192,
+   "tilesLoaded": 445,
+   "usedMB": 102,
+   "cacheMB": 408,
+   "heapMB": 581,
+   "longTasks": {
+    "n": 0,
+    "ms": 0,
+    "max": 0
+   },
+   "frameMs": 540,
+   "updateMs": 0.8
+  },
+  {
+   "view": "site",
+   "error": 6,
+   "settled": true,
+   "loadS": 2,
+   "downloadMB": 0,
+   "triangles": 226110,
+   "drawCalls": 57,
+   "tilesVisible": 2,
+   "tilesLoaded": 445,
+   "usedMB": 58,
+   "cacheMB": 408,
+   "heapMB": 581,
+   "longTasks": {
+    "n": 0,
+    "ms": 0,
+    "max": 0
+   },
+   "frameMs": 45,
+   "updateMs": 0.1
+  },
+  {
+   "view": "site",
+   "error": 3,
+   "settled": true,
+   "loadS": 2,
+   "downloadMB": 0,
+   "triangles": 829241,
+   "drawCalls": 78,
+   "tilesVisible": 9,
+   "tilesLoaded": 445,
+   "usedMB": 69,
+   "cacheMB": 408,
+   "heapMB": 582,
+   "longTasks": {
+    "n": 0,
+    "ms": 0,
+    "max": 0
+   },
+   "frameMs": 131,
+   "updateMs": 0.1
+  }
+ ],
+ "qualityLook": {
+  "target": [
+   5350.8127,
+   -30.6345,
+   3918.2875
+  ],
+  "dir": [
+   0.6391,
+   0,
+   -0.7691
+  ]
+ },
+ "ready": {
+  "open": 39.1,
+  "after-orbit": 53.1,
+  "search-zoom": 71.1,
+  "zoom": 94.7,
+  "q-near-6": 127,
+  "q-near-3": 147.4,
+  "q-mid-6": 183.3,
+  "q-mid-3": 249.4,
+  "q-far-6": 278.6,
+  "q-far-3": 307.5,
+  "q-site-6": 323.2,
+  "q-site-3": 327.5
+ },
+ "console": [
+  "warning: TilesRenderer: tiles versions at 1.1 or higher have limited support. Some new extensions and features may not be supported.",
+  "warning: [.WebGL-0x544001cf200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+  "warning: [.WebGL-0x544001cf200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+  "warning: [.WebGL-0x544001cf200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+  "warning: [.WebGL-0x544001cf200]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels (this message will no longer repeat)"
+ ],
+ "pageErrors": [],
+ "failedRequests": [],
+ "apiCalls": [
+  "GET /api/aps-acc?action=contents&project=b.p&folder=F",
+  "GET /api/aps-convert?urn=…",
+  "GET /api/aps-convert?urn=…&tiles3d=1",
+  "GET /api/aps-convert?urn=…&metaShard=3",
+  "GET /api/aps-convert?urn=…&metaShard=2",
+  "GET /api/aps-convert?urn=…&metaShard=1",
+  "GET /api/aps-convert?urn=…&metaShard=0"
+ ],
+ "r2MB": 76.4,
+ "finished": "2026-10-15T01:39:25.168Z"
+}
