@@ -1,8 +1,8 @@
 // 3D Tiles 1.1 content for the second viewer engine (docs/3D뷰_2차_엔진.md). Pure: arrays in, buffers out.
 //   packMeshes      decoded XKT meshes → one opaque + one transparent group (positions, colour, dbId, indices)
 //   weldGroup       one vertex per position within an object (the converter splits them per face)
-//   simplifyGroup   coarser level: meshopt simplify with an absolute error (metres), prune, needle removal; long
-//                   objects that vanished come back as oriented boxes (proxyBoxes)
+//   simplifyGroup   coarser level: meshopt simplify with an absolute error (metres), prune, needle removal; parts
+//                   that lost most of their surface (thin members) come back as boxes along each part (proxyBoxes)
 //   encodeGlb       group(s) → .glb: int16 positions (KHR_mesh_quantization) + EXT_meshopt_compression,
 //                   per-vertex _FEATURE_ID_0 = dbId (EXT_mesh_features), no normals (viewer shades flat)
 //   groupSpatially  items → tree of ≤ maxChildren per node (recursive median splits)
@@ -138,24 +138,70 @@ function eigenAxes([a00, a01, a02, a11, a12, a22]) {
   return [0, 1, 2].map(j => [v[0][j], v[1][j], v[2][j]]);
 }
 
+/** Connected parts (triangles sharing a vertex; after welding, one part per solid or surface patch): part per vertex. */
+export function partsOf(group) {
+  const nv = group.ids.length, up = new Int32Array(nv);
+  for (let v = 0; v < nv; v++) up[v] = v;
+  const root = v => { while (up[v] !== v) { up[v] = up[up[v]]; v = up[v]; } return v; };
+  const join = (x, y) => { const rx = root(x), ry = root(y); if (rx !== ry) up[ry] = rx; };
+  for (let i = 0; i < group.idx.length; i += 3) { join(group.idx[i], group.idx[i + 1]); join(group.idx[i], group.idx[i + 2]); }
+  const part = new Int32Array(nv), number = new Map();
+  for (let v = 0; v < nv; v++) {
+    const r = root(v);
+    let k = number.get(r);
+    if (k === undefined) number.set(r, k = number.size);
+    part[v] = k;
+  }
+  return { part, count: number.size };
+}
+
+/** Twice the area of triangle (a, b, c) of `pos` (xyz per vertex). */
+const twiceArea = (pos, a, b, c) => {
+  const ux = pos[b * 3] - pos[a * 3], uy = pos[b * 3 + 1] - pos[a * 3 + 1], uz = pos[b * 3 + 2] - pos[a * 3 + 2];
+  const vx = pos[c * 3] - pos[a * 3], vy = pos[c * 3 + 1] - pos[a * 3 + 1], vz = pos[c * 3 + 2] - pos[a * 3 + 2];
+  return Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx);
+};
+
 /**
- * Objects the simplification removed entirely but that are long enough to read from afar (rails, poles, beams,
- * railings): one oriented box each (12 triangles, the object's colour and dbId), at least a quarter of the error thick
- * so it stays a continuous line instead of breaking into dashes. Shorter objects are below the level's error anyway.
+ * Parts the simplification flattened or removed (`lost[part]`), drawn as oriented boxes along each part instead:
+ * poles, braces, cantilever tubes, rails and handrails thinner than the level's error collapse into slivers or vanish,
+ * and one box per object (a pole with its cantilever) read as a solid panel from afar. Each part gets its own box;
+ * a part that is not straight (an L bracket, a curved rail, a mast with arms welded to it) is cut in two across its
+ * length until each piece is within the error, so the boxes follow its shape. Boxes are at least a quarter of the
+ * error thick (a continuous line, not dashes, at the distance the level is drawn). Parts shorter than twice the
+ * error are below the level, unless their object is longer than that (pieces of a cantilever): those keep pieces from
+ * half the error up. 12 triangles per box, the part's colour and dbId.
  */
-export function proxyBoxes(group, survivors, errorMeters) {
+export function proxyBoxes(group, part, lost, errorMeters) {
   const minLength = errorMeters * 2, minThick = errorMeters * 0.25;
-  const verts = new Map();
+  const lists = new Map();
   for (let v = 0; v < group.ids.length; v++) {
-    const id = group.ids[v];
-    if (!(id > 0) || survivors.has(id)) continue;
-    let list = verts.get(id);
-    if (!list) verts.set(id, list = []);
+    const k = part[v];
+    if (!lost[k]) continue;
+    let list = lists.get(k);
+    if (!list) lists.set(k, list = []);
     list.push(v);
   }
-  const pos = [], rgba = [], ids = [], idx = [];
-  for (const [id, list] of verts) {
-    const p = group.pos, n = list.length;
+  const p = group.pos, pos = [], rgba = [], ids = [], idx = [];
+  // Extent of each object in this group (all its parts): a long object built of short pieces (a cantilever of
+  // tubes, clamps and insulators under 1.6 m each) keeps its pieces from half the error up, so it reads as a frame.
+  const objectBox = new Map();
+  for (const list of lists.values()) objectBox.set(group.ids[list[0]], [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity]);
+  for (let v = 0; v < group.ids.length; v++) {
+    const b = objectBox.get(group.ids[v]);
+    if (b) for (let a = 0; a < 3; a++) { if (p[v * 3 + a] < b[a]) b[a] = p[v * 3 + a]; if (p[v * 3 + a] > b[a + 3]) b[a + 3] = p[v * 3 + a]; }
+  }
+  const longObject = id => { const b = objectBox.get(id); return Math.hypot(b[3] - b[0], b[4] - b[1], b[5] - b[2]) >= minLength; };
+  // Surface per vertex (a third of each triangle's), to tell sparse shapes from plates.
+  const vertexArea = new Float64Array(group.ids.length);
+  for (let i = 0; i < group.idx.length; i += 3) {
+    const [a, b, c] = [group.idx[i], group.idx[i + 1], group.idx[i + 2]];
+    if (!lost[part[a]]) continue;
+    const third = twiceArea(p, a, b, c) / 6;
+    vertexArea[a] += third; vertexArea[b] += third; vertexArea[c] += third;
+  }
+  const box = (list, depth) => {
+    const n = list.length;
     let mx = 0, my = 0, mz = 0;
     for (const v of list) { mx += p[v * 3]; my += p[v * 3 + 1]; mz += p[v * 3 + 2]; }
     mx /= n; my /= n; mz /= n;
@@ -166,24 +212,38 @@ export function proxyBoxes(group, survivors, errorMeters) {
     }
     const axes = eigenAxes(cov);
     const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-    for (const v of list) for (let k = 0; k < 3; k++) {
-      const d = (p[v * 3] - mx) * axes[k][0] + (p[v * 3 + 1] - my) * axes[k][1] + (p[v * 3 + 2] - mz) * axes[k][2];
-      if (d < lo[k]) lo[k] = d; if (d > hi[k]) hi[k] = d;
+    const along = (v, k) => (p[v * 3] - mx) * axes[k][0] + (p[v * 3 + 1] - my) * axes[k][1] + (p[v * 3 + 2] - mz) * axes[k][2];
+    for (const v of list) for (let k = 0; k < 3; k++) { const d = along(v, k); if (d < lo[k]) lo[k] = d; if (d > hi[k]) hi[k] = d; }
+    const order = [0, 1, 2].sort((a, b) => (hi[b] - lo[b]) - (hi[a] - lo[a])); // length, width, thickness
+    const [L, W] = [hi[order[0]] - lo[order[0]], hi[order[1]] - lo[order[1]]];
+    if (depth === 0 && L < (longObject(group.ids[list[0]]) ? errorMeters / 2 : minLength)) return;
+    // Wider than the error but filling little of its length × width (bent, an L, members in a row): cut across the
+    // length at its middle and box each half. A plate or deck edge fills it (its surface is about L × W or more) and
+    // stays one flat box.
+    let surface = 0;
+    for (const v of list) surface += vertexArea[v];
+    if (W > errorMeters && surface < 0.5 * L * W && depth < 6 && L > minLength) {
+      const k = order[0], mid = (lo[k] + hi[k]) / 2, a = [], b = [];
+      for (const v of list) (along(v, k) < mid ? a : b).push(v);
+      if (a.length && b.length) { box(a, depth + 1); box(b, depth + 1); return; }
     }
-    if (Math.max(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]) < minLength) continue;
     for (let k = 0; k < 3; k++) if (hi[k] - lo[k] < minThick) { const m = (hi[k] + lo[k]) / 2; lo[k] = m - minThick / 2; hi[k] = m + minThick / 2; }
     const base = ids.length;
     for (let c = 0; c < 8; c++) {
       const e = [c & 1 ? hi[0] : lo[0], c & 2 ? hi[1] : lo[1], c & 4 ? hi[2] : lo[2]];
       for (let a = 0; a < 3; a++) pos.push((a === 0 ? mx : a === 1 ? my : mz) + e[0] * axes[0][a] + e[1] * axes[1][a] + e[2] * axes[2][a]);
       rgba.push(...group.rgba.subarray(list[0] * 4, list[0] * 4 + 4));
-      ids.push(id);
+      ids.push(group.ids[list[0]]);
     }
     for (const [a, b, c, d] of [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]])
       idx.push(base + a, base + b, base + c, base + a, base + c, base + d);
-  }
+  };
+  for (const list of lists.values()) box(list, 0);
   return ids.length ? { pos: Float64Array.from(pos), rgba: Uint8Array.from(rgba), ids: Float32Array.from(ids), idx: Uint32Array.from(idx) } : null;
 }
+
+/** A part keeping less than this share of its surface after simplification is drawn as boxes (proxyBoxes). */
+const LOST_SURFACE = 0.5;
 
 /**
  * Coarser copy: simplify the whole group with an absolute error in metres and prune parts smaller than it.
@@ -192,7 +252,8 @@ export function proxyBoxes(group, survivors, errorMeters) {
  * every triangle longer than the error and flatter than 1:25; with `minHeight` (metres) only those thinner than that,
  * so long thin faces (rails, deck edges, parapets) of the finer copies stay (0: keep every triangle). `lockBorder` keeps
  * every border vertex in place, so patches that meet along a seam without shared vertices stay closed.
- * Long objects that disappeared come back as oriented boxes (proxyBoxes), so a far view is not full of gaps.
+ * Parts that lost most of their surface (thin members flattened to slivers or pruned) come back as oriented boxes
+ * along each part (proxyBoxes), so a far view keeps their shape instead of gaps, slivers or one block per object.
  */
 export async function simplifyGroup(group, errorMeters, { ratio = 0.01, minHeight, lockBorder = false } = {}) {
   if (!group || group.idx.length < 3) return group;
@@ -205,7 +266,7 @@ export async function simplifyGroup(group, errorMeters, { ratio = 0.01, minHeigh
   const flags = ['ErrorAbsolute', 'Prune', ...(lockBorder ? ['LockBorder'] : [])];
   try { [result] = MeshoptSimplifier.simplify(group.idx, local, 3, target, errorMeters, flags); }
   catch { return group; }
-  if (!result || result.length < 3) return null;
+  result ??= new Uint32Array(0);
   const kept = [];
   const minEdge2 = errorMeters * errorMeters;
   for (let i = 0; i < result.length; i += 3) {
@@ -221,10 +282,17 @@ export async function simplifyGroup(group, errorMeters, { ratio = 0.01, minHeigh
     if (maxE2 > minEdge2 && (minHeight === undefined ? twiceArea / 2 < 0.02 * maxE2 : twiceArea / Math.sqrt(maxE2) < minHeight)) continue;
     kept.push(a, c, d);
   }
-  const survivors = new Set();
-  for (const v of kept) survivors.add(group.ids[v]);
-  const simplified = kept.length ? compact(group, Uint32Array.from(kept)) : null;
-  return mergeGroups([simplified, proxyBoxes(group, survivors, errorMeters)]);
+  // Surface kept per part: a part that lost most of it (flattened to slivers, or pruned) becomes boxes.
+  const { part, count } = partsOf(group);
+  const before = new Float64Array(count), after = new Float64Array(count);
+  for (let i = 0; i < group.idx.length; i += 3) before[part[group.idx[i]]] += twiceArea(local, group.idx[i], group.idx[i + 1], group.idx[i + 2]);
+  for (let i = 0; i < kept.length; i += 3) after[part[kept[i]]] += twiceArea(local, kept[i], kept[i + 1], kept[i + 2]);
+  const lost = new Uint8Array(count);
+  for (let k = 0; k < count; k++) lost[k] = before[k] > 0 && after[k] < LOST_SURFACE * before[k] ? 1 : 0;
+  const whole = [];
+  for (let i = 0; i < kept.length; i += 3) if (!lost[part[kept[i]]]) whole.push(kept[i], kept[i + 1], kept[i + 2]);
+  const simplified = whole.length ? compact(group, Uint32Array.from(whole)) : null;
+  return mergeGroups([simplified, proxyBoxes(group, part, lost, errorMeters)]);
 }
 
 // ── GLB ───────────────────────────────────────────────────────────────────────────────────────────

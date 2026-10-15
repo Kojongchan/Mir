@@ -4,7 +4,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { Vector3 } from 'three';
 import { packMeshes, encodeGlb, simplifyGroup, mergeGroups, groupSpatially, boxVolume, triangles, packTerrain, simplifyTerrain,
-  encodeTerrainGlb, proxyBoxes, weldGroup } from '../scripts/tiles3d.mjs';
+  encodeTerrainGlb, proxyBoxes, partsOf, weldGroup } from '../scripts/tiles3d.mjs';
 
 const cube = (x, y, z, s) => {
   const world = Float64Array.from([[0,0,0],[1,0,0],[1,1,0],[0,1,0],[0,0,1],[1,0,1],[1,1,1],[0,1,1]].flatMap(([a, b, c]) => [x + a * s, y + b * s, z + c * s]));
@@ -145,7 +145,39 @@ test('far levels keep long thin objects as oriented boxes instead of dropping th
   // Colour comes along; nothing is proxied when everything survived.
   const v0 = coarse.ids.indexOf(2);
   assert.deepEqual([...coarse.rgba.subarray(v0 * 4, v0 * 4 + 4)], [200, 30, 30, 255]);
-  assert.equal(proxyBoxes(group, new Set([1, 2, 3]), 4), null);
+  const { part, count } = partsOf(group);
+  assert.equal(proxyBoxes(group, part, new Uint8Array(count), 4), null);
+});
+
+test('a pole keeps its shape from afar: mast and arm are boxed apart (not one panel), a curved member follows its curve', async () => {
+  const z = [0, 0, 1], x = [1, 0, 0], y = [0, 1, 0];
+  // One object (dbId 1): a 10 m mast 0.3 m wide and a 3 m arm 0.1 m thick at its top, as separate solids.
+  const mast = orientedBox([0, 0, 5], [x, y, z], [0.15, 0.15, 5]), arm = orientedBox([1.5, 0, 9.5], [x, y, z], [1.5, 0.05, 0.05]);
+  // Another (dbId 2): a 0.12 m bar along a 50 m radius arc over 60° (one connected solid, 24 segments).
+  const ring = [], tri = [];
+  for (let k = 0; k <= 24; k++) {
+    const t = (k / 24) * (Math.PI / 3), c = [100 + 50 * Math.cos(t), 50 * Math.sin(t)], r = [Math.cos(t), Math.sin(t)];
+    for (const [u, w] of [[-0.06, -0.06], [0.06, -0.06], [0.06, 0.06], [-0.06, 0.06]]) ring.push(c[0] + r[0] * u, c[1] + r[1] * u, w);
+    if (k) for (let j = 0; j < 4; j++) { const a = (k - 1) * 4 + j, b = (k - 1) * 4 + (j + 1) % 4; tri.push(a, b, b + 4, a, b + 4, a + 4); }
+  }
+  const meshes = [
+    { entity: 0, ...mast, rgba: [220, 220, 220, 255], textured: false },
+    { entity: 1, ...arm, rgba: [220, 220, 220, 255], textured: false },
+    { entity: 2, world: Float64Array.from(ring), tri: Uint32Array.from(tri), rgba: [90, 90, 90, 255], textured: false },
+    { entity: 3, ...cube(300, 0, 0, 40), rgba: [180, 180, 180, 255], textured: false },
+  ];
+  const group = packMeshes(meshes, e => [1, 1, 2, 3][e]).opaque;
+  const coarse = await simplifyGroup(group, 1, { minHeight: 0, lockBorder: true });
+  const of = id => { const out = []; for (let v = 0; v < coarse.ids.length; v++) if (coarse.ids[v] === id) out.push([coarse.pos[v * 3], coarse.pos[v * 3 + 1], coarse.pos[v * 3 + 2]]); return out; };
+  const pole = of(1);
+  assert.ok(pole.length >= 16, 'mast and arm are both there');
+  // One box over both would fill the corner below the arm (x 1 … 3 m, z < 8 m): nothing may be there.
+  assert.ok(!pole.some(([px, , pz]) => px > 1 && pz < 8), 'no panel between the mast and the arm');
+  assert.ok(pole.some(([px, , pz]) => px > 2.9 && pz > 9), 'the arm reaches its end');
+  // The bar's boxes stay near the arc (radius 50 ± the error), so it is drawn as a curve, not a 6.7 m wide slab.
+  const bar = of(2);
+  assert.ok(bar.length >= 16, 'the bar became several boxes');
+  for (const [px, py] of bar) assert.ok(Math.abs(Math.hypot(px - 100, py) - 50) < 1, `near the arc: ${px}, ${py}`);
 });
 
 /** A cube with its vertices split per face (as the converter writes flat-shaded geometry): 36 vertices. */
@@ -193,14 +225,20 @@ test('every tile file name the build writes is one the API signs', async () => {
   for (const n of ['c/../x.glb', 'c/f1.glb?x', 'tileset.json.bak']) assert.ok(!signed.test(n), n);
 });
 
-test('finer copies keep long thin faces wider than the error; the coarse rule drops them', async () => {
+test('finer copies keep long thin faces wider than the error; the coarse rule boxes them', async () => {
   // One object: a 4 m block and a 30 × 0.8 m strip (a parapet or deck edge) on top; at 0.3 m it is not collapsed.
   const strip = { world: Float64Array.from([0, 0, 4.5, 30, 0, 4.5, 30, 0.8, 4.5, 0, 0.8, 4.5]), tri: Uint32Array.from([0, 1, 2, 0, 2, 3]) };
   const group = packMeshes([{ entity: 0, ...cube(0, 0, 0, 4), rgba: [9, 9, 9, 255], textured: false },
     { entity: 0, ...strip, rgba: [9, 9, 9, 255], textured: false }], () => 1).opaque;
-  const hasStrip = g => { for (let v = 0; v < g.ids.length; v++) if (g.pos[v * 3] > 20) return true; return false; };
-  assert.ok(!hasStrip(await simplifyGroup(group, 0.3)), 'flatter than 1:25: dropped, and the object survives, so no box');
-  assert.ok(hasStrip(await simplifyGroup(weldGroup(group), 0.3, { minHeight: 0.03 })));
+  const strip8 = g => { const out = []; for (let v = 0; v < g.ids.length; v++) if (g.pos[v * 3] > 20) out.push(v); return out; };
+  // Coarse rule: the strip's faces are flatter than 1:25 and go; the strip comes back as one flat box (no needles).
+  const coarse = await simplifyGroup(group, 0.3), box = strip8(coarse);
+  assert.equal(box.length, 4, 'four corners of one box at the far end');
+  const zs = box.map(v => coarse.pos[v * 3 + 2]);
+  assert.ok(Math.max(...zs) - Math.min(...zs) >= 0.07, 'a quarter of the error thick');
+  // Finer copies keep the strip's own faces.
+  const fine = await simplifyGroup(weldGroup(group), 0.3, { minHeight: 0.03 });
+  assert.ok(strip8(fine).length >= 2 && strip8(fine).every(v => fine.pos[v * 3 + 2] === 4.5));
 });
 
 test('locked borders keep a seam between two separately tessellated patches closed', async () => {
