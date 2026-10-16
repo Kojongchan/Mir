@@ -36,45 +36,52 @@ const boxMesh = (x, y, z, sx, sy, sz) => ({
 const origin = [214000, 395000, 30];
 const shifted = b => b.map((v, a) => v - origin[a % 3]);
 
-test('entities match their own object\'s fragment by box, each fragment once; rotated boxes by containment', () => {
+test('candidates: a named entity\'s own object only; a renamed one any object named in the file; loose boxes of rotated pieces', () => {
   const src = [
-    { dbId: 10, ...boxMesh(214100, 395100, 40, 2, 1, 1) },        // 0: entity 0
-    { dbId: 10, ...boxMesh(214103, 395100, 40, 2, 1, 1) },        // 1: entity 1 (second fragment of 10)
-    { dbId: 11, ...boxMesh(214103, 395100, 40, 2, 1, 1) },        // 2: same box, other object (entity 2)
+    { dbId: 10, ...boxMesh(214100, 395100, 40, 2, 1, 1) },        // 0
+    { dbId: 10, ...boxMesh(214103, 395100, 40, 2, 1, 1) },        // 1: second piece of 10
+    { dbId: 11, ...boxMesh(214103, 395100, 40, 2, 1, 1) },        // 2: same box, object 11 (named in the file)
     { dbId: 12, bbox: [214199.5, 395099.5, 39.5, 214202.5, 395102.5, 42.5] }, // 3: rotated geometry's loose box
+    { dbId: 13, ...boxMesh(214103, 395100, 40, 2, 1, 1) },        // 4: same box, object 13 (not in the file)
   ];
   const fragments = indexFragments(src.map(f => ({ dbId: f.dbId, bbox: f.bbox })));
-  const match = fragmentMatcher(fragments, origin);
-  const boxes = Float64Array.from([src[0].bbox, src[1].bbox, src[2].bbox, [214200.2, 395100.1, 40.3, 214201.8, 395101.9, 41.7], [214500, 395500, 40, 214501, 395501, 41]]
+  const candidates = fragmentMatcher(fragments, origin);
+  const boxes = Float64Array.from([src[0].bbox, src[1].bbox, src[1].bbox, [214200.2, 395100.1, 40.3, 214201.8, 395101.9, 41.7], [214500, 395500, 40, 214501, 395501, 41]]
     .flatMap(shifted).map((v, i) => v + (i % 2 ? 0.004 : -0.004))); // quantization error
-  const steps = new Float64Array(5 * 3).fill(0.005);
-  const out = match({ boxes, steps }, [10, 10, 11, 12, 10]);
-  assert.deepEqual([...out], [0, 1, 2, 3, -1]);
-  // Unknown object (renamed fragment without a table entry): not matched.
-  assert.deepEqual([...match({ boxes, steps }, [0, 0, 0, 0, 0])], [-1, -1, -1, -1, -1]);
+  const file = { ids: ['10', 'entity-1', '11', '12', '10'], boxes, steps: new Float64Array(5 * 3).fill(0.005) };
+  const out = candidates(file, [10, 10, 11, 12, 10]);
+  assert.deepEqual(out[0], [0]);
+  assert.deepEqual([...out[1]].sort(), [1, 2], 'renamed: pieces of 10 and 11 (both named here), not of 13');
+  assert.deepEqual(out[2], [2], 'named 11: its own piece only');
+  assert.deepEqual(out[3], [3], 'contained in the loose box');
+  assert.deepEqual(out[4], []);
 });
 
-test('matched entities get the fragment\'s exact triangles and their colour; a fragment off the entity is refused', () => {
+test('the geometry picks the fragment (and owner) of each entity; a fragment off the entity is refused', () => {
   const quantize = (p, step) => Float64Array.from(p, v => Math.round(v / step) * step);
+  const place = m => placeMesh(m.vertices, m.indices, fragmentMatrix({ t: m.t }), origin);
   const a = boxMesh(214100.0037, 395100.0041, 40.0029, 2, 1, 1), b = boxMesh(214110, 395100, 40, 1, 1, 1);
-  const pa = placeMesh(a.vertices, a.indices, fragmentMatrix({ t: a.t }), origin);
-  const pb = placeMesh(b.vertices, b.indices, fragmentMatrix({ t: b.t }), origin);
+  // c: same box as a, but a wedge (only the bottom corners and one top edge): a different piece of another object.
+  const c = { ...a, vertices: Float32Array.from([0,0,0, 2,0,0, 2,1,0, 0,1,0, 0,0,1, 2,0,1]), indices: [0,1,2, 0,2,3, 0,1,5, 0,5,4, 3,2,5, 3,5,4, 0,3,4, 1,2,5] };
+  const pa = place(a), pb = place(b), pc = place(c);
   const step = 0.02; // a 2 cm grid, as the U-channel's
   const meshes = [
     { entity: 0, world: quantize(pa.pos, step), tri: Uint32Array.from(a.indices), rgba: [180, 180, 180, 255], textured: false },
     { entity: 1, world: quantize(pb.pos, step).map((v, i) => (i % 3 === 0 ? v + 3 : v)), tri: Uint32Array.from(b.indices), rgba: [0, 160, 0, 255], textured: false },
     { entity: 2, world: quantize(pb.pos, step), tri: Uint32Array.from(b.indices), rgba: [90, 90, 90, 255], textured: false },
+    { entity: 3, world: quantize(pc.pos, step), tri: Uint32Array.from(c.indices), rgba: [200, 100, 0, 255], textured: false },
   ];
-  const pieces = new Map([[7, pa], [8, pb]]);
-  const { meshes: out, stats } = refineMeshes(meshes, [7, 8, -1], new Float64Array(9).fill(step), f => pieces.get(f));
-  assert.equal(out.length, 3);
+  // Entity 0 lists the wedge first (its box fits as well); entity 3 is the wedge, listed after the box piece.
+  const pieces = new Map([[7, pa], [8, pb], [9, pc]]);
+  const { meshes: out, owner, stats } = refineMeshes(meshes, [[9, 7], [8], [], [7, 9]], new Float64Array(12).fill(step), f => pieces.get(f));
+  assert.deepEqual([...owner], [7, -1, -1, 9]);
   const first = out.find(m => m.entity === 0);
   assert.equal(first.world, pa.pos);
   assert.deepEqual(first.rgba, [180, 180, 180, 255]);
   assert.equal(out.find(m => m.entity === 1).world, meshes[1].world, 'fragment 3 m away: kept as decoded');
-  assert.equal(out.find(m => m.entity === 2).world, meshes[2].world, 'unmatched: kept');
-  assert.deepEqual({ entities: stats.entities, matched: stats.matched, replaced: stats.replaced, rejected: stats.rejected }, { entities: 3, matched: 2, replaced: 1, rejected: 1 });
-  assert.equal(stats.trianglesBefore, 36);
-  assert.equal(stats.trianglesAfter, 36);
-  assert.ok(stats.shiftMm[0] <= 17, `shift ${stats.shiftMm[0]} mm is within half a grid step`);
+  assert.equal(out.find(m => m.entity === 2).world, meshes[2].world, 'no candidate: kept');
+  assert.equal(out.find(m => m.entity === 3).world, pc.pos);
+  assert.deepEqual({ entities: stats.entities, matched: stats.matched, replaced: stats.replaced, rejected: stats.rejected, noCandidate: stats.noCandidate },
+    { entities: 4, matched: 3, replaced: 2, rejected: 1, noCandidate: 1 });
+  assert.ok(stats.shiftMm.every(mm => mm <= 17), `shifts ${stats.shiftMm} mm are within half a grid step`);
 });

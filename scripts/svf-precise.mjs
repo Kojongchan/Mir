@@ -7,9 +7,9 @@
 // mesh in float32 a few metres around it — exact to well under a millimetre (dbId 1011: tile vertices 9.9 mm median,
 // 17.6 mm at most from the SVF's).
 //
-// Each XKT entity is one SVF fragment (the converter writes one glTF node per fragment), so an entity is matched to
-// its fragment by box — as the renamed-fragment table does (scripts/entity-alias.mjs) — and its triangles are
-// replaced by the fragment's only after its decoded vertices are found on the fragment's. Unmatched entities stay as
+// Each XKT entity is one SVF fragment (the converter writes one glTF node per fragment): its candidates are found by
+// box (as the renamed-fragment table does, scripts/entity-alias.mjs) and the one whose vertices it shares replaces its
+// triangles and names its owner (correcting the table's box-only guesses). Entities with no fitting fragment stay as
 // decoded. Pure parts are tested in tests/svf-precise.test.mjs; openSvfSource reads an existing SVF derivative
 // (read-only, no new APS job).
 import fs from 'node:fs';
@@ -47,12 +47,14 @@ const CENTRE_CELL = 4; // metres: second pass by centre
 const cellKey = (x, y, z) => `${x},${y},${z}`;
 
 /**
- * Matcher of tile entities to source fragments. `fragments`: indexFragments() of the SVF fragment list (world
- * boxes); the tiles' frame is SVF world − `origin`. `match(file, dbIds)` → Int32Array, the fragment of each entity
- * (−1 = none): `file` = xktEntityBoxes(xkt) ({ boxes, steps }), `dbIds[e]` the entity's object (0 = unknown). Per
- * entity the closest box among its object's fragments within the file's quantization tolerance; then, for the rest,
- * a box that contains the entity with nearly the same centre (the box of rotated geometry is the box of its rotated
- * local box). Within a file each fragment is used once.
+ * Candidate source fragments of tile entities. `fragments`: indexFragments() of the SVF fragment list (world boxes);
+ * the tiles' frame is SVF world − `origin`. `candidates(file, dbIds)` → per entity, fragment indices, best box first: `file` = xktEntityBoxes(xkt) ({ ids, boxes, steps }), `dbIds[e]` the entity's object from the tile (named
+ * entities) or the renamed-fragment table (`entity-N`, 0 = unknown); up to 12 per entity. A named entity's candidates are its own object's
+ * fragments; a renamed entity's are those of every object named in the file, since the table guessed the owner by box
+ * alone and pieces of one family share boxes (WPC girder 7915's piece was given to @콘크리트 8867: selecting the girder
+ * left that piece white). Boxes within the file's quantization tolerance, then boxes that contain the entity with
+ * nearly the same centre (the box of rotated geometry is the box of its rotated local box). The geometry decides
+ * between them (refineMeshes).
  */
 export function fragmentMatcher(fragments, origin) {
   const fb = fragments.boxes, count = fragments.db.length;
@@ -68,40 +70,41 @@ export function fragmentMatcher(fragments, origin) {
     for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++)
       for (const f of grid.get(cellKey(base[0] + dx, base[1] + dy, base[2] + dz)) ?? []) visit(f);
   };
-  return function match({ boxes, steps }, dbIds) {
-    const out = new Int32Array(dbIds.length).fill(-1), taken = new Set(), left = [];
-    for (let e = 0; e < dbIds.length; e++) {
-      if (!(dbIds[e] > 0) || Number.isNaN(boxes[e * 6])) continue;
-      let best = -1, bestFit = 1;
+  const NAMED = /^\d+$/;
+  return function candidates({ ids, boxes, steps }, dbIds) {
+    const named = new Set();
+    ids.forEach(id => { if (NAMED.test(id)) named.add(Number(id)); });
+    return ids.map((id, e) => {
+      if (Number.isNaN(boxes[e * 6])) return [];
+      const own = NAMED.test(id);
+      const ok = f => (own ? fragments.db[f] === Number(id) : named.has(fragments.db[f]) || (dbIds[e] > 0 && fragments.db[f] === dbIds[e]));
+      const found = new Map(); // fragment → rank (box fit ≤ 1, then 1 + centre offset)
       near(minGrid, [0, 1, 2].map(a => Math.floor(boxes[e * 6 + a] / CELL)), f => {
-        if (fragments.db[f] !== dbIds[e] || taken.has(f)) return;
+        if (!ok(f)) return;
         let worst = 0;
         for (let a = 0; a < 6; a++) worst = Math.max(worst, Math.abs(boxes[e * 6 + a] - shifted(f, a)) / tolerance(steps[e * 3 + a % 3], fb[f * 6 + a]));
-        if (worst <= bestFit) { best = f; bestFit = worst; }
+        if (worst <= 1) found.set(f, worst);
       });
-      if (best >= 0) { taken.add(best); out[e] = best; } else left.push(e);
-    }
-    for (const e of left) {
       const c = [0, 1, 2].map(a => (boxes[e * 6 + a] + boxes[e * 6 + a + 3]) / 2);
-      let best = -1, bestOff = Infinity;
       near(centreGrid, c.map(v => Math.floor(v / CENTRE_CELL)), f => {
-        if (fragments.db[f] !== dbIds[e] || taken.has(f)) return;
+        if (found.has(f) || !ok(f)) return;
         let diag = 0;
         for (let a = 0; a < 3; a++) {
           const tol = tolerance(steps[e * 3 + a], fb[f * 6 + a]);
           if (boxes[e * 6 + a] < shifted(f, a) - tol || boxes[e * 6 + a + 3] > shifted(f, a + 3) + tol) return;
           diag += (fb[f * 6 + a + 3] - fb[f * 6 + a]) ** 2;
         }
+        // Ranked by centre offset over the box diagonal: a rotated piece's source box can be much larger than the piece
+        // (WPC girder fragment 21442: 12.6 × 13.4 m box, 9 × 10 m piece, centres 2.1 m apart); the vertices decide.
         const off = Math.hypot(...[0, 1, 2].map(a => c[a] - (shifted(f, a) + shifted(f, a + 3)) / 2));
-        if (off <= Math.max(0.1, 0.1 * Math.sqrt(diag)) && off < bestOff) { best = f; bestOff = off; }
+        found.set(f, 1 + off / Math.max(0.1, Math.sqrt(diag)));
       });
-      if (best >= 0) { taken.add(best); out[e] = best; }
-    }
-    return out;
+      return [...found].sort((a, b) => a[1] - b[1]).slice(0, 12).map(([f]) => f);
+    });
   };
 }
 
-/** Spatial hash of a piece's vertices (cell = `cell` metres): distance to the nearest one within `tol`, or Infinity. */
+/** Spatial hash of points (cell = `cell` metres): distance to the nearest one, or Infinity beyond one cell. */
 function vertexHash(pos, cell) {
   const map = new Map();
   for (let v = 0; v < pos.length / 3; v++) {
@@ -118,49 +121,72 @@ function vertexHash(pos, cell) {
   };
 }
 
+/** Up to `n` evenly spread points of a flat position array, as [x, y, z]. */
+function spread(pos, n) {
+  const count = pos.length / 3, every = Math.max(1, Math.floor(count / n)), out = [];
+  for (let v = 0; v < count && out.length < n; v += every) out.push([pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]]);
+  return out;
+}
+
 /**
- * Decoded meshes of one tile file (decodeXkt) with each matched entity's meshes replaced by its fragment's exact
- * triangles: one mesh with the colour of the entity's largest mesh. `fragmentOf[e]` from the matcher, `steps` from
- * xktEntityBoxes, `pieceOf(f)` → { pos, idx } in the tiles' frame (null: lines, points, missing). An entity is
- * replaced only when at least `agree` of (up to 64 of) its decoded vertices have a fragment vertex within two
- * quantization steps + 2 cm. Returns { meshes, stats }.
+ * Decoded meshes of one tile file (decodeXkt) with each entity's meshes replaced by its source fragment's exact
+ * triangles (one mesh with the colour of the entity's largest mesh), and the fragment's object as the entity's owner.
+ * `candidates[e]` from fragmentMatcher, `steps` from xktEntityBoxes, `pieceOf(f)` → { pos, idx } in the tiles' frame
+ * (null: lines, points, missing). A candidate fits when at least `agree` of (up to 64 of) the entity's decoded vertices
+ * have a fragment vertex within two quantization steps + 2 cm; among fitting ones the best share of the fragment's
+ * vertices found on the entity wins (a piece whose corners are a subset of another's), each fragment once per file,
+ * best pairs first. Returns { meshes, owner (fragment per entity, −1 = kept as decoded), stats }.
  */
-export function refineMeshes(meshes, fragmentOf, steps, pieceOf, { agree = 0.9, samples = 64 } = {}) {
-  const stats = { entities: 0, matched: 0, replaced: 0, rejected: 0, noMesh: 0, trianglesBefore: 0, trianglesAfter: 0, shiftMm: [] };
+export function refineMeshes(meshes, candidates, steps, pieceOf, { agree = 0.9, samples = 64 } = {}) {
+  const stats = { entities: 0, matched: 0, replaced: 0, rejected: 0, noCandidate: 0, noMesh: 0, trianglesBefore: 0, trianglesAfter: 0, shiftMm: [] };
   const byEntity = new Map();
   for (const m of meshes) {
     const list = byEntity.get(m.entity);
     if (list) list.push(m); else byEntity.set(m.entity, [m]);
     stats.trianglesBefore += m.tri.length / 3;
   }
-  const out = [];
+  const pairs = []; // { e, f, score, shift }
   for (const [e, list] of byEntity) {
     stats.entities++;
-    const f = fragmentOf[e] ?? -1;
-    if (f < 0) { out.push(...list); continue; }
+    const cands = candidates[e] ?? [];
+    if (!cands.length) { stats.noCandidate++; continue; }
     stats.matched++;
-    const piece = pieceOf(f);
-    if (!piece || !piece.idx.length) { stats.noMesh++; out.push(...list); continue; }
     const step = Math.max(steps[e * 3], steps[e * 3 + 1], steps[e * 3 + 2]), tol = 0.02 + 2 * step;
-    const nearest = vertexHash(piece.pos, tol);
-    const total = list.reduce((n, m) => n + m.world.length / 3, 0), every = Math.max(1, Math.floor(total / samples));
-    let checked = 0, hits = 0, k = 0;
-    const shifts = [];
-    for (const m of list) for (let v = 0; v < m.world.length / 3; v++, k++) {
-      if (k % every) continue;
-      checked++;
-      const d = nearest(m.world[v * 3], m.world[v * 3 + 1], m.world[v * 3 + 2]);
-      if (d <= tol) { hits++; shifts.push(d); }
+    const world = new Float64Array(list.reduce((n, m) => n + m.world.length, 0));
+    let o = 0;
+    for (const m of list) { world.set(m.world, o); o += m.world.length; }
+    const mine = spread(world, samples), onEntity = vertexHash(world, tol);
+    let usable = 0;
+    for (const f of cands) {
+      const piece = pieceOf(f);
+      if (!piece || !piece.idx.length) continue;
+      usable++;
+      const onPiece = vertexHash(piece.pos, tol), shifts = [];
+      let hits = 0;
+      for (const [x, y, z] of mine) { const d = onPiece(x, y, z); if (d <= tol) { hits++; shifts.push(d); } }
+      if (hits < agree * mine.length) continue;
+      const theirs = spread(piece.pos, samples);
+      const back = theirs.filter(([x, y, z]) => onEntity(x, y, z) <= tol).length / theirs.length;
+      shifts.sort((a, b) => a - b);
+      pairs.push({ e, f, score: hits / mine.length + back, shift: shifts[shifts.length >> 1] });
     }
-    if (hits < agree * checked) { stats.rejected++; out.push(...list); continue; }
-    const main = list.reduce((a, b) => (b.tri.length > a.tri.length ? b : a));
+    if (!usable) stats.noMesh++;
+  }
+  pairs.sort((a, b) => b.score - a.score);
+  const owner = new Int32Array(candidates.length).fill(-1), taken = new Set();
+  for (const p of pairs) {
+    if (owner[p.e] >= 0 || taken.has(p.f)) continue;
+    owner[p.e] = p.f; taken.add(p.f);
+    stats.replaced++; stats.shiftMm.push(Math.round(p.shift * 1000));
+  }
+  const out = [];
+  for (const [e, list] of byEntity) {
+    if (owner[e] < 0) { if ((candidates[e] ?? []).length) stats.rejected++; out.push(...list); continue; }
+    const piece = pieceOf(owner[e]), main = list.reduce((a, b) => (b.tri.length > a.tri.length ? b : a));
     out.push({ ...main, world: piece.pos, tri: piece.idx });
-    stats.replaced++;
-    shifts.sort((a, b) => a - b);
-    stats.shiftMm.push(Math.round(shifts[shifts.length >> 1] * 1000));
   }
   for (const m of out) stats.trianglesAfter += m.tri.length / 3;
-  return { meshes: out, stats };
+  return { meshes: out, owner, stats };
 }
 
 /**

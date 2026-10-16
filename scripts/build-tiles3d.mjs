@@ -174,7 +174,7 @@ async function load(i, key, precise = false) {
   const decoded = decodeXkt(xkt);
   if (!decoded?.meshes.length) return null;
   const dbIds = dbIdsFor(i, decoded.ids);
-  const meshes = precise && svf ? await svf.refine(xkt, decoded.meshes, dbIds) : decoded.meshes;
+  const meshes = precise && svf ? await svf.refine(xkt, decoded.meshes, dbIds) : decoded.meshes; // may correct dbIds
   return packMeshes(meshes, e => dbIds[e]);
 }
 /** Write packed groups as c/<name>.glb (counted in `kind`, a stats key or entry); returns { bounds, triangles } or null. */
@@ -244,18 +244,25 @@ if (svfMode && !reuse) {
   // 50 over the site. A wrong origin is off by whole metres for every object, and the vertex check refuses it anyway.
   if (!est || est.samples < 10 || est.votes < est.samples * 0.6) throw new Error(`No consistent converter origin: ${JSON.stringify(est)}`);
   console.log(`SVF origin ${est.origin.join(',')} (${est.votes}/${est.samples} single-fragment objects agree); source ready in ${Math.round((Date.now() - started) / 1000)} s`);
-  const match = fragmentMatcher(source.fragments, est.origin);
+  const candidatesOf = fragmentMatcher(source.fragments, est.origin);
   const bins = [1, 5, 10, 20, 50];
-  const total = stats.svf = { origin: est.origin, tiles: 0, entities: 0, matched: 0, replaced: 0, rejected: 0, noMesh: 0, trianglesBefore: 0,
-    trianglesAfter: 0, shiftMm: Object.fromEntries([...bins.map(b => [`<=${b}`, 0]), ['more', 0]]), maxShiftMm: 0, downloadedMB: 0 };
+  const total = stats.svf = { origin: est.origin, tiles: 0, entities: 0, matched: 0, replaced: 0, rejected: 0, noCandidate: 0, noMesh: 0,
+    relabelled: 0, trianglesBefore: 0, trianglesAfter: 0, shiftMm: Object.fromEntries([...bins.map(b => [`<=${b}`, 0]), ['more', 0]]), maxShiftMm: 0,
+    downloadedMB: 0 };
   svf = {
+    /** Exact triangles for the tile's entities; `dbIds` (per entity) is corrected in place to each matched fragment's object. */
     async refine(xkt, meshes, dbIds) {
       const file = xktEntityBoxes(xkt);
-      const fragmentOf = match(file, dbIds);
-      const pieces = await source.pieces([...fragmentOf].filter(f => f >= 0), est.origin);
-      const { meshes: out, stats: s } = refineMeshes(meshes, fragmentOf, file.steps, f => pieces.get(f));
+      const candidates = candidatesOf(file, dbIds);
+      const pieces = await source.pieces([...new Set(candidates.flat())], est.origin);
+      const { meshes: out, owner, stats: s } = refineMeshes(meshes, candidates, file.steps, f => pieces.get(f));
+      owner.forEach((f, e) => {
+        if (f < 0 || source.fragments.db[f] === dbIds[e]) return;
+        dbIds[e] = source.fragments.db[f];
+        total.relabelled++;
+      });
       total.tiles++;
-      for (const k of ['entities', 'matched', 'replaced', 'rejected', 'noMesh', 'trianglesBefore', 'trianglesAfter']) total[k] += s[k];
+      for (const k of ['entities', 'matched', 'replaced', 'rejected', 'noCandidate', 'noMesh', 'trianglesBefore', 'trianglesAfter']) total[k] += s[k];
       for (const mm of s.shiftMm) {
         const b = bins.find(x => mm <= x);
         total.shiftMm[b ? `<=${b}` : 'more']++;
@@ -272,7 +279,7 @@ if (svfMode && !reuse) {
 const leaves = [];
 let next = 0, done = 0;
 const progress = () => {
-  if (++done % 100 === 0) console.log(`Leaves ${done}/${tiles.length} · far ${MB(stats.far.bytes)} MB · ${MID_ERRORS.map(e => `${e} m ${MB(stats.mid[e].bytes)} MB`).join(' · ')} · detail ${MB(stats.detail.bytes)} MB${stats.svf ? ` · SVF ${stats.svf.replaced}/${stats.svf.entities} entities, ${stats.svf.downloadedMB} MB` : ''}`);
+  if (++done % 100 === 0) console.log(`Leaves ${done}/${tiles.length} · far ${MB(stats.far.bytes)} MB · ${MID_ERRORS.map(e => `${e} m ${MB(stats.mid[e].bytes)} MB`).join(' · ')} · detail ${MB(stats.detail.bytes)} MB${stats.svf ? ` · SVF ${stats.svf.replaced}/${stats.svf.entities} entities (${stats.svf.relabelled} owners corrected), ${stats.svf.downloadedMB} MB` : ''}`);
 };
 const union = (a, b) => [0, 1, 2].map(k => Math.min(a[k], b[k])).concat([3, 4, 5].map(k => Math.max(a[k], b[k])));
 await Promise.all(Array.from({ length: 4 }, async () => {
