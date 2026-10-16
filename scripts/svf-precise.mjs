@@ -71,13 +71,19 @@ export function fragmentMatcher(fragments, origin) {
       for (const f of grid.get(cellKey(base[0] + dx, base[1] + dy, base[2] + dz)) ?? []) visit(f);
   };
   const NAMED = /^\d+$/;
-  return function candidates({ ids, boxes, steps }, dbIds) {
+  /**
+   * `wide` (entities the first look did not place): only these entities, up to 64 candidates each, and a renamed one
+   * may belong to any object (four large pieces had no owner in the table and none named in their file; a WPC girder's
+   * piece was the 13th of its object's ≈ 300 rotated fragments around it).
+   */
+  return function candidates({ ids, boxes, steps }, dbIds, wide = null) {
     const named = new Set();
     ids.forEach(id => { if (NAMED.test(id)) named.add(Number(id)); });
+    const limit = wide ? 64 : 12;
     return ids.map((id, e) => {
-      if (Number.isNaN(boxes[e * 6])) return [];
+      if (Number.isNaN(boxes[e * 6]) || (wide && !wide.has(e))) return [];
       const own = NAMED.test(id);
-      const ok = f => (own ? fragments.db[f] === Number(id) : named.has(fragments.db[f]) || (dbIds[e] > 0 && fragments.db[f] === dbIds[e]));
+      const ok = f => (own ? fragments.db[f] === Number(id) : wide || named.has(fragments.db[f]) || (dbIds[e] > 0 && fragments.db[f] === dbIds[e]));
       const found = new Map(); // fragment → rank (box fit ≤ 1, then 1 + centre offset)
       near(minGrid, [0, 1, 2].map(a => Math.floor(boxes[e * 6 + a] / CELL)), f => {
         if (!ok(f)) return;
@@ -99,7 +105,7 @@ export function fragmentMatcher(fragments, origin) {
         const off = Math.hypot(...[0, 1, 2].map(a => c[a] - (shifted(f, a) + shifted(f, a + 3)) / 2));
         found.set(f, 1 + off / Math.max(0.1, Math.sqrt(diag)));
       });
-      return [...found].sort((a, b) => a[1] - b[1]).slice(0, 12).map(([f]) => f);
+      return [...found].sort((a, b) => a[1] - b[1]).slice(0, limit).map(([f]) => f);
     });
   };
 }

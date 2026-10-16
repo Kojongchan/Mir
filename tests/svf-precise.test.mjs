@@ -55,6 +55,9 @@ test('candidates: a named entity\'s own object only; a renamed one any object na
   assert.deepEqual(out[2], [2], 'named 11: its own piece only');
   assert.deepEqual(out[3], [3], 'contained in the loose box');
   assert.deepEqual(out[4], []);
+  const wide = candidates(file, [10, 10, 11, 12, 10], new Set([1]));
+  assert.deepEqual([...wide[1]].sort(), [1, 2, 4], 'wider look: a renamed entity may take a piece of any object');
+  assert.ok([0, 2, 3, 4].every(e => wide[e].length === 0), 'wider look: only the entities asked for');
 });
 
 test('the geometry picks the fragment (and owner) of each entity; a fragment off the entity is refused', () => {

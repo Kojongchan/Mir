@@ -262,11 +262,19 @@ if (svfMode && !reuse) {
      */
     async refine(i, xkt, meshes, dbIds, fix = null) {
       const file = xktEntityBoxes(xkt);
-      let candidates = candidatesOf(file, dbIds);
-      if (fix?.exclude.size) candidates = candidates.map(list => list.filter(f => !fix.exclude.has(f)));
+      const allowed = list => (fix?.exclude.size ? list.filter(f => !fix.exclude.has(f)) : list);
+      let candidates = candidatesOf(file, dbIds).map(allowed);
       const extras = fix?.extras ?? [];
       const pieces = await source.pieces([...new Set([...candidates.flat(), ...extras])], est.origin);
-      const { meshes: out, owner, score, stats: s } = refineMeshes(meshes, candidates, file.steps, f => pieces.get(f));
+      let { meshes: out, owner, score, stats: s } = refineMeshes(meshes, candidates, file.steps, f => pieces.get(f));
+      if (s.misses.length) {
+        // A wider look for the entities left: the placed ones keep their fragment, the rest get more candidates.
+        const owned = new Set([...owner].filter(f => f >= 0)), left = new Set(s.misses.map(m => m.entity));
+        const wider = candidatesOf(file, dbIds, left).map(list => allowed(list).filter(f => !owned.has(f)));
+        candidates = candidates.map((list, e) => (owner[e] >= 0 ? [owner[e]] : wider[e]));
+        for (const [f, piece] of await source.pieces([...new Set(wider.flat())].filter(f => !pieces.has(f)), est.origin)) pieces.set(f, piece);
+        ({ meshes: out, owner, score, stats: s } = refineMeshes(meshes, candidates, file.steps, f => pieces.get(f)));
+      }
       const took = new Map();
       let relabelled = 0, added = 0;
       owner.forEach((f, e) => {
