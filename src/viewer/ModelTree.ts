@@ -76,6 +76,28 @@ export class ModelTree {
     return out;
   }
 
+  /**
+   * Branches to hide so that only `keep` (each with everything below it) stays visible: every branch off the paths
+   * from the roots to the kept objects, as few as possible (a file with nothing kept is one branch).
+   */
+  hideAllBut(keep: Iterable<number>): number[] {
+    const kept = new Set<number>(), onPath = new Set<number>();
+    for (const id of keep) {
+      if (!(id > 0 && id < this.n)) continue;
+      kept.add(id);
+      for (const p of this.path(id)) onPath.add(p);
+    }
+    const out: number[] = [];
+    const stack = [...this.roots];
+    while (stack.length) {
+      const cur = stack.pop()!;
+      if (kept.has(cur)) continue;
+      if (!onPath.has(cur)) { out.push(cur); continue; }
+      stack.push(...this.children(cur));
+    }
+    return out;
+  }
+
   /** Case-insensitive match on name or type; every term must match. Returns all matches in tree order. */
   search(query: string, limit = Number.POSITIVE_INFINITY): { total: number; ids: number[] } {
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean);

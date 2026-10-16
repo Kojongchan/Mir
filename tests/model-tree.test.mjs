@@ -40,3 +40,13 @@ test('invalid parent links become roots instead of cycles', () => {
   assert.ok(tree.roots.includes(5));
   assert.deepEqual(tree.path(6), [6]);
 });
+
+test('showing only some objects hides the fewest branches off their paths', () => {
+  const tree = new ModelTree(data);
+  assert.deepEqual(tree.hideAllBut([5]).sort(), [3, 4]); // the other pier and the whole tunnel file
+  assert.deepEqual(tree.hideAllBut([2]), [3]); // a kept branch keeps everything under it
+  assert.deepEqual(tree.hideAllBut([4, 5, 6]).sort(), []);
+  assert.deepEqual(tree.hideAllBut([1, 4]), []); // an ancestor kept: its whole subtree shows
+  assert.deepEqual(tree.hideAllBut([]), [1]);
+  assert.deepEqual(tree.hideAllBut([0, 99]), [1]); // ids outside the tree are ignored
+});

@@ -40,6 +40,17 @@ const storedColorMode = (): ColorMode => {
 };
 const remember = (key: string, value: string) => { try { localStorage.setItem(key, value); } catch { /* private mode */ } };
 
+/** A click on one object (null: empty space): it alone, or with Ctrl/Shift/⌘ toggled in the current selection. */
+function choose(prev: readonly number[], id: number | null, additive: boolean): readonly number[] {
+  if (!additive) return id ? [id] : [];
+  if (!id) return prev;
+  return prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
+}
+/** Visibility changes kept for 되돌리기 (Ctrl+Z). */
+const UNDO_STEPS = 30;
+type Visibility = { hidden: ReadonlySet<number>; past: ReadonlySet<number>[] };
+const NO_HIDDEN: Visibility = { hidden: new Set(), past: [] };
+
 export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
   const { projectId = '' } = useParams();
   const tilesQuery = variant ? `tiles3d=1&variant=${variant}` : 'tiles3d=1';
@@ -74,9 +85,14 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
   const [quality, setQuality] = useState<Quality>(storedQuality);
   const [outlines, setOutlines] = useState(storedOutlines);
   const [colorMode, setColorMode] = useState<ColorMode>(storedColorMode);
-  const [selectedDb, setSelectedDb] = useState<number | null>(null);
+  // Selected objects in the order picked; the last one is shown in the tree and (alone) in the property panel.
+  const [selection, setSelection] = useState<readonly number[]>([]);
+  const primary = selection.length ? selection[selection.length - 1] : null;
+  const chosen = useMemo(() => new Set(selection), [selection]);
   const [revealDb, setRevealDb] = useState<number | null>(null);
-  const [hiddenNodes, setHiddenNodes] = useState<ReadonlySet<number>>(new Set());
+  // Hidden tree branches (the checkboxes, 숨기기, 선택만 보기) and the earlier states for 되돌리기.
+  const [visibility, setVisibility] = useState<Visibility>(NO_HIDDEN);
+  const hiddenNodes = visibility.hidden;
   const [highlightIds, setHighlightIds] = useState<number[] | null>(null);
   const [statsOpen, setStatsOpen] = useState(false); // narrow screens: one summary line until tapped
   // Phones and narrow tablets: panels start closed and one at a time (side by side they cover the view).
@@ -114,7 +130,7 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
     for (const id of ids) { if (tree) out.push(...tree.subtree(id)); else out.push(id); }
     return out;
   }, [tree]);
-  const selected = useMemo(() => (selectedDb === null ? [] : expand([selectedDb])), [selectedDb, expand]);
+  const selected = useMemo(() => expand(selection), [selection, expand]);
   const highlighted = useMemo(() => expand(highlightIds ?? []), [highlightIds, expand]);
   const hidden = useMemo(() => expand(hiddenNodes), [hiddenNodes, expand]);
   useEffect(() => { viewerRef.current?.setStates(selected, highlighted, hidden); }, [selected, highlighted, hidden]);
@@ -150,8 +166,9 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
       if (!start || e.button !== 0 || Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4 || performance.now() - start.t > 500) return;
       const rect = canvas.getBoundingClientRect();
       const hit = viewerRef.current?.pick(e.clientX - rect.left, e.clientY - rect.top);
-      const id = hit?.dbId || null;
-      setSelectedDb(id); setRevealDb(id);
+      const id = hit?.dbId || null, additive = e.ctrlKey || e.metaKey || e.shiftKey;
+      setSelection(prev => choose(prev, id, additive));
+      if (id || !additive) setRevealDb(id);
     };
     const onDouble = (e: MouseEvent) => {
       const viewer = viewerRef.current, rect = canvas.getBoundingClientRect();
@@ -166,15 +183,24 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
     return () => { canvas.removeEventListener('pointerdown', onDown); canvas.removeEventListener('pointerup', onUp); canvas.removeEventListener('dblclick', onDouble); };
   }, []);
 
-  // Escape clears the selection (up close there may be no empty spot left to click), unless a dialog or a text field
-  // takes it (the search box clears itself on Escape).
+  // Keys, unless a dialog or a text field takes them (the search box clears itself on Escape): Escape clears the
+  // selection (up close there may be no empty spot left to click), H hides it, I shows only it, Shift+H shows
+  // everything, Ctrl+Z undoes the last visibility change. Physical keys, so a Korean keyboard layout works too.
+  const keyActions = useRef<{ hide: () => void; isolate: () => void; showAll: () => void; undo: () => void } | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented || dialogOpen()) return;
+      if (e.isComposing || e.defaultPrevented || e.repeat || dialogOpen()) return;
       const el = document.activeElement;
       const typing = el instanceof HTMLElement && (el.isContentEditable || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement
         || (el instanceof HTMLInputElement && !['checkbox', 'radio', 'button'].includes(el.type)));
-      if (!typing) setSelectedDb(null);
+      const actions = keyActions.current;
+      if (typing || !actions) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if (e.key === 'Escape') setSelection(prev => (prev.length ? [] : prev));
+      else if (e.code === 'KeyZ' && mod && !e.shiftKey && !e.altKey) { e.preventDefault(); actions.undo(); }
+      else if (mod || e.altKey) return;
+      else if (e.code === 'KeyH') { if (e.shiftKey) actions.showAll(); else actions.hide(); }
+      else if (e.code === 'KeyI' && !e.shiftKey) actions.isolate();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -185,7 +211,7 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
     if (!viewer) return;
     if (!f.accUrn) { setStatus('이 파일은 아직 APS 파생(URN)이 없습니다.'); return; }
     setBusy(true); setStatus(`불러오는 중… ${f.name}`); setModelName(f.name); setMissing(null);
-    setSelectedDb(null); setRevealDb(null); setHiddenNodes(new Set()); setHighlightIds(null);
+    setSelection([]); setRevealDb(null); setVisibility(NO_HIDDEN); setHighlightIds(null);
     index.reset(); boxesRef.current = null; urlsRef.current = null;
     try {
       const headers = await authHeaders();
@@ -274,17 +300,36 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
     finally { setCapturing(false); }
   }, [capturing, modelName]);
 
-  const toggleNode = useCallback((id: number, visible: boolean) => {
-    setHiddenNodes(prev => {
-      const next = new Set(prev);
-      if (visible) { next.delete(id); if (tree) for (const d of tree.subtree(id)) next.delete(d); } else next.add(id);
-      return next;
-    });
-  }, [tree]);
-  const selectNode = useCallback((id: number, zoom: boolean) => {
-    setSelectedDb(id);
+  /** A visibility change, remembered for 되돌리기 (an unchanged set is not a step). */
+  const changeHidden = useCallback((next: (prev: ReadonlySet<number>) => ReadonlySet<number>) => setVisibility(v => {
+    const hidden = next(v.hidden);
+    return hidden === v.hidden ? v : { hidden, past: [...v.past.slice(-(UNDO_STEPS - 1)), v.hidden] };
+  }), []);
+  const toggleNode = useCallback((id: number, visible: boolean) => changeHidden(prev => {
+    const next = new Set(prev);
+    if (visible) { next.delete(id); if (tree) for (const d of tree.subtree(id)) next.delete(d); } else next.add(id);
+    return next;
+  }), [tree, changeHidden]);
+  /** 숨기기: the selected objects join the hidden ones (and are no longer selected). */
+  const hideSelection = useCallback(() => {
+    if (!selection.length) return;
+    changeHidden(prev => new Set([...prev, ...selection]));
+    setSelection([]);
+  }, [selection, changeHidden]);
+  /** 선택만 보기: everything else hidden, the selection shown even if it was hidden. */
+  const isolateSelection = useCallback(() => {
+    if (tree && selection.length) changeHidden(() => new Set(tree.hideAllBut(selection)));
+  }, [tree, selection, changeHidden]);
+  const showAll = useCallback(() => changeHidden(prev => (prev.size ? new Set() : prev)), [changeHidden]);
+  const undoVisibility = useCallback(() => setVisibility(v => (v.past.length ? { hidden: v.past[v.past.length - 1], past: v.past.slice(0, -1) } : v)), []);
+  keyActions.current = { hide: hideSelection, isolate: isolateSelection, showAll, undo: undoVisibility };
+  const selectNode = useCallback((id: number, zoom: boolean, additive = false) => {
+    setSelection(prev => choose(prev, id, additive));
     if (zoom) void zoomTo([id]);
   }, [zoomTo]);
+  const selectMany = useCallback((ids: number[], additive: boolean) => {
+    setSelection(prev => (additive ? [...new Set([...prev, ...ids])] : ids));
+  }, []);
 
   const statsText = stats && [
     `${PROFILES[stats.tier].label} · 오차 ${stats.errorTarget}px`,
@@ -321,8 +366,8 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
             <UiIcon name="folder" size={14} /> <span className="threed-test__wide">ACC에서 </span>열기
           </button>
           <button className="btn btn--sm" onClick={() => viewerRef.current?.frameAll()} disabled={!modelName}>전체 맞춤</button>
-          <button className="btn btn--sm" onClick={() => selectedDb !== null && void zoomTo([selectedDb])} disabled={selectedDb === null}
-            title="선택한 객체로 확대 (선택 해제: 빈 곳 클릭 또는 Esc)">선택 확대</button>
+          <button className="btn btn--sm" onClick={() => selection.length && void zoomTo([...selection])} disabled={!selection.length}
+            title="선택한 객체로 확대 (Ctrl+클릭으로 여러 개 선택 · 해제: 빈 곳 클릭 또는 Esc)">선택 확대</button>
           <button className={`btn btn--sm${terrainOn ? ' btn--primary' : ''}`} disabled={!modelName} title="지형(항공사진) 표시"
             onClick={() => { const next = !terrainOn; setTerrainOn(next); viewerRef.current?.setTerrainVisible(next); }}>지형</button>
           <button className="btn btn--sm" disabled={!modelName || capturing} onClick={() => void capture()}
@@ -413,10 +458,15 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
                 <strong>모델 트리</strong>
                 <span className="muted">{(tree.n - 1).toLocaleString()}개 객체</span>
                 <div className="spacer" />
+                {hiddenNodes.size > 0 && (
+                  <button type="button" className="btn btn--sm" onClick={showAll} title={`숨긴 ${hidden.length.toLocaleString()}개를 모두 다시 보이기 (Shift+H)`}>
+                    모두 보이기
+                  </button>
+                )}
                 <button type="button" className="ic-only" onClick={() => setTreeOpen(false)} aria-label="모델 트리 닫기">✕</button>
               </div>
-              <ModelTreePanel tree={tree} hiddenNodes={hiddenNodes} selected={selectedDb} reveal={revealDb}
-                onToggle={toggleNode} onSelect={id => { setRevealDb(null); selectNode(id, false); }} />
+              <ModelTreePanel tree={tree} hiddenNodes={hiddenNodes} selected={primary} selection={chosen} reveal={revealDb}
+                onToggle={toggleNode} onSelect={(id, additive) => { setRevealDb(null); selectNode(id, false, additive); }} />
             </aside>
           )}
           {tree && propsOpen && (
@@ -426,21 +476,47 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
                 <div className="spacer" />
                 <button type="button" className="ic-only" onClick={() => setPropsOpen(false)} aria-label="속성 닫기">✕</button>
               </div>
-              <PropertyPanel tree={tree} selected={selectedDb} loadProps={index.loadProps} searchValues={index.searchValues}
-                onSelect={(id, zoom) => { setRevealDb(id); selectNode(id, zoom); }}
+              <PropertyPanel tree={tree} selected={selection.length === 1 ? selection[0] : null} selection={selection}
+                loadProps={index.loadProps} searchValues={index.searchValues}
+                onSelect={(id, zoom, additive) => { setRevealDb(id); selectNode(id, zoom, !!additive); }} onSelectMany={selectMany}
                 onZoom={ids => void zoomTo(ids)} onHighlight={setHighlightIds} />
             </aside>
           )}
-          {painted && (
-            <div className="threed-test2__legend" aria-label={`색 구분: ${COLOR_MODES[colorMode]}`}>
-              {painted.legend.map(g => (
-                <span key={g.name} className="threed-test2__legend-item" title={`${g.name} · 객체 ${g.count.toLocaleString()}개`}>
-                  <i style={{ background: `rgb(${g.rgb.join(',')})` }} />{g.name}
-                </span>
-              ))}
-              {painted.others > 0 && <span className="threed-test2__legend-item muted"><i style={{ background: 'rgb(176,176,176)' }} />기타 {painted.others}개</span>}
-            </div>
-          )}
+          {/* Top centre: what is selected / hidden and what to do with it, then the colour legend. */}
+          <div className="threed-test2__top">
+            {tree && (selection.length > 0 || hiddenNodes.size > 0 || visibility.past.length > 0) && (
+              <div className="threed-test2__selbar" role="toolbar" aria-label="선택과 보이기">
+                {selection.length > 0 && (
+                  <>
+                    <strong>선택 {selection.length.toLocaleString()}개</strong>
+                    <button type="button" className="btn btn--sm" onClick={() => void zoomTo([...selection])} title="선택한 객체로 확대">확대</button>
+                    <button type="button" className="btn btn--sm" onClick={hideSelection} title="선택한 객체 숨기기 (H)">숨기기</button>
+                    <button type="button" className="btn btn--sm" onClick={isolateSelection} title="선택한 객체만 보기 — 나머지는 숨김 (I)">선택만 보기</button>
+                    <button type="button" className="btn btn--sm" onClick={() => setSelection([])} title="선택 해제 (Esc)">해제</button>
+                  </>
+                )}
+                {hiddenNodes.size > 0 && (
+                  <>
+                    <span className="muted">숨김 {hidden.length.toLocaleString()}개</span>
+                    <button type="button" className="btn btn--sm" onClick={showAll} title="숨긴 객체를 모두 다시 보이기 (Shift+H)">모두 보이기</button>
+                  </>
+                )}
+                {visibility.past.length > 0 && (
+                  <button type="button" className="btn btn--sm" onClick={undoVisibility} title="숨기기·보이기를 한 단계 되돌리기 (Ctrl+Z)">↶ 되돌리기</button>
+                )}
+              </div>
+            )}
+            {painted && (
+              <div className="threed-test2__legend" aria-label={`색 구분: ${COLOR_MODES[colorMode]}`}>
+                {painted.legend.map(g => (
+                  <span key={g.name} className="threed-test2__legend-item" title={`${g.name} · 객체 ${g.count.toLocaleString()}개`}>
+                    <i style={{ background: `rgb(${g.rgb.join(',')})` }} />{g.name}
+                  </span>
+                ))}
+                {painted.others > 0 && <span className="threed-test2__legend-item muted"><i style={{ background: 'rgb(176,176,176)' }} />기타 {painted.others}개</span>}
+              </div>
+            )}
+          </div>
           {statsText && (
             <button type="button" className={`threed-test2__stats${statsOpen ? ' is-open' : ''}`} onClick={() => setStatsOpen(o => !o)}
               aria-expanded={statsOpen} title="성능 표시 (좁은 화면에서는 눌러서 펼침)">

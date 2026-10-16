@@ -6,15 +6,18 @@ const ROW = 24;
 /**
  * Left panel: the loaded model's object tree (files → layers → objects), like Navisworks' selection
  * tree. Rows are virtualized (a file can hold tens of thousands of objects). The checkbox hides or shows
- * a whole branch; clicking a name selects it. `reveal` expands and scrolls to an object picked in 3D.
+ * a whole branch; clicking a name selects it (Ctrl/Shift/⌘-click adds or removes it when the page keeps a
+ * multiple `selection`). `reveal` expands and scrolls to an object picked in 3D.
  */
-export function ModelTreePanel({ tree, hiddenNodes, selected, reveal, onToggle, onSelect }: {
+export function ModelTreePanel({ tree, hiddenNodes, selected, selection, reveal, onToggle, onSelect }: {
   tree: ModelTree;
   hiddenNodes: ReadonlySet<number>;
   selected: number | null;
+  /** Every selected object (rows marked), when the page selects several. */
+  selection?: ReadonlySet<number>;
   reveal: number | null;
   onToggle: (id: number, visible: boolean) => void;
-  onSelect: (id: number) => void;
+  onSelect: (id: number, additive: boolean) => void;
 }) {
   // Open the roots, and a single root's children (the appended files of an integrated model).
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set(tree.roots.length === 1 ? tree.roots : []));
@@ -78,16 +81,16 @@ export function ModelTreePanel({ tree, hiddenNodes, selected, reveal, onToggle, 
       <div style={{ height: rows.length * ROW, position: 'relative' }}>
         {rows.slice(first, last).map(({ id, depth }, i) => {
           const count = tree.childCount(id);
-          const hidden = hiddenBy(id);
+          const hidden = hiddenBy(id), isSelected = selected === id || !!selection?.has(id);
           return (
-            <div key={id} role="treeitem" aria-expanded={count ? expanded.has(id) : undefined} aria-selected={selected === id}
-              className={`model-tree__row${selected === id ? ' is-selected' : ''}${hidden ? ' is-hidden' : ''}`}
+            <div key={id} role="treeitem" aria-expanded={count ? expanded.has(id) : undefined} aria-selected={isSelected}
+              className={`model-tree__row${isSelected ? ' is-selected' : ''}${hidden ? ' is-hidden' : ''}`}
               style={{ top: (first + i) * ROW, paddingLeft: 4 + depth * 14 }}>
               <button type="button" className="model-tree__caret" tabIndex={-1} disabled={!count} onClick={() => toggleOpen(id)}
                 aria-label={expanded.has(id) ? '접기' : '펼치기'}>{count ? (expanded.has(id) ? '▾' : '▸') : ''}</button>
               <input type="checkbox" checked={!hidden} disabled={hidden && !hiddenNodes.has(id)} title={hidden ? '보이기' : '숨기기'}
                 onChange={e => onToggle(id, e.target.checked)} />
-              <button type="button" className="model-tree__name" onClick={() => onSelect(id)} onDoubleClick={() => count && toggleOpen(id)}
+              <button type="button" className="model-tree__name" onClick={e => onSelect(id, e.ctrlKey || e.metaKey || e.shiftKey)} onDoubleClick={() => count && toggleOpen(id)}
                 title={tree.type(id) ? `${tree.name(id)} · ${tree.type(id)}` : tree.name(id)}>
                 {tree.name(id)}
                 {count > 0 && <span className="model-tree__count">{count.toLocaleString()}</span>}

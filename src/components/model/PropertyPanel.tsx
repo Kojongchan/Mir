@@ -28,15 +28,20 @@ function groupsOf(data: ObjectProps | null): Section['groups'] {
  * every match), and the selected object's properties. In Navisworks exports the picked node is often
  * plain geometry (Item only) while the design data (element, family, material, schedule…) sits on its
  * parent objects, so the parents' properties are listed below, nearest first.
+ * With `selection` (pages that select several objects): Ctrl/Shift/⌘-click on a result adds or removes it, 「모두 선택」
+ * selects every match (`onSelectMany`), and two or more selected objects are listed instead of properties.
  */
-export function PropertyPanel({ tree, selected, unindexed, loadProps, searchValues, onSelect, onZoom, onHighlight }: {
+export function PropertyPanel({ tree, selected, selection, unindexed, loadProps, searchValues, onSelect, onSelectMany, onZoom, onHighlight }: {
   tree: ModelTree;
   selected: number | null;
+  selection?: readonly number[];
   /** Picked geometry that has no original object id (nothing to show but its scene id). */
   unindexed?: string | null;
   loadProps: (dbId: number) => Promise<ObjectProps | null>;
   searchValues: ValueSearch;
-  onSelect: (id: number, zoom: boolean) => void;
+  onSelect: (id: number, zoom: boolean, additive?: boolean) => void;
+  /** Select every search match (`additive`: add them to the current selection). */
+  onSelectMany?: (ids: number[], additive: boolean) => void;
   onZoom: (ids: number[]) => void;
   onHighlight: (ids: number[] | null) => void;
 }) {
@@ -48,6 +53,8 @@ export function PropertyPanel({ tree, selected, unindexed, loadProps, searchValu
   const [valueProgress, setValueProgress] = useState('');
   const [highlighted, setHighlighted] = useState(false);
   const [sections, setSections] = useState<{ id: number; list: Section[]; loading: boolean; more?: boolean; error?: string } | null>(null);
+  const chosen = useMemo(() => new Set(selection ?? []), [selection]);
+  const additive = (e: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }) => !!selection && (e.ctrlKey || e.metaKey || e.shiftKey);
 
   // Search after typing pauses.
   useEffect(() => {
@@ -120,6 +127,10 @@ export function PropertyPanel({ tree, selected, unindexed, loadProps, searchValu
               onClick={() => { const on = !highlighted; setHighlighted(on); onHighlight(on ? result.ids : null); }}>
               {highlighted ? '강조 해제' : '모두 강조'}
             </button>
+            {onSelectMany && (
+              <button type="button" className="btn btn--sm" disabled={!result.total} onClick={e => onSelectMany(result.ids, additive(e))}
+                title="검색된 객체를 모두 선택합니다 — 선택한 뒤 숨기기·선택만 보기 (Ctrl+클릭: 지금 선택에 더하기)">모두 선택</button>
+            )}
             <button type="button" className="btn btn--sm" disabled={!result.total} onClick={() => onZoom(result.ids)} title="검색된 객체가 모두 보이도록 확대">확대</button>
           </div>
         )}
@@ -127,7 +138,8 @@ export function PropertyPanel({ tree, selected, unindexed, loadProps, searchValu
           <ul className="prop-panel__results">
             {result.ids.slice(0, SHOWN).map(id => (
               <li key={id}>
-                <button type="button" className={selected === id ? 'is-selected' : ''} onClick={() => onSelect(id, true)}
+                <button type="button" className={selected === id || chosen.has(id) ? 'is-selected' : ''}
+                  onClick={e => { const add = additive(e); onSelect(id, !add, add); }}
                   title={tree.path(id).map(p => tree.name(p)).join(' › ')}>
                   <span>{tree.name(id)}</span>
                   {tree.type(id) && <span className="muted">{tree.type(id)}</span>}
@@ -140,7 +152,23 @@ export function PropertyPanel({ tree, selected, unindexed, loadProps, searchValu
       </div>
 
       <div className="prop-panel__body">
-        {selected === null ? (
+        {selection && selection.length > 1 ? (
+          <>
+            <div className="prop-panel__title"><strong>{selection.length.toLocaleString()}개 선택</strong></div>
+            <p className="muted prop-panel__hint">속성은 하나를 고르면 표시됩니다. Ctrl+클릭으로 선택에 더하거나 뺍니다.</p>
+            <ul className="prop-panel__results prop-panel__chosen">
+              {selection.slice(0, SHOWN).map(id => (
+                <li key={id}>
+                  <button type="button" onClick={e => onSelect(id, false, additive(e))} title={tree.path(id).map(p => tree.name(p)).join(' › ')}>
+                    <span>{tree.name(id)}</span>
+                    {tree.type(id) && <span className="muted">{tree.type(id)}</span>}
+                  </button>
+                </li>
+              ))}
+              {selection.length > SHOWN && <li className="muted prop-panel__more">외 {(selection.length - SHOWN).toLocaleString()}개</li>}
+            </ul>
+          </>
+        ) : selected === null ? (
           <p className="muted prop-panel__hint">
             {unindexed ? `선택한 형상(${unindexed})은 원본 객체 정보가 없어 속성이 없습니다.` : '3D 화면이나 트리에서 객체를 선택하면 속성이 표시됩니다.'}
           </p>
