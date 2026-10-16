@@ -47,6 +47,16 @@ export type ViewerStats = {
 type TileStats = { downloading: number; parsing: number; loaded: number; failed: number };
 /** True from the first queued tile until every download/parse has finished (not in the library's typings). */
 const loading = (tiles: TilesRenderer) => (tiles as unknown as { isLoading: boolean }).isLoading;
+/** Depth / far packed by the pick material (three.js packDepthToRGBA) at byte `at`. */
+const unpackDepth = (rgba: ArrayLike<number>, at: number) =>
+  rgba[at] / 255 + rgba[at + 1] / 65025 + rgba[at + 2] / 16581375 + rgba[at + 3] / 4228250625;
+/**
+ * CSS px around the pointer searched for a surface. Within UNDER_RADIUS it counts as under the pointer (the pivot of a
+ * drag; thin members seen from afar are a pixel or two wide); farther, its depth still sets zoom and pan steps — the
+ * whole-site view of a long site is a thin band, and the cursor beside it is the usual case.
+ */
+const SAMPLE_RADIUS = 24;
+const UNDER_RADIUS = 4;
 
 /**
  * Second viewer engine (docs/3D뷰_2차_엔진.md): three.js + 3DTilesRendererJS + camera-controls. The tileset is in a
@@ -108,6 +118,16 @@ export class TilesViewer {
   /** Outlines between objects (outline.ts); null = the scene draws straight to the canvas. */
   private outline: OutlinePass | null = null;
   private readonly samples: number;
+  /** Mouse over the canvas with no button held (CSS px): the surface under it is sampled (sampleSurface). */
+  private pointer: { x: number; y: number } | null = null;
+  /** Latest surface sample: where and from which view (`view`) it was taken, the drawn point nearest the pointer and
+   * its distance on screen (CSS px); point null = nothing within SAMPLE_RADIUS. */
+  private sample: { x: number; y: number; view: number; at: number; point: Vector3 | null; offset: number } | null = null;
+  private readonly sampleTarget = new WebGLRenderTarget(1, 1);
+  private sampling = false;
+  private sampleWanted = false;
+  /** Bumped whenever the camera moves. */
+  private view = 0;
 
   constructor(private readonly canvas: HTMLCanvasElement, tier?: DeviceTier) {
     // No reverse-Z: with three r171 it drew nothing in Chromium's software GL. A logarithmic depth buffer on every
@@ -145,6 +165,7 @@ export class TilesViewer {
     this.controls.addEventListener('update', () => { this.dirty = true; this.needsUpdate = true; });
     canvas.addEventListener('pointerdown', this.pivotAtPointer, { capture: true });
     canvas.addEventListener('wheel', this.depthAtWheel, { capture: true, passive: true });
+    for (const type of ['pointermove', 'pointerup', 'pointerleave'] as const) canvas.addEventListener(type, this.trackPointer, { passive: true });
     this.resize = new ResizeObserver(() => this.fit());
     this.resize.observe(canvas.parentElement ?? canvas);
     this.fit();
@@ -282,30 +303,50 @@ export class TilesViewer {
     this.needsUpdate = this.dirty = true;
   }
 
-  /** Object under a canvas position (CSS px) and its world point, or null. */
+  /**
+   * Draw the pick pass (mode 0: dbId, 1: view depth / far packed in RGBA; 0 = nothing) for the `size`×`size` drawing-
+   * buffer pixels whose top-left is (`left`, `top`) of the canvas, into `target`.
+   */
+  private renderPick(mode: number, left: number, top: number, size: number, target: WebGLRenderTarget) {
+    const ratio = this.renderer.getPixelRatio(), inset = this.inset * ratio;
+    const w = this.canvas.clientWidth * ratio, h = this.canvas.clientHeight * ratio;
+    this.pickMaterial!.uniforms.mode.value = mode;
+    this.pickMaterial!.uniforms.far.value = this.camera.far;
+    this.camera.setViewOffset(w, h + inset, left, top + inset, size, size);
+    this.scene.overrideMaterial = this.pickMaterial;
+    const background = this.scene.background;
+    this.scene.background = null;
+    this.renderer.setRenderTarget(target);
+    this.renderer.setClearColor(0x000000, 0);
+    this.renderer.clear();
+    this.renderer.render(this.scene, this.camera);
+    this.renderer.setRenderTarget(null);
+    this.scene.overrideMaterial = null;
+    this.scene.background = background;
+    this.applyView();
+  }
+
+  /** World point at view depth `depth` along the ray through canvas point (x, y) (CSS px), for a camera's matrices. */
+  private pointAt(x: number, y: number, depth: number, view: { world: Matrix4; projectionInverse: Matrix4 }): Vector3 {
+    const eye = new Vector3().setFromMatrixPosition(view.world);
+    const forward = new Vector3(0, 0, -1).transformDirection(view.world);
+    const dir = new Vector3((x / this.canvas.clientWidth) * 2 - 1, -(y / this.canvas.clientHeight) * 2 + 1, 0.5)
+      .applyMatrix4(view.projectionInverse).applyMatrix4(view.world).sub(eye).normalize();
+    return eye.addScaledVector(dir, depth / Math.max(1e-6, dir.dot(forward)));
+  }
+
+  /**
+   * Object under a canvas position (CSS px) and its world point, or null. Waits for the GPU (two reads): for clicks;
+   * wheel and drag starts use the pointer sample (sampleSurface).
+   */
   pick(x: number, y: number): { dbId: number; point: Vector3 } | null {
     if (!this.pickMaterial || !this.tiles) return null;
-    const rect = this.canvas.getBoundingClientRect();
-    const px = x * this.renderer.getPixelRatio(), py = y * this.renderer.getPixelRatio();
-    const w = rect.width * this.renderer.getPixelRatio(), h = rect.height * this.renderer.getPixelRatio();
+    const ratio = this.renderer.getPixelRatio(), left = Math.floor(x * ratio), top = Math.floor(y * ratio);
+    const view = { world: this.camera.matrixWorld.clone(), projectionInverse: this.camera.projectionMatrixInverse.clone() };
     const read = (mode: number) => {
-      this.pickMaterial!.uniforms.mode.value = mode;
-      this.pickMaterial!.uniforms.far.value = this.camera.far;
       const pixel = new Uint8Array(4);
-      const inset = this.inset * this.renderer.getPixelRatio();
-      this.camera.setViewOffset(w, h + inset, Math.floor(px), Math.floor(py + inset), 1, 1);
-      this.scene.overrideMaterial = this.pickMaterial;
-      const background = this.scene.background;
-      this.scene.background = null;
-      this.renderer.setRenderTarget(this.pickTarget);
-      this.renderer.setClearColor(0x000000, 0);
-      this.renderer.clear();
-      this.renderer.render(this.scene, this.camera);
+      this.renderPick(mode, left, top, 1, this.pickTarget);
       this.renderer.readRenderTargetPixels(this.pickTarget, 0, 0, 1, 1, pixel);
-      this.renderer.setRenderTarget(null);
-      this.scene.overrideMaterial = null;
-      this.scene.background = background;
-      this.applyView();
       return pixel;
     };
     const id = read(0);
@@ -313,13 +354,69 @@ export class TilesViewer {
     const d = read(1);
     this.dirty = true;
     if (d[0] === 0 && d[1] === 0 && d[2] === 0 && d[3] === 0) return dbId ? { dbId, point: this.controls.getTarget(new Vector3()) } : null;
-    // Unpack (three.js packDepthToRGBA) → view depth → world point along the pixel's ray.
-    const depth = (d[0] / 255 + d[1] / 65025 + d[2] / 16581375 + d[3] / 4228250625) * this.camera.far;
-    const ndc = new Vector3((x / rect.width) * 2 - 1, -(y / rect.height) * 2 + 1, 0.5).unproject(this.camera);
-    const dir = ndc.sub(this.camera.position).normalize();
-    const forward = this.camera.getWorldDirection(new Vector3());
-    const point = this.camera.position.clone().addScaledVector(dir, depth / Math.max(1e-6, dir.dot(forward)));
-    return { dbId, point };
+    return { dbId, point: this.pointAt(x, y, unpackDepth(d, 0) * this.camera.far, view) };
+  }
+
+  /**
+   * Read the depth around the pointer without waiting for the GPU: the pick material's depth pass over a small window
+   * (a rail a pixel or two wide still counts), copied to a buffer that the GPU fills when it gets there
+   * (readRenderTargetPixelsAsync). The synchronous pick stopped the page until the GPU had finished everything queued —
+   * 95% of the time of a wheel zoom (profile of 12 notches in software GL: 32 of 34 s in readPixels).
+   */
+  private sampleSurface() {
+    if (!this.pickMaterial || !this.tiles || !this.pointer) return;
+    const { x, y } = this.pointer, ratio = this.renderer.getPixelRatio();
+    const r = Math.ceil(SAMPLE_RADIUS * ratio), size = 2 * r + 1;
+    if (this.sampleTarget.width !== size) this.sampleTarget.setSize(size, size);
+    const left = Math.floor(x * ratio) - r, top = Math.floor(y * ratio) - r, far = this.camera.far;
+    const view = { world: this.camera.matrixWorld.clone(), projectionInverse: this.camera.projectionMatrixInverse.clone() };
+    this.renderPick(1, left, top, size, this.sampleTarget);
+    const buffer = new Uint8Array(size * size * 4), version = this.view, at = performance.now();
+    this.sampling = true;
+    this.sampleWanted = false;
+    this.renderer.readRenderTargetPixelsAsync(this.sampleTarget, 0, 0, size, size, buffer).then(() => {
+      // The drawn pixel nearest the pointer (rows come bottom first).
+      let best = -1, bestScore = Infinity;
+      for (let k = 0; k < size * size; k++) {
+        if (!(buffer[k * 4] | buffer[k * 4 + 1] | buffer[k * 4 + 2] | buffer[k * 4 + 3])) continue;
+        const score = ((k % size) - r) ** 2 + (Math.floor(k / size) - r) ** 2;
+        if (score < bestScore) { bestScore = score; best = k; }
+      }
+      const point = best < 0 ? null : this.pointAt((left + (best % size) + 0.5) / ratio, (top + size - 1 - Math.floor(best / size) + 0.5) / ratio,
+        unpackDepth(buffer, best * 4) * far, view);
+      this.sample = { x, y, view: version, at, point, offset: Math.sqrt(bestScore) / ratio };
+    }, () => { /* context lost: the next sample tries again */ }).finally(() => { this.sampling = false; });
+  }
+
+  /**
+   * Depth along the view axis and world point of the surface at or near a canvas point (CSS px; `under`: within
+   * UNDER_RADIUS), or null for empty space: from the pointer sample when it was taken there (within a few px; from this
+   * very view when `exact`, the pivot of a drag), else picked now at that pixel (waiting for the GPU).
+   */
+  private surfaceAt(x: number, y: number, exact: boolean): { depth: number; point: Vector3; under: boolean } | null {
+    const s = this.sample;
+    const usable = s && Math.hypot(s.x - x, s.y - y) <= (exact ? 3 : 8) && (exact ? s.view === this.view : performance.now() - s.at < 1000);
+    if (!usable) { const hit = this.depthAt(x, y); return hit && { ...hit, under: true }; }
+    if (!s.point) return null;
+    const depth = s.point.clone().sub(this.camera.position).dot(this.camera.getWorldDirection(new Vector3()));
+    return depth > 0 ? { depth, point: s.point, under: s.offset <= UNDER_RADIUS } : null;
+  }
+
+  /**
+   * Zoom / pan depth over empty space (sky, the background around a long site seen whole — most of that view): where
+   * the pointer's ray meets the site's mid height, else the site centre's depth. The orbit distance used before shrank
+   * with every zoom step, so zooming over empty space slowed to a stop (user report: "멀리서 휠로 당기면 점점 안 당겨짐").
+   */
+  private emptyDepth(x: number, y: number): number | undefined {
+    const b = this.bounds;
+    if (!b) return undefined;
+    const eye = this.camera.position, forward = this.camera.getWorldDirection(new Vector3());
+    const dir = new Vector3((x / this.canvas.clientWidth) * 2 - 1, -(y / this.canvas.clientHeight) * 2 + 1, 0.5)
+      .unproject(this.camera).sub(eye).normalize();
+    const reach = eye.distanceTo(b.center) + b.radius;
+    const ground = dir.y < -1e-3 && eye.y > b.center.y ? Math.min((eye.y - b.center.y) / -dir.y, reach) * dir.dot(forward) : 0;
+    const depth = ground > 0 ? ground : b.center.clone().sub(eye).dot(forward);
+    return depth > this.controls.minDistance * 2 ? depth : undefined;
   }
 
   /** Fly to a tileset-frame box [minX, minY, minZ, maxX, maxY, maxZ] (Z-up). */
@@ -415,9 +512,11 @@ export class TilesViewer {
     this.resize.disconnect();
     this.canvas.removeEventListener('pointerdown', this.pivotAtPointer, { capture: true });
     this.canvas.removeEventListener('wheel', this.depthAtWheel, { capture: true });
+    for (const type of ['pointermove', 'pointerup', 'pointerleave'] as const) this.canvas.removeEventListener(type, this.trackPointer);
     this.closeTiles();
     this.controls.dispose();
     this.pickTarget.dispose();
+    this.sampleTarget.dispose();
     this.outline?.dispose();
     this.renderer.dispose();
   }
@@ -459,7 +558,7 @@ export class TilesViewer {
       mesh.material = mesh.material.transparent ? this.surface!.transparent : this.surface!.opaque;
     });
     if (terrain) { this.terrainScenes.add(scene); scene.visible = this.terrainShown; }
-    this.dirty = true;
+    this.dirty = this.sampleWanted = true;
   }
 
   /** A tile left the cache: dispose the terrain materials made in adopt (the library disposes its own). */
@@ -568,28 +667,40 @@ export class TilesViewer {
   }
 
   /**
-   * Pointer down: rotate about the surface under the pointer (objects and terrain); pan and pinch at that surface's
-   * depth; empty space keeps the distance with the target back on the view axis.
+   * Pointer down: rotate about the surface under the pointer (objects and terrain); pan and pinch at the depth of the
+   * surface at or near the pointer, over empty space at the ground under it (emptyDepth), with the target back on the
+   * view axis.
    */
   private pivotAtPointer = (event: PointerEvent) => {
     if (!this.tiles) return;
-    const rect = this.canvas.getBoundingClientRect();
-    const hit = this.depthAt(event.clientX - rect.left, event.clientY - rect.top);
-    if (event.button === 0 && event.isPrimary && hit) {
+    const rect = this.canvas.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
+    const hit = this.surfaceAt(x, y, true);
+    if (event.button === 0 && event.isPrimary && hit?.under) {
       this.freeze();
       this.controls.setOrbitPoint(hit.point.x, hit.point.y, hit.point.z);
-    } else this.centreTarget(hit?.depth);
+    } else this.centreTarget(hit ? hit.depth : this.emptyDepth(x, y));
     this.needsUpdate = this.dirty = true;
   };
 
-  /** Wheel: zoom steps follow the surface under the cursor (once per scroll gesture, not every notch). */
+  /**
+   * Wheel: zoom steps follow the surface at or near the cursor, else the ground under it (once per scroll gesture, not
+   * every notch), from the pointer sample — no GPU wait while the mouse rests there.
+   */
   private lastWheel = 0;
   private depthAtWheel = (event: WheelEvent) => {
     const now = performance.now();
     if (!this.tiles || now - this.lastWheel < 300) { this.lastWheel = now; return; }
     this.lastWheel = now;
-    const rect = this.canvas.getBoundingClientRect();
-    this.centreTarget(this.depthAt(event.clientX - rect.left, event.clientY - rect.top)?.depth);
+    const rect = this.canvas.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
+    const hit = this.surfaceAt(x, y, false);
+    this.centreTarget(hit ? hit.depth : this.emptyDepth(x, y));
+  };
+
+  /** A mouse over the canvas with no button held keeps the surface sample under it fresh; a drag or leaving stops it. */
+  private trackPointer = (event: PointerEvent) => {
+    const hover = event.type !== 'pointerleave' && event.pointerType === 'mouse' && event.buttons === 0;
+    this.pointer = hover ? { x: event.offsetX, y: event.offsetY } : null;
+    if (hover) this.sampleWanted = true;
   };
 
   /**
@@ -620,7 +731,7 @@ export class TilesViewer {
   private loop = () => {
     this.raf = requestAnimationFrame(this.loop);
     const moved = this.controls.update(this.clock.getDelta());
-    if (moved) { this.dirty = true; this.needsUpdate = true; }
+    if (moved) { this.dirty = true; this.needsUpdate = true; this.view++; }
     const tiles = this.tiles;
     const failed = (tiles as unknown as { stats?: TileStats } | null)?.stats?.failed ?? 0;
     if (tiles && failed > 0) {
@@ -645,6 +756,8 @@ export class TilesViewer {
     }
     const now = performance.now();
     if (this.onStats && now - this.lastStats > 500) { this.lastStats = now; this.onStats(this.stats()); }
+    // One sample in flight at a time, again when the mouse or the view moved or tiles arrived.
+    if (this.pointer && !this.sampling && (this.sampleWanted || this.sample?.view !== this.view)) this.sampleSurface();
     if (!this.dirty) return;
     this.dirty = false;
     this.frame = this.draw();
