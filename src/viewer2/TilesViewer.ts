@@ -381,7 +381,12 @@ export class TilesViewer {
     this.sampledAt = performance.now();
     this.sampling = true;
     this.sampleWanted = false;
-    this.renderer.readRenderTargetPixelsAsync(this.sampleTarget, 0, 0, size, size, buffer).then(() => {
+    const read = this.renderer.readRenderTargetPixelsAsync(this.sampleTarget, 0, 0, size, size, buffer);
+    // three r171 leaves its pixel-pack buffer bound while it waits (it binds it again to collect the pixels): every
+    // synchronous readPixels meanwhile — a click's pick — failed with INVALID_OPERATION and found nothing (ui-check 207).
+    const gl = this.renderer.getContext() as WebGL2RenderingContext;
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    read.then(() => {
       // The drawn pixel nearest the pointer (rows come bottom first).
       let best = -1, bestScore = Infinity;
       for (let k = 0; k < size * size; k++) {

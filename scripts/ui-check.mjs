@@ -345,8 +345,11 @@ const mobile = env.UI_MOBILE === '1' || env.UI_MOBILE === 'tablet';
 const tablet = env.UI_MOBILE === 'tablet';
 results.conditions = { page: PAGE, cpu: Number(env.UI_CPU) || 1, mobile: tablet ? 'tablet' : mobile, tiles: env.UI_TILES || 16 };
 const consoleLines = [], pageErrors = [], failed = [], apiCalls = [];
-/** Shader and GL errors in the console fail the check: a shader that does not compile leaves the view blank (and fast). */
-const glErrors = () => consoleLines.filter(l => /Shader Error|program not valid|GL_INVALID|Feedback loop/.test(l));
+/**
+ * Shader and GL errors in the console fail the check: a shader that does not compile leaves the view blank (and fast), a
+ * failed readPixels makes picks find nothing (run 207: "WebGL: INVALID_OPERATION: readPixels").
+ */
+const glErrors = () => consoleLines.filter(l => /Shader Error|program not valid|GL_INVALID|WebGL: INVALID_|Feedback loop/.test(l));
 const modelName = env.UI_MODEL_NAME || '평택-오송 5공구_통합모델.nwd';
 let page, cdp;
 /** A new browser context (empty storage: no tile cache) and page, with Supabase and the API answered locally. */
