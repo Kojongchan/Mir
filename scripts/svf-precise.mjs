@@ -139,7 +139,8 @@ function spread(pos, n) {
  * stats }.
  */
 export function refineMeshes(meshes, candidates, steps, pieceOf, { agree = 0.9, samples = 64 } = {}) {
-  const stats = { entities: 0, matched: 0, replaced: 0, rejected: 0, noCandidate: 0, noMesh: 0, trianglesBefore: 0, trianglesAfter: 0, shiftMm: [] };
+  const stats = { entities: 0, matched: 0, replaced: 0, rejected: 0, noCandidate: 0, noMesh: 0, trianglesBefore: 0, trianglesAfter: 0, shiftMm: [],
+    misses: [] }; // entities kept as decoded: { entity, candidates, bestFit (share of its vertices on the best candidate), fitTaken }
   const byEntity = new Map();
   for (const m of meshes) {
     const list = byEntity.get(m.entity);
@@ -147,6 +148,7 @@ export function refineMeshes(meshes, candidates, steps, pieceOf, { agree = 0.9, 
     stats.trianglesBefore += m.tri.length / 3;
   }
   const pairs = []; // { e, f, score, shift }
+  const bestFit = new Map(); // entity → best share of its vertices on a candidate
   for (const [e, list] of byEntity) {
     stats.entities++;
     const cands = candidates[e] ?? [];
@@ -165,6 +167,7 @@ export function refineMeshes(meshes, candidates, steps, pieceOf, { agree = 0.9, 
       const onPiece = vertexHash(piece.pos, tol), shifts = [];
       let hits = 0;
       for (const [x, y, z] of mine) { const d = onPiece(x, y, z); if (d <= tol) { hits++; shifts.push(d); } }
+      bestFit.set(e, Math.max(bestFit.get(e) ?? 0, hits / mine.length));
       if (hits < agree * mine.length) continue;
       const theirs = spread(piece.pos, samples);
       const back = theirs.filter(([x, y, z]) => onEntity(x, y, z) <= tol).length / theirs.length;
@@ -182,7 +185,15 @@ export function refineMeshes(meshes, candidates, steps, pieceOf, { agree = 0.9, 
   }
   const out = [];
   for (const [e, list] of byEntity) {
-    if (owner[e] < 0) { if ((candidates[e] ?? []).length) stats.rejected++; out.push(...list); continue; }
+    if (owner[e] < 0) {
+      const cands = candidates[e] ?? [];
+      if (cands.length) stats.rejected++;
+      // A fitting candidate another entity took: two entities of the file are the same fragment.
+      stats.misses.push({ entity: e, candidates: cands.length, bestFit: Math.round((bestFit.get(e) ?? 0) * 100) / 100,
+        fitTaken: pairs.some(p => p.e === e && taken.has(p.f)) });
+      out.push(...list);
+      continue;
+    }
     const piece = pieceOf(owner[e]), main = list.reduce((a, b) => (b.tri.length > a.tri.length ? b : a));
     out.push({ ...main, world: piece.pos, tri: piece.idx });
   }

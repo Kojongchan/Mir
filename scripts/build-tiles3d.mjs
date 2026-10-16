@@ -55,16 +55,17 @@ const s3 = localDir ? null : new S3Client({ region: 'auto', endpoint: `https://$
   credentials: { accessKeyId: env.R2_ACCESS_KEY_ID, secretAccessKey: env.R2_SECRET_ACCESS_KEY } }), Bucket = env.R2_BUCKET;
 const store = localDir ? { send: async command => localSend(command) } : s3;
 // R2 network blips are retried with longer pauses than the SDK's own (run 212 stopped at tile 600 of 1,073 after three
-// connect timeouts within 0.2 s); answers from the store (missing key, refused request) are not.
+// connect timeouts within 0.2 s; run 216 needed the fourth retry): 5, 10, 20, 40, 60 s. Answers from the store (missing
+// key, refused request) are not retried.
 const NETWORK = /^(?:ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENETUNREACH|EHOSTUNREACH|EAI_AGAIN|EPIPE|ENOTFOUND|UND_ERR_\w+)$/;
 const transient = e => !missing(e) && (NETWORK.test(e?.code ?? '') || e?.name === 'TimeoutError' || /socket hang up/i.test(e?.message ?? '')
   || (e?.$metadata?.httpStatusCode >= 500 && e.$metadata.httpStatusCode !== 501));
 async function retrying(task) {
   for (let attempt = 1; ; attempt++) {
     try { return await task(); } catch (e) {
-      if (localDir || attempt >= 5 || !transient(e)) throw e;
-      const wait = 5 * 2 ** (attempt - 1);
-      console.log(`R2 ${e?.code ?? e?.name}; retry ${attempt}/4 in ${wait} s`);
+      if (localDir || attempt >= 6 || !transient(e)) throw e;
+      const wait = Math.min(60, 5 * 2 ** (attempt - 1));
+      console.log(`R2 ${e?.code ?? e?.name}; retry ${attempt}/5 in ${wait} s`);
       await new Promise(res => setTimeout(res, wait * 1000));
     }
   }
@@ -284,7 +285,9 @@ if (svfMode && !reuse) {
         took.set(f, 0);
         added++;
       }
-      perTile.set(i, { s, relabelled, added, took, objects: new Set(dbIds.filter(d => d > 0)), box: tiles[i].aabb });
+      const misses = s.misses.map(m => ({ tile: i, id: file.ids[m.entity], dbId: dbIds[m.entity], size: [0, 1, 2].map(a => +(file.boxes[m.entity * 6 + a + 3] - file.boxes[m.entity * 6 + a]).toFixed(2)),
+        triangles: meshes.filter(x => x.entity === m.entity).reduce((n, x) => n + x.tri.length / 3, 0), candidates: m.candidates, bestFit: m.bestFit, fitTaken: m.fitTaken }));
+      perTile.set(i, { s, relabelled, added, took, misses, objects: new Set(dbIds.filter(d => d > 0)), box: tiles[i].aabb });
       return out;
     },
     /** Totals over the built tiles (a rebuilt tile counts once). */
@@ -301,6 +304,7 @@ if (svfMode && !reuse) {
           t.maxShiftMm = Math.max(t.maxShiftMm, mm);
         }
       }
+      t.kept = [...perTile.values()].flatMap(r => r.misses).slice(0, 60); // entities kept as decoded, for the log
       return t;
     },
     /**
