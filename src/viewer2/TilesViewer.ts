@@ -57,6 +57,8 @@ const unpackDepth = (rgba: ArrayLike<number>, at: number) =>
  */
 const SAMPLE_RADIUS = 24;
 const UNDER_RADIUS = 4;
+/** Least ms between surface samples (each is a pass over what lies under the pointer — at a far view, most tiles). */
+const SAMPLE_EVERY = 100;
 
 /**
  * Second viewer engine (docs/3D뷰_2차_엔진.md): three.js + 3DTilesRendererJS + camera-controls. The tileset is in a
@@ -122,12 +124,16 @@ export class TilesViewer {
   private pointer: { x: number; y: number } | null = null;
   /** Latest surface sample: where and from which view (`view`) it was taken, the drawn point nearest the pointer and
    * its distance on screen (CSS px); point null = nothing within SAMPLE_RADIUS. */
-  private sample: { x: number; y: number; view: number; at: number; point: Vector3 | null; offset: number } | null = null;
+  private sample: { x: number; y: number; view: number; point: Vector3 | null; offset: number } | null = null;
   private readonly sampleTarget = new WebGLRenderTarget(1, 1);
   private sampling = false;
   private sampleWanted = false;
-  /** Bumped whenever the camera moves. */
+  private sampledAt = 0;
+  /** Bumped when the camera is flown somewhere (dropSample): a read begun before is not kept. */
+  private sampleEpoch = 0;
+  /** Bumped whenever the camera moves; `moving`: it moved in the last frame. */
   private view = 0;
+  private moving = false;
 
   constructor(private readonly canvas: HTMLCanvasElement, tier?: DeviceTier) {
     // No reverse-Z: with three r171 it drew nothing in Chromium's software GL. A logarithmic depth buffer on every
@@ -371,7 +377,8 @@ export class TilesViewer {
     const left = Math.floor(x * ratio) - r, top = Math.floor(y * ratio) - r, far = this.camera.far;
     const view = { world: this.camera.matrixWorld.clone(), projectionInverse: this.camera.projectionMatrixInverse.clone() };
     this.renderPick(1, left, top, size, this.sampleTarget);
-    const buffer = new Uint8Array(size * size * 4), version = this.view, at = performance.now();
+    const buffer = new Uint8Array(size * size * 4), version = this.view, epoch = this.sampleEpoch;
+    this.sampledAt = performance.now();
     this.sampling = true;
     this.sampleWanted = false;
     this.renderer.readRenderTargetPixelsAsync(this.sampleTarget, 0, 0, size, size, buffer).then(() => {
@@ -384,18 +391,25 @@ export class TilesViewer {
       }
       const point = best < 0 ? null : this.pointAt((left + (best % size) + 0.5) / ratio, (top + size - 1 - Math.floor(best / size) + 0.5) / ratio,
         unpackDepth(buffer, best * 4) * far, view);
-      this.sample = { x, y, view: version, at, point, offset: Math.sqrt(bestScore) / ratio };
+      if (epoch === this.sampleEpoch) this.sample = { x, y, view: version, point, offset: Math.sqrt(bestScore) / ratio };
     }, () => { /* context lost: the next sample tries again */ }).finally(() => { this.sampling = false; });
+  }
+
+  /** The camera is flown somewhere: what is under the mouse changes (sampled again once it rests). */
+  private dropSample() {
+    this.sample = null;
+    this.sampleEpoch++;
   }
 
   /**
    * Depth along the view axis and world point of the surface at or near a canvas point (CSS px; `under`: within
    * UNDER_RADIUS), or null for empty space: from the pointer sample when it was taken there (within a few px; from this
-   * very view when `exact`, the pivot of a drag), else picked now at that pixel (waiting for the GPU).
+   * very view when `exact`, the pivot of a drag), else picked now at that pixel (waiting for the GPU). A sample from
+   * before a zoom still holds: zoom toward the cursor keeps the same world point under it.
    */
   private surfaceAt(x: number, y: number, exact: boolean): { depth: number; point: Vector3; under: boolean } | null {
     const s = this.sample;
-    const usable = s && Math.hypot(s.x - x, s.y - y) <= (exact ? 3 : 8) && (exact ? s.view === this.view : performance.now() - s.at < 1000);
+    const usable = s && Math.hypot(s.x - x, s.y - y) <= (exact ? 3 : 8) && (!exact || s.view === this.view);
     if (!usable) { const hit = this.depthAt(x, y); return hit && { ...hit, under: true }; }
     if (!s.point) return null;
     const depth = s.point.clone().sub(this.camera.position).dot(this.camera.getWorldDirection(new Vector3()));
@@ -427,6 +441,7 @@ export class TilesViewer {
     // Bounding sphere, not box: a box fit looks along the current direction and can end up inside a long object.
     const sphere = corners.getBoundingSphere(new Sphere());
     sphere.radius = Math.max(sphere.radius * 1.1, 1);
+    this.dropSample();
     this.centreTarget();
     void this.controls.fitToSphere(sphere, animate);
     this.needsUpdate = this.dirty = true;
@@ -439,6 +454,7 @@ export class TilesViewer {
    */
   frameAll(animate = true): void {
     if (!this.bounds) return;
+    this.dropSample();
     this.centreTarget();
     type TileNode = { boundingVolume?: { box?: number[] }; children?: TileNode[]; extras?: { mir?: string } };
     const boxes: number[][] = [];
@@ -624,6 +640,7 @@ export class TilesViewer {
 
   /** Fly the camera to look at `target` from `eye` (both in scene coordinates). */
   lookAt(eye: Vector3, target: Vector3, animate = true): void {
+    this.dropSample();
     this.centreTarget();
     void this.controls.setLookAt(eye.x, eye.y, eye.z, target.x, target.y, target.z, animate);
     this.needsUpdate = this.dirty = true;
@@ -731,7 +748,8 @@ export class TilesViewer {
   private loop = () => {
     this.raf = requestAnimationFrame(this.loop);
     const moved = this.controls.update(this.clock.getDelta());
-    if (moved) { this.dirty = true; this.needsUpdate = true; this.view++; }
+    if (moved) { this.dirty = true; this.needsUpdate = true; this.view++; this.moving = true; }
+    else if (this.moving) { this.moving = false; this.sampleWanted = true; } // at rest: sample what is under the mouse now
     const tiles = this.tiles;
     const failed = (tiles as unknown as { stats?: TileStats } | null)?.stats?.failed ?? 0;
     if (tiles && failed > 0) {
@@ -756,8 +774,9 @@ export class TilesViewer {
     }
     const now = performance.now();
     if (this.onStats && now - this.lastStats > 500) { this.lastStats = now; this.onStats(this.stats()); }
-    // One sample in flight at a time, again when the mouse or the view moved or tiles arrived.
-    if (this.pointer && !this.sampling && (this.sampleWanted || this.sample?.view !== this.view)) this.sampleSurface();
+    // Sample the surface under a resting camera when the mouse moved, the camera stopped or tiles arrived: one at a time,
+    // at most every SAMPLE_EVERY ms, none while the camera moves.
+    if (this.pointer && this.sampleWanted && !this.sampling && !moved && now - this.sampledAt >= SAMPLE_EVERY) this.sampleSurface();
     if (!this.dirty) return;
     this.dirty = false;
     this.frame = this.draw();
