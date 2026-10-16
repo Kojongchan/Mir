@@ -417,6 +417,19 @@ export class TilesViewer {
   }
 
   /**
+   * Zoom / pan depth at a canvas point: the surface under it; else the nearer of a surface beside it (the thin band of a
+   * long site seen whole) and the ground under it — with the pointer just below a structure the ground comes first (the
+   * structure's depth put the target below the ground there: 12 quick notches took the camera under the site); else
+   * the ground or the site centre.
+   */
+  private depthNear(x: number, y: number, hit: { depth: number; under: boolean } | null): number | undefined {
+    if (hit?.under) return hit.depth;
+    const ground = this.emptyDepth(x, y);
+    if (!hit) return ground;
+    return ground === undefined ? hit.depth : Math.min(hit.depth, ground);
+  }
+
+  /**
    * Zoom / pan depth over empty space (sky, the background around a long site seen whole — most of that view): where
    * the pointer's ray meets the site's mid height, else the site centre's depth. The orbit distance used before shrank
    * with every zoom step, so zooming over empty space slowed to a stop (user report: "멀리서 휠로 당기면 점점 안 당겨짐").
@@ -684,9 +697,8 @@ export class TilesViewer {
   }
 
   /**
-   * Pointer down: rotate about the surface under the pointer (objects and terrain); pan and pinch at the depth of the
-   * surface at or near the pointer, over empty space at the ground under it (emptyDepth), with the target back on the
-   * view axis.
+   * Pointer down: rotate about the surface under the pointer (objects and terrain); else pan and pinch at the depth from
+   * depthNear, with the target back on the view axis.
    */
   private pivotAtPointer = (event: PointerEvent) => {
     if (!this.tiles) return;
@@ -695,7 +707,7 @@ export class TilesViewer {
     if (event.button === 0 && event.isPrimary && hit?.under) {
       this.freeze();
       this.controls.setOrbitPoint(hit.point.x, hit.point.y, hit.point.z);
-    } else this.centreTarget(hit ? hit.depth : this.emptyDepth(x, y));
+    } else this.centreTarget(this.depthNear(x, y, hit));
     this.needsUpdate = this.dirty = true;
   };
 
@@ -709,8 +721,7 @@ export class TilesViewer {
     if (!this.tiles || now - this.lastWheel < 300) { this.lastWheel = now; return; }
     this.lastWheel = now;
     const rect = this.canvas.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
-    const hit = this.surfaceAt(x, y, false);
-    this.centreTarget(hit ? hit.depth : this.emptyDepth(x, y));
+    this.centreTarget(this.depthNear(x, y, this.surfaceAt(x, y, false)));
   };
 
   /**
