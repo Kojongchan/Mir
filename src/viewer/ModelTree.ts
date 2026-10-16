@@ -93,7 +93,7 @@ export class ModelTree {
       const cur = stack.pop()!;
       if (kept.has(cur)) continue;
       if (!onPath.has(cur)) { out.push(cur); continue; }
-      stack.push(...this.children(cur));
+      for (const child of this.children(cur)) stack.push(child); // no argument spread: a node can have 100 k children
     }
     return out;
   }

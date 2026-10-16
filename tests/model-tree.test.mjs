@@ -50,3 +50,12 @@ test('showing only some objects hides the fewest branches off their paths', () =
   assert.deepEqual(tree.hideAllBut([]), [1]);
   assert.deepEqual(tree.hideAllBut([0, 99]), [1]); // ids outside the tree are ignored
 });
+
+test('showing only one object of a file with 300 k objects does not overflow the stack', () => {
+  const n = 300_002;
+  const parent = new Array(n).fill(1); parent[0] = 0; parent[1] = 0;
+  const tree = new ModelTree({ v: 1, n, parent, name: new Array(n).fill('x'), type: new Array(n).fill(0), types: [''] });
+  const hidden = tree.hideAllBut([5]);
+  assert.equal(hidden.length, n - 3); // every sibling of 5 under the one file
+  assert.ok(!hidden.includes(5) && !hidden.includes(1));
+});

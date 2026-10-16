@@ -127,7 +127,8 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
   // Object states → the viewer's state texture (a branch acts on everything under it).
   const expand = useCallback((ids: Iterable<number>) => {
     const out: number[] = [];
-    for (const id of ids) { if (tree) out.push(...tree.subtree(id)); else out.push(id); }
+    // One push per id: spreading a file's subtree (hundreds of thousands) as arguments overflows the call stack.
+    for (const id of ids) { if (tree) for (const d of tree.subtree(id)) out.push(d); else out.push(id); }
     return out;
   }, [tree]);
   const selected = useMemo(() => expand(selection), [selection, expand]);
