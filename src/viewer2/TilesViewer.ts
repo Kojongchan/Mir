@@ -713,9 +713,13 @@ export class TilesViewer {
     this.centreTarget(hit ? hit.depth : this.emptyDepth(x, y));
   };
 
-  /** A mouse over the canvas with no button held keeps the surface sample under it fresh; a drag or leaving stops it. */
+  /**
+   * A mouse over the canvas with no button held keeps the surface sample under it fresh; a drag (it turns or moves the
+   * view: the sampled point is no longer under the pointer) or leaving stops it.
+   */
   private trackPointer = (event: PointerEvent) => {
     const hover = event.type !== 'pointerleave' && event.pointerType === 'mouse' && event.buttons === 0;
+    if (!hover && event.type === 'pointermove') this.dropSample();
     this.pointer = hover ? { x: event.offsetX, y: event.offsetY } : null;
     if (hover) this.sampleWanted = true;
   };
