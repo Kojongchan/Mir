@@ -167,14 +167,17 @@ const growObjects = group => {
     }
   }
 };
-/** Decode one XKT into packed groups (null if empty); `precise`: matched entities take the SVF's exact triangles. */
-async function load(i, key, precise = false) {
+/**
+ * Decode one XKT into packed groups (null if empty); `precise`: matched entities take the SVF's exact triangles (`fix`:
+ * fragments to leave to other tiles and fragments to add, from the audit).
+ */
+async function load(i, key, precise = false, fix = null) {
   const xkt = await getBytes(`${prefix}/xkt/${key}`);
   if (!xkt) return null;
   const decoded = decodeXkt(xkt);
   if (!decoded?.meshes.length) return null;
   const dbIds = dbIdsFor(i, decoded.ids);
-  const meshes = precise && svf ? await svf.refine(xkt, decoded.meshes, dbIds, tiles[i].aabb) : decoded.meshes; // may correct dbIds
+  const meshes = precise && svf ? await svf.refine(i, xkt, decoded.meshes, dbIds, fix) : decoded.meshes; // may correct and extend dbIds
   return packMeshes(meshes, e => dbIds[e]);
 }
 /** Write packed groups as c/<name>.glb (counted in `kind`, a stats key or entry); returns { bounds, triangles } or null. */
@@ -245,73 +248,112 @@ if (svfMode && !reuse) {
   if (!est || est.samples < 10 || est.votes < est.samples * 0.6) throw new Error(`No consistent converter origin: ${JSON.stringify(est)}`);
   console.log(`SVF origin ${est.origin.join(',')} (${est.votes}/${est.samples} single-fragment objects agree); source ready in ${Math.round((Date.now() - started) / 1000)} s`);
   const candidatesOf = fragmentMatcher(source.fragments, est.origin);
-  const used = new Uint16Array(source.fragments.db.length); // tiles that took each fragment
-  const seen = new Set(), done = []; // objects with an entity in an original tile; those tiles' boxes
+  const fb = source.fragments.boxes, fragmentCount = source.fragments.db.length;
+  const around = (f, b) => [0, 1, 2].every(a => { const c = (fb[f * 6 + a] + fb[f * 6 + a + 3]) / 2 - est.origin[a]; return c >= b[a] && c <= b[a + 3]; });
+  // Per built tile: its statistics, the fragments its entities took (with the match score), its objects and its box.
+  const perTile = new Map();
+  const colourOf = new Map(); // object → the colour of one of its meshes (for fragments added to a tile)
   const bins = [1, 5, 10, 20, 50];
-  const total = stats.svf = { origin: est.origin, tiles: 0, entities: 0, matched: 0, replaced: 0, rejected: 0, noCandidate: 0, noMesh: 0,
-    relabelled: 0, trianglesBefore: 0, trianglesAfter: 0, shiftMm: Object.fromEntries([...bins.map(b => [`<=${b}`, 0]), ['more', 0]]), maxShiftMm: 0,
-    downloadedMB: 0 };
   svf = {
-    /** Exact triangles for the tile's entities; `dbIds` (per entity) is corrected in place to each matched fragment's object. */
-    async refine(xkt, meshes, dbIds, box) {
+    /**
+     * Exact triangles for tile i's entities; `dbIds` (per entity) is corrected in place to each matched fragment's
+     * object. `fix`: { exclude: fragments this tile must not take, extras: fragments it adds (lost in the conversion) }.
+     */
+    async refine(i, xkt, meshes, dbIds, fix = null) {
       const file = xktEntityBoxes(xkt);
-      for (const d of dbIds) if (d > 0) seen.add(d);
-      if (box) done.push(box);
-      const candidates = candidatesOf(file, dbIds);
-      const pieces = await source.pieces([...new Set(candidates.flat())], est.origin);
-      const { meshes: out, owner, stats: s } = refineMeshes(meshes, candidates, file.steps, f => pieces.get(f));
+      let candidates = candidatesOf(file, dbIds);
+      if (fix?.exclude.size) candidates = candidates.map(list => list.filter(f => !fix.exclude.has(f)));
+      const extras = fix?.extras ?? [];
+      const pieces = await source.pieces([...new Set([...candidates.flat(), ...extras])], est.origin);
+      const { meshes: out, owner, score, stats: s } = refineMeshes(meshes, candidates, file.steps, f => pieces.get(f));
+      const took = new Map();
+      let relabelled = 0, added = 0;
       owner.forEach((f, e) => {
-        if (f >= 0) used[f]++;
-        if (f < 0 || source.fragments.db[f] === dbIds[e]) return;
-        dbIds[e] = source.fragments.db[f];
-        total.relabelled++;
+        if (f < 0) return;
+        took.set(f, score[e]);
+        if (source.fragments.db[f] !== dbIds[e]) { dbIds[e] = source.fragments.db[f]; relabelled++; }
       });
-      total.tiles++;
-      for (const k of ['entities', 'matched', 'replaced', 'rejected', 'noCandidate', 'noMesh', 'trianglesBefore', 'trianglesAfter']) total[k] += s[k];
-      for (const mm of s.shiftMm) {
-        const b = bins.find(x => mm <= x);
-        total.shiftMm[b ? `<=${b}` : 'more']++;
-        total.maxShiftMm = Math.max(total.maxShiftMm, mm);
+      for (const m of meshes) { const d = dbIds[m.entity]; if (d > 0 && !colourOf.has(d)) colourOf.set(d, m.rgba); }
+      // Fragments the conversion lost, as entities of their own.
+      for (const f of extras) {
+        const piece = pieces.get(f);
+        if (!piece || took.has(f)) continue;
+        const d = source.fragments.db[f];
+        out.push({ entity: dbIds.length, world: piece.pos, tri: piece.idx, rgba: colourOf.get(d) ?? [200, 200, 200, 255], textured: false });
+        dbIds.push(d);
+        took.set(f, 0);
+        added++;
       }
-      total.downloadedMB = source.downloadedMB;
+      perTile.set(i, { s, relabelled, added, took, objects: new Set(dbIds.filter(d => d > 0)), box: tiles[i].aabb });
       return out;
     },
-    /**
-     * Whole site: visible source fragments that no tile entity took (lost in the conversion: holes) and fragments
-     * taken in more than one tile (drawn twice), with their area per object.
-     */
-    async audit() {
-      const missing = [], twice = [];
-      // Only objects that have entities in the original tiles (the terrain is in the base files), and fragments inside
-      // a built tile's box (all of them for the whole site; a dry run over a few tiles).
-      const fb = source.fragments.boxes, o = est.origin;
-      const inside = f => done.some(b => [0, 1, 2].every(a => { const c = (fb[f * 6 + a] + fb[f * 6 + a + 3]) / 2 - o[a]; return c >= b[a] && c <= b[a + 3]; }));
-      for (let f = 0; f < used.length; f++) {
-        if (used[f] > 1) twice.push(f);
-        else if (!used[f] && source.visible(f) && seen.has(source.fragments.db[f]) && inside(f)) missing.push(f);
-      }
-      const sum = async list => {
-        const per = new Map();
-        let fragments = 0, triangles = 0, area = 0;
-        for (let k = 0; k < list.length; k += 20000) {
-          for (const [f, piece] of await source.pieces(list.slice(k, k + 20000), est.origin)) {
-            if (!piece) continue; // lines, points
-            let a = 0;
-            for (let t = 0; t < piece.idx.length; t += 3) {
-              const [i, j, l] = [piece.idx[t] * 3, piece.idx[t + 1] * 3, piece.idx[t + 2] * 3], p = piece.pos;
-              const u = [p[j] - p[i], p[j + 1] - p[i + 1], p[j + 2] - p[i + 2]], w = [p[l] - p[i], p[l + 1] - p[i + 1], p[l + 2] - p[i + 2]];
-              a += Math.hypot(u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]) / 2;
-            }
-            fragments++; triangles += piece.idx.length / 3; area += a;
-            const db = source.fragments.db[f];
-            per.set(db, (per.get(db) ?? 0) + a);
-          }
+    /** Totals over the built tiles (a rebuilt tile counts once). */
+    totals() {
+      const t = { origin: est.origin, tiles: perTile.size, entities: 0, matched: 0, replaced: 0, rejected: 0, noCandidate: 0, noMesh: 0, relabelled: 0,
+        added: 0, trianglesBefore: 0, trianglesAfter: 0, shiftMm: Object.fromEntries([...bins.map(b => [`<=${b}`, 0]), ['more', 0]]), maxShiftMm: 0,
+        downloadedMB: source.downloadedMB };
+      for (const r of perTile.values()) {
+        for (const k of ['entities', 'matched', 'replaced', 'rejected', 'noCandidate', 'noMesh', 'trianglesBefore', 'trianglesAfter']) t[k] += r.s[k];
+        t.relabelled += r.relabelled; t.added += r.added;
+        for (const mm of r.s.shiftMm) {
+          const b = bins.find(x => mm <= x);
+          t.shiftMm[b ? `<=${b}` : 'more']++;
+          t.maxShiftMm = Math.max(t.maxShiftMm, mm);
         }
-        const top = [...per].sort((x, y) => y[1] - x[1]).slice(0, 15).map(([db, a]) => [db, Math.round(a * 10) / 10]);
-        return { fragments, triangles, areaM2: Math.round(area), objects: per.size, top };
-      };
-      total.missing = await sum(missing);
-      total.twice = await sum(twice);
+      }
+      return t;
+    },
+    /**
+     * Visible fragments no built tile took (lost in the conversion: holes) — of objects that have entities in the
+     * original tiles (the terrain is in the base files), inside a built tile's box — and fragments two tiles took.
+     */
+    audit() {
+      const takers = new Map(), seen = new Set(), boxes = [];
+      for (const [i, r] of perTile) {
+        for (const [f, score] of r.took) { const l = takers.get(f); if (l) l.push({ tile: i, score }); else takers.set(f, [{ tile: i, score }]); }
+        for (const d of r.objects) seen.add(d);
+        boxes.push(r.box);
+      }
+      const missing = [], twice = new Map();
+      for (let f = 0; f < fragmentCount; f++) {
+        const t = takers.get(f);
+        if (t?.length > 1) twice.set(f, t);
+        else if (!t && source.visible(f) && seen.has(source.fragments.db[f]) && boxes.some(b => around(f, b))) missing.push(f);
+      }
+      return { missing, twice };
+    },
+    /** The built tile for a lost fragment: the smallest box around its centre, among tiles holding its object if any. */
+    homeOf(f) {
+      const d = source.fragments.db[f];
+      let best = -1, bestVolume = Infinity, any = -1, anyVolume = Infinity;
+      for (const [i, r] of perTile) {
+        if (!around(f, r.box)) continue;
+        const b = r.box, volume = (b[3] - b[0]) * (b[4] - b[1]) * (b[5] - b[2]);
+        if (r.objects.has(d) && volume < bestVolume) { best = i; bestVolume = volume; }
+        if (volume < anyVolume) { any = i; anyVolume = volume; }
+      }
+      return best >= 0 ? best : any;
+    },
+    /** Fragments, triangles, area and the objects with the most area, for a list of fragments (lines and points skipped). */
+    async measure(list) {
+      const per = new Map();
+      let fragments = 0, triangles = 0, area = 0;
+      for (let k = 0; k < list.length; k += 20000) {
+        for (const [f, piece] of await source.pieces(list.slice(k, k + 20000), est.origin)) {
+          if (!piece) continue;
+          let a = 0;
+          for (let t = 0; t < piece.idx.length; t += 3) {
+            const [i, j, l] = [piece.idx[t] * 3, piece.idx[t + 1] * 3, piece.idx[t + 2] * 3], p = piece.pos;
+            const u = [p[j] - p[i], p[j + 1] - p[i + 1], p[j + 2] - p[i + 2]], w = [p[l] - p[i], p[l + 1] - p[i + 1], p[l + 2] - p[i + 2]];
+            a += Math.hypot(u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]) / 2;
+          }
+          fragments++; triangles += piece.idx.length / 3; area += a;
+          const db = source.fragments.db[f];
+          per.set(db, (per.get(db) ?? 0) + a);
+        }
+      }
+      const top = [...per].sort((x, y) => y[1] - x[1]).slice(0, 15).map(([db, a]) => [db, Math.round(a * 10) / 10]);
+      return { fragments, triangles, areaM2: Math.round(area), objects: per.size, top };
     },
   };
 }
@@ -321,9 +363,42 @@ if (svfMode && !reuse) {
 const leaves = [];
 let next = 0, done = 0;
 const progress = () => {
-  if (++done % 100 === 0) console.log(`Leaves ${done}/${tiles.length} · far ${MB(stats.far.bytes)} MB · ${MID_ERRORS.map(e => `${e} m ${MB(stats.mid[e].bytes)} MB`).join(' · ')} · detail ${MB(stats.detail.bytes)} MB${stats.svf ? ` · SVF ${stats.svf.replaced}/${stats.svf.entities} entities (${stats.svf.relabelled} owners corrected), ${stats.svf.downloadedMB} MB` : ''}`);
+  if (++done % 100 === 0) console.log(`Leaves ${done}/${tiles.length} · far ${MB(stats.far.bytes)} MB · ${MID_ERRORS.map(e => `${e} m ${MB(stats.mid[e].bytes)} MB`).join(' · ')} · detail ${MB(stats.detail.bytes)} MB${svf ? (t => ` · SVF ${t.replaced}/${t.entities} entities (${t.relabelled} owners corrected), ${t.downloadedMB} MB`)(svf.totals()) : ''}`);
 };
 const union = (a, b) => [0, 1, 2].map(k => Math.min(a[k], b[k])).concat([3, 4, 5].map(k => Math.max(a[k], b[k])));
+/**
+ * Tile i's original level under its simplified copies, as a leaf (null: no original). `fix` (SVF audit) rebuilds a
+ * tile: its counts go to a scratch record, the first build's stay in the statistics.
+ */
+async function buildOriginal(i, fix = null) {
+  const original = await load(i, tiles[i].n, true, fix);
+  if (!original) return null;
+  const sink = fix ? { detail: { files: 0, triangles: 0, bytes: 0, vertices: 0, weldedVertices: 0 },
+    mid: Object.fromEntries(MID_ERRORS.map(e => [e, { files: 0, triangles: 0, bytes: 0, skipped: 0 }])) } : stats;
+  // One vertex per position: the simplifier needs connected surfaces.
+  const groups = { opaque: weldGroup(original.opaque), transparent: weldGroup(original.transparent) };
+  sink.detail.vertices += (original.opaque?.ids.length ?? 0) + (original.transparent?.ids.length ?? 0);
+  sink.detail.weldedVertices += (groups.opaque?.ids.length ?? 0) + (groups.transparent?.ids.length ?? 0);
+  growObjects(groups.opaque); growObjects(groups.transparent);
+  const detail = await write(groups, `d${i}`, sink.detail);
+  if (!detail) return null;
+  let top = { bounds: detail.bounds, content: `c/d${i}.glb`, error: 0, children: [] }, topGroups = groups, topTriangles = detail.triangles;
+  for (const [k, error] of [...MID_ERRORS.entries()].reverse()) {
+    const s = sink.mid[error];
+    // Borders locked and every triangle kept: objects are patches whose seams do not share vertices (tile 931: 85 %
+    // of edges shared), and patches simplified on their own opened cracks along the seams that showed the layer
+    // under them as white streaks (user screenshot, 0.1 m copy at 115 m: 42 hole pixels vs 21 in the original,
+    // locked 20). Long thin triangles along locked borders are part of the surface, not slivers.
+    const copyOf = g => simplifyGroup(g, error, { minHeight: 0, lockBorder: true });
+    const mid = { opaque: await copyOf(groups.opaque), transparent: await copyOf(groups.transparent) };
+    const n = triangles(mid.opaque) + triangles(mid.transparent);
+    const out = n && n <= MID_ENOUGH * topTriangles ? await write(mid, `m${k}-${i}`, s) : null;
+    if (!out) { s.skipped++; continue; }
+    top = { bounds: union(out.bounds, top.bounds), content: `c/m${k}-${i}.glb`, error, children: [top] };
+    topGroups = mid; topTriangles = out.triangles;
+  }
+  return { key: i, centre: centreOf(top.bounds), ...top, groups: topGroups };
+}
 await Promise.all(Array.from({ length: 4 }, async () => {
   for (let i = next++; i < tiles.length; i = next++) {
     const t = tiles[i];
@@ -335,35 +410,8 @@ await Promise.all(Array.from({ length: 4 }, async () => {
       progress();
       continue;
     }
-    const original = (!region || region.has(i)) && /^[\w.-]+\.xkt$/.test(t.n ?? '') ? await load(i, t.n, true) : null;
-    if (original) {
-      // One vertex per position: the simplifier needs connected surfaces.
-      const groups = { opaque: weldGroup(original.opaque), transparent: weldGroup(original.transparent) };
-      stats.detail.vertices += (original.opaque?.ids.length ?? 0) + (original.transparent?.ids.length ?? 0);
-      stats.detail.weldedVertices += (groups.opaque?.ids.length ?? 0) + (groups.transparent?.ids.length ?? 0);
-      growObjects(groups.opaque); growObjects(groups.transparent);
-      const detail = await write(groups, `d${i}`, 'detail');
-      if (detail) {
-        let top = { bounds: detail.bounds, content: `c/d${i}.glb`, error: 0, children: [] }, topGroups = groups, topTriangles = detail.triangles;
-        for (const [k, error] of [...MID_ERRORS.entries()].reverse()) {
-          const s = stats.mid[error];
-          // Borders locked and every triangle kept: objects are patches whose seams do not share vertices (tile 931: 85 %
-          // of edges shared), and patches simplified on their own opened cracks along the seams that showed the layer
-          // under them as white streaks (user screenshot, 0.1 m copy at 115 m: 42 hole pixels vs 21 in the original,
-          // locked 20). Long thin triangles along locked borders are part of the surface, not slivers.
-          const copyOf = g => simplifyGroup(g, error, { minHeight: 0, lockBorder: true });
-          const mid = { opaque: await copyOf(groups.opaque), transparent: await copyOf(groups.transparent) };
-          const n = triangles(mid.opaque) + triangles(mid.transparent);
-          const out = n && n <= MID_ENOUGH * topTriangles ? await write(mid, `m${k}-${i}`, s) : null;
-          if (!out) { s.skipped++; continue; }
-          top = { bounds: union(out.bounds, top.bounds), content: `c/m${k}-${i}.glb`, error, children: [top] };
-          topGroups = mid; topTriangles = out.triangles;
-        }
-        leaves.push({ key: i, centre: centreOf(top.bounds), ...top, groups: topGroups });
-        progress();
-        continue;
-      }
-    }
+    const leaf = (!region || region.has(i)) && /^[\w.-]+\.xkt$/.test(t.n ?? '') ? await buildOriginal(i) : null;
+    if (leaf) { leaves.push(leaf); progress(); continue; }
     if (!validFar(t)) { progress(); continue; }
     const farGroups = await load(i, t.far.n);
     const far = farGroups && await write(farGroups, `f${i}`, 'far');
@@ -376,10 +424,32 @@ await Promise.all(Array.from({ length: 4 }, async () => {
 }));
 console.log('Leaves', JSON.stringify({ far: stats.far, mid: stats.mid, detail: stats.detail }));
 if (svf) {
-  await svf.audit();
-  console.log('SVF audit', JSON.stringify({ missing: stats.svf.missing, twice: stats.svf.twice }));
+  // Second pass over the few tiles the audit points at, before the parents are built from the leaves.
+  const rebuild = async (i, fix) => {
+    for (const k of [...files.keys()]) if (k === `c/d${i}.glb` || new RegExp(`^c/m\\d+-${i}\\.glb$`).test(k)) files.delete(k);
+    const leaf = await buildOriginal(i, fix), at = leaves.findIndex(l => l.key === i);
+    if (leaf) { if (at >= 0) leaves[at] = leaf; else leaves.push(leaf); } else if (at >= 0) leaves.splice(at, 1);
+  };
+  let plan = svf.audit();
+  const first = { missing: plan.missing.length, twice: plan.twice.size };
+  // A fragment two tiles took stays with the better match; the others choose again without it.
+  const exclude = new Map();
+  for (const [f, takers] of plan.twice) {
+    takers.sort((a, b) => b.score - a.score);
+    for (const { tile } of takers.slice(1)) { const set = exclude.get(tile); if (set) set.add(f); else exclude.set(tile, new Set([f])); }
+  }
+  for (const [i, set] of exclude) await rebuild(i, { exclude: set, extras: [] });
+  // Fragments the conversion lost go to the tile holding their object around them. Whole site only: in a region build
+  // the tiles around it (far files only) own fragments inside the region's overlapping boxes.
+  plan = svf.audit();
+  const extras = new Map();
+  if (!region) for (const f of plan.missing) { const home = svf.homeOf(f); if (home >= 0) { const l = extras.get(home); if (l) l.push(f); else extras.set(home, [f]); } }
+  for (const [i, list] of extras) await rebuild(i, { exclude: exclude.get(i) ?? new Set(), extras: list });
+  plan = svf.audit();
+  stats.svf = { ...svf.totals(), firstPass: first, rebuiltTiles: new Set([...exclude.keys(), ...extras.keys()]).size,
+    missing: await svf.measure(plan.missing), twice: await svf.measure([...plan.twice.keys()]) };
+  console.log('SVF', JSON.stringify(stats.svf));
 }
-if (stats.svf) console.log('SVF', JSON.stringify(stats.svf));
 
 // Coarser levels: merge each group of ≤8 children and simplify with a larger absolute error.
 let parentId = 0;

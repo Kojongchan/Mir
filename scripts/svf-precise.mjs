@@ -135,7 +135,8 @@ function spread(pos, n) {
  * (null: lines, points, missing). A candidate fits when at least `agree` of (up to 64 of) the entity's decoded vertices
  * have a fragment vertex within two quantization steps + 2 cm; among fitting ones the best share of the fragment's
  * vertices found on the entity wins (a piece whose corners are a subset of another's), each fragment once per file,
- * best pairs first. Returns { meshes, owner (fragment per entity, −1 = kept as decoded), stats }.
+ * best pairs first. Returns { meshes, owner (fragment per entity, −1 = kept as decoded), score (of the owner: up to 2),
+ * stats }.
  */
 export function refineMeshes(meshes, candidates, steps, pieceOf, { agree = 0.9, samples = 64 } = {}) {
   const stats = { entities: 0, matched: 0, replaced: 0, rejected: 0, noCandidate: 0, noMesh: 0, trianglesBefore: 0, trianglesAfter: 0, shiftMm: [] };
@@ -173,10 +174,10 @@ export function refineMeshes(meshes, candidates, steps, pieceOf, { agree = 0.9, 
     if (!usable) stats.noMesh++;
   }
   pairs.sort((a, b) => b.score - a.score);
-  const owner = new Int32Array(candidates.length).fill(-1), taken = new Set();
+  const owner = new Int32Array(candidates.length).fill(-1), score = new Float32Array(candidates.length), taken = new Set();
   for (const p of pairs) {
     if (owner[p.e] >= 0 || taken.has(p.f)) continue;
-    owner[p.e] = p.f; taken.add(p.f);
+    owner[p.e] = p.f; score[p.e] = p.score; taken.add(p.f);
     stats.replaced++; stats.shiftMm.push(Math.round(p.shift * 1000));
   }
   const out = [];
@@ -186,7 +187,7 @@ export function refineMeshes(meshes, candidates, steps, pieceOf, { agree = 0.9, 
     out.push({ ...main, world: piece.pos, tri: piece.idx });
   }
   for (const m of out) stats.trianglesAfter += m.tri.length / 3;
-  return { meshes: out, owner, stats };
+  return { meshes: out, owner, score, stats };
 }
 
 /**
