@@ -252,6 +252,8 @@ export async function openSvfSource({ urn, getToken, region = 'US', dir, log = (
   };
   return {
     fragments: indexFragments(list.map(f => ({ dbId: f.dbID, bbox: f.bbox }))),
+    /** Drawn by the source viewers (hidden fragments are not). */
+    visible: f => !!list[f]?.visible,
     get downloadedMB() { return Math.round(bytes / 1048576); },
     /** Exact triangles of these fragments in the tiles' frame: Map fragment → { pos, idx } | null (lines, points). */
     async pieces(indices, origin) {

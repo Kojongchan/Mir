@@ -174,7 +174,7 @@ async function load(i, key, precise = false) {
   const decoded = decodeXkt(xkt);
   if (!decoded?.meshes.length) return null;
   const dbIds = dbIdsFor(i, decoded.ids);
-  const meshes = precise && svf ? await svf.refine(xkt, decoded.meshes, dbIds) : decoded.meshes; // may correct dbIds
+  const meshes = precise && svf ? await svf.refine(xkt, decoded.meshes, dbIds, tiles[i].aabb) : decoded.meshes; // may correct dbIds
   return packMeshes(meshes, e => dbIds[e]);
 }
 /** Write packed groups as c/<name>.glb (counted in `kind`, a stats key or entry); returns { bounds, triangles } or null. */
@@ -245,18 +245,23 @@ if (svfMode && !reuse) {
   if (!est || est.samples < 10 || est.votes < est.samples * 0.6) throw new Error(`No consistent converter origin: ${JSON.stringify(est)}`);
   console.log(`SVF origin ${est.origin.join(',')} (${est.votes}/${est.samples} single-fragment objects agree); source ready in ${Math.round((Date.now() - started) / 1000)} s`);
   const candidatesOf = fragmentMatcher(source.fragments, est.origin);
+  const used = new Uint16Array(source.fragments.db.length); // tiles that took each fragment
+  const seen = new Set(), done = []; // objects with an entity in an original tile; those tiles' boxes
   const bins = [1, 5, 10, 20, 50];
   const total = stats.svf = { origin: est.origin, tiles: 0, entities: 0, matched: 0, replaced: 0, rejected: 0, noCandidate: 0, noMesh: 0,
     relabelled: 0, trianglesBefore: 0, trianglesAfter: 0, shiftMm: Object.fromEntries([...bins.map(b => [`<=${b}`, 0]), ['more', 0]]), maxShiftMm: 0,
     downloadedMB: 0 };
   svf = {
     /** Exact triangles for the tile's entities; `dbIds` (per entity) is corrected in place to each matched fragment's object. */
-    async refine(xkt, meshes, dbIds) {
+    async refine(xkt, meshes, dbIds, box) {
       const file = xktEntityBoxes(xkt);
+      for (const d of dbIds) if (d > 0) seen.add(d);
+      if (box) done.push(box);
       const candidates = candidatesOf(file, dbIds);
       const pieces = await source.pieces([...new Set(candidates.flat())], est.origin);
       const { meshes: out, owner, stats: s } = refineMeshes(meshes, candidates, file.steps, f => pieces.get(f));
       owner.forEach((f, e) => {
+        if (f >= 0) used[f]++;
         if (f < 0 || source.fragments.db[f] === dbIds[e]) return;
         dbIds[e] = source.fragments.db[f];
         total.relabelled++;
@@ -270,6 +275,43 @@ if (svfMode && !reuse) {
       }
       total.downloadedMB = source.downloadedMB;
       return out;
+    },
+    /**
+     * Whole site: visible source fragments that no tile entity took (lost in the conversion: holes) and fragments
+     * taken in more than one tile (drawn twice), with their area per object.
+     */
+    async audit() {
+      const missing = [], twice = [];
+      // Only objects that have entities in the original tiles (the terrain is in the base files), and fragments inside
+      // a built tile's box (all of them for the whole site; a dry run over a few tiles).
+      const fb = source.fragments.boxes, o = est.origin;
+      const inside = f => done.some(b => [0, 1, 2].every(a => { const c = (fb[f * 6 + a] + fb[f * 6 + a + 3]) / 2 - o[a]; return c >= b[a] && c <= b[a + 3]; }));
+      for (let f = 0; f < used.length; f++) {
+        if (used[f] > 1) twice.push(f);
+        else if (!used[f] && source.visible(f) && seen.has(source.fragments.db[f]) && inside(f)) missing.push(f);
+      }
+      const sum = async list => {
+        const per = new Map();
+        let fragments = 0, triangles = 0, area = 0;
+        for (let k = 0; k < list.length; k += 20000) {
+          for (const [f, piece] of await source.pieces(list.slice(k, k + 20000), est.origin)) {
+            if (!piece) continue; // lines, points
+            let a = 0;
+            for (let t = 0; t < piece.idx.length; t += 3) {
+              const [i, j, l] = [piece.idx[t] * 3, piece.idx[t + 1] * 3, piece.idx[t + 2] * 3], p = piece.pos;
+              const u = [p[j] - p[i], p[j + 1] - p[i + 1], p[j + 2] - p[i + 2]], w = [p[l] - p[i], p[l + 1] - p[i + 1], p[l + 2] - p[i + 2]];
+              a += Math.hypot(u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]) / 2;
+            }
+            fragments++; triangles += piece.idx.length / 3; area += a;
+            const db = source.fragments.db[f];
+            per.set(db, (per.get(db) ?? 0) + a);
+          }
+        }
+        const top = [...per].sort((x, y) => y[1] - x[1]).slice(0, 15).map(([db, a]) => [db, Math.round(a * 10) / 10]);
+        return { fragments, triangles, areaM2: Math.round(area), objects: per.size, top };
+      };
+      total.missing = await sum(missing);
+      total.twice = await sum(twice);
     },
   };
 }
@@ -333,6 +375,10 @@ await Promise.all(Array.from({ length: 4 }, async () => {
   }
 }));
 console.log('Leaves', JSON.stringify({ far: stats.far, mid: stats.mid, detail: stats.detail }));
+if (svf) {
+  await svf.audit();
+  console.log('SVF audit', JSON.stringify({ missing: stats.svf.missing, twice: stats.svf.twice }));
+}
 if (stats.svf) console.log('SVF', JSON.stringify(stats.svf));
 
 // Coarser levels: merge each group of ≤8 children and simplify with a larger absolute error.
