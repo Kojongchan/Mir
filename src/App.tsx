@@ -111,7 +111,9 @@ export default function App() {
             <Route path="clash" element={<AccModels key="clash" autoClash />} />
             {/* 3D뷰(신규 테스트) — iframe 없이 자체 뷰어를 직접 띄우는 실험 메뉴. */}
             <Route path="model-test" element={<ThreeDTest />} />
-            <Route path="model-test-2" element={<ThreeDTest2 />} />
+            {/* One page, two tilesets: the keys make switching between them start a fresh viewer. */}
+            <Route path="model-test-2" element={<ThreeDTest2 key="tiles3d" />} />
+            <Route path="model-test-3" element={<ThreeDTest2 key="tiles3d-svf" variant="svf" />} />
             <Route path="quantities" element={<Quantities />} />
             <Route path="drawings" element={<Drawings />} />
             <Route path="docs" element={<DocumentManager />} />

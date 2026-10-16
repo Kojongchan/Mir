@@ -306,11 +306,15 @@ export default async function handler(req: Request): Promise<Response> {
       return json({ urls });
     }
     // Second viewer engine (D23): the published 3D Tiles run's files, each with a signed URL. The tileset refers to
-    // its files by relative path; the viewer maps those paths to these URLs.
+    // its files by relative path; the viewer maps those paths to these URLs. variant=svf: the third viewer's trial
+    // tileset (original level from the SVF's exact coordinates), published apart under tiles3d-svf/.
     if (url.searchParams.get('tiles3d') === '1') {
+      const variant = url.searchParams.get('variant');
+      if (variant !== null && variant !== 'svf') return json({ error: 'variant 오류' }, 400);
+      const folder = variant === 'svf' ? 'tiles3d-svf' : 'tiles3d';
       const dir = await resolveCacheDir(urn);
-      const text = await r2GetText(`${dir}/tiles3d/current.json`);
-      if (!text) return json({ error: '이 모델은 2차 화면용 타일이 아직 없습니다.', missing: true }, 404);
+      const text = await r2GetText(`${dir}/${folder}/current.json`);
+      if (!text) return json({ error: variant === 'svf' ? '이 모델은 3차 화면용(SVF 정밀) 타일이 아직 없습니다.' : '이 모델은 2차 화면용 타일이 아직 없습니다.', missing: true }, 404);
       let current: { v?: number; run?: string; files?: unknown; builtAt?: string };
       try { current = JSON.parse(text); } catch { return json({ error: '3D Tiles 기록이 손상되었습니다.' }, 500); }
       if (current.v !== 1 || !/^runs\/[a-zA-Z0-9-]+$/.test(current.run ?? '') || !Array.isArray(current.files))
@@ -319,7 +323,7 @@ export default async function handler(req: Request): Promise<Response> {
       const expiresIn = 4 * 3600;
       // Every other tile file on the second host name (tileset.json and objects.bin stay on the first).
       const urls = Object.fromEntries(await Promise.all(paths.map(async (p, i) =>
-        [p, await r2PresignGet(`${dir}/tiles3d/${current.run}/${p}`, expiresIn, p.endsWith('.glb') && i % 2 === 1)] as const)));
+        [p, await r2PresignGet(`${dir}/${folder}/${current.run}/${p}`, expiresIn, p.endsWith('.glb') && i % 2 === 1)] as const)));
       return json({ run: current.run, builtAt: current.builtAt, expiresIn, urls });
     }
     const shard = url.searchParams.get('metaShard');

@@ -6,10 +6,13 @@
 const MARKER = 'https://tile-cache.mir.invalid/__run';
 const keyOf = (path: string) => `https://tile-cache.mir.invalid/${path}`;
 
-/** Model folder and run of a signed tileset URL (…/<model>/tiles3d/runs/<id>/tileset.json), or null. */
+/**
+ * Model folder and run of a signed tileset URL (…/<model>/tiles3d/runs/<id>/tileset.json), or null. The third
+ * viewer's trial tileset (…/tiles3d-svf/…) gets its own cache (`<model>-svf`), so switching viewers keeps both.
+ */
 export function runOf(tilesetUrl: string): { model: string; run: string } | null {
-  const m = /\/([A-Za-z0-9]{1,40})\/tiles3d\/(runs\/[A-Za-z0-9-]+)\/tileset\.json(?:\?|$)/.exec(tilesetUrl);
-  return m ? { model: m[1], run: m[2] } : null;
+  const m = /\/([A-Za-z0-9]{1,40})\/tiles3d(-svf)?\/(runs\/[A-Za-z0-9-]+)\/tileset\.json(?:\?|$)/.exec(tilesetUrl);
+  return m ? { model: m[1] + (m[2] ?? ''), run: m[3] } : null;
 }
 
 export type TileCacheStats = { hits: number; stored: number };

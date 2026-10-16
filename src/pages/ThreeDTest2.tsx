@@ -22,7 +22,8 @@ const authHeaders = async () => {
 /**
  * 3D뷰 (신규 테스트 2차) — second viewer engine prototype (decision D23, docs/3D뷰_2차_엔진.md): the model's 3D Tiles
  * (built by Actions diag_only=tiles3d, startable here by project admins) on three.js + 3DTilesRendererJS, next to the
- * xeokit page for comparison.
+ * xeokit page for comparison. variant "svf" is 3D뷰 (신규 테스트 3차): the same viewer on the trial tileset whose
+ * original level comes from the SVF's exact coordinates (diag_options svf=1, built from Actions only).
  */
 const narrowScreen = () => window.matchMedia('(max-width: 900px)').matches;
 /** The viewer's picture quality is remembered in this browser. */
@@ -39,8 +40,10 @@ const storedColorMode = (): ColorMode => {
 };
 const remember = (key: string, value: string) => { try { localStorage.setItem(key, value); } catch { /* private mode */ } };
 
-export function ThreeDTest2() {
+export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
   const { projectId = '' } = useParams();
+  const tilesQuery = variant ? `tiles3d=1&variant=${variant}` : 'tiles3d=1';
+  const tilesName = variant ? '3차 화면용(SVF 정밀) 타일' : '2차 화면용 타일';
   const { canEdit, canManage } = useProjectRole(projectId);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<TilesViewer | null>(null);
@@ -187,15 +190,15 @@ export function ThreeDTest2() {
     try {
       const headers = await authHeaders();
       const urn = encodeURIComponent(f.accUrn);
-      const [stateRes, tilesRes] = await Promise.all([fetch(`/api/aps-convert?urn=${urn}`, { headers }), fetch(`/api/aps-convert?urn=${urn}&tiles3d=1`, { headers })]);
+      const [stateRes, tilesRes] = await Promise.all([fetch(`/api/aps-convert?urn=${urn}`, { headers }), fetch(`/api/aps-convert?urn=${urn}&${tilesQuery}`, { headers })]);
       const tiles = await readApiJson<{ urls?: Record<string, string>; builtAt?: string; expiresIn?: number; error?: string; missing?: boolean }>(tilesRes);
       const state = await readApiJson<{ meta?: MetaInfo; tiles?: unknown[] }>(stateRes);
       if (!tilesRes.ok || !tiles.urls?.['tileset.json']) {
         if (tiles.missing) {
           const converted = Array.isArray(state.tiles) && state.tiles.length > 0;
           setMissing({ file: f, converted });
-          setStatus(converted ? `${f.name} · 2차 화면용 타일이 아직 없습니다.` : `${f.name} · 아직 변환되지 않은 모델입니다.`);
-        } else setStatus(tiles.error ?? '2차 화면용 타일을 불러오지 못했습니다.');
+          setStatus(converted ? `${f.name} · ${tilesName}이 아직 없습니다.` : `${f.name} · 아직 변환되지 않은 모델입니다.`);
+        } else setStatus(tiles.error ?? `${tilesName}을 불러오지 못했습니다.`);
         return;
       }
       urlsRef.current = tiles.urls;
@@ -205,7 +208,7 @@ export function ThreeDTest2() {
       setStatus(`${f.name} · 3D Tiles ${Object.keys(tiles.urls).length.toLocaleString()}개 파일${tiles.builtAt ? ` · 생성 ${tiles.builtAt.slice(0, 10)}` : ''}`);
     } catch (e) { setStatus(`열기 실패: ${errMessage(e)}`); }
     finally { setBusy(false); }
-  }, [index]);
+  }, [index, tilesQuery, tilesName]);
 
   // Signed tile URLs last 4 h: renew them 15 min early so a long session keeps loading tiles.
   useEffect(() => {
@@ -214,7 +217,7 @@ export function ThreeDTest2() {
       if (!due || Date.now() < due.at) return;
       renewAt.current = null;
       try {
-        const r = await fetch(`/api/aps-convert?urn=${encodeURIComponent(due.urn)}&tiles3d=1`, { headers: await authHeaders() });
+        const r = await fetch(`/api/aps-convert?urn=${encodeURIComponent(due.urn)}&${tilesQuery}`, { headers: await authHeaders() });
         const next = await readApiJson<{ urls?: Record<string, string>; expiresIn?: number }>(r);
         if (!r.ok || !next.urls) throw new Error('renew');
         Object.assign(urlsRef.current ?? {}, next.urls);
@@ -223,7 +226,7 @@ export function ThreeDTest2() {
       } catch { renewAt.current = { urn: due.urn, at: Date.now() + 60_000 }; }
     }, 30_000);
     return () => clearInterval(timer);
-  }, []);
+  }, [tilesQuery]);
 
   /** Project admins: build this model's tiles (Actions job, ≈10–20 min), then open it when the job succeeds. */
   const buildTiles = useCallback(async () => {
@@ -297,8 +300,17 @@ export function ThreeDTest2() {
       <div className="threed-test__note">
         <UiIcon name="cube" size={16} />
         <span>
-          <strong>3D뷰 (신규 테스트 2차)</strong> — 엔진 <strong>three.js + 3D Tiles</strong>(표준 계층형 타일, 화면 크기 기반 단계 선택).
-          기존 화면과 같은 모델을 비교하는 시제품입니다. 기기 등급에 따라 그리는 양을 자동으로 조절합니다.
+          {variant === 'svf' ? (
+            <>
+              <strong>3D뷰 (신규 테스트 3차)</strong> — 2차 화면과 같은 엔진에서, 가장 세밀한(원본) 단계의 좌표를 모델의
+              <strong> SVF 원본 좌표</strong>로 바꾼 시험판입니다(기존 2~20cm 격자 → 1mm 이하). 가까이서 울퉁불퉁하던 면을 2차 화면과 비교해 보세요.
+            </>
+          ) : (
+            <>
+              <strong>3D뷰 (신규 테스트 2차)</strong> — 엔진 <strong>three.js + 3D Tiles</strong>(표준 계층형 타일, 화면 크기 기반 단계 선택).
+              기존 화면과 같은 모델을 비교하는 시제품입니다. 기기 등급에 따라 그리는 양을 자동으로 조절합니다.
+            </>
+          )}
         </span>
       </div>
       <div className="threed-test__viewer">
@@ -367,11 +379,13 @@ export function ThreeDTest2() {
               <UiIcon name="cube" size={40} />
               {missing.converted ? (
                 <>
-                  <p><strong>{missing.file.name}</strong> 은(는) 2차 화면용 타일이 아직 없습니다.</p>
+                  <p><strong>{missing.file.name}</strong> 은(는) {tilesName}이 아직 없습니다.</p>
+                  {variant ? <p className="threed-test__empty-sub">3차 화면은 시험판이라 시험 타일을 만든 모델만 열립니다(GitHub Actions에서 생성).</p> : <>
                   <p className="threed-test__empty-sub">2차 화면은 시제품이라 타일을 만든 모델만 열립니다. 변환된 모델로부터 만들며 보통 10~20분 걸립니다.</p>
                   {job ? <p className="threed-test__empty-sub">{job.note}</p>
                     : canManage ? <button className="btn btn--primary btn--sm" onClick={() => void buildTiles()}>2차 타일 만들기</button>
                       : <p className="threed-test__empty-sub">프로젝트 관리자가 이 화면에서 만들 수 있습니다.</p>}
+                  </>}
                 </>
               ) : (
                 <>
