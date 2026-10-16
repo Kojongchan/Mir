@@ -690,6 +690,18 @@ export class TilesViewer {
     const t = eye.clone().addScaledVector(dir, d);
     void this.controls.setFocalOffset(0, 0, 0, false);
     void this.controls.setLookAt(eye.x, eye.y, eye.z, t.x, t.y, t.z, false);
+    this.settleControls();
+  }
+
+  /**
+   * Let camera-controls take a distance set without a transition as its last one. Zoom toward the cursor shifts the
+   * target by (distance now − last distance); with the last one still the old orbit distance, the first notch after
+   * re-aiming took that whole difference as zoom: a target 346 m deep moved to a surface 32 m away, one notch with
+   * the cursor off-centre threw the camera 127 m sideways (ui-check 207/208; with the cursor at the centre, as in the
+   * first camera check, the shift is about zero).
+   */
+  private settleControls() {
+    this.controls.update(0);
   }
 
   /** Depth along the view axis of the surface under a canvas point (CSS px), or null for empty space. */
@@ -712,6 +724,7 @@ export class TilesViewer {
     if (event.button === 0 && event.isPrimary && hit?.under) {
       this.freeze();
       this.controls.setOrbitPoint(hit.point.x, hit.point.y, hit.point.z);
+      this.settleControls(); // a pinch right after must not zoom by the old orbit distance
     } else this.centreTarget(this.depthNear(x, y, hit));
     this.needsUpdate = this.dirty = true;
   };
