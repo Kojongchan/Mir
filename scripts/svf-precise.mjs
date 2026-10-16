@@ -66,15 +66,16 @@ export function fragmentMatcher(fragments, origin) {
     add(minGrid, cellKey(...[0, 1, 2].map(a => Math.floor(shifted(f, a) / CELL))), f);
     add(centreGrid, cellKey(...[0, 1, 2].map(a => Math.floor((shifted(f, a) + shifted(f, a + 3)) / 2 / CENTRE_CELL))), f);
   }
-  const near = (grid, base, visit) => {
-    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++)
+  const near = (grid, base, visit, r = [1, 1, 1]) => {
+    for (let dx = -r[0]; dx <= r[0]; dx++) for (let dy = -r[1]; dy <= r[1]; dy++) for (let dz = -r[2]; dz <= r[2]; dz++)
       for (const f of grid.get(cellKey(base[0] + dx, base[1] + dy, base[2] + dz)) ?? []) visit(f);
   };
   const NAMED = /^\d+$/;
   /**
-   * `wide` (entities the first look did not place): only these entities, up to 64 candidates each, and a renamed one
-   * may belong to any object (four large pieces had no owner in the table and none named in their file; a WPC girder's
-   * piece was the 13th of its object's ≈ 300 rotated fragments around it).
+   * `wide` (entities the first look did not place): only these entities, up to 64 candidates each, a renamed one may
+   * belong to any object, and containing boxes are looked for as far as the entity's own size (a WPC girder's piece was
+   * the 13th of its object's ≈ 300 rotated fragments around it; four large white pieces had no owner in the table, none
+   * named in their file, and source boxes centred up to 6.4 m off their 38 × 20 m geometry, which is not symmetric).
    */
   return function candidates({ ids, boxes, steps }, dbIds, wide = null) {
     const named = new Set();
@@ -92,6 +93,7 @@ export function fragmentMatcher(fragments, origin) {
         if (worst <= 1) found.set(f, worst);
       });
       const c = [0, 1, 2].map(a => (boxes[e * 6 + a] + boxes[e * 6 + a + 3]) / 2);
+      const reach = [0, 1, 2].map(a => (wide ? Math.min(16, 1 + Math.ceil((boxes[e * 6 + a + 3] - boxes[e * 6 + a]) / CENTRE_CELL)) : 1));
       near(centreGrid, c.map(v => Math.floor(v / CENTRE_CELL)), f => {
         if (found.has(f) || !ok(f)) return;
         let diag = 0;
@@ -104,7 +106,7 @@ export function fragmentMatcher(fragments, origin) {
         // (WPC girder fragment 21442: 12.6 × 13.4 m box, 9 × 10 m piece, centres 2.1 m apart); the vertices decide.
         const off = Math.hypot(...[0, 1, 2].map(a => c[a] - (shifted(f, a) + shifted(f, a + 3)) / 2));
         found.set(f, 1 + off / Math.max(0.1, Math.sqrt(diag)));
-      });
+      }, reach);
       return [...found].sort((a, b) => a[1] - b[1]).slice(0, limit).map(([f]) => f);
     });
   };

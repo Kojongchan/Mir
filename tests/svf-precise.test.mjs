@@ -60,6 +60,15 @@ test('candidates: a named entity\'s own object only; a renamed one any object na
   assert.ok([0, 2, 3, 4].every(e => wide[e].length === 0), 'wider look: only the entities asked for');
 });
 
+test('wider look: an owner-less piece whose source box is centred metres off its geometry', () => {
+  // As the four large white pieces: 38 × 20 × 10 m geometry, source box 40 × 37 × 21 m centred 6.2 m off in y.
+  const fragments = indexFragments([{ dbId: 20, bbox: [214298.4, 395285.3, 32.6, 214338.4, 395322.3, 53.6] }]);
+  const candidates = fragmentMatcher(fragments, origin);
+  const file = { ids: ['entity-7'], boxes: Float64Array.from(shifted([214300, 395300, 40, 214338, 395320, 50])), steps: new Float64Array(3).fill(0.003) };
+  assert.deepEqual(candidates(file, [0]), [[]], 'first look: no owner, nothing named, box centre two cells away');
+  assert.deepEqual(candidates(file, [0], new Set([0])), [[0]]);
+});
+
 test('the geometry picks the fragment (and owner) of each entity; a fragment off the entity is refused', () => {
   const quantize = (p, step) => Float64Array.from(p, v => Math.round(v / step) * step);
   const place = m => placeMesh(m.vertices, m.indices, fragmentMatrix({ t: m.t }), origin);
