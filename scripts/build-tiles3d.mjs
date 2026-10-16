@@ -10,14 +10,19 @@
 //                level to that many tiles around one (quick test builds); default: the whole site
 //   reuse      : TILES3D_REUSE=1 or DIAG_OPTIONS="reuse=1" keeps the published run's leaves (far, detail, terrain,
 //                objects.bin) and rebuilds only the coarser structure levels into that run (no second copy)
+//   svf        : TILES3D_SVF=1 or DIAG_OPTIONS="svf=1" takes the original level's triangles from the model's SVF
+//                (exact coordinates; the XKT grid is 2–20 cm, scripts/svf-precise.mjs) and publishes under
+//                <prefix>/tiles3d-svf/ instead (the third viewer's trial; the second viewer's tileset is untouched).
+//                Needs APS_CLIENT_ID / APS_CLIENT_SECRET (and URN, else the model's claim)
 //   output     : <prefix>/tiles3d/runs/<id>/{tileset.json, objects.bin, c/*.glb}, then <prefix>/tiles3d/current.json
 // Object ids: numeric entity ids are dbIds; converter-renamed fragments (`entity-N`) use the model's fragment
 // table (meta/alias), so every level carries the owning object's dbId per vertex. Terrain has no object ids.
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { decodeXkt } from './tile-lod-merge.mjs';
+import { decodeXkt, xktEntityBoxes } from './tile-lod-merge.mjs';
 import { packMeshes, mergeGroups, simplifyGroup, encodeGlb, boxVolume, groupSpatially, triangles, packTerrain, simplifyTerrain,
   encodeTerrainGlb, weldGroup } from './tiles3d.mjs';
 import { checkStorageBudget } from './storage-budget.mjs';
@@ -79,14 +84,17 @@ const getBytes = async Key => {
 const getJson = async Key => { const b = await getBytes(Key); return b ? JSON.parse(b.toString()) : null; };
 const MB = n => Math.round(n / 1048576 * 10) / 10;
 
+let urn = env.URN || '';
 try { await client.send(new HeadObjectCommand({ Bucket, Key: `${prefix}/xkt/manifest.json` })); }
 catch (e) {
   if (!missing(e)) throw e;
   const alias = await getJson(`${prefix}/alias.json`);
   if (!/^[A-Za-z0-9]{1,40}$/.test(alias?.prefix ?? '')) throw new Error('No cached model under this identifier', { cause: e });
   console.log(`Alias ${prefix} -> ${alias.prefix}`);
-  prefix = alias.prefix;
+  prefix = alias.prefix; urn ||= alias.urn ?? '';
 }
+const svfMode = env.TILES3D_SVF === '1' || /(?:^|,)\s*svf=1\b/.test(env.DIAG_OPTIONS || '');
+const OUT = svfMode ? 'tiles3d-svf' : 'tiles3d'; // published tileset folder under the model
 const manifest = await getJson(`${prefix}/xkt/manifest.json`);
 const tiles = manifest?.tiles, base = manifest?.base;
 if (!Array.isArray(tiles) || !tiles.length) throw new Error('Not a tiled model');
@@ -142,14 +150,15 @@ const growObjects = group => {
     }
   }
 };
-/** Decode one XKT into packed groups (null if empty). */
-async function load(i, key) {
+/** Decode one XKT into packed groups (null if empty); `precise`: matched entities take the SVF's exact triangles. */
+async function load(i, key, precise = false) {
   const xkt = await getBytes(`${prefix}/xkt/${key}`);
   if (!xkt) return null;
   const decoded = decodeXkt(xkt);
   if (!decoded?.meshes.length) return null;
   const dbIds = dbIdsFor(i, decoded.ids);
-  return packMeshes(decoded.meshes, e => dbIds[e]);
+  const meshes = precise && svf ? await svf.refine(xkt, decoded.meshes, dbIds) : decoded.meshes;
+  return packMeshes(meshes, e => dbIds[e]);
 }
 /** Write packed groups as c/<name>.glb (counted in `kind`, a stats key or entry); returns { bounds, triangles } or null. */
 async function write(groups, name, kind) {
@@ -166,8 +175,8 @@ const reuse = env.TILES3D_REUSE === '1' || /(?:^|,)\s*reuse=1\b/.test(env.DIAG_O
 let previous = null;
 const reusedLeaves = new Map();
 if (reuse) {
-  const current = await getJson(`${prefix}/tiles3d/current.json`);
-  const old = current && /^runs\/[a-zA-Z0-9-]+$/.test(current.run ?? '') && await getJson(`${prefix}/tiles3d/${current.run}/tileset.json`);
+  const current = await getJson(`${prefix}/${OUT}/current.json`);
+  const old = current && /^runs\/[a-zA-Z0-9-]+$/.test(current.run ?? '') && await getJson(`${prefix}/${OUT}/${current.run}/tileset.json`);
   if (!old) throw new Error('No published tileset to reuse');
   previous = { current, tileset: old };
   const fromBox = v => { const [cx, cy, cz, hx, , , , hy, , , , hz] = v.box; return [cx - hx, cy - hy, cz - hz, cx + hx, cy + hy, cz + hz]; };
@@ -181,12 +190,70 @@ if (reuse) {
   console.log(`Reusing ${current.run}: ${reusedLeaves.size} leaves`);
 }
 
+// svf=1: the model's SVF for the original level — fragment boxes up front, mesh packs as tiles ask for them. Each
+// tile entity is matched to its source fragment and replaced by its exact triangles (scripts/svf-precise.mjs).
+let svf = null;
+if (svfMode && !reuse) {
+  const { openSvfSource, fragmentMatcher, refineMeshes } = await import('./svf-precise.mjs');
+  const { estimateOrigin } = await import('./entity-alias.mjs');
+  urn ||= (await getJson(`${prefix}/claim.json`))?.urn ?? '';
+  if (!/^[A-Za-z0-9_-]+=*$/.test(urn)) throw new Error('Model URN unknown: pass the urn input');
+  let token = null;
+  const getToken = async () => {
+    if (token && token.until > Date.now()) return token.value;
+    const basic = Buffer.from(`${env.APS_CLIENT_ID}:${env.APS_CLIENT_SECRET}`).toString('base64');
+    const r = await fetch('https://developer.api.autodesk.com/authentication/v2/token', { method: 'POST',
+      headers: { authorization: `Basic ${basic}`, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'client_credentials', scope: 'data:read viewables:read' }) });
+    const d = await r.json();
+    if (!r.ok || !d.access_token) throw new Error('APS token failed');
+    token = { value: d.access_token, until: Date.now() + (Math.min(d.expires_in ?? 3600, 3600) - 300) * 1000 };
+    return token.value;
+  };
+  const started = Date.now();
+  const source = await openSvfSource({ urn, getToken, region: env.APS_REGION || 'US', dir: path.join(env.RUNNER_TEMP || os.tmpdir(), `svf-${prefix}`),
+    log: console.log });
+  // Converter origin (tiles = SVF world − origin): objects with one fragment vote, from a few original tiles.
+  const sample = [];
+  for (const [i, t] of tiles.entries()) {
+    if (sample.length >= 12) break;
+    if ((region && !region.has(i)) || !/^[\w.-]+\.xkt$/.test(t.n ?? '')) continue;
+    const xkt = await getBytes(`${prefix}/xkt/${t.n}`);
+    if (xkt) sample.push(xktEntityBoxes(xkt));
+  }
+  const est = estimateOrigin(sample, source.fragments);
+  // Rotated single fragments vote off (their source box is looser than the tile's): 193 of 213 agreed in 12 tiles.
+  if (!est || est.samples < 10 || est.votes < est.samples * 0.75) throw new Error(`No consistent converter origin: ${JSON.stringify(est)}`);
+  console.log(`SVF origin ${est.origin.join(',')} (${est.votes}/${est.samples} single-fragment objects agree); source ready in ${Math.round((Date.now() - started) / 1000)} s`);
+  const match = fragmentMatcher(source.fragments, est.origin);
+  const bins = [1, 5, 10, 20, 50];
+  const total = stats.svf = { origin: est.origin, tiles: 0, entities: 0, matched: 0, replaced: 0, rejected: 0, noMesh: 0, trianglesBefore: 0,
+    trianglesAfter: 0, shiftMm: Object.fromEntries([...bins.map(b => [`<=${b}`, 0]), ['more', 0]]), maxShiftMm: 0, downloadedMB: 0 };
+  svf = {
+    async refine(xkt, meshes, dbIds) {
+      const file = xktEntityBoxes(xkt);
+      const fragmentOf = match(file, dbIds);
+      const pieces = await source.pieces([...fragmentOf].filter(f => f >= 0), est.origin);
+      const { meshes: out, stats: s } = refineMeshes(meshes, fragmentOf, file.steps, f => pieces.get(f));
+      total.tiles++;
+      for (const k of ['entities', 'matched', 'replaced', 'rejected', 'noMesh', 'trianglesBefore', 'trianglesAfter']) total[k] += s[k];
+      for (const mm of s.shiftMm) {
+        const b = bins.find(x => mm <= x);
+        total.shiftMm[b ? `<=${b}` : 'more']++;
+        total.maxShiftMm = Math.max(total.maxShiftMm, mm);
+      }
+      total.downloadedMB = source.downloadedMB;
+      return out;
+    },
+  };
+}
+
 // Leaves: per tile, the original under its simplified copies (finest first, each kept when it saves enough); the
 // coarsest is the leaf and carries its groups for the parents. No original (or outside a test region): the far file.
 const leaves = [];
 let next = 0, done = 0;
 const progress = () => {
-  if (++done % 100 === 0) console.log(`Leaves ${done}/${tiles.length} · far ${MB(stats.far.bytes)} MB · ${MID_ERRORS.map(e => `${e} m ${MB(stats.mid[e].bytes)} MB`).join(' · ')} · detail ${MB(stats.detail.bytes)} MB`);
+  if (++done % 100 === 0) console.log(`Leaves ${done}/${tiles.length} · far ${MB(stats.far.bytes)} MB · ${MID_ERRORS.map(e => `${e} m ${MB(stats.mid[e].bytes)} MB`).join(' · ')} · detail ${MB(stats.detail.bytes)} MB${stats.svf ? ` · SVF ${stats.svf.replaced}/${stats.svf.entities} entities, ${stats.svf.downloadedMB} MB` : ''}`);
 };
 const union = (a, b) => [0, 1, 2].map(k => Math.min(a[k], b[k])).concat([3, 4, 5].map(k => Math.max(a[k], b[k])));
 await Promise.all(Array.from({ length: 4 }, async () => {
@@ -200,7 +267,7 @@ await Promise.all(Array.from({ length: 4 }, async () => {
       progress();
       continue;
     }
-    const original = (!region || region.has(i)) && /^[\w.-]+\.xkt$/.test(t.n ?? '') ? await load(i, t.n) : null;
+    const original = (!region || region.has(i)) && /^[\w.-]+\.xkt$/.test(t.n ?? '') ? await load(i, t.n, true) : null;
     if (original) {
       // One vertex per position: the simplifier needs connected surfaces.
       const groups = { opaque: weldGroup(original.opaque), transparent: weldGroup(original.transparent) };
@@ -240,6 +307,7 @@ await Promise.all(Array.from({ length: 4 }, async () => {
   }
 }));
 console.log('Leaves', JSON.stringify({ far: stats.far, mid: stats.mid, detail: stats.detail }));
+if (stats.svf) console.log('SVF', JSON.stringify(stats.svf));
 
 // Coarser levels: merge each group of ≤8 children and simplify with a larger absolute error.
 let parentId = 0;
@@ -329,7 +397,8 @@ const rootBounds = [0, 1, 2].map(a => Math.min(...top.map(b => b[a]))).concat([3
 const tileset = { asset: { version: '1.1', generator: 'MIR build-tiles3d' }, geometricError: 1e6,
   root: { boundingVolume: boxVolume(rootBounds), geometricError: 1e6, refine: 'REPLACE',
     children: [toJson(structures, 'structure'), ...(terrainJson ? [terrainJson] : [])] },
-  extras: { mir: { objects: objectCount, detail: region ? { region: region.size } : 'all', terrain: !!terrainJson } } };
+  extras: { mir: { objects: objectCount, detail: region ? { region: region.size } : 'all', terrain: !!terrainJson,
+    ...(stats.svf ? { precise: 'svf' } : {}) } } };
 files.set('tileset.json', gzipSync(JSON.stringify(tileset)));
 if (!reuse) {
   for (let k = 0; k < objectCount * 6; k++) if (!Number.isFinite(objectBoxes[k])) objectBoxes[k] = NaN;
@@ -346,7 +415,7 @@ if (!localDir) {
 const run = previous ? previous.current.run : `runs/${randomUUID()}`;
 const entries = [...files.entries()];
 for (let k = 0; k < entries.length; k += 32) await Promise.all(entries.slice(k, k + 32).map(([path, body]) => client.send(new PutObjectCommand({
-  Bucket, Key: `${prefix}/tiles3d/${run}/${path}`, Body: body,
+  Bucket, Key: `${prefix}/${OUT}/${run}/${path}`, Body: body,
   ContentType: path.endsWith('.glb') ? 'model/gltf-binary' : path.endsWith('.json') ? 'application/json' : 'application/octet-stream',
   ...(path.endsWith('.glb') ? {} : { ContentEncoding: 'gzip' }) }))));
 // Reuse: the run keeps its leaves; old coarser levels this build no longer has are dropped from the list (and below).
@@ -354,9 +423,9 @@ const kept = previous ? previous.current.files.filter(f => !/^c\/h\d+\.glb$/.tes
 const published = [...kept, ...files.keys()];
 const publishedStats = previous ? { ...previous.current.stats, parents: stats.parents } : stats;
 const bytes = previous ? previous.current.bytes + total : total; // after a reuse: an upper bound (old parents counted)
-await client.send(new PutObjectCommand({ Bucket, Key: `${prefix}/tiles3d/current.json`, ContentType: 'application/json',
+await client.send(new PutObjectCommand({ Bucket, Key: `${prefix}/${OUT}/current.json`, ContentType: 'application/json',
   Body: JSON.stringify({ v: 1, run, files: published, bytes, builtAt: new Date().toISOString(), stats: publishedStats }) }));
-console.log(`Published ${prefix}/tiles3d/${run}${previous ? ' (coarser levels rebuilt in place)' : ''}`);
+console.log(`Published ${prefix}/${OUT}/${run}${previous ? ' (coarser levels rebuilt in place)' : ''}`);
 /**
  * Delete keys 1,000 per request (one at a time took 27 minutes for a run's 2,751 files); if the store refuses batch
  * deletes, 16 single deletes at a time.
@@ -382,13 +451,13 @@ async function removeKeys(keys) {
 }
 if (previous) {
   const keep = new Set(published);
-  await removeKeys(previous.current.files.filter(f => !keep.has(f)).map(f => `${prefix}/tiles3d/${run}/${f}`));
+  await removeKeys(previous.current.files.filter(f => !keep.has(f)).map(f => `${prefix}/${OUT}/${run}/${f}`));
 }
 const old = [];
 let tok;
 do {
-  const page = await client.send(new ListObjectsV2Command({ Bucket, Prefix: `${prefix}/tiles3d/runs/`, MaxKeys: 1000, ...(tok ? { ContinuationToken: tok } : {}) }));
-  for (const o of page.Contents ?? []) if (!o.Key.startsWith(`${prefix}/tiles3d/${run}/`)) old.push(o.Key);
+  const page = await client.send(new ListObjectsV2Command({ Bucket, Prefix: `${prefix}/${OUT}/runs/`, MaxKeys: 1000, ...(tok ? { ContinuationToken: tok } : {}) }));
+  for (const o of page.Contents ?? []) if (!o.Key.startsWith(`${prefix}/${OUT}/${run}/`)) old.push(o.Key);
   tok = page.IsTruncated ? page.NextContinuationToken : undefined;
 } while (tok);
 console.log(`Done, removed ${await removeKeys(old)} old files`);

@@ -10,7 +10,7 @@ const CELL = 1; // metres; candidate lookup by the box's minimum corner
 const CENTRE_CELL = 4; // metres; second pass looks up by centre
 
 /** Per-axis match tolerance: file quantization, float32 source boxes at survey coordinates, slack. */
-const tolerance = (step, value) => 0.03 + 2 * step + 2.5e-7 * Math.abs(value);
+export const tolerance = (step, value) => 0.03 + 2 * step + 2.5e-7 * Math.abs(value);
 
 /** Index of source fragments: dbId per fragment, world boxes, fragments per dbId. */
 export function indexFragments(list) {

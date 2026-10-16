@@ -247,7 +247,7 @@ jobs:
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: node --max-old-space-size=6144 "$RUNNER_TEMP/entity-alias/build-entity-alias.mjs"
   # 3D Tiles 1.1 tileset for the second viewer engine (decision D23, scripts/build-tiles3d.mjs). Reads the
-  # existing tiles; writes only under <prefix>/tiles3d/.
+  # existing tiles; writes only under <prefix>/tiles3d/ (diag_options svf=1: <prefix>/tiles3d-svf/, the third viewer's trial).
   tiles3d:
     if: github.event.inputs.diag_only == 'tiles3d'
     runs-on: ubuntu-latest
@@ -262,12 +262,17 @@ jobs:
       - name: Prepare tiles3d runtime
         run: |
           mkdir -p "$RUNNER_TEMP/tiles3d"
-          cp scripts/build-tiles3d.mjs scripts/tiles3d.mjs scripts/tile-lod-merge.mjs scripts/storage-budget.mjs scripts/cache-key.mjs "$RUNNER_TEMP/tiles3d/"
-          npm install --prefix "$RUNNER_TEMP/tiles3d" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 meshoptimizer@1.3.0
+          cp scripts/build-tiles3d.mjs scripts/tiles3d.mjs scripts/tile-lod-merge.mjs scripts/storage-budget.mjs scripts/cache-key.mjs scripts/svf-precise.mjs scripts/entity-alias.mjs "$RUNNER_TEMP/tiles3d/"
+          npm install --prefix "$RUNNER_TEMP/tiles3d" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 meshoptimizer@1.3.0 svf-utils@8 adm-zip@0.5
       - name: Build the tileset
         env:
           MODEL_CACHE_PREFIX: ${{ github.event.inputs.item }}
           DIAG_OPTIONS: ${{ github.event.inputs.diag_options }}
+          # svf=1 (third viewer's trial): the original level from the model's SVF (read-only, no new APS job).
+          URN: ${{ github.event.inputs.urn }}
+          APS_REGION: ${{ github.event.inputs.region }}
+          APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
+          APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
