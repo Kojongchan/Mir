@@ -213,15 +213,16 @@ if (svfMode && !reuse) {
   const started = Date.now();
   const source = await openSvfSource({ urn, getToken, region: env.APS_REGION || 'US', dir: path.join(env.RUNNER_TEMP || os.tmpdir(), `svf-${prefix}`),
     log: console.log });
-  // Converter origin (tiles = SVF world − origin): objects with one fragment vote, from a few original tiles.
-  const sample = [];
-  for (const [i, t] of tiles.entries()) {
-    if (sample.length >= 12) break;
-    if ((region && !region.has(i)) || !/^[\w.-]+\.xkt$/.test(t.n ?? '')) continue;
-    const xkt = await getBytes(`${prefix}/xkt/${t.n}`);
+  // Converter origin (tiles = SVF world − origin): objects with one fragment vote, from original tiles spread over
+  // the scope until 50 have voted (the first 12 tiles of the site had 5; 12 tiles around 949 had 376).
+  const scope = tiles.map((t, i) => i).filter(i => (!region || region.has(i)) && /^[\w.-]+\.xkt$/.test(tiles[i].n ?? ''));
+  const sample = [], picks = Math.min(scope.length, 48);
+  let est = null;
+  for (let k = 0; k < picks && !(est?.samples >= 50); k++) {
+    const xkt = await getBytes(`${prefix}/xkt/${tiles[scope[Math.floor((k + 0.5) * scope.length / picks)]].n}`);
     if (xkt) sample.push(xktEntityBoxes(xkt));
+    est = estimateOrigin(sample, source.fragments);
   }
-  const est = estimateOrigin(sample, source.fragments);
   // Rotated single fragments vote off (their source box is looser than the tile's): 193 of 213 agreed in 12 tiles.
   if (!est || est.samples < 10 || est.votes < est.samples * 0.75) throw new Error(`No consistent converter origin: ${JSON.stringify(est)}`);
   console.log(`SVF origin ${est.origin.join(',')} (${est.votes}/${est.samples} single-fragment objects agree); source ready in ${Math.round((Date.now() - started) / 1000)} s`);
