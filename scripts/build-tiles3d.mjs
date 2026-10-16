@@ -53,7 +53,23 @@ const { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand, Delet
   : await import('@aws-sdk/client-s3');
 const s3 = localDir ? null : new S3Client({ region: 'auto', endpoint: `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
   credentials: { accessKeyId: env.R2_ACCESS_KEY_ID, secretAccessKey: env.R2_SECRET_ACCESS_KEY } }), Bucket = env.R2_BUCKET;
-const client = localDir ? { send: async command => localSend(command) } : s3;
+const store = localDir ? { send: async command => localSend(command) } : s3;
+// R2 network blips are retried with longer pauses than the SDK's own (run 212 stopped at tile 600 of 1,073 after three
+// connect timeouts within 0.2 s); answers from the store (missing key, refused request) are not.
+const NETWORK = /^(?:ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENETUNREACH|EHOSTUNREACH|EAI_AGAIN|EPIPE|ENOTFOUND|UND_ERR_\w+)$/;
+const transient = e => !missing(e) && (NETWORK.test(e?.code ?? '') || e?.name === 'TimeoutError' || /socket hang up/i.test(e?.message ?? '')
+  || (e?.$metadata?.httpStatusCode >= 500 && e.$metadata.httpStatusCode !== 501));
+async function retrying(task) {
+  for (let attempt = 1; ; attempt++) {
+    try { return await task(); } catch (e) {
+      if (localDir || attempt >= 5 || !transient(e)) throw e;
+      const wait = 5 * 2 ** (attempt - 1);
+      console.log(`R2 ${e?.code ?? e?.name}; retry ${attempt}/4 in ${wait} s`);
+      await new Promise(res => setTimeout(res, wait * 1000));
+    }
+  }
+}
+const client = { send: command => retrying(() => store.send(command)) };
 /** The few S3 commands this job uses, on a local folder. */
 async function localSend(command) {
   const { Key, Body, Prefix } = command.input;
@@ -74,13 +90,14 @@ async function localSend(command) {
   throw new Error('Unsupported local command');
 }
 const missing = e => e?.name === 'NoSuchKey' || e?.name === 'NotFound' || e?.$metadata?.httpStatusCode === 404;
-const getBytes = async Key => {
+// The body is read inside the retry too (a connection can drop mid-download).
+const getBytes = Key => retrying(async () => {
   try {
-    const r = await client.send(new GetObjectCommand({ Bucket, Key }));
+    const r = await store.send(new GetObjectCommand({ Bucket, Key }));
     const b = Buffer.from(await r.Body.transformToByteArray());
     return b[0] === 0x1f && b[1] === 0x8b ? gunzipSync(b, { maxOutputLength: 1024 * 1048576 }) : b;
   } catch (e) { if (missing(e)) return null; throw e; }
-};
+});
 const getJson = async Key => { const b = await getBytes(Key); return b ? JSON.parse(b.toString()) : null; };
 const MB = n => Math.round(n / 1048576 * 10) / 10;
 
@@ -223,8 +240,9 @@ if (svfMode && !reuse) {
     if (xkt) sample.push(xktEntityBoxes(xkt));
     est = estimateOrigin(sample, source.fragments);
   }
-  // Rotated single fragments vote off (their source box is looser than the tile's): 193 of 213 agreed in 12 tiles.
-  if (!est || est.samples < 10 || est.votes < est.samples * 0.75) throw new Error(`No consistent converter origin: ${JSON.stringify(est)}`);
+  // Rotated single fragments vote off (their source box is looser than the tile's): 193 of 213 agreed in 12 tiles, 39 of
+  // 50 over the site. A wrong origin is off by whole metres for every object, and the vertex check refuses it anyway.
+  if (!est || est.samples < 10 || est.votes < est.samples * 0.6) throw new Error(`No consistent converter origin: ${JSON.stringify(est)}`);
   console.log(`SVF origin ${est.origin.join(',')} (${est.votes}/${est.samples} single-fragment objects agree); source ready in ${Math.round((Date.now() - started) / 1000)} s`);
   const match = fragmentMatcher(source.fragments, est.origin);
   const bins = [1, 5, 10, 20, 50];

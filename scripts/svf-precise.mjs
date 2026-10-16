@@ -198,8 +198,8 @@ export async function openSvfSource({ urn, getToken, region = 'US', dir, log = (
           bytes += b.length;
           return file;
         } catch (e) {
-          if (attempt >= 4) throw e;
-          await new Promise(res => setTimeout(res, 1500 * attempt));
+          if (attempt >= 5) throw e;
+          await new Promise(res => setTimeout(res, 5000 * 2 ** (attempt - 1))); // network blips: up to 75 s in all
         }
       }
     })());
