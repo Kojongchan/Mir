@@ -10,6 +10,9 @@ const onKey = (e: KeyboardEvent) => {
   stack[stack.length - 1].current();
 };
 
+/** A dialog is open and takes the Escape key (page-level Escape actions stand aside). */
+export const dialogOpen = () => stack.length > 0;
+
 /** Close a dialog with the Escape key while `active` (latest handler is used without re-subscribing). */
 export function useEscapeKey(onEscape: () => void, active = true) {
   const handler = useRef(onEscape);

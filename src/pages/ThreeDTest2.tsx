@@ -5,6 +5,7 @@ import { useProjectRole } from '../auth/useProjectRole';
 import { supabase } from '../lib/supabase';
 import { isAccModel } from '../lib/aps';
 import { errMessage, readApiJson } from '../lib/errors';
+import { dialogOpen } from '../lib/useEscapeKey';
 import { UiIcon } from '../components/icons/UiIcon';
 import { ModelTreePanel } from '../components/model/ModelTreePanel';
 import { PropertyPanel } from '../components/model/PropertyPanel';
@@ -162,6 +163,20 @@ export function ThreeDTest2() {
     return () => { canvas.removeEventListener('pointerdown', onDown); canvas.removeEventListener('pointerup', onUp); canvas.removeEventListener('dblclick', onDouble); };
   }, []);
 
+  // Escape clears the selection (up close there may be no empty spot left to click), unless a dialog or a text field
+  // takes it (the search box clears itself on Escape).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented || dialogOpen()) return;
+      const el = document.activeElement;
+      const typing = el instanceof HTMLElement && (el.isContentEditable || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement
+        || (el instanceof HTMLInputElement && !['checkbox', 'radio', 'button'].includes(el.type)));
+      if (!typing) setSelectedDb(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const openModel = useCallback(async (f: PickedAccFile) => {
     const viewer = viewerRef.current;
     if (!viewer) return;
@@ -294,7 +309,8 @@ export function ThreeDTest2() {
             <UiIcon name="folder" size={14} /> <span className="threed-test__wide">ACC에서 </span>열기
           </button>
           <button className="btn btn--sm" onClick={() => viewerRef.current?.frameAll()} disabled={!modelName}>전체 맞춤</button>
-          <button className="btn btn--sm" onClick={() => selectedDb !== null && void zoomTo([selectedDb])} disabled={selectedDb === null}>선택 확대</button>
+          <button className="btn btn--sm" onClick={() => selectedDb !== null && void zoomTo([selectedDb])} disabled={selectedDb === null}
+            title="선택한 객체로 확대 (선택 해제: 빈 곳 클릭 또는 Esc)">선택 확대</button>
           <button className={`btn btn--sm${terrainOn ? ' btn--primary' : ''}`} disabled={!modelName} title="지형(항공사진) 표시"
             onClick={() => { const next = !terrainOn; setTerrainOn(next); viewerRef.current?.setTerrainVisible(next); }}>지형</button>
           <button className="btn btn--sm" disabled={!modelName || capturing} onClick={() => void capture()}
