@@ -398,7 +398,7 @@ async function buildOriginal(i, fix = null) {
   let top = { bounds: detail.bounds, content: `c/d${i}.glb`, error: 0, children: [] }, topGroups = groups, topTriangles = detail.triangles;
   // Vertices nearer another object than a copy's error stay in place in that copy (scripts/clearance.mjs): layers a
   // few centimetres apart cut through each other once both are simplified (tunnel portal shotcrete over its lining).
-  const [nearOpaque, nearTransparent] = await nearOther([groups.opaque, groups.transparent], Math.max(...MID_ERRORS));
+  const [nearOpaque, nearTransparent] = await nearOther([groups.opaque, groups.transparent], MID_ERRORS);
   for (const [k, error] of [...MID_ERRORS.entries()].reverse()) {
     const s = sink.mid[error];
     // Borders locked and every triangle kept: objects are patches whose seams do not share vertices (tile 931: 85 %

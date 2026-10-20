@@ -4,7 +4,7 @@
 // the grey shotcrete (user report "거리감에 따라 잔상", 5.1 % of the rays onto the shotcrete hit the lining first; 11.4 %
 // in the 1 m copy). Vertices nearer another object than a copy's error are kept in place in that copy (0.3 %).
 //   curvedVertices  vertices whose triangles are not all in one plane (flat ones can move in their plane)
-//   nearOther       per vertex, distance to the nearest triangle of another object (capped), in worker threads
+//   nearOther       per vertex, which copy errors have a triangle of another object within them (worker threads)
 import os from 'node:os';
 import { Worker } from 'node:worker_threads';
 
@@ -50,12 +50,14 @@ function workers() {
 }
 
 /**
- * Groups of one tile ({ pos, ids, idx }, null allowed; the opaque and the transparent one) → per group a Float32Array:
- * each vertex's distance to the nearest triangle of another object in any of the groups, up to `reach` (metres; flat
- * vertices, and those `ask` leaves out, get `reach`). Measured in a worker thread (one per core): a dense tile takes
- * seconds (tile 931: 159 k curved vertices, 3.3 s), so several tiles are measured at once.
+ * Groups of one tile ({ pos, ids, idx }, null allowed; the opaque and the transparent one) and the copies' errors
+ * (metres) → per group a Float32Array per vertex, such that `value < error` exactly when a triangle of another object
+ * (in any of the groups) lies within `error` of the vertex: the next smaller error with one within it (0 below the
+ * smallest), or the largest error when none is (also for flat vertices). Measured in worker threads (one per core), so
+ * several tiles are measured at once.
  */
-export async function nearOther(groups, reach) {
+export async function nearOther(groups, errors) {
+  const limits = [...errors].sort((a, b) => a - b);
   const list = groups.map(g => (g && g.idx.length ? g : null));
   const counts = list.map(g => (g ? g.ids.length : 0)), total = counts.reduce((a, b) => a + b, 0);
   if (!total) return groups.map(() => null);
@@ -75,7 +77,7 @@ export async function nearOther(groups, reach) {
   const out = await new Promise((resolve, reject) => {
     pending.set(job, { resolve, reject, worker });
     hold(worker, 1);
-    worker.postMessage({ job, pos, ids, idx, ask, reach, stopAt: 0 }, [pos.buffer, ids.buffer, idx.buffer, ask.buffer]);
+    worker.postMessage({ job, pos, ids, idx, ask, limits }, [pos.buffer, ids.buffer, idx.buffer, ask.buffer]);
   });
   let at = 0;
   return list.map((g, k) => { const n = counts[k], part = g ? out.slice(at, at + n) : null; at += n; return part; });

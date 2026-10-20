@@ -64,14 +64,16 @@ test('curved vertices: a flat grid has none, a sphere is all curved', () => {
   assert.ok(curvedVertices(s, s.ids.length).every(x => x === 1));
 });
 
-test('distance to another object: two layers 3 cm apart, and a far object', async () => {
-  const outer = sphere(5, 1, 12, 24), inner = sphere(4.97, 2, 12, 24), far = sphere(1, 3, 6, 12);
+test('another object within each copy error: layers 3 cm and 20 cm apart, and a far object', async () => {
+  const outer = sphere(5, 1, 12, 24), inner = sphere(4.97, 2, 12, 24), core = sphere(4.77, 3, 12, 24), far = sphere(1, 4, 6, 12);
   far.pos = far.pos.map((x, i) => (i % 3 === 0 ? x + 50 : x));
-  const [near, none] = await nearOther([join(outer, inner), far], 1);
-  // Each vertex of a layer is within the gap (plus the other layer's chord sag) of the other layer.
-  assert.ok(near.every(d => d < 0.1), `max ${Math.max(...near)}`);
-  assert.ok(near.some(d => d < 0.031));
-  assert.ok(none.every(d => d === 1), 'nothing within reach');
+  const [layers, none] = await nearOther([join(join(outer, inner), core), far], [1, 0.3, 0.1]);
+  const n = outer.ids.length, lockedAt = (d, e) => d < e;
+  // The outer layer has the inner one within 0.1 m: kept in every copy. The core (0.2 m under the inner) only in the
+  // 0.3 m and 1 m copies.
+  assert.ok(layers.slice(0, n).every(d => lockedAt(d, 0.1)));
+  assert.ok(layers.slice(2 * n).every(d => !lockedAt(d, 0.1) && lockedAt(d, 0.3) && lockedAt(d, 1)));
+  assert.ok(none.every(d => !lockedAt(d, 1)), 'nothing within reach');
 });
 
 test('a simplified copy keeps the outer layer outside when vertices near another object are locked', async () => {
@@ -80,7 +82,7 @@ test('a simplified copy keeps the outer layer outside when vertices near another
   const plain = await simplifyGroup(g, 0.1, { minHeight: 0, lockBorder: true });
   assert.ok(plain.idx.length < g.idx.length / 2, 'the plain copy is coarser');
   assert.ok(firstHitShare(plain, 2) > 0.02, 'the inner layer shows through the plain copy');
-  const [near] = await nearOther([g], 0.1);
+  const [near] = await nearOther([g], [0.1]);
   const locked = await simplifyGroup(g, 0.1, { minHeight: 0, lockBorder: true, lock: Uint8Array.from(near, d => (d < 0.1 ? 1 : 0)) });
   assert.equal(firstHitShare(locked, 2), 0, 'with the layers locked the inner one stays hidden');
 });
