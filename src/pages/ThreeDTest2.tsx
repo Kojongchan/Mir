@@ -13,6 +13,7 @@ import { useModelIndex, type MetaInfo } from '../viewer/useModelIndex';
 import { TilesViewer, type ViewerStats } from '../viewer2/TilesViewer';
 import { PROFILES, QUALITIES, type DeviceTier, type Quality } from '../viewer2/deviceProfile';
 import { COLOR_MODES, paintFor, type ColorMode } from '../viewer2/colorModes';
+import { readSignedTiles, saveSignedTiles, type SignedTiles } from '../viewer2/signedTiles';
 
 const authHeaders = async () => {
   const { data } = await supabase.auth.getSession();
@@ -207,49 +208,94 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  /**
+   * The model's signed tile list from the server (the tree comes along; an older API answer without it is completed
+   * from the model state), kept in this browser for opening again; null with the reason shown when there is none.
+   */
+  const fetchTiles = useCallback(async (f: PickedAccFile, scope: string): Promise<SignedTiles | null> => {
+    const headers = await authHeaders();
+    const urn = encodeURIComponent(f.accUrn ?? '');
+    const r = await fetch(`/api/aps-convert?urn=${urn}&${tilesQuery}`, { headers });
+    const tiles = await readApiJson<{ run?: string; urls?: Record<string, string>; builtAt?: string; expiresIn?: number; meta?: MetaInfo; error?: string; missing?: boolean }>(r);
+    const ok = r.ok && !!tiles.urls?.['tileset.json'];
+    let meta = tiles.meta, converted = false;
+    if ((!ok && tiles.missing) || (ok && !meta)) {
+      const state = await readApiJson<{ meta?: MetaInfo; tiles?: unknown[] }>(await fetch(`/api/aps-convert?urn=${urn}`, { headers }));
+      meta ??= state.meta;
+      converted = Array.isArray(state.tiles) && state.tiles.length > 0;
+    }
+    if (!ok || !tiles.urls) {
+      if (tiles.missing) {
+        setMissing({ file: f, converted });
+        setStatus(converted ? `${f.name} · ${tilesName}이 아직 없습니다.` : `${f.name} · 아직 변환되지 않은 모델입니다.`);
+      } else setStatus(tiles.error ?? `${tilesName}을 불러오지 못했습니다.`);
+      return null;
+    }
+    const kept: SignedTiles = { run: tiles.run, builtAt: tiles.builtAt, urls: tiles.urls, meta, expiresAt: Date.now() + (tiles.expiresIn ?? 14400) * 1000 };
+    // Kept only with the tree signed alongside (valid as long as the tiles); the model state's tree URL lasts 1 h.
+    if (tiles.meta) void saveSignedTiles(scope, kept);
+    return kept;
+  }, [tilesQuery, tilesName]);
+
+  /** Bumped per opened model: a list that arrives for an earlier one is dropped. */
+  const openSeq = useRef(0);
   const openModel = useCallback(async (f: PickedAccFile) => {
     const viewer = viewerRef.current;
     if (!viewer) return;
     if (!f.accUrn) { setStatus('이 파일은 아직 APS 파생(URN)이 없습니다.'); return; }
+    const seq = ++openSeq.current;
+    const show = (t: SignedTiles) => {
+      setSelection([]); setRevealDb(null); setVisibility(NO_HIDDEN); setHighlightIds(null);
+      index.reset(); boxesRef.current = null;
+      urlsRef.current = { ...t.urls };
+      // Renewed 15 min before the URLs expire, so a long session keeps loading tiles.
+      renewAt.current = { urn: f.accUrn!, at: Math.max(Date.now() + 60_000, t.expiresAt - 15 * 60_000) };
+      viewer.open(t.urls, (t.meta?.objects ?? 0) + 1);
+      void index.open(f.accUrn!, t.meta);
+      setStatus(`${f.name} · 3D Tiles ${Object.keys(t.urls).length.toLocaleString()}개 파일${t.builtAt ? ` · 생성 ${t.builtAt.slice(0, 10)}` : ''}`);
+    };
     setBusy(true); setStatus(`불러오는 중… ${f.name}`); setModelName(f.name); setMissing(null);
-    setSelection([]); setRevealDb(null); setVisibility(NO_HIDDEN); setHighlightIds(null);
-    index.reset(); boxesRef.current = null; urlsRef.current = null;
     try {
-      const headers = await authHeaders();
-      const urn = encodeURIComponent(f.accUrn);
-      const [stateRes, tilesRes] = await Promise.all([fetch(`/api/aps-convert?urn=${urn}`, { headers }), fetch(`/api/aps-convert?urn=${urn}&${tilesQuery}`, { headers })]);
-      const tiles = await readApiJson<{ urls?: Record<string, string>; builtAt?: string; expiresIn?: number; error?: string; missing?: boolean }>(tilesRes);
-      const state = await readApiJson<{ meta?: MetaInfo; tiles?: unknown[] }>(stateRes);
-      if (!tilesRes.ok || !tiles.urls?.['tileset.json']) {
-        if (tiles.missing) {
-          const converted = Array.isArray(state.tiles) && state.tiles.length > 0;
-          setMissing({ file: f, converted });
-          setStatus(converted ? `${f.name} · ${tilesName}이 아직 없습니다.` : `${f.name} · 아직 변환되지 않은 모델입니다.`);
-        } else setStatus(tiles.error ?? `${tilesName}을 불러오지 못했습니다.`);
+      const { data } = await supabase.auth.getSession();
+      const scope = `${data.session?.user.id ?? ''}|${tilesQuery}|${f.accUrn}`;
+      const kept = await readSignedTiles(scope);
+      if (kept && kept.expiresAt - Date.now() > 30 * 60_000) {
+        // Opened before in this browser: at once from the kept list, a fresh one behind it (a newer build replaces
+        // the view; the same build only renews the URLs).
+        show(kept);
+        setBusy(false);
+        const fresh = await fetchTiles(f, scope).catch(() => null);
+        if (!fresh || seq !== openSeq.current) return;
+        if (fresh.run !== kept.run) { show(fresh); setStatus(s => `${s} · 새로 생성된 타일로 바꿨습니다`); return; }
+        Object.assign(urlsRef.current ?? {}, fresh.urls);
+        viewer.updateUrls(fresh.urls);
+        renewAt.current = { urn: f.accUrn, at: fresh.expiresAt - 15 * 60_000 };
         return;
       }
-      urlsRef.current = tiles.urls;
-      renewAt.current = { urn: f.accUrn, at: Date.now() + Math.max(60, (tiles.expiresIn ?? 14400) - 900) * 1000 };
-      viewer.open(tiles.urls, (state.meta?.objects ?? 0) + 1);
-      void index.open(f.accUrn, state.meta);
-      setStatus(`${f.name} · 3D Tiles ${Object.keys(tiles.urls).length.toLocaleString()}개 파일${tiles.builtAt ? ` · 생성 ${tiles.builtAt.slice(0, 10)}` : ''}`);
+      setSelection([]); setRevealDb(null); setVisibility(NO_HIDDEN); setHighlightIds(null);
+      index.reset(); boxesRef.current = null; urlsRef.current = null;
+      const fresh = await fetchTiles(f, scope);
+      if (fresh && seq === openSeq.current) show(fresh);
     } catch (e) { setStatus(`열기 실패: ${errMessage(e)}`); }
-    finally { setBusy(false); }
-  }, [index, tilesQuery, tilesName]);
+    finally { if (seq === openSeq.current) setBusy(false); }
+  }, [index, tilesQuery, fetchTiles]);
 
-  // Signed tile URLs last 4 h: renew them 15 min early so a long session keeps loading tiles.
+  // Signed tile URLs last 9 h: renew them 15 min early so a long session keeps loading tiles (kept for reopening too).
   useEffect(() => {
     const timer = setInterval(async () => {
       const due = renewAt.current;
       if (!due || Date.now() < due.at) return;
       renewAt.current = null;
       try {
+        const { data } = await supabase.auth.getSession();
         const r = await fetch(`/api/aps-convert?urn=${encodeURIComponent(due.urn)}&${tilesQuery}`, { headers: await authHeaders() });
-        const next = await readApiJson<{ urls?: Record<string, string>; expiresIn?: number }>(r);
+        const next = await readApiJson<{ run?: string; urls?: Record<string, string>; builtAt?: string; expiresIn?: number; meta?: MetaInfo }>(r);
         if (!r.ok || !next.urls) throw new Error('renew');
         Object.assign(urlsRef.current ?? {}, next.urls);
         viewerRef.current?.updateUrls(next.urls);
-        renewAt.current = { urn: due.urn, at: Date.now() + Math.max(60, (next.expiresIn ?? 14400) - 900) * 1000 };
+        const expiresAt = Date.now() + (next.expiresIn ?? 14400) * 1000;
+        renewAt.current = { urn: due.urn, at: expiresAt - 15 * 60_000 };
+        if (next.meta) void saveSignedTiles(`${data.session?.user.id ?? ''}|${tilesQuery}|${due.urn}`, { run: next.run, builtAt: next.builtAt, urls: next.urls, meta: next.meta, expiresAt });
       } catch { renewAt.current = { urn: due.urn, at: Date.now() + 60_000 }; }
     }, 30_000);
     return () => clearInterval(timer);

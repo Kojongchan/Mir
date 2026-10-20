@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase, usernameToEmail, isSupabaseConfigured } from '../lib/supabase';
+import { clearSignedTiles } from '../viewer2/signedTiles';
 
 interface Profile {
   id: string;
@@ -66,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
+    await clearSignedTiles(); // signed tile lists kept for reopening models (valid for a working day)
     await supabase.auth.signOut();
   };
 

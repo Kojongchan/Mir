@@ -60,13 +60,17 @@ function supa() {
   });
 }
 
+// One client per instance: it keeps the day's signing key, so signing the 3,682 URLs of a tileset does not derive it
+// again for each one (25 % of the signing time in a local measurement).
+let r2Client: AwsClient | null = null;
 function r2() {
-  return new AwsClient({
+  r2Client ??= new AwsClient({
     accessKeyId: R2_ACCESS_KEY_ID as string,
     secretAccessKey: R2_SECRET_ACCESS_KEY as string,
     service: 's3',
     region: 'auto',
   });
+  return r2Client;
 }
 const objUrl = (key: string) => `${R2_ENDPOINT}/${R2_BUCKET}/${key}`;
 // The same object under the bucket's own host name. Browsers open at most 6 HTTP/1.1 connections per host, and 3D
@@ -157,13 +161,13 @@ async function readMetaPointer(dir: string): Promise<MetaPointer | null> {
       Number.isSafeInteger(m.shardCount) && m.shardCount >= 0 ? m : null;
   } catch { return null; }
 }
-async function metaIndex(dir: string): Promise<MetaIndex | undefined> {
+async function metaIndex(dir: string, expires = 3600): Promise<MetaIndex | undefined> {
   const m = await readMetaPointer(dir);
   if (!m) return undefined;
   // Owners of fragments the converter renamed `entity-N` (scripts/build-entity-alias.mjs), when built.
   const alias = typeof m.alias === 'string' && /^alias\/[a-zA-Z0-9-]+\.json$/.test(m.alias)
-    ? { alias: await r2PresignGet(`${dir}/meta/${m.alias}`) } : {};
-  return { tree: await r2PresignGet(`${dir}/meta/${m.gen}/tree.json`), shardSize: m.shardSize, shardCount: m.shardCount, objects: m.objects ?? 0, ...alias };
+    ? { alias: await r2PresignGet(`${dir}/meta/${m.alias}`, expires) } : {};
+  return { tree: await r2PresignGet(`${dir}/meta/${m.gen}/tree.json`, expires), shardSize: m.shardSize, shardCount: m.shardCount, objects: m.objects ?? 0, ...alias };
 }
 type CacheState =
   | { ready: true; xkt: true; urls: string[]; navUrls?: string[]; tiles?: Tile[]; baseUrls?: string[]; instUrls?: string[]; lod1Url?: string; focus?: Focus; meta?: MetaIndex }
@@ -320,11 +324,16 @@ export default async function handler(req: Request): Promise<Response> {
       if (current.v !== 1 || !/^runs\/[a-zA-Z0-9-]+$/.test(current.run ?? '') || !Array.isArray(current.files))
         return json({ error: '3D Tiles 기록이 손상되었습니다.' }, 500);
       const paths = current.files.filter((p): p is string => typeof p === 'string' && TILES3D_FILE.test(p));
-      const expiresIn = 4 * 3600;
+      // A working day (user decision): the page keeps this answer and opens the model again from it without waiting
+      // for the signing (src/viewer2/signedTiles.ts). The model tree comes along, so the page needs no other call.
+      const expiresIn = 9 * 3600;
       // Every other tile file on the second host name (tileset.json and objects.bin stay on the first).
-      const urls = Object.fromEntries(await Promise.all(paths.map(async (p, i) =>
-        [p, await r2PresignGet(`${dir}/${folder}/${current.run}/${p}`, expiresIn, p.endsWith('.glb') && i % 2 === 1)] as const)));
-      return json({ run: current.run, builtAt: current.builtAt, expiresIn, urls });
+      const [urls, meta] = await Promise.all([
+        Promise.all(paths.map(async (p, i) =>
+          [p, await r2PresignGet(`${dir}/${folder}/${current.run}/${p}`, expiresIn, p.endsWith('.glb') && i % 2 === 1)] as const)).then(Object.fromEntries),
+        metaIndex(dir, expiresIn),
+      ]);
+      return json({ run: current.run, builtAt: current.builtAt, expiresIn, urls, meta });
     }
     const shard = url.searchParams.get('metaShard');
     if (shard !== null) {
