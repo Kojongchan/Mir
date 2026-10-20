@@ -134,6 +134,8 @@ export class TilesViewer {
   /** Bumped whenever the camera moves; `moving`: it moved in the last frame. */
   private view = 0;
   private moving = false;
+  /** The last surface point a drag rotated about (pivotAtPointer): the pivot of a drag that starts over empty space. */
+  private lastPivot: Vector3 | null = null;
 
   constructor(private readonly canvas: HTMLCanvasElement, tier?: DeviceTier) {
     // No reverse-Z: with three r171 it drew nothing in Chromium's software GL. A logarithmic depth buffer on every
@@ -446,7 +448,10 @@ export class TilesViewer {
     const dir = new Vector3((x / this.canvas.clientWidth) * 2 - 1, -(y / this.canvas.clientHeight) * 2 + 1, 0.5)
       .unproject(this.camera).sub(eye).normalize();
     const reach = eye.distanceTo(b.center) + b.radius;
-    const ground = dir.y < -1e-3 && eye.y > b.center.y ? Math.min((eye.y - b.center.y) / -dir.y, reach) * dir.dot(forward) : 0;
+    // The mid-height plane from above, or from below for an eye under it (in a tunnel, under the ground): the site
+    // centre's depth there was 1.6 km, and a drag over the sky-coloured gap rotated about it — the camera flew 650 m.
+    const level = (eye.y - b.center.y) / -dir.y;
+    const ground = Math.abs(dir.y) > 1e-3 && level > 0 ? Math.min(level, reach) * dir.dot(forward) : 0;
     const depth = ground > 0 ? ground : b.center.clone().sub(eye).dot(forward);
     return depth > this.controls.minDistance * 2 ? depth : undefined;
   }
@@ -557,6 +562,7 @@ export class TilesViewer {
 
   private closeTiles() {
     this.bounds = null;
+    this.lastPivot = null;
     this.terrainScenes.clear();
     if (this.tiles) { this.world.remove(this.tiles.group); this.tiles.dispose(); this.tiles = null; }
     this.surface?.opaque.dispose(); this.surface?.transparent.dispose(); this.pickMaterial?.dispose();
@@ -714,20 +720,40 @@ export class TilesViewer {
   }
 
   /**
-   * Pointer down: rotate about the surface under the pointer (objects and terrain); else pan and pinch at the depth from
-   * depthNear, with the target back on the view axis.
+   * Pointer down: rotate about the surface under the pointer (objects and terrain), or for a drag that starts over
+   * empty space about emptyPivot; pan and pinch at the depth from depthNear, with the target back on the view axis.
    */
   private pivotAtPointer = (event: PointerEvent) => {
     if (!this.tiles) return;
     const rect = this.canvas.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
     const hit = this.surfaceAt(x, y, true);
-    if (event.button === 0 && event.isPrimary && hit?.under) {
+    const pivot = event.button === 0 && event.isPrimary ? (hit?.under ? hit.point : this.emptyPivot(hit)) : null;
+    if (pivot) {
+      if (hit?.under) this.lastPivot = hit.point.clone();
       this.freeze();
-      this.controls.setOrbitPoint(hit.point.x, hit.point.y, hit.point.z);
+      this.controls.setOrbitPoint(pivot.x, pivot.y, pivot.z);
       this.settleControls(); // a pinch right after must not zoom by the old orbit distance
     } else this.centreTarget(this.depthNear(x, y, hit));
     this.needsUpdate = this.dirty = true;
   };
+
+  /**
+   * Pivot of a drag that starts over empty space (the sky-coloured gaps around a tunnel, beside a structure): a surface
+   * beside the pointer; else the last pivot while it is still in front and on screen (rotating about it keeps it in
+   * place); else the surface at the screen centre. Null: the view's depth as before. Rotating about the site centre's
+   * depth instead threw the camera hundreds of metres from a tunnel (user report "터널에서 회전 시 튐", measured 650 m
+   * and 109 tiles reloaded on one drag).
+   */
+  private emptyPivot(beside: { point: Vector3 } | null): Vector3 | null {
+    if (beside) return beside.point;
+    const last = this.lastPivot;
+    if (last) {
+      const ndc = last.clone().project(this.camera);
+      const depth = last.clone().sub(this.camera.position).dot(this.camera.getWorldDirection(new Vector3()));
+      if (depth > this.controls.minDistance * 2 && Math.abs(ndc.x) <= 1 && Math.abs(ndc.y) <= 1) return last;
+    }
+    return this.depthAt(this.canvas.clientWidth / 2, this.canvas.clientHeight / 2)?.point ?? null;
+  }
 
   /**
    * Wheel: zoom steps follow the surface at or near the cursor, else the ground under it (once per scroll gesture, not
