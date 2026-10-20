@@ -251,11 +251,13 @@ const LOST_SURFACE = 0.5;
  * Long needle triangles that collapsed thin parts leave behind are dropped (they flash when flat-shaded): by default
  * every triangle longer than the error and flatter than 1:25; with `minHeight` (metres) only those thinner than that,
  * so long thin faces (rails, deck edges, parapets) of the finer copies stay (0: keep every triangle). `lockBorder` keeps
- * every border vertex in place, so patches that meet along a seam without shared vertices stay closed.
+ * every border vertex in place, so patches that meet along a seam without shared vertices stay closed. `lock` (one byte
+ * per vertex, 1 = keep) keeps chosen vertices in place: those near another object (scripts/clearance.mjs), so nested
+ * layers do not cut through each other.
  * Parts that lost most of their surface (thin members flattened to slivers or pruned) come back as oriented boxes
  * along each part (proxyBoxes), so a far view keeps their shape instead of gaps, slivers or one block per object.
  */
-export async function simplifyGroup(group, errorMeters, { ratio = 0.01, minHeight, lockBorder = false } = {}) {
+export async function simplifyGroup(group, errorMeters, { ratio = 0.01, minHeight, lockBorder = false, lock = null } = {}) {
   if (!group || group.idx.length < 3) return group;
   await MeshoptSimplifier.ready;
   const b = boundsOf(group);
@@ -264,7 +266,11 @@ export async function simplifyGroup(group, errorMeters, { ratio = 0.01, minHeigh
   const target = Math.max(3, Math.floor(group.idx.length * ratio / 3) * 3);
   let result;
   const flags = ['ErrorAbsolute', 'Prune', ...(lockBorder ? ['LockBorder'] : [])];
-  try { [result] = MeshoptSimplifier.simplify(group.idx, local, 3, target, errorMeters, flags); }
+  try {
+    [result] = lock
+      ? MeshoptSimplifier.simplifyWithAttributes(group.idx, local, 3, new Float32Array(0), 0, [], lock, target, errorMeters, flags)
+      : MeshoptSimplifier.simplify(group.idx, local, 3, target, errorMeters, flags);
+  }
   catch { return group; }
   result ??= new Uint32Array(0);
   const kept = [];

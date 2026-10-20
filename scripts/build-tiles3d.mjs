@@ -26,6 +26,7 @@ import { decodeXkt, xktEntityBoxes } from './tile-lod-merge.mjs';
 import { packMeshes, mergeGroups, simplifyGroup, encodeGlb, boxVolume, groupSpatially, triangles, packTerrain, simplifyTerrain,
   encodeTerrainGlb, weldGroup } from './tiles3d.mjs';
 import { checkStorageBudget } from './storage-budget.mjs';
+import { nearOther } from './clearance.mjs';
 import { cacheKey } from './cache-key.mjs';
 
 const env = process.env;
@@ -152,7 +153,7 @@ if (regionOption) {
 
 const files = new Map(); // relative path → Buffer
 const stats = { far: { files: 0, triangles: 0, bytes: 0 }, detail: { files: 0, triangles: 0, bytes: 0, vertices: 0, weldedVertices: 0 },
-  mid: Object.fromEntries(MID_ERRORS.map(e => [e, { files: 0, triangles: 0, bytes: 0, skipped: 0 }])),
+  mid: Object.fromEntries(MID_ERRORS.map(e => [e, { files: 0, triangles: 0, bytes: 0, skipped: 0, lockedVertices: 0 }])),
   parents: [], terrain: { leaves: 0, triangles: 0, bytes: 0, textures: 0, textureBytes: 0, parents: [] } };
 const objectBoxes = new Float32Array(objectCount * 6);
 for (let k = 0; k < objectCount; k++) objectBoxes.set([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], k * 6);
@@ -386,7 +387,7 @@ async function buildOriginal(i, fix = null) {
   const original = await load(i, tiles[i].n, true, fix);
   if (!original) return null;
   const sink = fix ? { detail: { files: 0, triangles: 0, bytes: 0, vertices: 0, weldedVertices: 0 },
-    mid: Object.fromEntries(MID_ERRORS.map(e => [e, { files: 0, triangles: 0, bytes: 0, skipped: 0 }])) } : stats;
+    mid: Object.fromEntries(MID_ERRORS.map(e => [e, { files: 0, triangles: 0, bytes: 0, skipped: 0, lockedVertices: 0 }])) } : stats;
   // One vertex per position: the simplifier needs connected surfaces.
   const groups = { opaque: weldGroup(original.opaque), transparent: weldGroup(original.transparent) };
   sink.detail.vertices += (original.opaque?.ids.length ?? 0) + (original.transparent?.ids.length ?? 0);
@@ -395,14 +396,23 @@ async function buildOriginal(i, fix = null) {
   const detail = await write(groups, `d${i}`, sink.detail);
   if (!detail) return null;
   let top = { bounds: detail.bounds, content: `c/d${i}.glb`, error: 0, children: [] }, topGroups = groups, topTriangles = detail.triangles;
+  // Vertices nearer another object than a copy's error stay in place in that copy (scripts/clearance.mjs): layers a
+  // few centimetres apart cut through each other once both are simplified (tunnel portal shotcrete over its lining).
+  const [nearOpaque, nearTransparent] = await nearOther([groups.opaque, groups.transparent], Math.max(...MID_ERRORS));
   for (const [k, error] of [...MID_ERRORS.entries()].reverse()) {
     const s = sink.mid[error];
     // Borders locked and every triangle kept: objects are patches whose seams do not share vertices (tile 931: 85 %
     // of edges shared), and patches simplified on their own opened cracks along the seams that showed the layer
     // under them as white streaks (user screenshot, 0.1 m copy at 115 m: 42 hole pixels vs 21 in the original,
     // locked 20). Long thin triangles along locked borders are part of the surface, not slivers.
-    const copyOf = g => simplifyGroup(g, error, { minHeight: 0, lockBorder: true });
-    const mid = { opaque: await copyOf(groups.opaque), transparent: await copyOf(groups.transparent) };
+    const lockOf = near => {
+      if (!near) return null;
+      const lock = new Uint8Array(near.length);
+      for (let v = 0; v < near.length; v++) if (near[v] < error) { lock[v] = 1; s.lockedVertices++; }
+      return lock;
+    };
+    const copyOf = (g, near) => simplifyGroup(g, error, { minHeight: 0, lockBorder: true, lock: lockOf(near) });
+    const mid = { opaque: await copyOf(groups.opaque, nearOpaque), transparent: await copyOf(groups.transparent, nearTransparent) };
     const n = triangles(mid.opaque) + triangles(mid.transparent);
     const out = n && n <= MID_ENOUGH * topTriangles ? await write(mid, `m${k}-${i}`, s) : null;
     if (!out) { s.skipped++; continue; }
