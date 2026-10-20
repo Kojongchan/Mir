@@ -161,14 +161,18 @@ async function readMetaPointer(dir: string): Promise<MetaPointer | null> {
       Number.isSafeInteger(m.shardCount) && m.shardCount >= 0 ? m : null;
   } catch { return null; }
 }
-async function metaIndex(dir: string, expires = 3600): Promise<MetaIndex | undefined> {
-  const m = await readMetaPointer(dir);
+async function metaIndex(dir: string, expires = 3600, pointer?: MetaPointer | null): Promise<MetaIndex | undefined> {
+  const m = pointer === undefined ? await readMetaPointer(dir) : pointer;
   if (!m) return undefined;
   // Owners of fragments the converter renamed `entity-N` (scripts/build-entity-alias.mjs), when built.
   const alias = typeof m.alias === 'string' && /^alias\/[a-zA-Z0-9-]+\.json$/.test(m.alias)
     ? { alias: await r2PresignGet(`${dir}/meta/${m.alias}`, expires) } : {};
   return { tree: await r2PresignGet(`${dir}/meta/${m.gen}/tree.json`, expires), shardSize: m.shardSize, shardCount: m.shardCount, objects: m.objects ?? 0, ...alias };
 }
+/** A tileset's signed file list kept beside it in R2 (`<model>/<tiles3d folder>/signed.json`), see the tiles3d answer. */
+type SignedTileset = { v: 1; run: string; metaKey: string; expiresAt: number; urls: Record<string, string>; meta?: MetaIndex };
+const SIGNED_FOR_S = 9 * 3600;
+const SIGNED_REUSE_S = 6 * 3600;
 type CacheState =
   | { ready: true; xkt: true; urls: string[]; navUrls?: string[]; tiles?: Tile[]; baseUrls?: string[]; instUrls?: string[]; lod1Url?: string; focus?: Focus; meta?: MetaIndex }
   | { ready: true; url: string; focus?: Focus }
@@ -324,16 +328,27 @@ export default async function handler(req: Request): Promise<Response> {
       if (current.v !== 1 || !/^runs\/[a-zA-Z0-9-]+$/.test(current.run ?? '') || !Array.isArray(current.files))
         return json({ error: '3D Tiles 기록이 손상되었습니다.' }, 500);
       const paths = current.files.filter((p): p is string => typeof p === 'string' && TILES3D_FILE.test(p));
-      // A working day (user decision): the page keeps this answer and opens the model again from it without waiting
-      // for the signing (src/viewer2/signedTiles.ts). The model tree comes along, so the page needs no other call.
-      const expiresIn = 9 * 3600;
+      // URLs for a working day (user decision): the page keeps this answer and opens the model again from it
+      // (src/viewer2/signedTiles.ts); the model tree comes along, so the page needs no other call. Signing the 3,682
+      // files took about 6 s of a first visit, so the signed list is kept beside the tileset and handed out again
+      // while it is good for 6 h more (signed anew about every 3 h), for this run and this model tree.
+      const pointer = await readMetaPointer(dir);
+      const metaKey = pointer ? JSON.stringify([pointer.gen, pointer.alias ?? '', pointer.shardCount, pointer.objects ?? 0]) : '';
+      const keptKey = `${dir}/${folder}/signed.json`, now = Date.now();
+      const keptText = await r2GetText(keptKey);
+      let kept: SignedTileset | null;
+      try { kept = JSON.parse(keptText ?? 'null') as SignedTileset | null; } catch { kept = null; }
+      if (kept?.v === 1 && kept.run === current.run && kept.metaKey === metaKey && kept.expiresAt - now > SIGNED_REUSE_S * 1000 && kept.urls)
+        return json({ run: current.run, builtAt: current.builtAt, expiresIn: Math.floor((kept.expiresAt - now) / 1000), urls: kept.urls, meta: kept.meta });
       // Every other tile file on the second host name (tileset.json and objects.bin stay on the first).
       const [urls, meta] = await Promise.all([
         Promise.all(paths.map(async (p, i) =>
-          [p, await r2PresignGet(`${dir}/${folder}/${current.run}/${p}`, expiresIn, p.endsWith('.glb') && i % 2 === 1)] as const)).then(Object.fromEntries),
-        metaIndex(dir, expiresIn),
+          [p, await r2PresignGet(`${dir}/${folder}/${current.run}/${p}`, SIGNED_FOR_S, p.endsWith('.glb') && i % 2 === 1)] as const)).then(Object.fromEntries),
+        metaIndex(dir, SIGNED_FOR_S, pointer),
       ]);
-      return json({ run: current.run, builtAt: current.builtAt, expiresIn, urls, meta });
+      const fresh: SignedTileset = { v: 1, run: current.run as string, metaKey, expiresAt: now + SIGNED_FOR_S * 1000, urls, meta };
+      await r2PutJson(keptKey, fresh).catch(() => false); // next visitors reuse it; a failed write only costs them the signing
+      return json({ run: current.run, builtAt: current.builtAt, expiresIn: SIGNED_FOR_S, urls, meta });
     }
     const shard = url.searchParams.get('metaShard');
     if (shard !== null) {
