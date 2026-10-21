@@ -13,6 +13,7 @@ import { OutlinePass } from './outline';
 import { PROFILES, detailOf, probeDevice, type DeviceProfile, type DeviceTier, type Quality } from './deviceProfile';
 import { runOf, tileCachePlugin, type TileCacheStats } from './tileCache';
 import { nearestFiles, structureFiles, type NearbyFile } from './prefetch';
+import { PIVOT_REACH, ROOM_H, ROOM_REACH, ROOM_W, roomSize, unpackDepth, wheelStep } from './navigation';
 
 CameraControls.install({ THREE: { Vector2, Vector3, Vector4, Quaternion, Matrix4, Spherical, Box3, Sphere, Raycaster } });
 
@@ -50,9 +51,6 @@ export type ViewerStats = {
 type TileStats = { downloading: number; parsing: number; loaded: number; failed: number };
 /** True from the first queued tile until every download/parse has finished (not in the library's typings). */
 const loading = (tiles: TilesRenderer) => (tiles as unknown as { isLoading: boolean }).isLoading;
-/** Depth / far packed by the pick material (three.js packDepthToRGBA) at byte `at`. */
-const unpackDepth = (rgba: ArrayLike<number>, at: number) =>
-  rgba[at] / 255 + rgba[at + 1] / 65025 + rgba[at + 2] / 16581375 + rgba[at + 3] / 4228250625;
 /**
  * CSS px around the pointer searched for a surface. Within UNDER_RADIUS it counts as under the pointer (the pivot of a
  * drag; thin members seen from afar are a pixel or two wide); farther, its depth still sets zoom and pan steps — the
@@ -62,7 +60,6 @@ const SAMPLE_RADIUS = 24;
 const UNDER_RADIUS = 4;
 /** Least ms between surface samples (each is a pass over what lies under the pointer — at a far view, most tiles). */
 const SAMPLE_EVERY = 100;
-
 /**
  * Second viewer engine (docs/3D뷰_2차_엔진.md): three.js + 3DTilesRendererJS + camera-controls. The tileset is in a
  * Z-up frame (metres from the converter origin); `world` turns it Y-up like the first viewer. Rendering is on
@@ -146,6 +143,13 @@ export class TilesViewer {
   private moving = false;
   /** The last surface point a drag rotated about (pivotAtPointer): the pivot of a drag that starts over empty space. */
   private lastPivot: Vector3 | null = null;
+  /** How far the surroundings are (m; roomSize), Infinity outdoors or not yet measured; read at rest (sampleRoom). */
+  private room = Infinity;
+  private readonly roomTarget = new WebGLRenderTarget(ROOM_W, ROOM_H);
+  private roomSampling = false;
+  private roomWanted = true;
+  /** The scroll gesture under way: where the cursor is, the point it moves toward (a surface: `surface`), last notch. */
+  private wheelGesture: { x: number; y: number; at: number; point: Vector3; surface: boolean } | null = null;
 
   constructor(private readonly canvas: HTMLCanvasElement, tier?: DeviceTier) {
     // No reverse-Z: with three r171 it drew nothing in Chromium's software GL. A logarithmic depth buffer on every
@@ -176,13 +180,14 @@ export class TilesViewer {
     this.controls = new CameraControls(this.camera, canvas);
     this.controls.dollyToCursor = true;
     this.controls.infinityDolly = true;
+    this.controls.mouseButtons.wheel = CameraControls.ACTION.NONE; // the wheel moves the camera itself (onWheel)
     this.controls.minDistance = 0.5;
     this.controls.maxDistance = 200000;
     this.controls.smoothTime = 0.12;
     this.controls.draggingSmoothTime = 0.06;
     this.controls.addEventListener('update', () => { this.dirty = true; this.needsUpdate = true; });
     canvas.addEventListener('pointerdown', this.pivotAtPointer, { capture: true });
-    canvas.addEventListener('wheel', this.depthAtWheel, { capture: true, passive: true });
+    canvas.addEventListener('wheel', this.onWheel, { passive: false });
     for (const type of ['pointermove', 'pointerup', 'pointerleave'] as const) canvas.addEventListener(type, this.trackPointer, { passive: true });
     this.resize = new ResizeObserver(() => this.fit());
     this.resize.observe(canvas.parentElement ?? canvas);
@@ -566,12 +571,13 @@ export class TilesViewer {
     cancelAnimationFrame(this.raf);
     this.resize.disconnect();
     this.canvas.removeEventListener('pointerdown', this.pivotAtPointer, { capture: true });
-    this.canvas.removeEventListener('wheel', this.depthAtWheel, { capture: true });
+    this.canvas.removeEventListener('wheel', this.onWheel);
     for (const type of ['pointermove', 'pointerup', 'pointerleave'] as const) this.canvas.removeEventListener(type, this.trackPointer);
     this.closeTiles();
     this.controls.dispose();
     this.pickTarget.dispose();
     this.sampleTarget.dispose();
+    this.roomTarget.dispose();
     this.outline?.dispose();
     this.renderer.dispose();
   }
@@ -614,7 +620,7 @@ export class TilesViewer {
       mesh.material = mesh.material.transparent ? this.surface!.transparent : this.surface!.opaque;
     });
     if (terrain) { this.terrainScenes.add(scene); scene.visible = this.terrainShown; }
-    this.dirty = this.sampleWanted = true;
+    this.dirty = this.sampleWanted = this.roomWanted = true;
   }
 
   /** A tile left the cache: dispose the terrain materials made in adopt (the library disposes its own). */
@@ -743,7 +749,13 @@ export class TilesViewer {
     if (!this.tiles) return;
     const rect = this.canvas.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
     const hit = this.surfaceAt(x, y, true);
-    const pivot = event.button === 0 && event.isPrimary ? (hit?.under ? hit.point : this.emptyPivot(hit)) : null;
+    let pivot = event.button === 0 && event.isPrimary ? (hit?.under ? hit.point : this.emptyPivot(hit)) : null;
+    if (pivot && Number.isFinite(this.room)) {
+      // In a room, about a point near the eye along that direction (rotating about the far end of a tunnel swung the eye
+      // through the walls).
+      const eye = this.camera.position, d = pivot.distanceTo(eye), reach = PIVOT_REACH * this.room;
+      if (d > reach) pivot = eye.clone().lerp(pivot, reach / d);
+    }
     if (pivot) {
       if (hit?.under) this.lastPivot = hit.point.clone();
       this.freeze();
@@ -772,17 +784,71 @@ export class TilesViewer {
   }
 
   /**
-   * Wheel: zoom steps follow the surface at or near the cursor, else the ground under it (once per scroll gesture, not
-   * every notch), from the pointer sample — no GPU wait while the mouse rests there.
+   * Wheel: a notch moves the camera along the ray under the cursor, 15.7% of the way to the surface at or near the cursor
+   * (else the ground under it, depthNear) as camera-controls' zoom toward the cursor did — that way counted between
+   * ROOM_MIN and ROOM_REACH room sizes inside a room, and stopping WHEEL_STOP m before a surface under the cursor. The
+   * point is found once per scroll gesture (the pointer sample, no GPU wait while the mouse rests there): moving along
+   * the cursor's ray keeps it under the cursor. Out is the inverse of in (a notch in and one out come back).
    */
-  private lastWheel = 0;
-  private depthAtWheel = (event: WheelEvent) => {
-    const now = performance.now();
-    if (!this.tiles || now - this.lastWheel < 300) { this.lastWheel = now; return; }
-    this.lastWheel = now;
+  private onWheel = (event: WheelEvent) => {
+    event.preventDefault();
+    if (!this.tiles || !event.deltaY) return;
     const rect = this.canvas.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
-    this.centreTarget(this.depthNear(x, y, this.surfaceAt(x, y, false)));
+    const now = performance.now();
+    let g = this.wheelGesture;
+    if (!g || now - g.at > 300 || Math.hypot(g.x - x, g.y - y) > 3) {
+      const hit = this.surfaceAt(x, y, false), depth = this.depthNear(x, y, hit);
+      if (depth === undefined) return;
+      // The orbit target on the view axis at that depth (within the room): the near plane follows it. The view stays.
+      this.centreTarget(Number.isFinite(this.room) ? Math.min(depth, ROOM_REACH * this.room) : depth);
+      const point = this.pointAt(x, y, depth, { world: this.camera.matrixWorld, projectionInverse: this.camera.projectionMatrixInverse });
+      g = this.wheelGesture = { x, y, at: now, point, surface: !!hit?.under };
+    }
+    g.at = now;
+    // camera-controls' wheel scale: 0.95 per unit, a mouse notch (deltaY 100) 3.3 units off a Mac, 10 on one.
+    const mac = /Mac/.test(navigator.platform);
+    const units = event.deltaMode === 1 && !event.ctrlKey ? Math.abs(event.deltaY) / (mac ? 1 : 3) : Math.abs(event.deltaY) / (mac ? 10 : 30);
+    const scale = Math.pow(0.95, Math.min(units, 30));
+    const eye = this.controls.getPosition(new Vector3()), target = this.controls.getTarget(new Vector3());
+    const ray = g.point.clone().sub(eye), reach = ray.length();
+    if (reach < 1e-6) return;
+    ray.divideScalar(reach);
+    const forward = event.deltaY < 0, step = wheelStep(reach, this.room, scale, forward, g.surface);
+    if (step < 1e-4) return;
+    ray.multiplyScalar(forward ? step : -step);
+    eye.add(ray); target.add(ray);
+    void this.controls.setLookAt(eye.x, eye.y, eye.z, target.x, target.y, target.z, true);
+    this.needsUpdate = this.dirty = true;
   };
+
+  /**
+   * Measure the room size (roomSize) of a resting view without waiting for the GPU: the pick material's depth pass over
+   * the whole view at ROOM_W × ROOM_H pixels.
+   */
+  private sampleRoom() {
+    if (!this.pickMaterial || !this.tiles) return;
+    const far = this.camera.far, version = this.view;
+    this.pickMaterial.uniforms.mode.value = 1;
+    this.pickMaterial.uniforms.far.value = far;
+    this.scene.overrideMaterial = this.pickMaterial;
+    const background = this.scene.background;
+    this.scene.background = null;
+    this.renderer.setRenderTarget(this.roomTarget);
+    this.renderer.setClearColor(0x000000, 0);
+    this.renderer.clear();
+    this.renderer.render(this.scene, this.camera);
+    this.renderer.setRenderTarget(null);
+    this.scene.overrideMaterial = null;
+    this.scene.background = background;
+    const buffer = new Uint8Array(ROOM_W * ROOM_H * 4);
+    this.roomSampling = true;
+    this.roomWanted = false;
+    this.sampledAt = performance.now();
+    const read = this.renderer.readRenderTargetPixelsAsync(this.roomTarget, 0, 0, ROOM_W, ROOM_H, buffer);
+    const gl = this.renderer.getContext() as WebGL2RenderingContext;
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null); // as in sampleSurface
+    read.then(() => { if (version === this.view) this.room = roomSize(buffer, far); }, () => {}).finally(() => { this.roomSampling = false; });
+  }
 
   /**
    * A mouse over the canvas with no button held keeps the surface sample under it fresh; a drag (it turns or moves the
@@ -858,7 +924,7 @@ export class TilesViewer {
     this.raf = requestAnimationFrame(this.loop);
     const moved = this.controls.update(this.clock.getDelta());
     if (moved) { this.dirty = true; this.needsUpdate = true; this.view++; this.moving = true; }
-    else if (this.moving) { this.moving = false; this.sampleWanted = true; } // at rest: sample what is under the mouse now
+    else if (this.moving) { this.moving = false; this.sampleWanted = this.roomWanted = true; } // at rest: sample what is under the mouse now
     const tiles = this.tiles;
     const failed = (tiles as unknown as { stats?: TileStats } | null)?.stats?.failed ?? 0;
     if (tiles && failed > 0) {
@@ -889,6 +955,7 @@ export class TilesViewer {
     // Sample the surface under a resting camera when the mouse moved, the camera stopped or tiles arrived: one at a time,
     // at most every SAMPLE_EVERY ms, none while the camera moves.
     if (this.pointer && this.sampleWanted && !this.sampling && !moved && now - this.sampledAt >= SAMPLE_EVERY) this.sampleSurface();
+    else if (this.roomWanted && !this.roomSampling && !moved && now - this.sampledAt >= SAMPLE_EVERY) this.sampleRoom();
     if (!this.dirty) return;
     this.dirty = false;
     this.frame = this.draw();
