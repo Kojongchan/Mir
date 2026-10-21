@@ -49,16 +49,18 @@ export function packMeshes(meshes, dbIdOf) {
   return { opaque: pack(parts.opaque), transparent: pack(parts.transparent) };
 }
 
-/** Concatenate groups (same kind) of several tiles. */
+/** Concatenate groups (same kind) of several tiles; `skin` (scripts/skins.mjs) is kept when a group has it (0 elsewhere). */
 export function mergeGroups(groups) {
   const list = groups.filter(Boolean);
   if (!list.length) return null;
   let nv = 0, ni = 0;
   for (const g of list) { nv += g.ids.length; ni += g.idx.length; }
   const out = { pos: new Float64Array(nv * 3), rgba: new Uint8Array(nv * 4), ids: new Float32Array(nv), idx: new Uint32Array(ni) };
+  if (list.some(g => g.skin)) out.skin = new Float32Array(nv);
   let v = 0, i = 0;
   for (const g of list) {
     out.pos.set(g.pos, v * 3); out.rgba.set(g.rgba, v * 4); out.ids.set(g.ids, v);
+    if (g.skin) out.skin.set(g.skin, v);
     for (let k = 0; k < g.idx.length; k++) out.idx[i + k] = g.idx[k] + v;
     v += g.ids.length; i += g.idx.length;
   }
@@ -121,12 +123,14 @@ function compact(group, idx) {
   let n = 0;
   for (const v of idx) if (remap[v] < 0) remap[v] = n++;
   const out = { pos: new Float64Array(n * 3), rgba: new Uint8Array(n * 4), ids: new Float32Array(n), idx: new Uint32Array(idx.length) };
+  if (group.skin) out.skin = new Float32Array(n);
   for (let v = 0; v < remap.length; v++) {
     const r = remap[v];
     if (r < 0) continue;
     out.pos[r * 3] = group.pos[v * 3]; out.pos[r * 3 + 1] = group.pos[v * 3 + 1]; out.pos[r * 3 + 2] = group.pos[v * 3 + 2];
     out.rgba.set(group.rgba.subarray(v * 4, v * 4 + 4), r * 4);
     out.ids[r] = group.ids[v];
+    if (group.skin) out.skin[r] = group.skin[v];
   }
   for (let k = 0; k < idx.length; k++) out.idx[k] = remap[idx[k]];
   return out;
@@ -353,6 +357,7 @@ export async function encodeGlb({ opaque, transparent }) {
     for (let v = 0; v < Math.min(nv, remap.length); v++) if (remap[v] < unique) order[remap[v]] = v;
     // int16 positions (stride 8), Y-up: (x, z, −y) relative to the box centre, normalized by the half extent.
     const pos = new Int16Array(unique * 4), col = new Uint8Array(unique * 4), ids = new Float32Array(unique);
+    const skin = g.skin && g.skin.some(x => x > 0) ? new Float32Array(unique) : null;
     const q = (v, a) => Math.max(-32767, Math.min(32767, Math.round((v - c[a]) / h[a] * 32767)));
     const min = [32767, 32767, 32767], max = [-32767, -32767, -32767];
     for (let r = 0; r < unique; r++) {
@@ -363,6 +368,7 @@ export async function encodeGlb({ opaque, transparent }) {
       if (x > max[0]) max[0] = x; if (y > max[1]) max[1] = y; if (z > max[2]) max[2] = z;
       col.set(g.rgba.subarray(v * 4, v * 4 + 4), r * 4);
       ids[r] = g.ids[v];
+      if (skin) skin[r] = g.skin[v];
     }
     const bytes = a => new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
     const useShort = unique < 65536;
@@ -380,7 +386,10 @@ export async function encodeGlb({ opaque, transparent }) {
     const aIds = accessors.length - 1;
     accessors.push({ bufferView: vIdx, componentType: useShort ? USHORT : UINT, count: idx.length, type: 'SCALAR' });
     const aIdx = accessors.length - 1;
-    primitives.push({ attributes: { POSITION: aPos, COLOR_0: aCol, _FEATURE_ID_0: aIds }, indices: aIdx, material: gi === 0 && g === opaque ? 0 : 1, mode: 4,
+    const attributes = { POSITION: aPos, COLOR_0: aCol, _FEATURE_ID_0: aIds };
+    // The object whose skin hides this face (scripts/skins.mjs), 0 none: the viewer draws such faces deeper.
+    if (skin) { accessors.push({ bufferView: addView(bytes(skin), unique, 4, 'ATTRIBUTES', 34962), componentType: FLOAT, count: unique, type: 'SCALAR' }); attributes._SKIN = accessors.length - 1; }
+    primitives.push({ attributes, indices: aIdx, material: gi === 0 && g === opaque ? 0 : 1, mode: 4,
       extensions: { EXT_mesh_features: { featureIds: [{ featureCount, attribute: 0 }] } } });
     totalTriangles += idx.length / 3; totalVertices += unique;
   }

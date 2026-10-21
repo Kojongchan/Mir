@@ -55,13 +55,30 @@ export class ObjectStateTexture {
   }
 }
 
+/**
+ * Contained skins (scripts/skins.mjs): a face on the skin of another object that holds it — the tunnels' shotcrete and
+ * lining on their excavation, weaving up to SKIN_REACH (0.25 m) in and out of it — carries that object's dbId in
+ * `_skin` and is drawn SKIN_PUSH m deeper across the faces (further along a grazing view) while that object is shown,
+ * so the outer surface shows instead of contour lines where the two crossed. Selected or highlighted, the face comes
+ * that much nearer instead (the selection shows whole); its holder hidden, it stays where it is.
+ */
+const SKIN_PUSH = 0.3;
 const STATE_VERTEX = /* glsl */`
 attribute float _feature_id_0;
+attribute float _skin;
 uniform highp sampler2D objectState;
 varying vec4 vObjectState;
+varying float vSkinPush;
 vec4 readObjectState() {
   int id = int(_feature_id_0 + 0.5);
   return texelFetch(objectState, ivec2(id % ${WIDTH}, id / ${WIDTH}), 0);
+}
+float skinPush(vec4 own) {
+  int holder = int(_skin + 0.5);
+  if (holder <= 0) return 0.0;
+  vec4 held = texelFetch(objectState, ivec2(holder % ${WIDTH}, holder / ${WIDTH}), 0);
+  if (held.a > 0.0 && held.a < 0.01) return 0.0;
+  return abs(own.a - 254.0 / 255.0) < 0.5 / 255.0 || abs(own.a - 253.0 / 255.0) < 0.5 / 255.0 ? -1.0 : 1.0;
 }
 `;
 /**
@@ -86,11 +103,14 @@ float mirDepthRank(int id, float state) {
   return float(1 + id % 31);
 }
 `;
-const APPLY_DEPTH_ORDER = (id: string) => /* glsl */`
+/** `view`: the fragment's view-space offset to the eye (vViewPosition), for the skin push (no branch: derivatives). */
+const APPLY_DEPTH_ORDER = (id: string, view: string) => /* glsl */`
 #include <logdepthbuf_fragment>
 #if defined( USE_LOGDEPTHBUF )
   {
-    float depth = gl_FragDepth;
+    float facing = abs(dot(normalize(cross(dFdx(${view}), dFdy(${view}))), normalize(${view})));
+    float push = vSkinPush * ${SKIN_PUSH.toFixed(2)} / max(facing, 0.15) * (vFragDepth - 1.0) / max(length(${view}), 1e-3);
+    float depth = vIsPerspective == 0.0 ? gl_FragDepth : log2(max(1.0, vFragDepth + push)) * logDepthBufFC * 0.5;
     gl_FragDepth = max(0.0, depth - mirDepthRank(${id}, vObjectState.a) * (1.5e-7 + 0.01 * fwidth(depth)));
   }
 #endif
@@ -156,11 +176,11 @@ export function createSurfaceMaterial(state: ObjectStateTexture, transparent: bo
   material.onBeforeCompile = shader => {
     shader.uniforms.objectState = { value: state.texture };
     shader.vertexShader = STATE_VERTEX + shader.vertexShader
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\n  vObjectState = readObjectState();')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n  vObjectState = readObjectState();\n  vSkinPush = skinPush(vObjectState);')
       .replace('#include <project_vertex>', `#include <project_vertex>\n${HIDE}`);
     shader.vertexShader = withIdVaryings(shader.vertexShader, 'int(_feature_id_0 + 0.5)');
-    shader.fragmentShader = 'varying vec4 vObjectState;\n' + ID_OUTPUT + DEPTH_ORDER + shader.fragmentShader
-      .replace('#include <logdepthbuf_fragment>', APPLY_DEPTH_ORDER('vOutlineId'))
+    shader.fragmentShader = 'varying vec4 vObjectState;\nvarying float vSkinPush;\n' + ID_OUTPUT + DEPTH_ORDER + shader.fragmentShader
+      .replace('#include <logdepthbuf_fragment>', APPLY_DEPTH_ORDER('vOutlineId', 'vViewPosition'))
       .replace('#include <color_fragment>', '#include <color_fragment>\n  diffuseColor.rgb = mix(diffuseColor.rgb, vObjectState.rgb, step(0.5, vObjectState.a));')
       .replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  writeOutlineId(vOutlineId);');
   };
@@ -181,12 +201,15 @@ export function createPickMaterial(state: ObjectStateTexture): ShaderMaterial {
       #include <common>
       #include <logdepthbuf_pars_vertex>
       varying float vDepth;
+      varying vec3 vView;
       flat varying int vId;
       void main() {
         vObjectState = readObjectState();
+        vSkinPush = skinPush(vObjectState);
         vId = int(_feature_id_0 + 0.5);
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
         vDepth = -mv.z;
+        vView = -mv.xyz;
         gl_Position = projectionMatrix * mv;
         #include <logdepthbuf_vertex>
         ${HIDE}
@@ -198,11 +221,13 @@ export function createPickMaterial(state: ObjectStateTexture): ShaderMaterial {
       uniform int mode;
       uniform float far;
       varying float vDepth;
+      varying vec3 vView;
       varying vec4 vObjectState;
+      varying float vSkinPush;
       flat varying int vId;
       ${DEPTH_ORDER}
       void main() {
-        ${APPLY_DEPTH_ORDER('vId')}
+        ${APPLY_DEPTH_ORDER('vId', 'vView')}
         if (mode == 0) gl_FragColor = vec4(float((vId >> 16) & 255) / 255.0, float((vId >> 8) & 255) / 255.0, float(vId & 255) / 255.0, 1.0);
         else gl_FragColor = packDepthToRGBA(clamp(vDepth / far, 0.0, 0.999999));
       }`,

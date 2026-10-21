@@ -14,6 +14,7 @@
 // (read-only, no new APS job).
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { indexFragments, tolerance } from './entity-alias.mjs';
 
 /** Column-major 4×4 world matrix (float64) of an SVF fragment transform ({t} | {q, t, s} | {matrix, t}). */
@@ -260,6 +261,22 @@ export async function openSvfSource({ urn, getToken, region = 'US', dir, log = (
   const packUri = new Map();
   for (const a of assets) { const m = /(?:^|\/)(\d+)\.pf$/.exec(a.URI ?? ''); if (a.type === 'Autodesk.CloudPlatform.PackFile' && m) packUri.set(Number(m[1]), a.URI); }
   log(`SVF: ${list.length} fragments, ${geometries.length} geometries, ${packUri.size} mesh packs`);
+  // Materials drawn transparent: marked transparent, unless a bitmap over a white factor (drawn opaque in the earth
+  // tone, tiles3d.mjs meshColour — the tunnels' excavation). Unreadable: every fragment counts as opaque.
+  const transparentMaterial = new Map();
+  try {
+    const asset = assets.find(a => /(^|\/)(Protein)?Materials\.json(\.gz)?$/i.test(a.URI ?? ''));
+    if (asset) {
+      const raw = fs.readFileSync(await get(asset.URI));
+      const json = JSON.parse((raw[0] === 0x1f && raw[1] === 0x8b ? zlib.gunzipSync(raw) : raw).toString());
+      for (const [k, group] of Object.entries(json.materials ?? {})) {
+        const main = group.materials?.[group.userassets?.[0] ?? '0'], diffuse = main?.properties?.colors?.generic_diffuse?.values?.[0];
+        const white = !diffuse || (diffuse.r > 0.94 && diffuse.g > 0.94 && diffuse.b > 0.94);
+        const bitmap = Object.values(group.materials ?? {}).some(m => m?.definition === 'UnifiedBitmap');
+        transparentMaterial.set(Number(k), !!main?.transparent && !(bitmap && white));
+      }
+    }
+  } catch (e) { log(`SVF materials unreadable (${e.message}): every fragment counts as opaque`); }
   // Parsed packs, most recent last (a pack holds ≈ 60 meshes; the fragments of one tile share packs).
   const packs = new Map(), PACKS_KEPT = 96;
   const packOf = id => {
@@ -274,6 +291,8 @@ export async function openSvfSource({ urn, getToken, region = 'US', dir, log = (
     fragments: indexFragments(list.map(f => ({ dbId: f.dbID, bbox: f.bbox }))),
     /** Drawn by the source viewers (hidden fragments are not). */
     visible: f => !!list[f]?.visible,
+    /** Drawn transparent (its material; see above). */
+    transparent: f => transparentMaterial.get(list[f]?.materialID) ?? false,
     get downloadedMB() { return Math.round(bytes / 1048576); },
     /** Exact triangles of these fragments in the tiles' frame: Map fragment → { pos, idx } | null (lines, points). */
     async pieces(indices, origin) {

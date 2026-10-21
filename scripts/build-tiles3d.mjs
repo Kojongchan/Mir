@@ -27,6 +27,7 @@ import { packMeshes, meshColour, mergeGroups, simplifyGroup, encodeGlb, boxVolum
   encodeTerrainGlb, weldGroup } from './tiles3d.mjs';
 import { checkStorageBudget } from './storage-budget.mjs';
 import { nearOther } from './clearance.mjs';
+import { SKIN_REACH, applySkins, containedSkins } from './skins.mjs';
 import { cacheKey } from './cache-key.mjs';
 
 const env = process.env;
@@ -154,7 +155,8 @@ if (regionOption) {
 const files = new Map(); // relative path → Buffer
 const stats = { far: { files: 0, triangles: 0, bytes: 0 }, detail: { files: 0, triangles: 0, bytes: 0, vertices: 0, weldedVertices: 0 },
   mid: Object.fromEntries(MID_ERRORS.map(e => [e, { files: 0, triangles: 0, bytes: 0, skipped: 0, lockedVertices: 0 }])),
-  parents: [], terrain: { leaves: 0, triangles: 0, bytes: 0, textures: 0, textureBytes: 0, parents: [] } };
+  parents: [], terrain: { leaves: 0, triangles: 0, bytes: 0, textures: 0, textureBytes: 0, parents: [] },
+  skins: { tiles: 0, pushed: 0, shared: 0, pairs: 0, partnerTriangles: 0, seconds: 0 } };
 const objectBoxes = new Float32Array(objectCount * 6);
 for (let k = 0; k < objectCount; k++) objectBoxes.set([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], k * 6);
 const growObjects = group => {
@@ -255,6 +257,26 @@ if (svfMode && !reuse) {
   // Per built tile: its statistics, the fragments its entities took (with the match score), its objects and its box.
   const perTile = new Map();
   const colourOf = new Map(); // object → the colour of one of its meshes (for fragments added to a tile)
+  // Fragment boxes (tiles' frame) on a 20 m grid, for the skins' partners; fragments over 4,096 cells are checked always.
+  const GRID = 20;
+  const cellsOf = (b, pad) => {
+    const lo = [0, 1, 2].map(a => Math.floor((b[a] - pad) / GRID)), hi = [0, 1, 2].map(a => Math.floor((b[a + 3] + pad) / GRID));
+    const out = [];
+    for (let x = lo[0]; x <= hi[0]; x++) for (let y = lo[1]; y <= hi[1]; y++) for (let z = lo[2]; z <= hi[2]; z++) out.push(`${x},${y},${z}`);
+    return out;
+  };
+  let fragmentGrid = null;
+  const gridOf = () => {
+    const cells = new Map(), big = [];
+    for (let f = 0; f < fragmentCount; f++) {
+      const b = [0, 1, 2, 3, 4, 5].map(k => fb[f * 6 + k] - est.origin[k % 3]);
+      if (!b.every(Number.isFinite)) continue;
+      const span = [0, 1, 2].map(a => Math.floor(b[a + 3] / GRID) - Math.floor(b[a] / GRID) + 1);
+      if (span[0] * span[1] * span[2] > 4096) { big.push(f); continue; }
+      for (const k of cellsOf(b, 0)) { const l = cells.get(k); if (l) l.push(f); else cells.set(k, [f]); }
+    }
+    return { cells, big };
+  };
   const bins = [1, 5, 10, 20, 50];
   svf = {
     /**
@@ -315,6 +337,40 @@ if (svfMode && !reuse) {
       }
       t.kept = [...perTile.values()].flatMap(r => r.misses).slice(0, 60); // entities kept as decoded, for the log
       return t;
+    },
+    /**
+     * Opaque objects of the whole model near a tile's group, as one group in the tiles' frame (the tile's own objects
+     * left out): the skins its objects may lie on (scripts/skins.mjs). A fragment counts when its box comes within
+     * `reach` of the box of one of the group's objects.
+     */
+    async partners(group, reach) {
+      const own = new Map();
+      for (let v = 0; v < group.ids.length; v++) {
+        const id = group.ids[v];
+        let b = own.get(id);
+        if (!b) own.set(id, (b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity]));
+        for (let a = 0; a < 3; a++) { const x = group.pos[v * 3 + a]; if (x < b[a]) b[a] = x; if (x > b[a + 3]) b[a + 3] = x; }
+      }
+      fragmentGrid ??= gridOf();
+      const picked = new Set();
+      for (const b of own.values()) {
+        for (const list of [fragmentGrid.big, ...cellsOf(b, reach).map(k => fragmentGrid.cells.get(k) ?? [])]) for (const f of list) {
+          if (picked.has(f) || own.has(source.fragments.db[f]) || !source.visible(f) || source.transparent(f)) continue;
+          if ([0, 1, 2].every(a => fb[f * 6 + a] - est.origin[a] <= b[a + 3] + reach && fb[f * 6 + a + 3] - est.origin[a] >= b[a] - reach)) picked.add(f);
+        }
+      }
+      const pieces = [...(await source.pieces([...picked], est.origin))].filter(([, piece]) => piece);
+      let nv = 0, ni = 0;
+      for (const [, piece] of pieces) { nv += piece.pos.length / 3; ni += piece.idx.length; }
+      const out = { pos: new Float64Array(nv * 3), ids: new Float32Array(nv), idx: new Uint32Array(ni) };
+      let v0 = 0, i0 = 0;
+      for (const [f, piece] of pieces) {
+        const n = piece.pos.length / 3;
+        out.pos.set(piece.pos, v0 * 3); out.ids.fill(source.fragments.db[f], v0, v0 + n);
+        for (let k = 0; k < piece.idx.length; k++) out.idx[i0 + k] = piece.idx[k] + v0;
+        v0 += n; i0 += piece.idx.length;
+      }
+      return out;
     },
     /**
      * Visible fragments no built tile took (lost in the conversion: holes) — of objects that have entities in the
@@ -392,6 +448,21 @@ async function buildOriginal(i, fix = null) {
   const groups = { opaque: weldGroup(original.opaque), transparent: weldGroup(original.transparent) };
   sink.detail.vertices += (original.opaque?.ids.length ?? 0) + (original.transparent?.ids.length ?? 0);
   sink.detail.weldedVertices += (groups.opaque?.ids.length ?? 0) + (groups.transparent?.ids.length ?? 0);
+  // Faces on the skin of an object holding them are drawn behind it (scripts/skins.mjs); faces on a skin shared with
+  // another object (either side) stay in place in the copies, as near ones do below.
+  let shared = null;
+  if (svf && groups.opaque) {
+    const started = Date.now(), partners = await svf.partners(groups.opaque, SKIN_REACH);
+    const skins = await containedSkins(groups.opaque, partners);
+    const applied = applySkins(groups.opaque, skins.partner, skins.shared);
+    groups.opaque = applied.group; shared = applied.lock;
+    if (!fix) {
+      const st = stats.skins;
+      st.tiles++; st.pairs += skins.pairs; st.partnerTriangles += partners.idx.length / 3; st.seconds += (Date.now() - started) / 1000;
+      for (const p of skins.partner) if (p > 0) st.pushed++;
+      for (const x of skins.shared) if (x) st.shared++;
+    }
+  }
   growObjects(groups.opaque); growObjects(groups.transparent);
   const detail = await write(groups, `d${i}`, sink.detail);
   if (!detail) return null;
@@ -405,14 +476,14 @@ async function buildOriginal(i, fix = null) {
     // of edges shared), and patches simplified on their own opened cracks along the seams that showed the layer
     // under them as white streaks (user screenshot, 0.1 m copy at 115 m: 42 hole pixels vs 21 in the original,
     // locked 20). Long thin triangles along locked borders are part of the surface, not slivers.
-    const lockOf = near => {
+    const lockOf = (near, keep = null) => {
       if (!near) return null;
       const lock = new Uint8Array(near.length);
-      for (let v = 0; v < near.length; v++) if (near[v] < error) { lock[v] = 1; s.lockedVertices++; }
+      for (let v = 0; v < near.length; v++) if (near[v] < error || keep?.[v]) { lock[v] = 1; s.lockedVertices++; }
       return lock;
     };
-    const copyOf = (g, near) => simplifyGroup(g, error, { minHeight: 0, lockBorder: true, lock: lockOf(near) });
-    const mid = { opaque: await copyOf(groups.opaque, nearOpaque), transparent: await copyOf(groups.transparent, nearTransparent) };
+    const copyOf = (g, near, keep) => simplifyGroup(g, error, { minHeight: 0, lockBorder: true, lock: lockOf(near, keep) });
+    const mid = { opaque: await copyOf(groups.opaque, nearOpaque, shared), transparent: await copyOf(groups.transparent, nearTransparent) };
     const n = triangles(mid.opaque) + triangles(mid.transparent);
     const out = n && n <= MID_ENOUGH * topTriangles ? await write(mid, `m${k}-${i}`, s) : null;
     if (!out) { s.skipped++; continue; }
@@ -444,7 +515,7 @@ await Promise.all(Array.from({ length: 4 }, async () => {
     progress();
   }
 }));
-console.log('Leaves', JSON.stringify({ far: stats.far, mid: stats.mid, detail: stats.detail }));
+console.log('Leaves', JSON.stringify({ far: stats.far, mid: stats.mid, detail: stats.detail, skins: stats.skins }));
 if (svf) {
   // Second pass over the few tiles the audit points at, before the parents are built from the leaves.
   const rebuild = async (i, fix) => {
