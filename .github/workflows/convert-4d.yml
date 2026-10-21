@@ -251,7 +251,7 @@ jobs:
   tiles3d:
     if: github.event.inputs.diag_only == 'tiles3d'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 330
     permissions:
       contents: read
     steps:

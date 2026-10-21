@@ -432,7 +432,7 @@ if (svfMode && !reuse) {
 const leaves = [];
 let next = 0, done = 0;
 const progress = () => {
-  if (++done % 100 === 0) console.log(`Leaves ${done}/${tiles.length} · far ${MB(stats.far.bytes)} MB · ${MID_ERRORS.map(e => `${e} m ${MB(stats.mid[e].bytes)} MB`).join(' · ')} · detail ${MB(stats.detail.bytes)} MB${svf ? (t => ` · SVF ${t.replaced}/${t.entities} entities (${t.relabelled} owners corrected), ${t.downloadedMB} MB`)(svf.totals()) : ''}`);
+  if (++done % 100 === 0) console.log(`Leaves ${done}/${tiles.length} · far ${MB(stats.far.bytes)} MB · ${MID_ERRORS.map(e => `${e} m ${MB(stats.mid[e].bytes)} MB`).join(' · ')} · detail ${MB(stats.detail.bytes)} MB${svf ? (t => ` · SVF ${t.replaced}/${t.entities} entities (${t.relabelled} owners corrected), ${t.downloadedMB} MB`)(svf.totals()) : ''}${svf ? ` · skins ${stats.skins.pushed} pushed, ${Math.round(stats.skins.seconds)} s` : ''}`);
 };
 const union = (a, b) => [0, 1, 2].map(k => Math.min(a[k], b[k])).concat([3, 4, 5].map(k => Math.max(a[k], b[k])));
 /**

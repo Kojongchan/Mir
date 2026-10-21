@@ -278,7 +278,7 @@ export async function openSvfSource({ urn, getToken, region = 'US', dir, log = (
     }
   } catch (e) { log(`SVF materials unreadable (${e.message}): every fragment counts as opaque`); }
   // Parsed packs, most recent last (a pack holds ≈ 60 meshes; the fragments of one tile share packs).
-  const packs = new Map(), PACKS_KEPT = 96;
+  const packs = new Map(), PACKS_KEPT = 256; // the skins' neighbours (scripts/skins.mjs) reach into other tiles' packs
   const packOf = id => {
     let p = packs.get(id);
     if (p) { packs.delete(id); packs.set(id, p); return p; }

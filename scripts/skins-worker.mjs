@@ -27,12 +27,17 @@ parentPort.on('message', ({ job, pos, ids, idx, asked, reach, parallel, thicker,
     const geometry = new BufferGeometry();
     geometry.setAttribute('position', position);
     geometry.setIndex(new BufferAttribute(Uint32Array.from(l), 1));
-    const bvh = new MeshBVH(geometry, { maxLeafTris: 8 });
     const box = new Box3();
-    bvh.getBoundingBox(box);
     let area = 0;
-    for (let k = 0; k < l.length; k += 3) area += tri.set(a.fromArray(local, l[k] * 3), b.fromArray(local, l[k + 1] * 3), c.fromArray(local, l[k + 2] * 3)).getArea();
-    objects.set(id, { id, bvh, index: geometry.index.array, box, meanArea: area / (l.length / 3) });
+    for (let k = 0; k < l.length; k += 3) {
+      area += tri.set(a.fromArray(local, l[k] * 3), b.fromArray(local, l[k + 1] * 3), c.fromArray(local, l[k + 2] * 3)).getArea();
+      box.expandByPoint(a).expandByPoint(b).expandByPoint(c);
+    }
+    // The hierarchy is built when a triangle first comes near the object (most neighbours never do: 12 million
+    // triangles around a junction tile took 9 s to index). It reorders `index` in place; face numbers follow it.
+    let bvh = null;
+    objects.set(id, { id, index: geometry.index.array, box, meanArea: area / (l.length / 3),
+      get bvh() { return (bvh ??= new MeshBVH(geometry, { maxLeafTris: 8 })); } });
     for (let x = Math.floor((box.min.x - reach) / CELL); x <= Math.floor((box.max.x + reach) / CELL); x++)
       for (let y = Math.floor((box.min.y - reach) / CELL); y <= Math.floor((box.max.y + reach) / CELL); y++)
         for (let z = Math.floor((box.min.z - reach) / CELL); z <= Math.floor((box.max.z + reach) / CELL); z++) {
@@ -45,28 +50,30 @@ parentPort.on('message', ({ job, pos, ids, idx, asked, reach, parallel, thicker,
   const through = (o, point, dir) => [1, -1].map(sign => {
     ray.origin.copy(point).addScaledVector(dir, sign * 0.002);
     ray.direction.copy(dir).multiplyScalar(sign);
-    const hit = o.bvh.raycastFirst(ray, DoubleSide, 0, 100);
+    const hit = o.bvh.raycastFirst(ray, DoubleSide, 0, 30); // a tunnel's excavation is 10–15 m across
     return hit ? hit.distance + 0.002 : Infinity;
   });
   const faceNormal = (o, f, out) => tri.set(a.fromArray(local, o.index[f * 3] * 3), b.fromArray(local, o.index[f * 3 + 1] * 3),
     c.fromArray(local, o.index[f * 3 + 2] * 3)).getNormal(out);
-  // Pass 1: per asked triangle, the same-side candidates with their thickness; per pair (B, A) the areas.
-  const nt = idx.length / 3, found = [], pairs = new Map();
-  for (let t = 0; t < nt; t++) {
-    if (!asked[t]) continue;
+  const thickness = new Map(); // A's thickness at the middle of one of its faces (many of B's triangles meet the same face)
+  const areaOf = t => tri.set(a.fromArray(local, idx[t * 3] * 3), b.fromArray(local, idx[t * 3 + 1] * 3), c.fromArray(local, idx[t * 3 + 2] * 3)).getArea();
+  /**
+   * Triangle t of B against the other objects in its cell (or only `only`): for each face within reach, parallel,
+   * straight across and with both bodies on the same side, `visit(A, tA, overlap, outer, inner)` — outer: A is the
+   * outer one (thicker, or the finer of two of a thickness), inner: B is.
+   */
+  const judge = (t, only, visit) => {
     const B = objects.get(ids[idx[t * 3]]);
     tri.set(a.fromArray(local, idx[t * 3] * 3), b.fromArray(local, idx[t * 3 + 1] * 3), c.fromArray(local, idx[t * 3 + 2] * 3));
-    const area = tri.getArea();
-    if (!(area > 1e-6)) continue;
+    if (!(tri.getArea() > 1e-6)) return;
     tri.getNormal(nB); tri.getMidpoint(p);
-    const cell = grid.get(key(Math.floor(p.x / CELL), Math.floor(p.y / CELL), Math.floor(p.z / CELL)));
-    if (!cell) continue;
+    const list = only ?? grid.get(key(Math.floor(p.x / CELL), Math.floor(p.y / CELL), Math.floor(p.z / CELL)));
+    if (!list) return;
     let sides = null, tB = 0;
-    const list = [];
-    for (const id of cell) {
+    for (const id of list) {
       if (id === B.id) continue;
       const A = objects.get(id);
-      if (A.box.distanceToPoint(p) > reach) continue;
+      if (!A || A.box.distanceToPoint(p) > reach) continue;
       const r = A.bvh.closestPointToPoint(p, {}, 0, reach);
       if (!r || r.distance > reach) continue;
       faceNormal(A, r.faceIndex, nA);
@@ -76,35 +83,71 @@ parentPort.on('message', ({ job, pos, ids, idx, asked, reach, parallel, thicker,
       if (!sides) {
         sides = through(B, p, nB);
         tB = Math.min(sides[0], sides[1]);
-        if (!Number.isFinite(tB)) break; // B is open here: no body to judge
+        if (!Number.isFinite(tB)) return; // B is open here: no body to judge
       }
-      q.copy(r.point);
-      const [aPlus, aMinus] = through(A, q, nA), tA = Math.min(aPlus, aMinus);
+      const cached = id * 16777216 + r.faceIndex;
+      let at = thickness.get(cached);
+      if (!at) {
+        const n0 = nA.clone();
+        tri.set(a.fromArray(local, A.index[r.faceIndex * 3] * 3), b.fromArray(local, A.index[r.faceIndex * 3 + 1] * 3), c.fromArray(local, A.index[r.faceIndex * 3 + 2] * 3));
+        tri.getMidpoint(q);
+        thickness.set(cached, (at = through(A, q, n0)));
+        nA.copy(n0);
+      }
+      const tA = Math.min(at[0], at[1]);
       if (!Number.isFinite(tA)) continue;
       // Each body's side of the skin: where its own surface comes again first.
-      const bodyB = sides[0] <= sides[1] ? 1 : -1, bodyA = aPlus <= aMinus ? 1 : -1;
+      const bodyB = sides[0] <= sides[1] ? 1 : -1, bodyA = at[0] <= at[1] ? 1 : -1;
       if (bodyB * bodyA * nB.dot(nA) <= 0) continue; // bodies on opposite sides: faces touching, not one skin
       const overlap = bodyB * d.dot(nB) < tB; // A's skin is reached within B's thickness: the bodies overlap here
-      const thick = tA > thicker * tB, duplicate = !thick && tB < thicker * tA && B.meanArea > coarser * A.meanArea;
-      const k = `${B.id}~${id}`;
-      let e = pairs.get(k);
-      if (!e) pairs.set(k, (e = { all: 0, over: 0, out: 0 }));
-      e.all += area; if (overlap) e.over += area; if (thick || duplicate) e.out += area;
-      list.push(id, tA);
+      const outer = tA > thicker * tB || (tB < thicker * tA && B.meanArea > coarser * A.meanArea);
+      const inner = tB > thicker * tA || (tA < thicker * tB && A.meanArea > coarser * B.meanArea);
+      visit(id, tA, overlap, outer, inner);
     }
-    if (list.length) found.push(t, list);
+  };
+  // Pass 1, over a sample of each object's skin (its SAMPLE largest triangles): per pair (B, A) the area facing A, the
+  // part where the bodies overlap, where A is the outer one and where B is.
+  const SAMPLE = 2000, byObject = new Map();
+  for (let t = 0; t < idx.length / 3; t++) {
+    if (!asked[t]) continue;
+    const id = ids[idx[t * 3]], l = byObject.get(id);
+    if (l) l.push(t); else byObject.set(id, [t]);
   }
-  // Pairs where most of B's skin facing A overlaps A's body and A is the outer one (thicker, or the finer duplicate).
-  const contained = new Set();
-  for (const [k, e] of pairs) if (e.over >= share * e.all && e.out >= share * e.all) contained.add(k);
-  // Pass 2: per triangle the outermost contained partner (the thickest); per vertex whether it is on a shared skin.
-  const partner = new Float32Array(nt), shared = new Uint8Array(n);
-  for (let k = 0; k < found.length; k += 2) {
-    const t = found[k], list = found[k + 1], own = ids[idx[t * 3]];
-    let best = 0, bestT = -1;
-    for (let j = 0; j < list.length; j += 2) if (contained.has(`${own}~${list[j]}`) && list[j + 1] > bestT) { best = list[j]; bestT = list[j + 1]; }
-    partner[t] = best;
-    shared[idx[t * 3]] = shared[idx[t * 3 + 1]] = shared[idx[t * 3 + 2]] = 1;
+  const pairs = new Map();
+  for (const [own, list] of byObject) {
+    const sample = list.length <= SAMPLE ? list : list.map(t => [t, areaOf(t)]).sort((x, y) => y[1] - x[1]).slice(0, SAMPLE).map(([t]) => t);
+    for (const t of sample) {
+      const area = areaOf(t);
+      judge(t, null, (id, tA, overlap, outer, inner) => {
+        const k = `${own}~${id}`;
+        let e = pairs.get(k);
+        if (!e) pairs.set(k, (e = { all: 0, over: 0, out: 0, in: 0 }));
+        e.all += area; if (overlap) e.over += area; if (outer) e.out += area; if (inner) e.in += area;
+      });
+    }
   }
-  parentPort.postMessage({ job, partner, shared, pairs: contained.size }, [partner.buffer, shared.buffer]);
+  // Contained pairs: most of B's skin facing A overlaps A's body and A is the outer one (B goes behind A). The reverse
+  // (B holds A) only keeps B's skin in place in the copies, as A's tile pushes A.
+  const push = new Map(), hold = new Map(), add = (m, own, id) => { const l = m.get(own); if (l) l.push(id); else m.set(own, [id]); };
+  let contained = 0;
+  for (const [k, e] of pairs) {
+    if (e.over < share * e.all) continue;
+    const [own, id] = k.split('~').map(Number);
+    if (e.out >= share * e.all) { add(push, own, id); contained++; } else if (e.in >= share * e.all) add(hold, own, id);
+  }
+  // Pass 2, every triangle of the objects in such pairs against those partners only: the outermost one it lies on
+  // (the thickest), and whether it is on a shared skin.
+  const nt = idx.length / 3, partner = new Float32Array(nt), shared = new Uint8Array(n);
+  for (const [own, list] of byObject) {
+    const pushed = push.get(own) ?? [], held = hold.get(own) ?? [];
+    if (!pushed.length && !held.length) continue;
+    const only = [...pushed, ...held];
+    for (const t of list) {
+      let best = 0, bestT = -1, near = false;
+      judge(t, only, (id, tA) => { near = true; if (pushed.includes(id) && tA > bestT) { best = id; bestT = tA; } });
+      partner[t] = best;
+      if (near) shared[idx[t * 3]] = shared[idx[t * 3 + 1]] = shared[idx[t * 3 + 2]] = 1;
+    }
+  }
+  parentPort.postMessage({ job, partner, shared, pairs: contained }, [partner.buffer, shared.buffer]);
 });
