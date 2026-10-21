@@ -8,7 +8,7 @@ import { MeshBVH } from 'three-mesh-bvh';
 const CELL = 8; // metres: grid of object boxes
 const key = (x, y, z) => `${x},${y},${z}`;
 
-parentPort.on('message', ({ job, pos, ids, idx, asked, reach, parallel, thicker, coarser, share }) => {
+parentPort.on('message', ({ job, pos, ids, idx, asked, reach, parallel, thicker, coarser, share, depth: sunk }) => {
   const n = ids.length;
   // Float32 positions relative to the first vertex (a tile and its neighbours span a few hundred metres).
   const local = new Float32Array(n * 3);
@@ -59,8 +59,9 @@ parentPort.on('message', ({ job, pos, ids, idx, asked, reach, parallel, thicker,
   const areaOf = t => tri.set(a.fromArray(local, idx[t * 3] * 3), b.fromArray(local, idx[t * 3 + 1] * 3), c.fromArray(local, idx[t * 3 + 2] * 3)).getArea();
   /**
    * Triangle t of B against the other objects in its cell (or only `only`): for each face within reach, parallel,
-   * straight across and with both bodies on the same side, `visit(A, tA, overlap, outer, inner)` — outer: A is the
-   * outer one (thicker, or the finer of two of a thickness), inner: B is.
+   * straight across and with both bodies on the same side, `visit(A, tA, depth, outer, inner)` — depth: the share of
+   * the thinner body's thickness lying within the other one there; outer: A is the outer one (thicker, or the finer
+   * of two of a thickness), inner: B is.
    */
   const judge = (t, only, visit) => {
     const B = objects.get(ids[idx[t * 3]]);
@@ -99,14 +100,17 @@ parentPort.on('message', ({ job, pos, ids, idx, asked, reach, parallel, thicker,
       // Each body's side of the skin: where its own surface comes again first.
       const bodyB = sides[0] <= sides[1] ? 1 : -1, bodyA = at[0] <= at[1] ? 1 : -1;
       if (bodyB * bodyA * nB.dot(nA) <= 0) continue; // bodies on opposite sides: faces touching, not one skin
-      const overlap = bodyB * d.dot(nB) < tB; // A's skin is reached within B's thickness: the bodies overlap here
+      // Across the skins, towards the bodies: B's body spans [0, tB], A's [s, s + tA]. A layer lying on another
+      // (shotcrete on the lining, a finish on a wall: s = tB) overlaps it nowhere, though thinner.
+      const s = bodyB * d.dot(nB);
+      const depth = Math.max(0, Math.min(tB, s + tA) - Math.max(0, s)) / Math.min(tA, tB);
       const outer = tA > thicker * tB || (tB < thicker * tA && B.meanArea > coarser * A.meanArea);
       const inner = tB > thicker * tA || (tA < thicker * tB && A.meanArea > coarser * B.meanArea);
-      visit(id, tA, overlap, outer, inner);
+      visit(id, tA, depth, outer, inner);
     }
   };
-  // Pass 1, over a sample of each object's skin (its SAMPLE largest triangles): per pair (B, A) the area facing A, the
-  // part where the bodies overlap, where A is the outer one and where B is.
+  // Pass 1, over a sample of each object's skin (its SAMPLE largest triangles): per pair (B, A) the area facing A, that
+  // area times the bodies' depth share, the part where A is the outer one and where B is.
   const SAMPLE = 2000, byObject = new Map();
   for (let t = 0; t < idx.length / 3; t++) {
     if (!asked[t]) continue;
@@ -118,20 +122,21 @@ parentPort.on('message', ({ job, pos, ids, idx, asked, reach, parallel, thicker,
     const sample = list.length <= SAMPLE ? list : list.map(t => [t, areaOf(t)]).sort((x, y) => y[1] - x[1]).slice(0, SAMPLE).map(([t]) => t);
     for (const t of sample) {
       const area = areaOf(t);
-      judge(t, null, (id, tA, overlap, outer, inner) => {
+      judge(t, null, (id, tA, depth, outer, inner) => {
         const k = `${own}~${id}`;
         let e = pairs.get(k);
-        if (!e) pairs.set(k, (e = { all: 0, over: 0, out: 0, in: 0 }));
-        e.all += area; if (overlap) e.over += area; if (outer) e.out += area; if (inner) e.in += area;
+        if (!e) pairs.set(k, (e = { all: 0, depth: 0, out: 0, in: 0 }));
+        e.all += area; e.depth += depth * area; if (outer) e.out += area; if (inner) e.in += area;
       });
     }
   }
-  // Contained pairs: most of B's skin facing A overlaps A's body and A is the outer one (B goes behind A). The reverse
-  // (B holds A) only keeps B's skin in place in the copies, as A's tile pushes A.
+  // Contained pairs: over B's skin facing A the bodies overlap by `sunk` of the thinner one's thickness on average,
+  // and A is the outer one (B goes behind A). The reverse (B holds A) only keeps B's skin in place in the copies, as
+  // A's tile pushes A.
   const push = new Map(), hold = new Map(), add = (m, own, id) => { const l = m.get(own); if (l) l.push(id); else m.set(own, [id]); };
   let contained = 0;
   for (const [k, e] of pairs) {
-    if (e.over < share * e.all) continue;
+    if (e.depth < sunk * e.all) continue;
     const [own, id] = k.split('~').map(Number);
     if (e.out >= share * e.all) { add(push, own, id); contained++; } else if (e.in >= share * e.all) add(hold, own, id);
   }

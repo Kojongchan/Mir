@@ -54,11 +54,15 @@ test('a thin layer weaving ±8 cm about the top of a solid holding it is drawn b
   assert.ok(out.shared.some(x => x));
 });
 
-test('a panel 10 cm in front of a wall stays in front; of two equal layers the coarser goes behind', async () => {
+test('a panel 10 cm in front of a wall, or a finish lying on it, stays in front; of two equal layers the coarser goes behind', async () => {
   const wall = box([0, -5, 0, 10, 5, 10]), panel = box([10.1, -2, 1, 10.15, 2, 5]);
   const g = group({ 1: wall, 2: panel });
   const out = await containedSkins(g, null);
   assert.ok(!out.partner.some(p => p > 0), JSON.stringify(partnersOf(g, out)));
+  // A 9 cm finish on a 31 cm wall (the emergency turning bay, run 222): thinner, its skin 8.5 cm out, 5 mm into the wall.
+  const f = group({ 5: box([0, -5, -0.31, 10, 5, 0]), 6: box([1, -4, -0.005, 9, 4, 0.085]) });
+  const lying = await containedSkins(f, null);
+  assert.ok(!lying.partner.some(p => p > 0), JSON.stringify(partnersOf(f, lying)));
   // The same 20 cm deck twice: in 64 cells and in 1.
   const fine = slab([0, 0, 8, 8], 0, 0.2, 8, () => 0), coarse = slab([0, 0, 8, 8], 0, 0.2, 1, () => 0);
   const d = group({ 3: fine, 4: coarse });

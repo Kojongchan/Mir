@@ -14,10 +14,14 @@ import { Worker } from 'node:worker_threads';
  * parallel (|cos| ≥ PARALLEL) and straight across; both bodies on the same side of the two faces (the shotcrete's
  * outer face and the excavation's, not two faces touching back to back); A the outer one — THICKER times as thick
  * there (excavation 9–12 m, shotcrete 5–9 cm, lining 34 cm), or the finer of two of a thickness (a sweep's triangles
- * COARSER times a piece's); and over SHARE of B's skin facing A the bodies overlap (A's skin within B's thickness). A
- * finish panel 10 cm in front of a wall overlaps nowhere and stays in front.
+ * COARSER times a piece's) over SHARE of B's skin facing A; and the bodies overlap there by DEPTH of the thinner one's
+ * thickness on average. Over the 46 tiles around PI-1 the shotcrete and lining in the excavation overlap it by 38–100%
+ * (weaving in and out); layers lying on one another (shotcrete on the lining, lining on lining, a 9 cm finish on the
+ * 31 cm wall of the emergency turning bay — pushed by a 50% share of "A's skin within B's thickness", which a layer
+ * lying on another meets by rounding: patches of the wall showed through, run 222) by 0–19%, and stay in front; so
+ * does a finish panel 10 cm in front of a wall.
  */
-export const SKIN_REACH = 0.25, PARALLEL = 0.985, THICKER = 1.5, COARSER = 2, SHARE = 0.5;
+export const SKIN_REACH = 0.25, PARALLEL = 0.985, THICKER = 1.5, COARSER = 2, SHARE = 0.5, DEPTH = 0.25;
 
 let pool = null;
 const pending = new Map();
@@ -64,7 +68,7 @@ export async function containedSkins(group, partners) {
   const out = await new Promise((resolve, reject) => {
     pending.set(job, { resolve, reject, worker });
     hold(worker, 1);
-    worker.postMessage({ job, pos, ids, idx, asked, reach: SKIN_REACH, parallel: PARALLEL, thicker: THICKER, coarser: COARSER, share: SHARE },
+    worker.postMessage({ job, pos, ids, idx, asked, reach: SKIN_REACH, parallel: PARALLEL, thicker: THICKER, coarser: COARSER, share: SHARE, depth: DEPTH },
       [pos.buffer, ids.buffer, idx.buffer, asked.buffer]);
   });
   return { partner: out.partner.subarray(0, nt), shared: out.shared.subarray(0, nv), pairs: out.pairs };
