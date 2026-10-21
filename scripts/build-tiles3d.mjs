@@ -23,7 +23,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { decodeXkt, xktEntityBoxes } from './tile-lod-merge.mjs';
-import { packMeshes, mergeGroups, simplifyGroup, encodeGlb, boxVolume, groupSpatially, triangles, packTerrain, simplifyTerrain,
+import { packMeshes, meshColour, mergeGroups, simplifyGroup, encodeGlb, boxVolume, groupSpatially, triangles, packTerrain, simplifyTerrain,
   encodeTerrainGlb, weldGroup } from './tiles3d.mjs';
 import { checkStorageBudget } from './storage-budget.mjs';
 import { nearOther } from './clearance.mjs';
@@ -283,7 +283,7 @@ if (svfMode && !reuse) {
         took.set(f, score[e]);
         if (source.fragments.db[f] !== dbIds[e]) { dbIds[e] = source.fragments.db[f]; relabelled++; }
       });
-      for (const m of meshes) { const d = dbIds[m.entity]; if (d > 0 && !colourOf.has(d)) colourOf.set(d, m.rgba); }
+      for (const m of meshes) { const d = dbIds[m.entity]; if (d > 0 && !colourOf.has(d)) colourOf.set(d, meshColour(m)); }
       // Fragments the conversion lost, as entities of their own.
       for (const f of extras) {
         const piece = pieces.get(f);

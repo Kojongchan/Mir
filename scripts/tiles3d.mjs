@@ -14,12 +14,22 @@ import { MeshoptEncoder, MeshoptSimplifier } from 'meshoptimizer';
 const TEXTURED_RGBA = [150, 140, 122, 255];
 
 /**
+ * The colour a mesh is drawn with. A textured material with a white factor gets the opaque earth tone, its own opacity
+ * too: the tunnels' excavation ("지저분한 - 진갈색", 30% transparent as a rendering material, 0 in Revit's shading,
+ * which Navisworks shows) kept 216 and went among the transparent parts, drawn opaque but without depth — their far
+ * side and the cut faces between pieces showed through (user report: inclined tunnel PI-1_굴착 "투명하게 보이는 구간").
+ */
+export function meshColour(m) {
+  return m.textured && m.rgba[0] > 240 && m.rgba[1] > 240 && m.rgba[2] > 240 ? TEXTURED_RGBA : m.rgba;
+}
+
+/**
  * @param {{ entity: number, world: Float64Array, tri: Uint32Array, rgba: number[], textured: boolean }[]} meshes
  * @param {(entity: number) => number} dbIdOf  object id per entity (0 = none)
  */
 export function packMeshes(meshes, dbIdOf) {
   const parts = { opaque: [], transparent: [] };
-  for (const m of meshes) (m.rgba[3] < 250 ? parts.transparent : parts.opaque).push(m);
+  for (const m of meshes) (meshColour(m)[3] < 250 ? parts.transparent : parts.opaque).push(m);
   const pack = list => {
     let nv = 0, ni = 0;
     for (const m of list) { nv += m.world.length / 3; ni += m.tri.length; }
@@ -27,7 +37,7 @@ export function packMeshes(meshes, dbIdOf) {
     const pos = new Float64Array(nv * 3), rgba = new Uint8Array(nv * 4), ids = new Float32Array(nv), idx = new Uint32Array(ni);
     let v = 0, i = 0;
     for (const m of list) {
-      const n = m.world.length / 3, colour = m.textured && m.rgba[0] > 240 && m.rgba[1] > 240 && m.rgba[2] > 240 ? TEXTURED_RGBA : m.rgba;
+      const n = m.world.length / 3, colour = meshColour(m);
       const id = dbIdOf(m.entity) || 0;
       pos.set(m.world, v * 3);
       for (let k = 0; k < n; k++) { rgba.set(colour, (v + k) * 4); ids[v + k] = id; }

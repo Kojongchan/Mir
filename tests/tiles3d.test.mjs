@@ -53,6 +53,18 @@ test('a tile round-trips through three.js: positions (Z-up → Y-up), colours, d
   }
 });
 
+test('a textured white material is drawn opaque in the earth tone, whatever its own opacity (tunnel excavation)', () => {
+  const meshes = [
+    { entity: 0, ...cube(0, 0, 0, 2), rgba: [255, 255, 255, 216], textured: true },  // excavation: textured, 85% opaque
+    { entity: 1, ...cube(5, 0, 0, 1), rgba: [184, 188, 195, 192], textured: false }, // glass-like part: stays transparent
+    { entity: 2, ...cube(9, 0, 0, 1), rgba: [90, 90, 255, 200], textured: true },    // textured with a colour: its opacity
+  ];
+  const { opaque, transparent } = packMeshes(meshes, e => e + 1);
+  assert.deepEqual([...new Set(opaque.ids)], [1]);
+  assert.deepEqual([...opaque.rgba.subarray(0, 4)], [150, 140, 122, 255]);
+  assert.deepEqual([...new Set(transparent.ids)].sort(), [2, 3]);
+});
+
 test('coarser levels prune parts below the error and keep dbIds; tree nodes have at most 8 children', async () => {
   const meshes = [{ entity: 0, ...cube(0, 0, 0, 20), rgba: [1, 2, 3, 255], textured: false },
     { entity: 1, ...cube(50, 0, 0, 0.2), rgba: [1, 2, 3, 255], textured: false }];
