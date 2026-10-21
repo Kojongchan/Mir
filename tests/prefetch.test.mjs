@@ -8,7 +8,7 @@ const code = ts.transpileModule(fs.readFileSync(new URL('../src/viewer2/prefetch
 }).outputText;
 const mod = {};
 new Function('exports', code)(mod);
-const { leafFiles, nearestFiles } = mod;
+const { structureFiles, nearestFiles } = mod;
 
 const box = (x, y, z, h) => [x, y, z, h, 0, 0, 0, h, 0, 0, 0, h];
 const tileset = {
@@ -20,17 +20,17 @@ const tileset = {
   ],
 };
 
-test('leaf files: the original level and its copies with their tile spheres, not parents or far files', () => {
-  const files = leafFiles(tileset);
-  assert.deepEqual(files.map(f => f.path).sort(), ['c/d1.glb', 'c/d2.glb', 'c/d3.glb', 'c/m0-2.glb', 'c/m2-1.glb']);
+test('structure files: originals, copies and upper levels with their tile spheres, not far files', () => {
+  const files = structureFiles(tileset);
+  assert.deepEqual(files.map(f => f.path).sort(), ['c/d1.glb', 'c/d2.glb', 'c/d3.glb', 'c/h0.glb', 'c/m0-2.glb', 'c/m2-1.glb']);
   const d1 = files.find(f => f.path === 'c/d1.glb');
   assert.deepEqual(d1.centre, [0, 0, 0]);
   assert.ok(Math.abs(d1.radius - Math.sqrt(3) * 50) < 1e-9);
-  assert.deepEqual(leafFiles(null), []);
+  assert.deepEqual(structureFiles(null), []);
 });
 
 test('nearest files: within reach of the eye, nearest first, leaving out the ones done', () => {
-  const files = leafFiles(tileset);
+  const files = structureFiles(tileset).filter(f => f.path !== 'c/h0.glb');
   const near = nearestFiles(files, [10, 0, 0], 250, new Set());
   assert.deepEqual(near.slice(0, 2).sort(), ['c/d1.glb', 'c/m2-1.glb']);
   assert.deepEqual(near.slice(2).sort(), ['c/d2.glb', 'c/m0-2.glb']);

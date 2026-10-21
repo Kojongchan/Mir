@@ -12,7 +12,7 @@ import { ObjectStateTexture, createPickMaterial, createSurfaceMaterial, createTe
 import { OutlinePass } from './outline';
 import { PROFILES, detailOf, probeDevice, type DeviceProfile, type DeviceTier, type Quality } from './deviceProfile';
 import { runOf, tileCachePlugin, type TileCacheStats } from './tileCache';
-import { leafFiles, nearestFiles, type NearbyFile } from './prefetch';
+import { nearestFiles, structureFiles, type NearbyFile } from './prefetch';
 
 CameraControls.install({ THREE: { Vector2, Vector3, Vector4, Quaternion, Matrix4, Spherical, Box3, Sphere, Raycaster } });
 
@@ -244,7 +244,7 @@ export class TilesViewer {
       const box = new Box3();
       if (tiles.getBoundingBox(box)) { this.world.updateMatrixWorld(true); this.bounds = box.applyMatrix4(this.world.matrixWorld).getBoundingSphere(new Sphere()); }
       if (!this.firstFrameMs) this.frameAll(false);
-      this.nearby = leafFiles((tiles as unknown as { root: Parameters<typeof leafFiles>[0] }).root);
+      this.nearby = structureFiles((tiles as unknown as { root: Parameters<typeof structureFiles>[0] }).root);
     });
     this.world.add(tiles.group);
     this.tiles = tiles;
@@ -821,14 +821,17 @@ export class TilesViewer {
   }
 
   /**
-   * Fetch the leaf-level files of the tiles around the camera into the tile cache, nearest first, three at a time,
-   * until the camera moves, tiles start loading or the model's budget (profile.prefetchMB) is spent (prefetch.ts).
+   * Fetch the structure files of the tiles within 300–600 m of the camera into the tile cache, nearest first, six at a
+   * time (the tiles' two host names allow twelve), until the camera moves, tiles start loading or the model's budget
+   * (profile.prefetchMB) is spent (prefetch.ts). A 250 m move after 45 s at rest: 4.0 s → 2.7 s with three at a time
+   * within 200–500 m and no upper levels (25 of 48 tiles from the cache; the misses were upper levels and tiles 320 m
+   * away).
    */
   private async prefetchRound() {
     const p = this.prefetch, tiles = this.tiles, cache = this.cacheApi;
     if (p.running || !tiles || !cache || !this.nearby.length) return;
     const eye = tiles.group.worldToLocal(this.camera.position.clone());
-    const reach = Math.min(500, Math.max(200, this.controls.distance * 3));
+    const reach = Math.min(600, Math.max(300, this.controls.distance * 4));
     const paths = nearestFiles(this.nearby, eye.toArray(), reach, p.done), view = this.view;
     if (!paths.length) { p.finishedAt = view; return; }
     p.running = true;
@@ -836,7 +839,7 @@ export class TilesViewer {
     let next = 0;
     const go = () => !abort.signal.aborted && this.tiles === tiles && !loading(tiles) && p.bytes < budget;
     try {
-      await Promise.all(Array.from({ length: 3 }, async () => {
+      await Promise.all(Array.from({ length: 6 }, async () => {
         while (next < paths.length && go()) {
           const path = paths[next++], url = this.urls[path];
           p.done.add(path);
