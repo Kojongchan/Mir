@@ -7438,6 +7438,17 @@ textarea.input {
 .threed-test2__stats-short {
   display: none;
 }
+/* 보행 막대의 키 입력 (cm) */
+.threed-test2__height {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.threed-test2__height input {
+  width: 58px;
+  padding: 2px 4px;
+  font-size: 12px;
+}
 /* 화면 위 가운데: 선택·보이기 막대, 그 아래 색 구분 범례(줄바꿈되는 작은 칩) */
 .threed-test2__top {
   position: absolute;

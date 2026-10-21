@@ -1,8 +1,9 @@
 import {
-  AmbientLight, Box3, Clock, Color, DirectionalLight, Group, Matrix4, Mesh, PerspectiveCamera,
-  Quaternion, Raycaster, Scene, Sphere, Spherical, Vector2, Vector3, Vector4, WebGLRenderer, WebGLRenderTarget, type Material,
-  type MeshStandardMaterial, type Object3D,
+  AmbientLight, Box3, Clock, Color, DirectionalLight, DoubleSide, Euler, Group, Matrix3, Matrix4, Mesh, PerspectiveCamera,
+  Quaternion, Ray, Raycaster, Scene, Sphere, Spherical, Vector2, Vector3, Vector4, WebGLRenderer, WebGLRenderTarget,
+  type BufferGeometry, type Material, type MeshStandardMaterial, type Object3D,
 } from 'three';
+import { MeshBVH } from 'three-mesh-bvh';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import CameraControls from 'camera-controls';
 import { TilesRenderer } from '3d-tiles-renderer';
@@ -14,6 +15,11 @@ import { PROFILES, detailOf, probeDevice, type DeviceProfile, type DeviceTier, t
 import { runOf, tileCachePlugin, type TileCacheStats } from './tileCache';
 import { nearestFiles, structureFiles, type NearbyFile } from './prefetch';
 import { PIVOT_REACH, ROOM_H, ROOM_REACH, ROOM_W, roomSize, unpackDepth, wheelStep } from './navigation';
+import {
+  FLOOR_SEARCH, MAX_SPEED, MAX_STATURE, MIN_SPEED, MIN_STATURE, RUN_FACTOR, SPEED_STEP, STATURE, WALK_SPEED, eyeHeight, keysToMove,
+  stepWalker, type Hit, type Walker,
+} from './walk';
+import { WorkerFigure } from './avatar';
 
 CameraControls.install({ THREE: { Vector2, Vector3, Vector4, Quaternion, Matrix4, Spherical, Box3, Sphere, Raycaster } });
 
@@ -37,6 +43,22 @@ const resetFailed = (tiles: TilesRenderer) => {
 
 /** Stand-in origin: the tileset's relative paths resolve against it and are then mapped to signed URLs. */
 const BASE = 'https://tiles.mir.invalid/';
+
+/** Keys walk mode listens to (walk.ts keysToMove) and the pointer events of its look-around drag. */
+const WALK_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'KeyC', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft',
+  'ArrowRight', 'ShiftLeft', 'ShiftRight']);
+const WALK_POINTER = ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'] as const;
+
+/** Walk mode as shown to the page: on/off, speed (m/s), gravity and collision. */
+export type WalkInfo = { on: boolean; speed: number; gravity: boolean; collide: boolean; figure: boolean; height: number };
+/**
+ * Third-person view of the figure, over its right shoulder: FOLLOW m behind the head, FOLLOW_UP above it and SHOULDER to
+ * the right (at STATURE; scaled with the height), looking VIEW_TILT rad lower than the walk direction so the figure
+ * stands whole left of centre below the view ahead (first measured 3.2 m straight behind: the legs fell off the screen
+ * and the head covered the tunnel ahead). Pulled in before a wall or ceiling; nearer than FIGURE_NEAR m the figure is
+ * not drawn (inside the head).
+ */
+const FOLLOW = 4, FOLLOW_UP = 0.6, SHOULDER = 0.45, VIEW_TILT = -0.15, FIGURE_NEAR = 0.9;
 
 export type ViewerStats = {
   fps: number; frames: number; drawCalls: number; triangles: number; geometries: number;
@@ -150,6 +172,21 @@ export class TilesViewer {
   private roomWanted = true;
   /** The scroll gesture under way: where the cursor is, the point it moves toward (a surface: `surface`), last notch. */
   private wheelGesture: { x: number; y: number; at: number; point: Vector3; surface: boolean } | null = null;
+  /**
+   * Walk mode (walk.ts): the person, where the view looks (yaw, pitch), speed, keys held, the eye height shown (eases up
+   * a step), a mouse drag looking around, and the meshes rays are cast against (visible ones, gathered once a frame).
+   */
+  private walkState: {
+    walker: Walker; yaw: number; pitch: number; speed: number; keys: Set<string>; eyeY: number;
+    look: { id: number; x: number; y: number } | null; meshes: Mesh[] | null;
+    /** The construction worker shown in third person (null: first person), its heading and the camera's distance. */
+    figure: WorkerFigure | null; heading: number; follow: number;
+  } | null = null;
+  /** Walk settings kept between walks: the person's height and whether the figure is shown. */
+  private walkPrefs = { height: STATURE, figure: true };
+  /** Bounding volume hierarchies of the tile geometries rays were cast against (built when first needed). */
+  private readonly bvhs = new WeakMap<BufferGeometry, MeshBVH>();
+  onWalk?: (info: WalkInfo) => void;
 
   constructor(private readonly canvas: HTMLCanvasElement, tier?: DeviceTier) {
     // No reverse-Z: with three r171 it drew nothing in Chromium's software GL. A logarithmic depth buffer on every
@@ -342,7 +379,8 @@ export class TilesViewer {
     this.pickMaterial!.uniforms.far.value = this.camera.far;
     this.camera.setViewOffset(w, h + inset, left, top + inset, size, size);
     this.scene.overrideMaterial = this.pickMaterial;
-    const background = this.scene.background;
+    const background = this.scene.background, figure = this.walkState?.figure?.group, shown = figure?.visible;
+    if (figure) figure.visible = false; // not picked
     this.scene.background = null;
     this.renderer.setRenderTarget(target);
     this.renderer.setClearColor(0x000000, 0);
@@ -351,6 +389,7 @@ export class TilesViewer {
     this.renderer.setRenderTarget(null);
     this.scene.overrideMaterial = null;
     this.scene.background = background;
+    if (figure) figure.visible = !!shown;
     this.applyView();
   }
 
@@ -478,6 +517,7 @@ export class TilesViewer {
 
   /** Fly to a tileset-frame box [minX, minY, minZ, maxX, maxY, maxZ] (Z-up). */
   frameBox(box: ArrayLike<number>, animate = true): void {
+    this.setWalk(false);
     const corners = new Box3();
     for (const x of [box[0], box[3]]) for (const y of [box[1], box[4]]) for (const z of [box[2], box[5]])
       corners.expandByPoint(new Vector3(x, y, z).applyMatrix4(this.world.matrixWorld));
@@ -497,6 +537,7 @@ export class TilesViewer {
    */
   frameAll(animate = true): void {
     if (!this.bounds) return;
+    this.setWalk(false);
     this.dropSample();
     this.centreTarget();
     type TileNode = { boundingVolume?: { box?: number[] }; children?: TileNode[]; extras?: { mir?: string } };
@@ -568,6 +609,7 @@ export class TilesViewer {
   }
 
   dispose(): void {
+    this.setWalk(false);
     cancelAnimationFrame(this.raf);
     this.resize.disconnect();
     this.canvas.removeEventListener('pointerdown', this.pivotAtPointer, { capture: true });
@@ -670,7 +712,7 @@ export class TilesViewer {
         quiet = busy ? 0 : quiet + 1;
         if (quiet >= 4) break;
       }
-      this.controls.update(0);
+      if (!this.walkState) this.controls.update(0);
       this.camera.updateMatrixWorld();
       this.draw();
       // The drawing buffer is read in this task, before the browser composites (no preserveDrawingBuffer needed).
@@ -686,6 +728,7 @@ export class TilesViewer {
 
   /** Fly the camera to look at `target` from `eye` (both in scene coordinates). */
   lookAt(eye: Vector3, target: Vector3, animate = true): void {
+    this.setWalk(false);
     this.dropSample();
     this.centreTarget();
     void this.controls.setLookAt(eye.x, eye.y, eye.z, target.x, target.y, target.z, animate);
@@ -746,7 +789,7 @@ export class TilesViewer {
    * empty space about emptyPivot; pan and pinch at the depth from depthNear, with the target back on the view axis.
    */
   private pivotAtPointer = (event: PointerEvent) => {
-    if (!this.tiles) return;
+    if (!this.tiles || this.walkState) return;
     const rect = this.canvas.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
     const hit = this.surfaceAt(x, y, true);
     let pivot = event.button === 0 && event.isPrimary ? (hit?.under ? hit.point : this.emptyPivot(hit)) : null;
@@ -793,6 +836,7 @@ export class TilesViewer {
   private onWheel = (event: WheelEvent) => {
     event.preventDefault();
     if (!this.tiles || !event.deltaY) return;
+    if (this.walkState) { this.changeWalkSpeed(event.deltaY < 0 ? SPEED_STEP : 1 / SPEED_STEP); return; }
     const rect = this.canvas.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
     const now = performance.now();
     let g = this.wheelGesture;
@@ -920,9 +964,201 @@ export class TilesViewer {
     }
   }
 
+  /** Whether walk mode is on (setWalk). */
+  get walking(): boolean { return !!this.walkState; }
+
+  /**
+   * Walk mode on or off (walk.ts). On: the person stands on the floor under the eye (no long fall from a view high
+   * above; outside the model it floats there), the orbit controls rest, keys move it, a drag looks around, the wheel
+   * sets the speed. Off: the orbit controls take over from the person's eye, looking the same way.
+   */
+  setWalk(on: boolean): void {
+    if (on === !!this.walkState) return;
+    if (on) {
+      if (!this.tiles) return;
+      this.freeze();
+      this.controls.update(0);
+      this.camera.updateMatrixWorld();
+      const eye = this.camera.position.clone(), dir = this.camera.getWorldDirection(new Vector3());
+      const walker: Walker = { feet: eye.clone(), vy: 0, grounded: false, gravity: true, collide: true, height: this.walkPrefs.height };
+      const yaw = Math.atan2(-dir.x, -dir.z);
+      this.walkState = { walker, yaw, pitch: Math.asin(Math.max(-0.99, Math.min(0.99, dir.y))),
+        speed: WALK_SPEED, keys: new Set(), eyeY: eye.y, look: null, meshes: null, figure: null, heading: yaw, follow: 0 };
+      const floor = this.walkCast(eye, new Vector3(0, -1, 0), FLOOR_SEARCH);
+      if (floor) { walker.feet.y = eye.y - floor.distance; walker.grounded = true; } else walker.feet.y = eye.y - eyeHeight(walker);
+      this.walkState.eyeY = walker.feet.y + eyeHeight(walker);
+      this.showFigure(this.walkPrefs.figure);
+      this.controls.enabled = false;
+      window.addEventListener('keydown', this.walkKey);
+      window.addEventListener('keyup', this.walkKey);
+      window.addEventListener('blur', this.walkBlur);
+      for (const type of WALK_POINTER) this.canvas.addEventListener(type, this.walkLook);
+    } else {
+      this.walkState?.figure?.dispose();
+      this.walkState = null;
+      window.removeEventListener('keydown', this.walkKey);
+      window.removeEventListener('keyup', this.walkKey);
+      window.removeEventListener('blur', this.walkBlur);
+      for (const type of WALK_POINTER) this.canvas.removeEventListener(type, this.walkLook);
+      const eye = this.camera.position.clone(), ahead = eye.clone().addScaledVector(this.camera.getWorldDirection(new Vector3()), 5);
+      this.controls.enabled = true;
+      void this.controls.setLookAt(eye.x, eye.y, eye.z, ahead.x, ahead.y, ahead.z, false);
+      this.settleControls();
+    }
+    this.dropSample();
+    this.needsUpdate = this.dirty = true;
+    this.emitWalk();
+  }
+
+  /**
+   * Walk mode settings: gravity (the feet follow the floor, falls), collision (visible objects stop the body), the
+   * construction worker figure (third person) or none (first person), and the person's height (m).
+   */
+  setWalkOptions({ gravity, collide, figure, height }: { gravity?: boolean; collide?: boolean; figure?: boolean; height?: number }): void {
+    if (figure !== undefined) this.walkPrefs.figure = figure;
+    if (height !== undefined && Number.isFinite(height)) this.walkPrefs.height = Math.min(MAX_STATURE, Math.max(MIN_STATURE, height));
+    const s = this.walkState, w = s?.walker;
+    if (w) {
+      if (gravity !== undefined) { w.gravity = gravity; w.grounded = false; w.vy = 0; }
+      if (collide !== undefined) w.collide = collide;
+      w.height = this.walkPrefs.height;
+      if (figure !== undefined) this.showFigure(figure);
+    }
+    this.dirty = true;
+    this.emitWalk();
+  }
+
+  private showFigure(on: boolean) {
+    const s = this.walkState;
+    if (!s || on === !!s.figure) return;
+    if (on) { s.figure = new WorkerFigure(); s.heading = s.yaw; s.follow = 0; this.scene.add(s.figure.group); }
+    else { s.figure?.dispose(); s.figure = null; }
+  }
+
+  private changeWalkSpeed(factor: number) {
+    const s = this.walkState;
+    if (!s) return;
+    s.speed = Math.min(MAX_SPEED, Math.max(MIN_SPEED, s.speed * factor));
+    this.emitWalk();
+  }
+
+  private emitWalk() {
+    const s = this.walkState;
+    this.onWalk?.({ on: !!s, speed: s?.speed ?? WALK_SPEED, gravity: s?.walker.gravity ?? true, collide: s?.walker.collide ?? true,
+      figure: this.walkPrefs.figure, height: this.walkPrefs.height });
+  }
+
+  /** Walk keys held (not while typing in a field); arrows and Space do not scroll the page meanwhile. */
+  private walkKey = (event: KeyboardEvent) => {
+    const s = this.walkState, target = event.target as HTMLElement | null;
+    if (!s || !WALK_KEYS.has(event.code)) return;
+    if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+    if (event.type === 'keyup') { s.keys.delete(event.code); return; }
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    s.keys.add(event.code);
+    event.preventDefault();
+  };
+
+  private walkBlur = () => { this.walkState?.keys.clear(); };
+
+  /** A drag looks around from where the person stands, or around the figure (right: turn right, up: look up). */
+  private walkLook = (event: PointerEvent) => {
+    const s = this.walkState;
+    if (!s) return;
+    if (event.type === 'pointerdown') { s.look = { id: event.pointerId, x: event.clientX, y: event.clientY }; return; }
+    if (!s.look || event.pointerId !== s.look.id) return;
+    if (event.type !== 'pointermove') { s.look = null; return; }
+    const rate = Math.PI / Math.max(300, this.canvas.clientHeight); // half a turn over the canvas height
+    s.yaw -= (event.clientX - s.look.x) * rate;
+    s.pitch = Math.max(-1.5, Math.min(1.5, s.pitch - (event.clientY - s.look.y) * rate));
+    s.look.x = event.clientX; s.look.y = event.clientY;
+  };
+
+  /**
+   * One frame of walk mode: keys → a move in the view's direction, walk.ts physics, then the camera at the eye or, with
+   * the figure, behind it (the figure turns toward where it walks — backwards it keeps facing ahead — and swings its
+   * limbs with the distance walked).
+   */
+  private walkFrame(dt: number): boolean {
+    const s = this.walkState!, w = s.walker;
+    dt = Math.min(dt, 0.25); // a stalled frame (tab in the background) is not a long fall
+    s.meshes = null; // gathered again when this frame casts its first ray
+    const k = keysToMove(s.keys), speed = s.speed * (k.run ? RUN_FACTOR : 1);
+    const move = new Vector3(-Math.sin(s.yaw), 0, -Math.cos(s.yaw)).multiplyScalar(-k.back)
+      .addScaledVector(new Vector3(Math.cos(s.yaw), 0, -Math.sin(s.yaw)), k.right);
+    if (move.lengthSq() > 1) move.normalize();
+    move.multiplyScalar(speed * dt);
+    const from = w.feet.clone();
+    stepWalker(w, move, k.up * speed * dt, dt, this.walkCast, k.jump);
+    // Up a step the eye eases in (about 0.1 s); down and falling it follows at once.
+    const eyeY = w.feet.y + eyeHeight(w);
+    s.eyeY = eyeY > s.eyeY + 1e-3 ? s.eyeY + (eyeY - s.eyeY) * Math.min(1, dt * 15) : eyeY;
+    const before = this.camera.position.clone(), turn = this.camera.quaternion.clone();
+    const figure = s.figure;
+    this.camera.quaternion.setFromEuler(new Euler(Math.max(-1.5, s.pitch + (figure ? VIEW_TILT : 0)), s.yaw, 0, 'YXZ'));
+    if (figure) {
+      const walked = Math.hypot(w.feet.x - from.x, w.feet.z - from.z), backwards = k.back > 0 && !k.right;
+      if (walked > 1e-5) {
+        const heading = backwards ? s.yaw : Math.atan2(-(w.feet.x - from.x), -(w.feet.z - from.z));
+        const turnBy = Math.atan2(Math.sin(heading - s.heading), Math.cos(heading - s.heading));
+        s.heading += turnBy * Math.min(1, dt * 12);
+      }
+      figure.place({ x: w.feet.x, y: s.eyeY - eyeHeight(w), z: w.feet.z }, s.heading, w.height);
+      figure.pose(dt, backwards ? -walked : walked, k.run, !w.grounded && w.gravity);
+      // Behind, above and right of the head along the view, pulled in before whatever is between.
+      const scale = w.height / STATURE, head = new Vector3(w.feet.x, s.eyeY + 0.1 * scale, w.feet.z);
+      const look = new Quaternion().setFromEuler(new Euler(s.pitch, s.yaw, 0, 'YXZ'));
+      const back = new Vector3(SHOULDER, 0, FOLLOW).applyQuaternion(look).multiplyScalar(scale);
+      back.y += FOLLOW_UP * scale;
+      const want = back.length(), dir = back.divideScalar(want);
+      const hit = this.walkCast(head, dir, want + 0.25);
+      const room = hit ? Math.max(0.2, hit.distance - 0.25) : want;
+      s.follow = room < s.follow ? room : Math.min(room, s.follow + dt * 4); // in at once, out gently
+      this.camera.position.copy(head).addScaledVector(dir, s.follow);
+      figure.group.visible = s.follow > FIGURE_NEAR * scale;
+    } else this.camera.position.set(w.feet.x, s.eyeY, w.feet.z);
+    this.camera.updateMatrixWorld();
+    // Draw while the figure is still moving its limbs to a stand.
+    return this.camera.position.distanceToSquared(before) > 1e-10 || this.camera.quaternion.angleTo(turn) > 1e-6
+      || (!!figure && (s.keys.size > 0 || !w.grounded || figure.settling));
+  }
+
+  /**
+   * First visible surface along a ray (scene frame) for walk mode: the meshes on screen, each through a bounding volume
+   * hierarchy built when a ray first comes near it; hidden objects are passed through.
+   */
+  private walkCast = (origin: Vector3, dir: Vector3, far: number): Hit | null => {
+    const s = this.walkState;
+    if (!this.tiles) return null;
+    const meshes = s?.meshes ?? [];
+    if (s && !s.meshes) { this.tiles.group.traverseVisible(o => { if ((o as Mesh).isMesh) meshes.push(o as Mesh); }); s.meshes = meshes; }
+    const ray = new Ray(origin, dir), local = new Ray(), inverse = new Matrix4(), sphere = new Sphere();
+    let best: Hit | null = null, reach = far;
+    for (const mesh of meshes) {
+      const g = mesh.geometry;
+      if (!g.boundingSphere) g.computeBoundingSphere();
+      sphere.copy(g.boundingSphere!).applyMatrix4(mesh.matrixWorld);
+      if (sphere.distanceToPoint(origin) > reach || !ray.intersectsSphere(sphere)) continue;
+      let bvh = this.bvhs.get(g);
+      if (!bvh) { bvh = new MeshBVH(g); this.bvhs.set(g, bvh); }
+      local.copy(ray).applyMatrix4(inverse.copy(mesh.matrixWorld).invert());
+      const ids = g.getAttribute('_feature_id_0');
+      for (const hit of bvh.raycast(local, DoubleSide)) {
+        const distance = hit.point.applyMatrix4(mesh.matrixWorld).distanceTo(origin);
+        if (distance > reach || !hit.face) continue;
+        const id = ids ? Math.round(ids.getX(hit.face.a)) : 0;
+        if (id > 0 && this.state?.isHidden(id)) continue;
+        reach = distance;
+        best = { distance, normal: hit.face.normal.clone().applyMatrix3(new Matrix3().getNormalMatrix(mesh.matrixWorld)).normalize() };
+      }
+    }
+    return best;
+  };
+
   private loop = () => {
     this.raf = requestAnimationFrame(this.loop);
-    const moved = this.controls.update(this.clock.getDelta());
+    const dt = this.clock.getDelta();
+    const moved = this.walkState ? this.walkFrame(dt) : this.controls.update(dt);
     if (moved) { this.dirty = true; this.needsUpdate = true; this.view++; this.moving = true; }
     else if (this.moving) { this.moving = false; this.sampleWanted = this.roomWanted = true; } // at rest: sample what is under the mouse now
     const tiles = this.tiles;
@@ -940,7 +1176,7 @@ export class TilesViewer {
       // Near plane follows the distance to the orbit target; the far plane reaches just past the model.
       const distance = this.controls.distance;
       const reach = this.bounds ? this.camera.position.distanceTo(this.bounds.center) + this.bounds.radius * 1.05 : distance * 50;
-      this.camera.near = Math.min(Math.max(distance * 0.002, 0.05), 50);
+      this.camera.near = this.walkState ? 0.05 : Math.min(Math.max(distance * 0.002, 0.05), 50);
       this.camera.far = Math.max(reach, this.camera.near * 100);
       this.camera.updateProjectionMatrix();
       this.camera.updateMatrixWorld();
@@ -955,7 +1191,7 @@ export class TilesViewer {
     // Sample the surface under a resting camera when the mouse moved, the camera stopped or tiles arrived: one at a time,
     // at most every SAMPLE_EVERY ms, none while the camera moves.
     if (this.pointer && this.sampleWanted && !this.sampling && !moved && now - this.sampledAt >= SAMPLE_EVERY) this.sampleSurface();
-    else if (this.roomWanted && !this.roomSampling && !moved && now - this.sampledAt >= SAMPLE_EVERY) this.sampleRoom();
+    else if (this.roomWanted && !this.walkState && !this.roomSampling && !moved && now - this.sampledAt >= SAMPLE_EVERY) this.sampleRoom();
     if (!this.dirty) return;
     this.dirty = false;
     this.frame = this.draw();

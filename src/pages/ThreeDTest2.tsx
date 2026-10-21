@@ -10,7 +10,7 @@ import { UiIcon } from '../components/icons/UiIcon';
 import { ModelTreePanel } from '../components/model/ModelTreePanel';
 import { PropertyPanel } from '../components/model/PropertyPanel';
 import { useModelIndex, type MetaInfo } from '../viewer/useModelIndex';
-import { TilesViewer, type ViewerStats } from '../viewer2/TilesViewer';
+import { TilesViewer, type ViewerStats, type WalkInfo } from '../viewer2/TilesViewer';
 import { PROFILES, QUALITIES, type DeviceTier, type Quality } from '../viewer2/deviceProfile';
 import { COLOR_MODES, paintFor, type ColorMode } from '../viewer2/colorModes';
 import { readSignedTiles, saveSignedTiles, type SignedTiles } from '../viewer2/signedTiles';
@@ -85,6 +85,8 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
   const [tier, setTier] = useState<DeviceTier | 'auto'>('auto');
   const [quality, setQuality] = useState<Quality>(storedQuality);
   const [outlines, setOutlines] = useState(storedOutlines);
+  // Walk mode (3차): on with its speed, gravity and collision, or null.
+  const [walk, setWalk] = useState<WalkInfo | null>(null);
   const [colorMode, setColorMode] = useState<ColorMode>(storedColorMode);
   // Selected objects in the order picked; the last one is shown in the tree and (alone) in the property panel.
   const [selection, setSelection] = useState<readonly number[]>([]);
@@ -108,6 +110,7 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
     viewer.setQuality(storedQuality());
     viewer.setOutlines(storedOutlines());
     viewer.onStats = next => setStats(prev => prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
+    viewer.onWalk = info => setWalk(info.on ? info : null);
     viewerRef.current = viewer;
     return () => { viewer.dispose(); viewerRef.current = null; };
   }, []);
@@ -174,8 +177,9 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
     };
     const onDouble = (e: MouseEvent) => {
       const viewer = viewerRef.current, rect = canvas.getBoundingClientRect();
-      const hit = viewer?.pick(e.clientX - rect.left, e.clientY - rect.top);
-      if (!viewer || !hit) return;
+      if (!viewer || viewer.walking) return; // walking: the person stays where it stands
+      const hit = viewer.pick(e.clientX - rect.left, e.clientY - rect.top);
+      if (!hit) return;
       const eye = viewer.camera.position.clone().lerp(hit.point, 0.6);
       viewer.lookAt(eye, hit.point);
     };
@@ -417,6 +421,11 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
             title="선택한 객체로 확대 (Ctrl+클릭으로 여러 개 선택 · 해제: 빈 곳 클릭 또는 Esc)">선택 확대</button>
           <button className={`btn btn--sm${terrainOn ? ' btn--primary' : ''}`} disabled={!modelName} title="지형(항공사진) 표시"
             onClick={() => { const next = !terrainOn; setTerrainOn(next); viewerRef.current?.setTerrainVisible(next); }}>지형</button>
+          {variant === 'svf' && (
+            <button className={`btn btn--sm${walk ? ' btn--primary' : ''}`} aria-pressed={!!walk} disabled={!modelName}
+              title="보행 모드: 사람 눈높이(1.6m)로 걷기 — W·A·S·D(방향키) 이동, Shift 달리기, 드래그로 둘러보기, 휠로 속도. 중력·충돌(보이는 객체에 막힘, 숨긴 객체는 통과)"
+              onClick={() => viewerRef.current?.setWalk(!walk)}>보행</button>
+          )}
           <button className="btn btn--sm" disabled={!modelName || capturing} onClick={() => void capture()}
             title="지금 화면을 2배 해상도로, 멀리 있는 부분까지 세밀한 단계를 불러온 뒤 PNG 로 저장">{capturing ? '캡처 중…' : '고화질 캡처'}</button>
           <label className="threed-test2__tier" title="기기 등급: 화면 오차(px)와 메모리 상한을 정합니다">
@@ -531,6 +540,29 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
           )}
           {/* Top centre: what is selected / hidden and what to do with it, then the colour legend. */}
           <div className="threed-test2__top">
+            {walk && (
+              <div className="threed-test2__selbar" role="toolbar" aria-label="보행 모드">
+                <strong>보행</strong>
+                <span className="muted">W·A·S·D 이동 · Shift 달리기 · {walk.gravity ? 'Space 점프' : 'Q/E 아래·위'} · 드래그 둘러보기 · 휠 속도</span>
+                <span title="걷는 속도 (휠로 바꿈, Shift 를 누르면 3배)">{walk.speed < 10 ? walk.speed.toFixed(1) : Math.round(walk.speed)} m/s</span>
+                <button type="button" className={`btn btn--sm${walk.gravity ? ' btn--primary' : ''}`} aria-pressed={walk.gravity}
+                  title="중력: 바닥을 따라 걷고 45cm 이하 턱은 오르며, 더 높은 곳에서는 떨어집니다. 끄면 Q/E 로 아래·위"
+                  onClick={() => viewerRef.current?.setWalkOptions({ gravity: !walk.gravity })}>중력</button>
+                <button type="button" className={`btn btn--sm${walk.collide ? ' btn--primary' : ''}`} aria-pressed={walk.collide}
+                  title="충돌: 보이는 객체에 막혀 벽을 따라 미끄러집니다 (숨긴 객체는 통과)"
+                  onClick={() => viewerRef.current?.setWalkOptions({ collide: !walk.collide })}>충돌</button>
+                <button type="button" className={`btn btn--sm${walk.figure ? ' btn--primary' : ''}`} aria-pressed={walk.figure}
+                  title="캐릭터: 건설 작업자를 뒤에서 따라가며 봅니다(3인칭). 끄면 사람 눈높이에서 봅니다(1인칭)"
+                  onClick={() => viewerRef.current?.setWalkOptions({ figure: !walk.figure })}>캐릭터</button>
+                <label className="threed-test2__height" title="키 (140~200cm, 기본 172.5cm: 대한민국 성인 남성 평균) — 눈높이는 키의 93.6%">
+                  키
+                  <input type="number" min={140} max={200} step={0.5} value={Math.round(walk.height * 200) / 2}
+                    onChange={e => { const cm = Number(e.target.value); if (cm >= 140 && cm <= 200) viewerRef.current?.setWalkOptions({ height: cm / 100 }); }} />
+                  cm
+                </label>
+                <button type="button" className="btn btn--sm" onClick={() => viewerRef.current?.setWalk(false)} title="보행 끝내기 (일반 조작으로)">끝내기</button>
+              </div>
+            )}
             {tree && (selection.length > 0 || hiddenNodes.size > 0 || visibility.past.length > 0) && (
               <div className="threed-test2__selbar" role="toolbar" aria-label="선택과 보이기">
                 {selection.length > 0 && (

@@ -34,6 +34,11 @@ export class ObjectStateTexture {
     this.apply(this.last.selected, this.last.highlighted, this.last.hidden);
   }
 
+  /** Whether an object is hidden (walk mode passes through it). */
+  isHidden(id: number): boolean {
+    return id > 0 && id < this.capacity && this.data[id * 4 + 3] === 1;
+  }
+
   /** Recompute every texel from the sets (precedence: hidden > selected > highlighted > paint). */
   apply(selected: Iterable<number>, highlighted: Iterable<number>, hidden: Iterable<number>): void {
     this.last = { selected: [...selected], highlighted: [...highlighted], hidden: [...hidden] };
@@ -125,6 +130,20 @@ export function createTerrainMaterial(photo: Texture | null): MeshLambertMateria
     shader.fragmentShader = ID_OUTPUT + shader.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  writeOutlineId(0);');
   };
   material.customProgramCacheKey = () => 'mir-terrain';
+  return material;
+}
+
+/** Outline id of the walk-mode figure (no object has it): it reads as one shape against everything else. */
+export const FIGURE_ID = 0xfffffe;
+
+/** Material of the walk-mode figure (avatar.ts): a lit colour, outlined as one shape. */
+export function createFigureMaterial(color: number): MeshLambertMaterial {
+  const material = new MeshLambertMaterial({ color });
+  material.onBeforeCompile = shader => {
+    shader.vertexShader = withIdVaryings(shader.vertexShader, String(FIGURE_ID));
+    shader.fragmentShader = ID_OUTPUT + shader.fragmentShader.replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  writeOutlineId(vOutlineId);');
+  };
+  material.customProgramCacheKey = () => 'mir-figure';
   return material;
 }
 
