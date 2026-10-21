@@ -12,6 +12,7 @@ import { ObjectStateTexture, createPickMaterial, createSurfaceMaterial, createTe
 import { OutlinePass } from './outline';
 import { PROFILES, detailOf, probeDevice, type DeviceProfile, type DeviceTier, type Quality } from './deviceProfile';
 import { runOf, tileCachePlugin, type TileCacheStats } from './tileCache';
+import { leafFiles, nearestFiles, type NearbyFile } from './prefetch';
 
 CameraControls.install({ THREE: { Vector2, Vector3, Vector4, Quaternion, Matrix4, Spherical, Box3, Sphere, Raycaster } });
 
@@ -42,6 +43,8 @@ export type ViewerStats = {
   cacheMB: number; usedMB: number; heapMB: number | null; tier: DeviceTier; errorTarget: number;
   /** Tile files answered from this browser's tile cache (no download). */
   cacheHits: number;
+  /** Files fetched ahead around resting views (prefetch.ts) and their size. */
+  prefetched: number; prefetchedMB: number;
   firstFrameMs: number | null; settledMs: number | null;
 };
 type TileStats = { downloading: number; parsing: number; loaded: number; failed: number };
@@ -97,6 +100,13 @@ export class TilesViewer {
   private urls: Record<string, string> = {};
   private readonly pathBySigned = new Map<string, string>();
   private tileCache: TileCacheStats | null = null;
+  /** The tile cache of the open tileset (for prefetching), the leaf files of its tree, and the prefetch state: files
+   * already looked at, bytes fetched for this model, the round in progress (aborted when the camera moves). */
+  private cacheApi: ReturnType<typeof tileCachePlugin> | null = null;
+  private nearby: NearbyFile[] = [];
+  private prefetch = { done: new Set<string>(), bytes: 0, running: false, abort: null as AbortController | null, finishedAt: -1 };
+  /** Last time the camera moved or tiles were loading (prefetch waits for a quiet moment). */
+  private quietSince = 0;
   /**
    * Load ancestors: coarser levels of a view are fetched and shown first while its own tiles load (progressive), at
    * the cost of requests before the final tiles arrive. Off: each view loads its own tiles; what was on screen stays
@@ -217,7 +227,11 @@ export class TilesViewer {
       const cache = tileCachePlugin(run.model, run.run, url => this.pathBySigned.get(url) ?? null);
       tiles.registerPlugin(cache);
       this.tileCache = cache.stats;
-    } else this.tileCache = null;
+      this.cacheApi = cache;
+    } else { this.tileCache = null; this.cacheApi = null; }
+    this.prefetch.abort?.abort();
+    this.prefetch = { done: new Set(), bytes: 0, running: false, abort: null, finishedAt: -1 };
+    this.nearby = [];
     tiles.loadAncestors = this.ancestors;
     this.applyProfile(tiles);
     tiles.setCamera(this.camera);
@@ -230,6 +244,7 @@ export class TilesViewer {
       const box = new Box3();
       if (tiles.getBoundingBox(box)) { this.world.updateMatrixWorld(true); this.bounds = box.applyMatrix4(this.world.matrixWorld).getBoundingSphere(new Sphere()); }
       if (!this.firstFrameMs) this.frameAll(false);
+      this.nearby = leafFiles((tiles as unknown as { root: Parameters<typeof leafFiles>[0] }).root);
     });
     this.world.add(tiles.group);
     this.tiles = tiles;
@@ -543,6 +558,7 @@ export class TilesViewer {
       heapMB: memory ? Math.round(memory.usedJSHeapSize / 1048576) : null,
       tier: this.profile.tier, errorTarget: this.tiles?.errorTarget ?? this.detail.errorTarget ?? detailOf(this.profile, this.quality).errorTarget,
       firstFrameMs: this.firstFrameMs, settledMs: this.settledMs, cacheHits: this.tileCache?.hits ?? 0,
+      prefetched: this.tileCache?.prefetched ?? 0, prefetchedMB: Math.round((this.tileCache?.prefetchedBytes ?? 0) / 1048576),
     };
   }
 
@@ -804,6 +820,37 @@ export class TilesViewer {
     this.needsUpdate = this.dirty = true;
   }
 
+  /**
+   * Fetch the leaf-level files of the tiles around the camera into the tile cache, nearest first, three at a time,
+   * until the camera moves, tiles start loading or the model's budget (profile.prefetchMB) is spent (prefetch.ts).
+   */
+  private async prefetchRound() {
+    const p = this.prefetch, tiles = this.tiles, cache = this.cacheApi;
+    if (p.running || !tiles || !cache || !this.nearby.length) return;
+    const eye = tiles.group.worldToLocal(this.camera.position.clone());
+    const reach = Math.min(500, Math.max(200, this.controls.distance * 3));
+    const paths = nearestFiles(this.nearby, eye.toArray(), reach, p.done), view = this.view;
+    if (!paths.length) { p.finishedAt = view; return; }
+    p.running = true;
+    const abort = (p.abort = new AbortController()), budget = this.profile.prefetchMB * 1048576;
+    let next = 0;
+    const go = () => !abort.signal.aborted && this.tiles === tiles && !loading(tiles) && p.bytes < budget;
+    try {
+      await Promise.all(Array.from({ length: 3 }, async () => {
+        while (next < paths.length && go()) {
+          const path = paths[next++], url = this.urls[path];
+          p.done.add(path);
+          if (!url || (await cache.has(path))) continue;
+          try { p.bytes += await cache.store(path, url, abort.signal); } catch { p.done.delete(path); } // aborted or failed: later
+        }
+      }));
+      if (next >= paths.length || p.bytes >= budget) p.finishedAt = view; // nothing left here: wait for the camera to move
+    } finally {
+      if (p.abort === abort) p.abort = null;
+      p.running = false;
+    }
+  }
+
   private loop = () => {
     this.raf = requestAnimationFrame(this.loop);
     const moved = this.controls.update(this.clock.getDelta());
@@ -833,6 +880,9 @@ export class TilesViewer {
     }
     const now = performance.now();
     if (this.onStats && now - this.lastStats > 500) { this.lastStats = now; this.onStats(this.stats()); }
+    // Prefetch around a view that has rested 1.5 s with nothing loading; a move stops a round at once.
+    if (moved || !tiles || loading(tiles)) { this.quietSince = now; if (moved) this.prefetch.abort?.abort(); }
+    else if (now - this.quietSince > 1500 && !this.prefetch.running && this.prefetch.finishedAt !== this.view && this.profile.prefetchMB > 0) void this.prefetchRound();
     // Sample the surface under a resting camera when the mouse moved, the camera stopped or tiles arrived: one at a time,
     // at most every SAMPLE_EVERY ms, none while the camera moves.
     if (this.pointer && this.sampleWanted && !this.sampling && !moved && now - this.sampledAt >= SAMPLE_EVERY) this.sampleSurface();

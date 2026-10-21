@@ -5,10 +5,12 @@
  *  pixelRatio   cap on the device pixel ratio (fill cost grows with its square)
  *  parseJobs / downloadJobs  concurrent tile parses / downloads (parsing runs on the main thread; tiles come from two
  *               host names, 6 HTTP/1.1 connections each, and loading is bound by request latency)
+ *  prefetchMB   tiles around a resting view fetched ahead into the browser's tile cache per opened model (prefetch.ts);
+ *               0 on phones and tablets (mobile data)
  */
 export type DeviceTier = 'high' | 'pc' | 'mobile';
 export type DeviceProfile = { tier: DeviceTier; label: string; errorTarget: number; maxBytes: number; minBytes: number;
-  pixelRatio: number; parseJobs: number; downloadJobs: number };
+  pixelRatio: number; parseJobs: number; downloadJobs: number; prefetchMB: number };
 
 const MB = 1048576;
 // Screen errors from the quality sweeps (ui-check runs 189 → 197; tiles with copies of the original at 1 / 0.3 / 0.1 m,
@@ -19,9 +21,9 @@ const MB = 1048576;
 // at 4 px the 1 m copies load and the objects are whole — at most 2.7 M triangles and 131 MB in view on both, about
 // what 현장 PC draws at 6 px (3.1 M). Finer than 4 px adds nothing on a tablet (the near views are already the original).
 export const PROFILES: Record<DeviceTier, DeviceProfile> = {
-  high: { tier: 'high', label: '고성능 PC', errorTarget: 3, maxBytes: 1024 * MB, minBytes: 768 * MB, pixelRatio: 2, parseJobs: 4, downloadJobs: 12 },
-  pc: { tier: 'pc', label: '현장 PC', errorTarget: 6, maxBytes: 384 * MB, minBytes: 256 * MB, pixelRatio: 1.25, parseJobs: 2, downloadJobs: 12 },
-  mobile: { tier: 'mobile', label: '모바일·태블릿', errorTarget: 4, maxBytes: 256 * MB, minBytes: 160 * MB, pixelRatio: 1.5, parseJobs: 1, downloadJobs: 8 },
+  high: { tier: 'high', label: '고성능 PC', errorTarget: 3, maxBytes: 1024 * MB, minBytes: 768 * MB, pixelRatio: 2, parseJobs: 4, downloadJobs: 12, prefetchMB: 400 },
+  pc: { tier: 'pc', label: '현장 PC', errorTarget: 6, maxBytes: 384 * MB, minBytes: 256 * MB, pixelRatio: 1.25, parseJobs: 2, downloadJobs: 12, prefetchMB: 250 },
+  mobile: { tier: 'mobile', label: '모바일·태블릿', errorTarget: 4, maxBytes: 256 * MB, minBytes: 160 * MB, pixelRatio: 1.5, parseJobs: 1, downloadJobs: 8, prefetchMB: 0 },
 };
 
 /**

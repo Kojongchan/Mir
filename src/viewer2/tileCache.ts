@@ -15,14 +15,14 @@ export function runOf(tilesetUrl: string): { model: string; run: string } | null
   return m ? { model: m[1] + (m[2] ?? ''), run: m[3] } : null;
 }
 
-export type TileCacheStats = { hits: number; stored: number };
+export type TileCacheStats = { hits: number; stored: number; prefetched: number; prefetchedBytes: number };
 
 /**
  * A 3d-tiles-renderer plugin that answers tile downloads from the cache and stores what it fetches. `pathOf` maps a
  * request URL back to its path in the run (null: not a tile file, fetched as usual).
  */
 export function tileCachePlugin(model: string, run: string, pathOf: (url: string) => string | null) {
-  const stats: TileCacheStats = { hits: 0, stored: 0 };
+  const stats: TileCacheStats = { hits: 0, stored: 0, prefetched: 0, prefetchedBytes: 0 };
   const ready: Promise<Cache | null> = (async () => {
     if (typeof caches === 'undefined') return null; // not a secure context
     try {
@@ -47,6 +47,22 @@ export function tileCachePlugin(model: string, run: string, pathOf: (url: string
       const res = await fetch(url, options);
       if (res.ok) cache.put(keyOf(path), res.clone()).then(() => { stats.stored++; }, () => {});
       return res;
+    },
+    /** Whether a file of this run is in the cache (false when the cache is unavailable). */
+    async has(path: string): Promise<boolean> {
+      const cache = await ready;
+      return !!cache && !!(await cache.match(keyOf(path)).catch(() => undefined));
+    },
+    /** Fetch a file into the cache without parsing it (prefetch.ts); its size in bytes, 0 when not stored. */
+    async store(path: string, url: string, signal?: AbortSignal): Promise<number> {
+      const cache = await ready;
+      if (!cache) return 0;
+      const res = await fetch(url, { signal });
+      if (!res.ok) return 0;
+      const body = await res.arrayBuffer();
+      await cache.put(keyOf(path), new Response(body, { headers: { 'content-type': res.headers.get('content-type') ?? 'application/octet-stream' } }));
+      stats.prefetched++; stats.prefetchedBytes += body.byteLength;
+      return body.byteLength;
     },
   };
 }
