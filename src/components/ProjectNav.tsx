@@ -24,6 +24,7 @@ export function ProjectNav() {
     { to: `${base}/schedule`, icon: 'schedule', label: '공정현황' },
     { to: `${base}/model`, icon: 'model-3d', label: '통합모델 (3D)' },
     { to: `${base}/viewer`, icon: 'schedule-4d', label: '공정관리 (4D)' },
+    { to: `${base}/4d5d`, icon: 'schedule-4d', label: '공정·공사비 (4D/5D)' },
     { to: `${base}/clash`, icon: 'clash', label: '간섭검토' },
     { to: `${base}/model-test`, icon: 'model-3d', label: '3D뷰 (신규 테스트)' },
     { to: `${base}/model-test-2`, icon: 'model-3d', label: '3D뷰 (신규 테스트 2차)' },

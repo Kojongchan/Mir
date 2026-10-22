@@ -14,6 +14,9 @@ import { TilesViewer, type ViewerStats, type WalkInfo } from '../viewer2/TilesVi
 import { PROFILES, QUALITIES, type DeviceTier, type Quality } from '../viewer2/deviceProfile';
 import { COLOR_MODES, paintFor, type ColorMode } from '../viewer2/colorModes';
 import { readSignedTiles, saveSignedTiles, type SignedTiles } from '../viewer2/signedTiles';
+import { Sim45dDock } from '../components/sim45d/Sim45dDock';
+import { useSim45d } from '../components/sim45d/useSim45d';
+import { fourDState } from '../lib/sim45d/timeline';
 
 const authHeaders = async () => {
   const { data } = await supabase.auth.getSession();
@@ -52,7 +55,7 @@ const UNDO_STEPS = 30;
 type Visibility = { hidden: ReadonlySet<number>; past: ReadonlySet<number>[] };
 const NO_HIDDEN: Visibility = { hidden: new Set(), past: [] };
 
-export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
+export function ThreeDTest2({ variant, sim }: { variant?: 'svf'; sim?: boolean } = {}) {
   const { projectId = '' } = useParams();
   const tilesQuery = variant ? `tiles3d=1&variant=${variant}` : 'tiles3d=1';
   const tilesName = variant ? '3차 화면용(SVF 정밀) 타일' : '2차 화면용 타일';
@@ -64,6 +67,9 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
   const renewAt = useRef<{ urn: string; at: number } | null>(null);
   const index = useModelIndex();
   const tree = index.tree;
+  // 공정·공사비(4D/5D) 메뉴: 같은 3차 뷰어 + 하단 도크(공정표·차트·5D 내역·물량·연결). docs/IPS_4D5D.md
+  const sim45 = useSim45d(projectId, !!sim);
+  const xerInputRef = useRef<HTMLInputElement>(null);
   const [initError, setInitError] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -143,11 +149,42 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
   }, [tree]);
   const selected = useMemo(() => expand(selection), [selection, expand]);
   const highlighted = useMemo(() => expand(highlightIds ?? []), [highlightIds, expand]);
-  const hidden = useMemo(() => expand(hiddenNodes), [hiddenNodes, expand]);
+  // 4D(공정·공사비 메뉴): 기준일의 시공 상태 — 연결된 객체만 칠하고, 미시공은 숨기거나 회색으로. 색 구분보다 우선.
+  const { acts: simActs, links: simLinks, time: simTime, fourD: simFourD, hideFuture: simHideFuture } = sim45;
+  const fourD = useMemo(() => (sim && tree && simFourD && simLinks.size
+    ? fourDState(simActs, simLinks, simTime, tree.n, { hideFuture: simHideFuture }) : null),
+  [sim, tree, simFourD, simLinks, simActs, simTime, simHideFuture]);
+  const hidden = useMemo(() => {
+    const out = expand(hiddenNodes);
+    if (fourD) for (const id of fourD.hidden) out.push(id);
+    return out;
+  }, [hiddenNodes, expand, fourD]);
   useEffect(() => { viewerRef.current?.setStates(selected, highlighted, hidden); }, [selected, highlighted, hidden]);
   // Colour mode → per-object paint under the states (again for each opened model: its tree arrives after the tiles).
   const painted = useMemo(() => (tree ? paintFor(tree, colorMode) : null), [tree, colorMode]);
-  useEffect(() => { viewerRef.current?.setPaint(painted?.paint ?? null); }, [painted]);
+  useEffect(() => { viewerRef.current?.setPaint(fourD?.paint ?? painted?.paint ?? null); }, [painted, fourD]);
+  // 작업 선택 ↔ 3D 선택: 작업을 누르면 그 객체가 선택되고, 3D 에서 고른 객체는 그 객체가 걸린 작업을 선택한다.
+  const fromDock = useRef(false);
+  const { selectActivity: simSelectActivity, setSelected: simSetSelected } = sim45;
+  const selectActivity = useCallback((code: string, additive: boolean) => {
+    simSelectActivity(code, additive);
+    const ids = simLinks.get(code);
+    if (!ids?.length) return;
+    fromDock.current = true;
+    setSelection(prev => (additive ? [...new Set([...prev, ...ids])] : [...ids]));
+  }, [simSelectActivity, simLinks]);
+  const activitiesOf = useMemo(() => {
+    const m = new Map<number, string[]>();
+    for (const [code, ids] of simLinks) for (const id of ids) { const l = m.get(id); if (l) l.push(code); else m.set(id, [code]); }
+    return m;
+  }, [simLinks]);
+  useEffect(() => {
+    if (!sim || !activitiesOf.size) return;
+    if (fromDock.current) { fromDock.current = false; return; }
+    const codes = new Set<string>();
+    for (const id of selection) for (const c of activitiesOf.get(id) ?? []) codes.add(c);
+    simSetSelected(codes);
+  }, [sim, selection, activitiesOf, simSetSelected]);
 
   /** Per-object boxes (objects.bin, tileset frame) for zooming; loaded on first use. */
   const zoomTo = useCallback(async (ids: number[]) => {
@@ -407,7 +444,12 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
       <div className="threed-test__note">
         <UiIcon name="cube" size={16} />
         <span>
-          {variant === 'svf' ? (
+          {sim ? (
+            <>
+              <strong>공정·공사비 (4D/5D)</strong> — P6 공정표(XER)를 열면 3D 객체가 기준일의 시공 상태로 칠해지고, 아래 탭에서
+              공정표·S-curve·5D 내역·물량 대사를 함께 봅니다. 공정표는 다시 XER 로 내려받아 P6 에서 고칠 수 있습니다.
+            </>
+          ) : variant === 'svf' ? (
             <>
               <strong>3D뷰 (신규 테스트 3차)</strong> — 2차 화면과 같은 엔진에서, 가장 세밀한(원본) 단계의 좌표를 모델의
               <strong> SVF 원본 좌표</strong>로 바꾼 시험판입니다(기존 2~20cm 격자 → 1mm 이하). 가까이서 울퉁불퉁하던 면을 2차 화면과 비교해 보세요.
@@ -424,6 +466,28 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
         <div className="viewer-bar threed-test__bar">
           {/* The tools: in line on wide screens, one scrolling row on phones (status on its own line below). */}
           <div className="threed-test__tools">
+          {sim && (
+            <span className="sim-toolbar" role="group" aria-label="공정표">
+              <button className="btn btn--sm" onClick={() => xerInputRef.current?.click()} title="P6 에서 내보낸 공정표(XER) 열기">
+                <UiIcon name="file-text" size={14} /> 공정표 열기
+              </button>
+              {sim45.schedule && (
+                <>
+                  <button className="btn btn--sm" onClick={() => sim45.downloadXer(sim45.sourceEncoding ?? 'cp949')}
+                    title={`P6 에서 고칠 수 있게 XER 로 내려받기 (${sim45.sourceEncoding === 'utf-8' ? 'UTF-8' : 'CP949'} — 연 파일과 같은 인코딩)`}>
+                    <UiIcon name="download" size={14} /> XER
+                  </button>
+                  <span className="sim-toolbar__name" title={sim45.fileName}>{sim45.schedule.projectName}</span>
+                  <button type="button" className="ic-only" onClick={sim45.close} aria-label="공정표 닫기" title="공정표 닫기">✕</button>
+                </>
+              )}
+              <input ref={xerInputRef} type="file" accept=".xer" hidden onChange={e => {
+                const f = e.target.files?.[0];
+                e.target.value = '';
+                if (f) void sim45.openXer(f);
+              }} />
+            </span>
+          )}
           <button className="btn btn--sm btn--primary" onClick={() => setPickerOpen(true)} disabled={busy || !!initError} aria-label="ACC에서 열기">
             <UiIcon name="folder" size={14} /> <span className="threed-test__wide">ACC에서 </span>열기
           </button>
@@ -613,7 +677,7 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
                 )}
                 {hiddenNodes.size > 0 && (
                   <>
-                    <span className="muted">숨김 {hidden.length.toLocaleString()}개</span>
+                    <span className="muted">숨김 {(hidden.length - (fourD?.hidden.length ?? 0)).toLocaleString()}개</span>
                     <button type="button" className="btn btn--sm" onClick={showAll} title="숨긴 객체를 모두 다시 보이기 (Shift+H)">모두 보이기</button>
                   </>
                 )}
@@ -641,6 +705,8 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
             </button>
           )}
         </div>
+        {/* 공정·공사비: 3D 아래 도크(3D 영역이 줄어듦 — 패널·성능 표시는 3D 영역 안에 남음). */}
+        {sim && <Sim45dDock sim={sim45} onOpenXer={() => xerInputRef.current?.click()} objectCount={selection.length} onSelectActivity={selectActivity} />}
       </div>
       {pickerOpen && (
         <AccFilePicker projectId={projectId} canEdit={canEdit} title="3D 모델 열기" actionLabel="열기" accept={isAccModel}

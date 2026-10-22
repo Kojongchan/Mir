@@ -114,6 +114,8 @@ export default function App() {
             {/* One page, two tilesets: the keys make switching between them start a fresh viewer. */}
             <Route path="model-test-2" element={<ThreeDTest2 key="tiles3d" />} />
             <Route path="model-test-3" element={<ThreeDTest2 key="tiles3d-svf" variant="svf" />} />
+            {/* 공정·공사비(4D/5D): 3차 뷰어 + 하단 도크(공정표·차트·5D 내역·물량·연결). docs/IPS_4D5D.md */}
+            <Route path="4d5d" element={<ThreeDTest2 key="sim45d" variant="svf" sim />} />
             <Route path="quantities" element={<Quantities />} />
             <Route path="drawings" element={<Drawings />} />
             <Route path="docs" element={<DocumentManager />} />
