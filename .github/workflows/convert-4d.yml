@@ -103,7 +103,7 @@ on:
         required: false
         default: ''
       diag_options:
-        description: "진단 옵션 — tiles3d: 'region=<타일 번호>:<개수>' (비우면 객체 최다 타일 주변 48개) · ui-check: 'page=2,cpu=4,mobile=1,tiles=all'"
+        description: "진단 옵션 — tiles3d: 'svf=1', 'parts=<병렬 작업 수, 기본 8>', 'region=<타일 번호>:<개수>', 'compare=1|strict'(공개본과 파일 비교), 'reuse=1' · ui-check: 'page=2,cpu=4,mobile=1,tiles=all'"
         required: false
         default: ''
 
@@ -248,12 +248,16 @@ jobs:
         run: node --max-old-space-size=6144 "$RUNNER_TEMP/entity-alias/build-entity-alias.mjs"
   # 3D Tiles 1.1 tileset for the second viewer engine (decision D23, scripts/build-tiles3d.mjs). Reads the
   # existing tiles; writes only under <prefix>/tiles3d/ (diag_options svf=1: <prefix>/tiles3d-svf/, the third viewer's trial).
-  tiles3d:
+  # Staged (decision D27): plan → leaves, its parts in parallel jobs (diag_options parts=<n>, default 8) → finalize;
+  # the jobs hand over plan.json and part-<k>.* as artifacts. reuse=1 (coarser levels only) is built whole in the plan job.
+  tiles3d-plan:
     if: github.event.inputs.diag_only == 'tiles3d'
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 120
     permissions:
       contents: read
+    outputs:
+      parts: ${{ steps.plan.outputs.parts }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -262,9 +266,10 @@ jobs:
       - name: Prepare tiles3d runtime
         run: |
           mkdir -p "$RUNNER_TEMP/tiles3d"
-          cp scripts/build-tiles3d.mjs scripts/tiles3d.mjs scripts/tile-lod-merge.mjs scripts/storage-budget.mjs scripts/cache-key.mjs scripts/svf-precise.mjs scripts/entity-alias.mjs scripts/clearance.mjs scripts/clearance-worker.mjs scripts/skins.mjs scripts/skins-worker.mjs "$RUNNER_TEMP/tiles3d/"
+          cp scripts/build-tiles3d.mjs scripts/tiles3d-parts.mjs scripts/tiles3d.mjs scripts/tile-lod-merge.mjs scripts/storage-budget.mjs scripts/cache-key.mjs scripts/svf-precise.mjs scripts/entity-alias.mjs scripts/clearance.mjs scripts/clearance-worker.mjs scripts/skins.mjs scripts/skins-worker.mjs "$RUNNER_TEMP/tiles3d/"
           npm install --prefix "$RUNNER_TEMP/tiles3d" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 meshoptimizer@1.3.0 svf-utils@8 adm-zip@0.5 three@0.171.0 three-mesh-bvh@0.7.8
-      - name: Build the tileset
+      - name: Plan the build
+        id: plan
         env:
           MODEL_CACHE_PREFIX: ${{ github.event.inputs.item }}
           DIAG_OPTIONS: ${{ github.event.inputs.diag_options }}
@@ -277,6 +282,104 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          TILES3D_WORK: ${{ runner.temp }}/tiles3d-work
+        run: |
+          if echo "$DIAG_OPTIONS" | grep -Eq '(^|,) *reuse=1'; then
+            TILES3D_STAGE=all node --max-old-space-size=12288 "$RUNNER_TEMP/tiles3d/build-tiles3d.mjs"
+            echo 'parts=[]' >> "$GITHUB_OUTPUT"
+          else
+            TILES3D_STAGE=plan TILES3D_PARTS=8 node --max-old-space-size=12288 "$RUNNER_TEMP/tiles3d/build-tiles3d.mjs"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: steps.plan.outputs.parts != '[]'
+        with:
+          name: tiles3d-plan
+          path: ${{ runner.temp }}/tiles3d-work/plan.json
+          retention-days: 1
+  tiles3d-leaves:
+    needs: tiles3d-plan
+    if: needs.tiles3d-plan.outputs.parts != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        part: ${{ fromJSON(needs.tiles3d-plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare tiles3d runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/tiles3d"
+          cp scripts/build-tiles3d.mjs scripts/tiles3d-parts.mjs scripts/tiles3d.mjs scripts/tile-lod-merge.mjs scripts/storage-budget.mjs scripts/cache-key.mjs scripts/svf-precise.mjs scripts/entity-alias.mjs scripts/clearance.mjs scripts/clearance-worker.mjs scripts/skins.mjs scripts/skins-worker.mjs "$RUNNER_TEMP/tiles3d/"
+          npm install --prefix "$RUNNER_TEMP/tiles3d" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 meshoptimizer@1.3.0 svf-utils@8 adm-zip@0.5 three@0.171.0 three-mesh-bvh@0.7.8
+      - uses: actions/download-artifact@v4
+        with:
+          name: tiles3d-plan
+          path: ${{ runner.temp }}/tiles3d-work
+      - name: Build part ${{ matrix.part }}
+        env:
+          MODEL_CACHE_PREFIX: ${{ github.event.inputs.item }}
+          DIAG_OPTIONS: ${{ github.event.inputs.diag_options }}
+          # svf=1 (third viewer's trial): the original level from the model's SVF (read-only, no new APS job).
+          URN: ${{ github.event.inputs.urn }}
+          APS_REGION: ${{ github.event.inputs.region }}
+          APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
+          APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          TILES3D_WORK: ${{ runner.temp }}/tiles3d-work
+          TILES3D_STAGE: leaves
+          TILES3D_PART: ${{ matrix.part }}
+        run: node --max-old-space-size=12288 "$RUNNER_TEMP/tiles3d/build-tiles3d.mjs"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tiles3d-part-${{ matrix.part }}
+          path: ${{ runner.temp }}/tiles3d-work/part-*
+          retention-days: 1
+  tiles3d-finalize:
+    needs: [tiles3d-plan, tiles3d-leaves]
+    if: needs.tiles3d-plan.outputs.parts != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare tiles3d runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/tiles3d"
+          cp scripts/build-tiles3d.mjs scripts/tiles3d-parts.mjs scripts/tiles3d.mjs scripts/tile-lod-merge.mjs scripts/storage-budget.mjs scripts/cache-key.mjs scripts/svf-precise.mjs scripts/entity-alias.mjs scripts/clearance.mjs scripts/clearance-worker.mjs scripts/skins.mjs scripts/skins-worker.mjs "$RUNNER_TEMP/tiles3d/"
+          npm install --prefix "$RUNNER_TEMP/tiles3d" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 meshoptimizer@1.3.0 svf-utils@8 adm-zip@0.5 three@0.171.0 three-mesh-bvh@0.7.8
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tiles3d-*
+          path: ${{ runner.temp }}/tiles3d-work
+          merge-multiple: true
+      - name: Audit, parents, terrain, publish
+        env:
+          MODEL_CACHE_PREFIX: ${{ github.event.inputs.item }}
+          DIAG_OPTIONS: ${{ github.event.inputs.diag_options }}
+          # svf=1 (third viewer's trial): the original level from the model's SVF (read-only, no new APS job).
+          URN: ${{ github.event.inputs.urn }}
+          APS_REGION: ${{ github.event.inputs.region }}
+          APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
+          APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          TILES3D_WORK: ${{ runner.temp }}/tiles3d-work
+          TILES3D_STAGE: finalize
         run: node --max-old-space-size=12288 "$RUNNER_TEMP/tiles3d/build-tiles3d.mjs"
   # Approved one-off storage cleanup (scripts/r2-cleanup.mjs): dry run unless diag_options has apply=1.
   r2-cleanup:
