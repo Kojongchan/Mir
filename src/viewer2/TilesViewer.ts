@@ -286,7 +286,7 @@ export class TilesViewer {
     // Files already seen in this browser come from its tile cache (after the URL plugin: it sees signed URLs).
     const run = runOf(urls['tileset.json'] ?? '');
     if (run) {
-      const cache = tileCachePlugin(run.model, run.run, url => this.pathBySigned.get(url) ?? null);
+      const cache = tileCachePlugin(run.model, run.run, this.urls, url => this.pathBySigned.get(url) ?? null);
       tiles.registerPlugin(cache);
       this.tileCache = cache.stats;
       this.cacheApi = cache;

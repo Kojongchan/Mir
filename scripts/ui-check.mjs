@@ -289,7 +289,14 @@ const latency = Number(env.UI_LATENCY) || 0;
 let shard = env.UI_SHARD !== '0';
 /** 3D Tiles files served: level (file kind) and bytes. */
 const r2Log = [];
-const levelOf = key => { const m = /\/c\/([a-z])(\d+)?(?:-\d+)?\.glb$/.exec(key); return m ? (m[1] === 'm' ? `m${m[2]}` : m[1]) : key.split('/').pop(); };
+// A tile file stored by its hash (current.json v2) logs as the run's path the API signed it for.
+const pathOfStored = new Map();
+const levelOf = key => {
+  const stored = /\/files\/([0-9a-f]{64})\.glb$/.exec(key);
+  if (stored && pathOfStored.has(stored[1])) key = `/${pathOfStored.get(stored[1])}`;
+  const m = /\/c\/([a-z])(\d+)?(?:-\d+)?\.glb$/.exec(key);
+  return m ? (m[1] === 'm' ? `m${m[2]}` : m[1]) : key.split('/').pop();
+};
 const server = http.createServer(async (req, res) => {
   const u = new URL(req.url, 'http://local');
   try {
@@ -402,8 +409,11 @@ function routeApi(r) {
       results.tiles3d.unsignable = c.files.length - signable.length;
       // As the API: every other tile file on a second host name (here localhost next to 127.0.0.1).
       const host = (f, i) => (shard && f.endsWith('.glb') && i % 2 === 1 ? base.replace('127.0.0.1', 'localhost') : base);
+      // As the API: v2 tile files are stored by their hash (files/<SHA-256>.glb), the others in the run's folder.
+      const keyOf = f => (c.v === 2 && f.startsWith('c/') ? `files/${c.hash[f]}.glb` : `${c.run}/${f}`);
+      if (c.v === 2) for (const f of signable) if (f.startsWith('c/')) pathOfStored.set(c.hash[f], f);
       return r.fulfill({ json: { run: c.run, builtAt: c.builtAt, expiresIn: 14400,
-        urls: Object.fromEntries(signable.map((f, i) => [f, `${host(f, i)}/r2/${prefix}/tiles3d/${c.run}/${f}?X-Amz-Signature=ui-check`])) } });
+        urls: Object.fromEntries(signable.map((f, i) => [f, `${host(f, i)}/r2/${prefix}/tiles3d/${keyOf(f)}?X-Amz-Signature=ui-check`])) } });
     })();
     return r.fulfill({ json: state });
   }

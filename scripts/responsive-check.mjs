@@ -134,7 +134,8 @@ async function routeApi(r) {
     if (u.searchParams.has('metaShard')) return r.fulfill({ json: { url: `${base}${meta}/p/${u.searchParams.get('metaShard')}.json` } });
     if (u.searchParams.get('tiles3d') === '1') {
       return r.fulfill({ json: { run: model.current.run, builtAt: model.current.builtAt, expiresIn: 14400,
-        urls: Object.fromEntries(model.current.files.map(f => [f, `${base}/r2/${model.prefix}/tiles3d/${model.current.run}/${f}?X-Amz-Signature=rc`])) } });
+        urls: Object.fromEntries(model.current.files.map(f => [f, `${base}/r2/${model.prefix}/tiles3d/${model.current.v === 2 && f.startsWith('c/')
+          ? `files/${model.current.hash[f]}.glb` : `${model.current.run}/${f}`}?X-Amz-Signature=rc`])) } });
     }
     return r.fulfill({ json: { ready: true, xkt: true, urls: [], tiles: [], meta: { tree: `${base}${meta}/tree.json`, shardSize: model.pointer.shardSize,
       shardCount: model.pointer.shardCount, objects: model.pointer.objects ?? 0 } } });

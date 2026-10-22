@@ -46,6 +46,8 @@ const legacyCacheKey = (urn: string) => urn.replace(/[^a-zA-Z0-9]/g, '').slice(0
 // Files of a published 3D Tiles run that get a signed URL (names written by scripts/build-tiles3d.mjs: f/d/h/t/g<n>,
 // in-between levels m<k>-<n>). ui-check signs by the same pattern, read from this line.
 const TILES3D_FILE = /^(?:tileset\.json|objects\.bin|c\/[a-z]\d+(?:-\d+)?\.glb)$/;
+// current.json v2: a tile file c/<name>.glb is stored once by its content, <tiles3d folder>/files/<SHA-256>.glb.
+const TILES3D_HASH = /^[0-9a-f]{64}$/;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -323,11 +325,18 @@ export default async function handler(req: Request): Promise<Response> {
       const dir = await resolveCacheDir(urn);
       const text = await r2GetText(`${dir}/${folder}/current.json`);
       if (!text) return json({ error: variant === 'svf' ? '이 모델은 3차 화면용(SVF 정밀) 타일이 아직 없습니다.' : '이 모델은 2차 화면용 타일이 아직 없습니다.', missing: true }, 404);
-      let current: { v?: number; run?: string; files?: unknown; builtAt?: string };
+      let current: { v?: number; run?: string; files?: unknown; hash?: Record<string, unknown>; builtAt?: string };
       try { current = JSON.parse(text); } catch { return json({ error: '3D Tiles 기록이 손상되었습니다.' }, 500); }
-      if (current.v !== 1 || !/^runs\/[a-zA-Z0-9-]+$/.test(current.run ?? '') || !Array.isArray(current.files))
+      if (!(current.v === 1 || (current.v === 2 && current.hash && typeof current.hash === 'object')) || !/^runs\/[a-zA-Z0-9-]+$/.test(current.run ?? '')
+        || !Array.isArray(current.files))
         return json({ error: '3D Tiles 기록이 손상되었습니다.' }, 500);
-      const paths = current.files.filter((p): p is string => typeof p === 'string' && TILES3D_FILE.test(p));
+      // The key each file is stored under (v1: every file in the run's folder; v2: tile files by their hash).
+      const keyOf = (p: string): string | null => {
+        if (current.v !== 2 || !p.startsWith('c/')) return `${dir}/${folder}/${current.run}/${p}`;
+        const hash = current.hash?.[p];
+        return typeof hash === 'string' && TILES3D_HASH.test(hash) ? `${dir}/${folder}/files/${hash}.glb` : null;
+      };
+      const paths = current.files.filter((p): p is string => typeof p === 'string' && TILES3D_FILE.test(p) && keyOf(p) !== null);
       // URLs for a working day (user decision): the page keeps this answer and opens the model again from it
       // (src/viewer2/signedTiles.ts); the model tree comes along, so the page needs no other call. Signing the 3,682
       // files took about 6 s of a first visit, so the signed list is kept beside the tileset and handed out again
@@ -343,7 +352,7 @@ export default async function handler(req: Request): Promise<Response> {
       // Every other tile file on the second host name (tileset.json and objects.bin stay on the first).
       const [urls, meta] = await Promise.all([
         Promise.all(paths.map(async (p, i) =>
-          [p, await r2PresignGet(`${dir}/${folder}/${current.run}/${p}`, SIGNED_FOR_S, p.endsWith('.glb') && i % 2 === 1)] as const)).then(Object.fromEntries),
+          [p, await r2PresignGet(keyOf(p) as string, SIGNED_FOR_S, p.endsWith('.glb') && i % 2 === 1)] as const)).then(Object.fromEntries),
         metaIndex(dir, SIGNED_FOR_S, pointer),
       ]);
       const fresh: SignedTileset = { v: 1, run: current.run as string, metaKey, expiresAt: now + SIGNED_FOR_S * 1000, urls, meta };
