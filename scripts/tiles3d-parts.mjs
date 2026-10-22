@@ -6,18 +6,29 @@ import path from 'node:path';
 import { groupSpatially } from './tiles3d.mjs';
 
 /**
- * Tiles ({ key, centre }) for `parts` jobs: runs of `chunk` neighbouring tiles (the leaf order of groupSpatially — they
- * share SVF packs and skin partners) dealt round, so a dense stretch is shared (100 tiles at a junction took 65 of the
- * 222 minutes of run 223). One part: the tiles in the given order.
+ * Tiles ({ key, centre, cost? }) for `parts` jobs: runs of `chunk` neighbouring tiles (the leaf order of groupSpatially —
+ * they share SVF packs and skin partners), each run to the part with the least cost so far, costliest run first (a
+ * dense stretch took 65 of the 222 minutes of run 223; the parts of run 224 took 16 to over 33 minutes). Without costs every
+ * tile counts 1 and the runs are dealt round. One part: the tiles in the given order.
  */
 export function partition(items, parts, chunk = 16) {
   if (parts <= 1) return [items.map(it => it.key)];
-  const order = [];
+  const order = [], cost = new Map(items.map(it => [it.key, it.cost ?? 1]));
   const visit = node => { if (Array.isArray(node.children)) node.children.forEach(visit); else order.push(node.key); };
   visit(groupSpatially(items, 8));
-  const out = Array.from({ length: parts }, () => []);
-  for (let c = 0; c * chunk < order.length; c++) out[c % parts].push(...order.slice(c * chunk, (c + 1) * chunk));
-  return out;
+  const runs = [];
+  for (let c = 0; c * chunk < order.length; c++) {
+    const keys = order.slice(c * chunk, (c + 1) * chunk);
+    runs.push({ c, keys, cost: keys.reduce((n, k) => n + cost.get(k), 0) });
+  }
+  runs.sort((a, b) => b.cost - a.cost || a.c - b.c);
+  const out = Array.from({ length: parts }, () => ({ cost: 0, runs: [] }));
+  for (const run of runs) {
+    const part = out.reduce((best, p) => (p.cost < best.cost ? p : best));
+    part.runs.push(run); part.cost += run.cost;
+  }
+  // Within a part, its runs in site order.
+  return out.map(p => p.runs.sort((a, b) => a.c - b.c).flatMap(r => r.keys));
 }
 
 const TYPES = { Float64Array, Float32Array, Uint32Array, Uint16Array, Uint8Array, Int32Array };

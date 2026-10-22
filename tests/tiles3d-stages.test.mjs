@@ -59,6 +59,8 @@ function makeSite(dir, { tweak = false } = {}) {
   fs.writeFileSync(path.join(dir, 'svf.json'), JSON.stringify(fragments));
 }
 
+/** The record files in a records folder (beside them: costs.json). */
+const recs = dir => fs.readdirSync(dir).filter(f => f.endsWith('.rec'));
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'tiles3d-stages-'));
 async function build(bucket, work, env) {
   return execute(process.execPath, ['scripts/build-tiles3d.mjs'], { maxBuffer: 64 << 20, env: { ...process.env, TILES3D_LOCAL_DIR: bucket,
@@ -79,7 +81,7 @@ function published(bucket, folder, records = null) {
   assert.deepEqual(fs.readdirSync(path.join(base, 'runs')), [current.run.slice(5)], 'one run kept');
   assert.deepEqual(fs.readdirSync(path.join(base, current.run)).sort(), ['objects.bin', 'tileset.json']);
   const listed = new Set(Object.values(current.hash));
-  if (records) for (const f of fs.readdirSync(records)) for (const [, w] of readRecord(path.join(records, f), { metaOnly: true }).meta.files) listed.add(w.hash);
+  if (records) for (const f of recs(records)) for (const [, w] of readRecord(path.join(records, f), { metaOnly: true }).meta.files) listed.add(w.hash);
   for (const f of fs.readdirSync(path.join(base, 'files'))) assert.ok(listed.has(f.replace(/\.glb$/, '')), `stored file ${f} is listed`);
   return { current, files };
 }
@@ -128,7 +130,9 @@ for (const svf of [true, false]) {
     const mode = svf ? { DIAG_OPTIONS: 'svf=1' } : {}, folder = svf ? 'tiles3d-svf' : 'tiles3d';
     await build(site, path.join(site, 'w1'), { ...mode, TILES3D_STAGE: 'all', TILES3D_RECORDS: records });
     const first = published(site, folder, records);
-    assert.equal(fs.readdirSync(records).length, svf ? 8 : 7, 'a record per tile (and the rebuild)');
+    assert.equal(recs(records).length, svf ? 8 : 7, 'a record per tile (and the rebuild)');
+    const costs = JSON.parse(fs.readFileSync(path.join(records, 'costs.json'), 'utf8')).seconds;
+    assert.ok(costs.length === 7 && costs.every(c => typeof c === 'number'), "every tile's build time kept for the next plan");
 
     // Nothing changed: no tile built, the same files (nothing uploaded but the run's own two).
     const again = await build(site, path.join(site, 'w2'), { ...mode, TILES3D_STAGE: 'all', TILES3D_RECORDS: records });
@@ -155,10 +159,10 @@ for (const svf of [true, false]) {
     assert.equal(third.current.stats.incremental.built, 1);
     assert.notEqual(third.current.hash['c/d3.glb'], first.current.hash['c/d3.glb']);
     assert.equal(third.current.hash['c/d4.glb'], first.current.hash['c/d4.glb']);
-    assert.equal(fs.readdirSync(records).length, svf ? 8 : 7, "tile 3's old record dropped");
+    assert.equal(recs(records).length, svf ? 8 : 7, "tile 3's old record dropped");
     // The old d3 is gone from the store (nothing lists it); a damaged record is built again.
     assert.ok(!fs.existsSync(path.join(site, PREFIX, folder, 'files', `${first.current.hash['c/d3.glb']}.glb`)));
-    const victim = fs.readdirSync(records)[0];
+    const victim = recs(records)[0];
     fs.writeFileSync(path.join(records, victim), 'broken');
     const repaired = await build(site, path.join(site, 'w4'), { ...mode, TILES3D_STAGE: 'all', TILES3D_RECORDS: records });
     assert.match(repaired.stdout, svf ? /[67] of 7 tiles kept from their records, [01] to build/ : /6 of 7 tiles kept from their records, 1 to build/);
@@ -173,6 +177,8 @@ test('parts: runs of neighbours dealt round; one part keeps the order; records s
   assert.deepEqual(parts.flat().sort((a, b) => a - b), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
   assert.deepEqual(parts.map(p => p.length), [4, 4, 2]);
   for (const p of parts) for (let k = 0; k + 1 < p.length; k += 2) assert.equal(Math.abs(p[k + 1] - p[k]), 1, 'a run is two neighbours');
+  // With costs: the costliest run alone, the others shared by the cheaper parts (each part in site order).
+  assert.deepEqual(partition(items.map(it => ({ ...it, cost: it.key < 2 ? 10 : 1 })), 3, 2), [[0, 1], [2, 3, 6, 7], [4, 5, 8, 9]]);
   const file = path.join(tmp(), 'r.rec');
   const g = { pos: Float64Array.from([1.5, 2, 3]), rgba: Uint8Array.from([1, 2, 3, 4]), ids: Float32Array.from([7]), idx: Uint32Array.from([0, 0, 0]), skin: Float32Array.from([9]) };
   writeRecord(file, { tile: 4, files: [['c/d4.glb', { bytes: 9, hash: 'ab' }]] }, { opaque: g, transparent: null, boxes: { ids: Uint32Array.from([7]), box: new Float32Array(6) } });

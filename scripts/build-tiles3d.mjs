@@ -571,15 +571,19 @@ function saveRecord(dir, key, i, built) {
   const ids = [...built.boxes.keys()], box = new Float32Array(ids.length * 6);
   ids.forEach((id, k) => box.set(built.boxes.get(id), k * 6));
   const leaf = built.leaf ? { ...built.leaf, groups: undefined } : null;
-  writeRecord(path.join(dir, `${key}.rec`), { v: RECORD_VERSION, key, tile: i, leaf, files: [...built.files], stats: built.stats, svf: built.svf },
+  writeRecord(path.join(dir, `${key}.rec`), { v: RECORD_VERSION, key, tile: i, leaf, files: [...built.files], stats: built.stats, svf: built.svf,
+    seconds: built.seconds ?? null },
     { opaque: built.leaf?.groups?.opaque ?? null, transparent: built.leaf?.groups?.transparent ?? null, boxes: { ids: Uint32Array.from(ids), box } });
 }
-/** A saved record as finalize takes it: { key, tile, leaf (with its groups) | null, files: Map, stats, boxes, svf }. */
+/**
+ * A saved record as finalize takes it: { key, tile, leaf (with its groups) | null, files: Map, stats, boxes, svf, seconds (the
+ * tile's build time, for the next plan's parts) }.
+ */
 function loadRecord(file) {
   const { meta, sections } = readRecord(file);
   if (meta?.v !== RECORD_VERSION) throw new Error(`Record ${path.basename(file)} has version ${meta?.v}`);
   const leaf = meta.leaf ? { ...meta.leaf, groups: { opaque: sections.opaque ?? null, transparent: sections.transparent ?? null } } : null;
-  return { key: meta.key, tile: meta.tile, leaf, files: new Map(meta.files), stats: meta.stats, boxes: sections.boxes, svf: meta.svf };
+  return { key: meta.key, tile: meta.tile, leaf, files: new Map(meta.files), stats: meta.stats, boxes: sections.boxes, svf: meta.svf, seconds: meta.seconds };
 }
 
 // ─── tile fingerprint ends here ───
@@ -665,7 +669,8 @@ async function planStage(parts) {
   run = `runs/${randomUUID()}`;
   if (svfMode) svf = await openSvf(null);
   const code = leafCode();
-  const etags = new Map((await listKeys(`${prefix}/xkt/`)).map(o => [o.Key.slice(`${prefix}/xkt/`.length), o.ETag ?? '']));
+  const listed = new Map((await listKeys(`${prefix}/xkt/`)).map(o => [o.Key.slice(`${prefix}/xkt/`.length), o]));
+  const etags = new Map([...listed].map(([n, o]) => [n, o.ETag ?? '']));
   const fps = tiles.map((_, i) => fingerprint(i, { code, etags, svfId: svf?.id ?? null, origin: svf?.origin ?? null }));
   for (const o of await listKeys(`${prefix}/${OUT}/files/`)) { const m = /\/([0-9a-f]{64})\.glb$/.exec(o.Key); if (m) stored.add(m[1]); }
   const build = tiles.map((_, i) => i).filter(i => !usable(fps[i]));
@@ -677,14 +682,24 @@ async function planStage(parts) {
     const budget = await checkStorageBudget(tok => client.send(new ListObjectsV2Command({ Bucket, MaxKeys: 1000, ...(tok ? { ContinuationToken: tok } : {}) })), expected);
     console.log(`Storage: ${(budget.bytes / 1e9).toFixed(2)} GB now, ${(budget.projectedBytes / 1e9).toFixed(2)} GB with this build's new files (limit ${(budget.limit / 1e9).toFixed(1)} GB; files nothing refers to are removed afterwards)`);
   }
+  // Each tile's cost: its build time in the last build (costs.json beside the records), else its file's size at the
+  // median time per byte of the tiles that have both (all sizes: no times known).
+  const bytesOf = i => listed.get(originalOf(i) ? tiles[i].n : tiles[i].far?.n)?.Size ?? 0;
+  let seconds = [];
+  try { seconds = JSON.parse(fs.readFileSync(path.join(RECORDS, 'costs.json'), 'utf8')).seconds ?? []; } catch { /* none kept */ }
+  const rates = tiles.map((_, i) => (seconds[i] > 0 && bytesOf(i) > 0 ? seconds[i] / bytesOf(i) : null)).filter(r => r !== null).sort((a, b) => a - b);
+  const rate = rates.length ? rates[Math.floor(rates.length / 2)] : null;
+  const costOf = i => (seconds[i] > 0 ? seconds[i] : rate ? bytesOf(i) * rate : bytesOf(i) + 1);
   const chunk = Number(env.TILES3D_CHUNK) || 16;
-  const items = build.map(i => ({ key: i, centre: Array.isArray(tiles[i].aabb) ? centreOf(tiles[i].aabb) : [0, 0, 0] }));
+  const items = build.map(i => ({ key: i, centre: Array.isArray(tiles[i].aabb) ? centreOf(tiles[i].aabb) : [0, 0, 0], cost: costOf(i) }));
   const count = build.length ? Math.max(1, Math.min(parts, Math.ceil(build.length / chunk))) : 0;
   const plan = { v: 2, run, code, origin: svf?.origin ?? null, svfId: svf?.id ?? null, fps, parts: count ? partition(items, count, chunk) : [], stored: [...stored] };
   fs.writeFileSync(planFile, JSON.stringify(plan));
   if (STAGE === 'plan' && env.GITHUB_OUTPUT) fs.appendFileSync(env.GITHUB_OUTPUT, `parts=${JSON.stringify(plan.parts.map((_, k) => k))}\n`);
+  // Expected minutes per part (4 tiles at a time), when the costs are times.
+  const expected = rate ? ` (≈${plan.parts.map(p => Math.round(p.reduce((n, i) => n + costOf(i), 0) / 4 / 60)).join('/')} min by the last build's times)` : '';
   console.log(`Plan: ${run}; ${tiles.length - build.length} of ${tiles.length} tiles kept from their records, ${build.length} to build`
-    + (count ? ` in ${count} part(s) of ${plan.parts.map(p => p.length).join('/')} tiles` : '') + `; ${stored.size} files stored`);
+    + (count ? ` in ${count} part(s) of ${plan.parts.map(p => p.length).join('/')} tiles${expected}` : '') + `; ${stored.size} files stored`);
   return plan;
 }
 
@@ -700,7 +715,8 @@ async function leavesStage(plan, part) {
   };
   await Promise.all(Array.from({ length: 4 }, async () => {
     for (let n = next++; n < list.length; n = next++) {
-      const i = list[n], built = await buildTile(i);
+      const i = list[n], started = Date.now(), built = await buildTile(i);
+      built.seconds = Math.round((Date.now() - started) / 100) / 10;
       saveRecord(NEW, plan.fps[i], i, built);
       add(total, built.stats); files += built.files.size;
       progress();
@@ -716,20 +732,25 @@ async function leavesStage(plan, part) {
 async function finalizeStage(plan) {
   const parts = plan.parts.map((_, k) => JSON.parse(fs.readFileSync(partFile(k), 'utf8')));
   for (const [k, p] of parts.entries()) if (p.v !== 2 || p.run !== run) throw new Error(`Part ${k} belongs to ${p.run}, not ${run}`);
-  const used = new Set(); // records this build took (kept for the next one)
+  const used = new Set(), costs = tiles.map(() => null); // records this build took (kept for the next one), tiles' build times
   try {
-    await finalizeRecords(plan, parts, used);
+    await finalizeRecords(plan, parts, used, costs);
   } finally {
     // This build's records join the kept ones even when it stops here (their files are stored; a rerun keeps them).
-    for (const f of fs.readdirSync(NEW)) if (f.endsWith('.rec') && path.resolve(NEW) !== RECORDS) fs.copyFileSync(path.join(NEW, f), path.join(RECORDS, f));
+    // Moved, not copied: a whole site's records are ≈1.4 GB.
+    if (path.resolve(NEW) !== RECORDS) for (const f of fs.readdirSync(NEW)) if (f.endsWith('.rec')) {
+      try { fs.renameSync(path.join(NEW, f), path.join(RECORDS, f)); }
+      catch (e) { if (e.code !== 'EXDEV') throw e; fs.copyFileSync(path.join(NEW, f), path.join(RECORDS, f)); fs.rmSync(path.join(NEW, f)); }
+    }
   }
   // The next build starts from this one's records (the others are of tiles that changed or went).
   let dropped = 0;
   for (const f of fs.readdirSync(RECORDS)) if (f.endsWith('.rec') && !used.has(f.slice(0, -4))) { fs.rmSync(path.join(RECORDS, f)); dropped++; }
+  fs.writeFileSync(path.join(RECORDS, 'costs.json'), JSON.stringify({ v: 1, seconds: costs }));
   console.log(`Records: ${used.size} kept for the next build, ${dropped} dropped`);
 }
 
-async function finalizeRecords(plan, parts, used) {
+async function finalizeRecords(plan, parts, used, costs) {
   const built = new Set(parts.flatMap(p => p.tiles));
   const stats = { ...leafStats(), parents: [], terrain: { leaves: 0, triangles: 0, bytes: 0, textures: 0, textureBytes: 0, parents: [] } };
   const objectBoxes = new Float32Array(objectCount * 6);
@@ -748,6 +769,7 @@ async function finalizeRecords(plan, parts, used) {
     if (!file) throw new Error(`No record ${key}`);
     const r = loadRecord(file);
     used.add(key);
+    if (key === plan.fps[r.tile]) costs[r.tile] = r.seconds ?? null;
     for (const [, w] of r.files) { recorded.add(w.hash); stored.add(w.hash); }
     return r;
   };
