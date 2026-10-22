@@ -134,8 +134,13 @@ for (const svf of [true, false]) {
     const costs = JSON.parse(fs.readFileSync(path.join(records, 'costs.json'), 'utf8')).seconds;
     assert.ok(costs.length === 7 && costs.every(c => typeof c === 'number'), "every tile's build time kept for the next plan");
 
+    // What a build that stopped before publishing leaves (a stored file nobody lists, its run folder) goes first.
+    const base = path.join(site, PREFIX, folder), strayFile = path.join(base, 'files', `${'e'.repeat(64)}.glb`), strayRun = path.join(base, 'runs', 'stopped');
+    fs.writeFileSync(strayFile, 'x'); fs.mkdirSync(strayRun); fs.writeFileSync(path.join(strayRun, 'tileset.json'), 'x');
     // Nothing changed: no tile built, the same files (nothing uploaded but the run's own two).
     const again = await build(site, path.join(site, 'w2'), { ...mode, TILES3D_STAGE: 'all', TILES3D_RECORDS: records });
+    assert.match(again.stdout, /Removed 2 stored files nothing lists/);
+    assert.ok(!fs.existsSync(strayFile) && !fs.existsSync(strayRun));
     assert.match(again.stdout, /7 of 7 tiles kept from their records, 0 to build/);
     const second = published(site, folder, records);
     assert.notEqual(second.current.run, first.current.run);
@@ -160,6 +165,19 @@ for (const svf of [true, false]) {
     assert.notEqual(third.current.hash['c/d3.glb'], first.current.hash['c/d3.glb']);
     assert.equal(third.current.hash['c/d4.glb'], first.current.hash['c/d4.glb']);
     assert.equal(recs(records).length, svf ? 8 : 7, "tile 3's old record dropped");
+    // A build that stops before publishing (compare=strict, tile 3 back as it was) keeps what it built: its record and
+    // the build times; the next build keeps every tile.
+    makeSite(site);
+    fs.rmSync(path.join(records, 'costs.json'));
+    const stopped = await build(site, path.join(site, 'w5'), { ...mode, DIAG_OPTIONS: `${svf ? 'svf=1,' : ''}compare=strict`, TILES3D_STAGE: 'all', TILES3D_RECORDS: records })
+      .then(() => null, e => e);
+    assert.ok(stopped && /compare=strict: this run differs/.test(stopped.stderr), 'the strict comparison stops it');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(records, 'costs.json'), 'utf8')).seconds.length, 7);
+    const after = await build(site, path.join(site, 'w6'), { ...mode, TILES3D_STAGE: 'all', TILES3D_RECORDS: records });
+    assert.match(after.stdout, /7 of 7 tiles kept from their records, 0 to build/);
+    assert.deepEqual(published(site, folder, records).current.hash, first.current.hash, 'tile 3 as first built');
+    makeSite(site, { tweak: true });
+    await build(site, path.join(site, 'w7'), { ...mode, TILES3D_STAGE: 'all', TILES3D_RECORDS: records });
     // The old d3 is gone from the store (nothing lists it); a damaged record is built again.
     assert.ok(!fs.existsSync(path.join(site, PREFIX, folder, 'files', `${first.current.hash['c/d3.glb']}.glb`)));
     const victim = recs(records)[0];

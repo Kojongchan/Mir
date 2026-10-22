@@ -689,12 +689,24 @@ async function planStage(parts) {
   const listed = new Map((await listKeys(`${prefix}/xkt/`)).map(o => [o.Key.slice(`${prefix}/xkt/`.length), o]));
   const etags = new Map([...listed].map(([n, o]) => [n, o.ETag ?? '']));
   const fps = tiles.map((_, i) => fingerprint(i, { code, etags, svfId: svf?.id ?? null, origin: svf?.origin ?? null }));
-  for (const o of await listKeys(`${prefix}/${OUT}/files/`)) { const m = /\/([0-9a-f]{64})\.glb$/.exec(o.Key); if (m) stored.add(m[1]); }
+  const files = (await listKeys(`${prefix}/${OUT}/files/`)).map(o => ({ ...o, hash: /\/([0-9a-f]{64})\.glb$/.exec(o.Key)?.[1] }));
+  for (const o of files) if (o.hash) stored.add(o.hash);
   const build = tiles.map((_, i) => i).filter(i => !usable(fps[i]));
+  // Stored files neither the published run nor a readable record lists, and other runs' folders: left by a build that
+  // stopped before publishing (run 225 left 1.87 GB). Removed first, so the room below is counted without them.
+  const published = await getJson(`${prefix}/${OUT}/current.json`);
+  const keep = new Set(published?.v === 2 ? Object.values(published.hash ?? {}) : []);
+  for (const f of fs.readdirSync(RECORDS)) {
+    if (!f.endsWith('.rec')) continue;
+    try { for (const [, w] of readRecord(path.join(RECORDS, f), { metaOnly: true, key: recordKey }).meta.files) keep.add(w.hash); } catch { /* unreadable: built again */ }
+  }
+  const stray = [];
+  for (const o of files) if (!keep.has(o.hash)) { stray.push(o); stored.delete(o.hash); }
+  for (const o of await listKeys(`${prefix}/${OUT}/runs/`)) if (!published?.run || !o.Key.startsWith(`${prefix}/${OUT}/${published.run}/`)) stray.push(o);
+  if (stray.length) console.log(`Removed ${await removeKeys(stray.map(o => o.Key))} stored files nothing lists (${MB(stray.reduce((n, o) => n + (o.Size ?? 0), 0))} MB)`);
   // Tile files go up as they are written: the room is checked up front, for the tiles to build at the published run's
   // size per tile (+10 %, and a tenth of it for the parents and terrain).
   if (!localDir) {
-    const published = await getJson(`${prefix}/${OUT}/current.json`);
     const expected = Math.round((published?.bytes ?? 2_500_000_000) * 1.1 * Math.min(1, build.length / tiles.length + 0.1));
     const budget = await checkStorageBudget(tok => client.send(new ListObjectsV2Command({ Bucket, MaxKeys: 1000, ...(tok ? { ContinuationToken: tok } : {}) })), expected);
     console.log(`Storage: ${(budget.bytes / 1e9).toFixed(2)} GB now, ${(budget.projectedBytes / 1e9).toFixed(2)} GB with this build's new files (limit ${(budget.limit / 1e9).toFixed(1)} GB; files nothing refers to are removed afterwards)`);
@@ -769,11 +781,12 @@ async function finalizeStage(plan) {
       catch (e) { if (e.code !== 'EXDEV') throw e; fs.copyFileSync(path.join(NEW, f), path.join(RECORDS, f)); fs.rmSync(path.join(NEW, f)); }
     }
   } catch (e) { if (failure) console.log(`This build's records were not all kept: ${e.message}`); else failure = e; }
+  // The tiles' build times for the next plan's parts (also when this build stops here: its tiles were built).
+  if (costs.some(c => c !== null)) fs.writeFileSync(path.join(RECORDS, 'costs.json'), JSON.stringify({ v: 1, seconds: costs }));
   if (failure) throw failure;
   // The next build starts from this one's records (the others are of tiles that changed or went).
   let dropped = 0;
   for (const f of fs.readdirSync(RECORDS)) if (f.endsWith('.rec') && !used.has(f.slice(0, -4))) { fs.rmSync(path.join(RECORDS, f)); dropped++; }
-  fs.writeFileSync(path.join(RECORDS, 'costs.json'), JSON.stringify({ v: 1, seconds: costs }));
   console.log(`Records: ${used.size} kept for the next build, ${dropped} dropped`);
 }
 
@@ -983,9 +996,12 @@ async function compareWithPublished(mine) {
     if (!m) { gone.push(rel); return; }
     let hash = current.v === 2 ? current.hash?.[rel] : null;
     if (!hash) {
-      // A v1 run: the store's body, as uploaded (gzip kept: getBytes would unpack tileset.json and objects.bin).
-      const r = await retrying(() => store.send(new GetObjectCommand({ Bucket, Key: `${prefix}/${OUT}/${current.run}/${rel}` })));
-      hash = sha256(Buffer.from(await r.Body.transformToByteArray()));
+      // A v1 run: the store's body, as uploaded (gzip kept: getBytes would unpack tileset.json and objects.bin), read
+      // inside the retry (run 225 stopped on a connection reset mid-body).
+      hash = await retrying(async () => {
+        const r = await store.send(new GetObjectCommand({ Bucket, Key: `${prefix}/${OUT}/${current.run}/${rel}` }));
+        return sha256(Buffer.from(await r.Body.transformToByteArray()));
+      });
     }
     (hash === m.hash ? same : differ).push(rel);
   }));
