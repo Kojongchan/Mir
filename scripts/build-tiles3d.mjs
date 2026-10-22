@@ -733,16 +733,17 @@ async function finalizeStage(plan) {
   const parts = plan.parts.map((_, k) => JSON.parse(fs.readFileSync(partFile(k), 'utf8')));
   for (const [k, p] of parts.entries()) if (p.v !== 2 || p.run !== run) throw new Error(`Part ${k} belongs to ${p.run}, not ${run}`);
   const used = new Set(), costs = tiles.map(() => null); // records this build took (kept for the next one), tiles' build times
+  let failure = null;
+  try { await finalizeRecords(plan, parts, used, costs); } catch (e) { failure = e; }
+  // This build's records join the kept ones even when it stops here (their files are stored; a rerun keeps them).
+  // Moved, not copied: a whole site's records are ≈1.4 GB.
   try {
-    await finalizeRecords(plan, parts, used, costs);
-  } finally {
-    // This build's records join the kept ones even when it stops here (their files are stored; a rerun keeps them).
-    // Moved, not copied: a whole site's records are ≈1.4 GB.
     if (path.resolve(NEW) !== RECORDS) for (const f of fs.readdirSync(NEW)) if (f.endsWith('.rec')) {
       try { fs.renameSync(path.join(NEW, f), path.join(RECORDS, f)); }
       catch (e) { if (e.code !== 'EXDEV') throw e; fs.copyFileSync(path.join(NEW, f), path.join(RECORDS, f)); fs.rmSync(path.join(NEW, f)); }
     }
-  }
+  } catch (e) { if (failure) console.log(`This build's records were not all kept: ${e.message}`); else failure = e; }
+  if (failure) throw failure;
   // The next build starts from this one's records (the others are of tiles that changed or went).
   let dropped = 0;
   for (const f of fs.readdirSync(RECORDS)) if (f.endsWith('.rec') && !used.has(f.slice(0, -4))) { fs.rmSync(path.join(RECORDS, f)); dropped++; }
