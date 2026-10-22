@@ -219,6 +219,12 @@ test('parts: runs of neighbours dealt round; one part keeps the order; records s
   assert.throws(() => readRecord(path.join(path.dirname(file), 'r.rec'), { key }), /Corrupt record|not sealed/);
   fs.renameSync(sealed, path.join(path.dirname(file), 't.rec')); // its name is part of the seal: a record moved to another key is refused
   assert.throws(() => readRecord(path.join(path.dirname(file), 't.rec'), { key }));
+  // Deflated before sealing: a compressible body takes a fraction of its size; flags 1 (sealed, not deflated) still read.
+  const big = { pos: new Float64Array(100000).fill(1.25) }, packed = path.join(path.dirname(file), 'big.rec');
+  writeRecord(packed, { tile: 1 }, { opaque: big }, key);
+  assert.ok(fs.statSync(packed).size < 100000, `${fs.statSync(packed).size} bytes`);
+  assert.equal(readRecord(packed, { key }).deflated, true);
+  assert.deepEqual(readRecord(packed, { key }).sections.opaque, big);
 });
 
 test('sealed records: kept between builds with the same secret, built again with another, never readable in the file', { timeout: 240_000 }, async () => {

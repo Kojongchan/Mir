@@ -789,7 +789,16 @@ async function finalizeStage(plan) {
   // The next build starts from this one's records (the others are of tiles that changed or went).
   let dropped = 0;
   for (const f of fs.readdirSync(RECORDS)) if (f.endsWith('.rec') && !used.has(f.slice(0, -4))) { fs.rmSync(path.join(RECORDS, f)); dropped++; }
-  console.log(`Records: ${used.size} kept for the next build, ${dropped} dropped`);
+  // Records kept from before records were deflated are written again, once (sealed bytes do not compress in the cache).
+  let rewritten = 0;
+  for (const f of fs.readdirSync(RECORDS)) {
+    const file = path.join(RECORDS, f);
+    if (!f.endsWith('.rec') || readRecord(file, { metaOnly: true, key: recordKey }).deflated) continue;
+    const { meta, sections } = readRecord(file, { key: recordKey });
+    writeRecord(file, meta, sections, recordKey);
+    rewritten++;
+  }
+  console.log(`Records: ${used.size} kept for the next build${rewritten ? ` (${rewritten} written again deflated)` : ''}, ${dropped} dropped`);
 }
 
 async function finalizeRecords(plan, parts, used, costs) {

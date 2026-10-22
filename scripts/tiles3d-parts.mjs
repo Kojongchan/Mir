@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import { groupSpatially } from './tiles3d.mjs';
 
 /**
@@ -36,7 +37,10 @@ const TYPES = { Float64Array, Float32Array, Uint32Array, Uint16Array, Uint8Array
 const MAGIC = Buffer.from('MRC1');
 
 // A record leaves the job (artifacts, Actions cache) and holds model geometry: with a key it is sealed, head and body
-// apart (AES-256-GCM, each bound to the file's name and part), so the plan reads every head without the bodies.
+// apart (AES-256-GCM, each bound to the file's name and part), so the plan reads every head without the bodies. Head
+// and body are deflated first (sealed bytes do not compress: a site's records were 2.66 GB in the cache, 1.18 GB
+// before sealing).
+const SEALED = 1, DEFLATED = 2;
 function seal(bytes, key, label) {
   const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, iv);
   cipher.setAAD(Buffer.from(label));
@@ -51,10 +55,10 @@ function unseal(bytes, key, label) {
 }
 
 /**
- * Write a record: `meta` (JSON) and `sections` ({ name: { field: typed array, … } | null }) as ['MRC1', sealed u8,
- * [head bytes u32, head], [body bytes u32, body]] — head: { meta, sections: the arrays' names, types and lengths },
- * body: the arrays; each sealed when `key` (32 bytes) is given. Written beside and renamed into place, so a record is
- * whole or absent.
+ * Write a record: `meta` (JSON) and `sections` ({ name: { field: typed array, … } | null }) as ['MRC1', flags u8
+ * (1 sealed, 2 deflated), [head bytes u32, head], [body bytes u32, body]] — head: { meta, sections: the arrays' names,
+ * types and lengths }, body: the arrays; each deflated, then sealed when `key` (32 bytes) is given. Written beside and
+ * renamed into place, so a record is whole or absent.
  */
 export function writeRecord(file, meta, sections = {}, key = null) {
   const head = { meta, sections: {} }, arrays = [];
@@ -68,12 +72,12 @@ export function writeRecord(file, meta, sections = {}, key = null) {
     }
   }
   const name = path.basename(file);
-  let headBytes = Buffer.from(JSON.stringify(head)), body = Buffer.concat(arrays);
+  let headBytes = deflateRawSync(Buffer.from(JSON.stringify(head)), { level: 1 }), body = deflateRawSync(Buffer.concat(arrays), { level: 1 });
   if (key) { headBytes = seal(headBytes, key, `${name}:head`); body = seal(body, key, `${name}:body`); }
   const size = n => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b; };
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const part = `${file}.${process.pid}.part`;
-  fs.writeFileSync(part, Buffer.concat([MAGIC, Buffer.from([key ? 1 : 0]), size(headBytes.length), headBytes, size(body.length), body]));
+  fs.writeFileSync(part, Buffer.concat([MAGIC, Buffer.from([DEFLATED | (key ? SEALED : 0)]), size(headBytes.length), headBytes, size(body.length), body]));
   fs.renameSync(part, file);
 }
 
@@ -84,22 +88,23 @@ export function writeRecord(file, meta, sections = {}, key = null) {
 export function readRecord(file, { metaOnly = false, key = null } = {}) {
   const name = path.basename(file), corrupt = () => new Error(`Corrupt record ${name}`);
   const fd = fs.openSync(file, 'r');
-  let headBytes, sealed, bodyAt, size;
+  let headBytes, sealed, deflated, bodyAt, size;
   try {
     const start = Buffer.alloc(9);
-    if (fs.readSync(fd, start, 0, 9, 0) !== 9 || !start.subarray(0, 4).equals(MAGIC)) throw corrupt();
-    sealed = start[4] === 1;
+    if (fs.readSync(fd, start, 0, 9, 0) !== 9 || !start.subarray(0, 4).equals(MAGIC) || start[4] > (SEALED | DEFLATED)) throw corrupt();
+    sealed = !!(start[4] & SEALED); deflated = !!(start[4] & DEFLATED);
     if (sealed !== !!key) throw new Error(sealed ? `Record ${name} is sealed: no key` : `Record ${name} is not sealed`);
     headBytes = Buffer.alloc(start.readUInt32LE(5));
     if (fs.readSync(fd, headBytes, 0, headBytes.length, 9) !== headBytes.length) throw corrupt();
     bodyAt = 9 + headBytes.length;
     size = fs.fstatSync(fd).size;
   } finally { fs.closeSync(fd); }
-  const head = JSON.parse((sealed ? unseal(headBytes, key, `${name}:head`) : headBytes).toString());
-  if (metaOnly) return { meta: head.meta, sections: null };
+  const plain = (bytes, part) => { const b = sealed ? unseal(bytes, key, `${name}:${part}`) : bytes; return deflated ? inflateRawSync(b) : b; };
+  const head = JSON.parse(plain(headBytes, 'head').toString());
+  if (metaOnly) return { meta: head.meta, sections: null, deflated };
   const bytes = fs.readFileSync(file);
   if (size < bodyAt + 4 || bytes.length !== bodyAt + 4 + bytes.readUInt32LE(bodyAt)) throw corrupt();
-  const raw = bytes.subarray(bodyAt + 4), body = sealed ? unseal(raw, key, `${name}:body`) : raw, sections = {};
+  const body = plain(bytes.subarray(bodyAt + 4), 'body'), sections = {};
   let p = 0;
   for (const [section, list] of Object.entries(head.sections)) {
     const fields = {};
@@ -112,5 +117,5 @@ export function readRecord(file, { metaOnly = false, key = null } = {}) {
     sections[section] = fields;
   }
   if (p !== body.length) throw corrupt();
-  return { meta: head.meta, sections };
+  return { meta: head.meta, sections, deflated };
 }
