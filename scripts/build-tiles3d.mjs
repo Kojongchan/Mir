@@ -8,19 +8,24 @@
 //                is) and simplified parents carrying the same photos
 //   region     : TILES3D_REGION="<manifest index>:<count>" or DIAG_OPTIONS="region=<index>:<count>" limits the detail
 //                level to that many tiles around one (quick test builds); default: the whole site
-//   reuse      : TILES3D_REUSE=1 or DIAG_OPTIONS="reuse=1" keeps the published run's leaves (far, detail, terrain,
-//                objects.bin) and rebuilds only the coarser structure levels into that run (no second copy)
 //   svf        : TILES3D_SVF=1 or DIAG_OPTIONS="svf=1" takes the original level's triangles from the model's SVF
 //                (exact coordinates; the XKT grid is 2–20 cm, scripts/svf-precise.mjs) and publishes under
 //                <prefix>/tiles3d-svf/ instead (the third viewer's trial; the second viewer's tileset is untouched).
 //                Needs APS_CLIENT_ID / APS_CLIENT_SECRET (and URN, else the model's claim)
-//   output     : <prefix>/tiles3d/runs/<id>/{tileset.json, objects.bin, c/*.glb}, then <prefix>/tiles3d/current.json
-//   stages     : TILES3D_STAGE = all (default) | plan | leaves | finalize (decision D27). plan fixes the run, the SVF origin
-//                and the parts (runs of neighbouring tiles dealt round to TILES3D_PARTS jobs, scripts/tiles3d-parts.mjs);
-//                leaves (TILES3D_PART=k) builds and uploads one part's tiles; finalize audits the SVF matching over all
-//                of them, builds the parents, terrain and tileset and publishes. They meet in TILES3D_WORK (plan.json,
-//                part-<k>.json/.groups/.boxes; artifacts between the workflow's jobs). all: the three in one process,
-//                one part in manifest order. A tile's result does not depend on the part it is built in.
+//   output     : tile files by content, <prefix>/tiles3d/files/<SHA-256>.glb (one copy, whichever build or tile wrote
+//                it); the run's tileset.json and objects.bin in <prefix>/tiles3d/runs/<id>/; then
+//                <prefix>/tiles3d/current.json (v2: the run's files and their hashes — c/<name>.glb is files/<hash>.glb)
+//   stages     : TILES3D_STAGE = all (default) | plan | leaves | finalize (decision D27). plan fixes the run, the SVF
+//                origin and each tile's fingerprint (the code above "tile fingerprint ends here" with the modules it
+//                runs, scripts/code-fingerprint.mjs, and the tile's inputs). A tile whose record (TILES3D_RECORDS, kept
+//                between builds) has that fingerprint and whose files are stored is not built again; the others are
+//                dealt to parts (runs of neighbouring tiles dealt round to TILES3D_PARTS jobs, scripts/tiles3d-parts.mjs).
+//                leaves (TILES3D_PART=k) builds one part's tiles, uploads their files and writes their records;
+//                finalize audits the SVF matching over every record, builds the parents, terrain and tileset,
+//                publishes, removes stored files nothing refers to and leaves this build's records in TILES3D_RECORDS.
+//                The stages meet in TILES3D_WORK (plan.json, part-<k>.json, new/<fingerprint>.rec; artifacts between
+//                the workflow's jobs). all: the three in one process, one part in manifest order. A tile's result
+//                does not depend on the part it is built in, nor on the build it was built in.
 // Object ids: numeric entity ids are dbIds; converter-renamed fragments (`entity-N`) use the model's fragment
 // table (meta/alias), so every level carries the owning object's dbId per vertex. Terrain has no object ids.
 import { gunzipSync, gzipSync } from 'node:zlib';
@@ -28,7 +33,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { decodeXkt, xktEntityBoxes } from './tile-lod-merge.mjs';
 import { packMeshes, meshColour, mergeGroups, simplifyGroup, encodeGlb, boxVolume, groupSpatially, triangles, packTerrain, simplifyTerrain,
   encodeTerrainGlb, weldGroup } from './tiles3d.mjs';
@@ -36,7 +41,8 @@ import { checkStorageBudget } from './storage-budget.mjs';
 import { nearOther } from './clearance.mjs';
 import { SKIN_REACH, applySkins, containedSkins } from './skins.mjs';
 import { cacheKey } from './cache-key.mjs';
-import { mergeBoxes, partition, readGroups, writeGroups } from './tiles3d-parts.mjs';
+import { partition, readRecord, writeRecord } from './tiles3d-parts.mjs';
+import { codeFingerprint } from './code-fingerprint.mjs';
 
 const env = process.env;
 // Far v5 simplifies by 0.25 m but prunes parts < 1 m and drops thin pieces of large merged tiles; at 3 m the original
@@ -81,7 +87,7 @@ async function retrying(task) {
   }
 }
 const client = { send: command => retrying(() => store.send(command)) };
-/** The few S3 commands this job uses, on a local folder. */
+/** The few S3 commands this job uses, on a local folder (listed objects carry an MD5 ETag, as R2 gives). */
 async function localSend(command) {
   const { Key, Body, Prefix } = command.input;
   const file = Key && path.join(localDir, Key);
@@ -91,12 +97,15 @@ async function localSend(command) {
     return { Body: { transformToByteArray: async () => bytes } };
   }
   if (command instanceof PutObjectCommand) { fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, Body); return {}; }
-  if (command instanceof DeleteObjectCommand) { fs.rmSync(file, { force: true }); return {}; }
-  if (command instanceof DeleteObjectsCommand) { for (const o of command.input.Delete.Objects) fs.rmSync(path.join(localDir, o.Key), { force: true }); return {}; }
+  // A folder goes with its last file, as a prefix does in the store.
+  const remove = f => { fs.rmSync(f, { force: true }); for (let d = path.dirname(f); d.startsWith(`${localDir}${path.sep}`) && !fs.readdirSync(d).length; d = path.dirname(d)) fs.rmdirSync(d); };
+  if (command instanceof DeleteObjectCommand) { remove(file); return {}; }
+  if (command instanceof DeleteObjectsCommand) { for (const o of command.input.Delete.Objects) remove(path.join(localDir, o.Key)); return {}; }
   if (command instanceof ListObjectsV2Command) {
     const walk = dir => (fs.existsSync(dir) ? fs.readdirSync(dir, { withFileTypes: true }).flatMap(d => d.isDirectory() ? walk(path.join(dir, d.name)) : [path.join(dir, d.name)]) : []);
-    return { Contents: walk(localDir).map(f => ({ Key: path.relative(localDir, f).split(path.sep).join('/'), Size: fs.statSync(f).size }))
-      .filter(o => !Prefix || o.Key.startsWith(Prefix)) };
+    return { Contents: walk(localDir).map(f => ({ Key: path.relative(localDir, f).split(path.sep).join('/'), file: f }))
+      .filter(o => !Prefix || o.Key.startsWith(Prefix))
+      .map(({ Key, file: f }) => ({ Key, Size: fs.statSync(f).size, ETag: `"${createHash('md5').update(fs.readFileSync(f)).digest('hex')}"` })) };
   }
   throw new Error('Unsupported local command');
 }
@@ -111,6 +120,7 @@ const getBytes = Key => retrying(async () => {
 });
 const getJson = async Key => { const b = await getBytes(Key); return b ? JSON.parse(b.toString()) : null; };
 const MB = n => Math.round(n / 1048576 * 10) / 10;
+const sha256 = data => createHash('sha256').update(data).digest('hex');
 
 let urn = env.URN || '';
 try { await client.send(new HeadObjectCommand({ Bucket, Key: `${prefix}/xkt/manifest.json` })); }
@@ -159,78 +169,53 @@ if (regionOption) {
     .sort((p, q) => p[1] - q[1]).slice(0, regionCount).map(([i]) => i));
   console.log(`Detail only for ${region.size} tiles around ${regionTile}`);
 }
+/** Whether tile i's original is built (else its far file is its leaf). */
+const originalOf = i => (!region || region.has(i)) && /^[\w.-]+\.xkt$/.test(tiles[i].n ?? '');
 
-const STAGE = env.TILES3D_STAGE || 'all';
-if (!['all', 'plan', 'leaves', 'finalize'].includes(STAGE)) throw new Error(`Unknown stage ${STAGE}`);
-const WORK = path.resolve(env.TILES3D_WORK || path.join(env.RUNNER_TEMP || os.tmpdir(), `tiles3d-${prefix}`));
-fs.mkdirSync(WORK, { recursive: true });
-const planFile = path.join(WORK, 'plan.json'), partFile = (k, ext) => path.join(WORK, `part-${k}.${ext}`);
-// Reuse: the published run's tileset gives each tile's leaf (box, error, finer levels) and the terrain branch as is.
-const reuse = env.TILES3D_REUSE === '1' || /(?:^|,)\s*reuse=1\b/.test(env.DIAG_OPTIONS || '');
-if (reuse && STAGE !== 'all') throw new Error('reuse=1 is built in one stage (TILES3D_STAGE=all)');
-
-const freshStats = () => ({ far: { files: 0, triangles: 0, bytes: 0 }, detail: { files: 0, triangles: 0, bytes: 0, vertices: 0, weldedVertices: 0 },
+// Per-tile statistics (summed over the tiles at finalize).
+const leafStats = () => ({ far: { files: 0, triangles: 0, bytes: 0 }, detail: { files: 0, triangles: 0, bytes: 0, vertices: 0, weldedVertices: 0 },
   mid: Object.fromEntries(MID_ERRORS.map(e => [e, { files: 0, triangles: 0, bytes: 0, skipped: 0, lockedVertices: 0 }])),
-  parents: [], terrain: { leaves: 0, triangles: 0, bytes: 0, textures: 0, textureBytes: 0, parents: [] },
   skins: { tiles: 0, pushed: 0, shared: 0, pairs: 0, partnerTriangles: 0, seconds: 0, partnerSeconds: 0 } });
-const stats = freshStats();
-const objectBoxes = new Float32Array(objectCount * 6);
-for (let k = 0; k < objectCount; k++) objectBoxes.set([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], k * 6);
-const growObjects = group => {
+/** Grow `boxes` (object id → [min x, y, z, max x, y, z]) by a group's vertices. */
+const growObjects = (group, boxes) => {
   if (!group) return;
   for (let v = 0; v < group.ids.length; v++) {
     const id = group.ids[v];
     if (!(id > 0 && id < objectCount)) continue;
+    let b = boxes.get(id);
+    if (!b) boxes.set(id, (b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity]));
     for (let a = 0; a < 3; a++) {
       const p = group.pos[v * 3 + a];
-      if (p < objectBoxes[id * 6 + a]) objectBoxes[id * 6 + a] = p;
-      if (p > objectBoxes[id * 6 + 3 + a]) objectBoxes[id * 6 + 3 + a] = p;
+      if (p < b[a]) b[a] = p;
+      if (p > b[a + 3]) b[a + 3] = p;
     }
   }
 };
 
-// Each file goes to the run as soon as it is written, 16 at a time (the whole run kept in memory until the end was
-// 1.9 GB); `written`: relative path → { bytes, hash (SHA-256) } of what this process uploaded (the parts' lists join in
-// at finalize).
+// Each file goes to the store as soon as it is written, 16 at a time (the whole run kept in memory until the end was
+// 1.9 GB). A tile file (c/*.glb) is stored by its content, once: one already stored (listed by the plan, or uploaded
+// by this job) is not sent again. Other files go to the run's folder, gzipped.
 let run = null;
-const written = new Map(), uploading = new Set();
+const stored = new Set(), uploading = new Set(), uploads = { files: 0, bytes: 0 };
 let uploadError = null;
 const contentType = rel => (rel.endsWith('.glb') ? 'model/gltf-binary' : rel.endsWith('.json') ? 'application/json' : 'application/octet-stream');
-async function upload(rel, body) {
+const storedKey = hash => `${prefix}/${OUT}/files/${hash}.glb`;
+/** Upload `body` as the run's file `rel`, noted in `into` (path → { bytes, hash: SHA-256 }). */
+async function upload(rel, body, into) {
   if (uploadError) throw uploadError;
+  const hash = sha256(body), tile = rel.startsWith('c/');
+  into.set(rel, { bytes: body.length, hash });
+  if (tile && stored.has(hash)) return;
+  if (tile) stored.add(hash);
   while (uploading.size >= 16) { await Promise.race(uploading); if (uploadError) throw uploadError; }
-  const sent = client.send(new PutObjectCommand({ Bucket, Key: `${prefix}/${OUT}/${run}/${rel}`, Body: body, ContentType: contentType(rel),
-    ...(rel.endsWith('.glb') ? {} : { ContentEncoding: 'gzip' }) })).catch(e => { uploadError ??= e; }).finally(() => uploading.delete(sent));
+  const sent = client.send(new PutObjectCommand({ Bucket, Key: tile ? storedKey(hash) : `${prefix}/${OUT}/${run}/${rel}`, Body: body, ContentType: contentType(rel),
+    ...(tile ? {} : { ContentEncoding: 'gzip' }) })).catch(e => { uploadError ??= e; }).finally(() => uploading.delete(sent));
   uploading.add(sent);
-  written.set(rel, { bytes: body.length, hash: createHash('sha256').update(body).digest('hex') });
+  uploads.files++; uploads.bytes += body.length;
 }
-const writtenBytes = () => [...written.values()].reduce((n, w) => n + w.bytes, 0);
 async function flushUploads() {
   await Promise.all(uploading);
   if (uploadError) throw uploadError;
-}
-/**
- * Delete keys 1,000 per request (one at a time took 27 minutes for a run's 2,751 files); if the store refuses batch
- * deletes, 16 single deletes at a time.
- */
-let batchDeletes = true;
-async function removeKeys(keys) {
-  for (let k = 0; k < keys.length; k += 1000) {
-    const chunk = keys.slice(k, k + 1000);
-    if (batchDeletes) {
-      try {
-        const r = await client.send(new DeleteObjectsCommand({ Bucket, Delete: { Objects: chunk.map(Key => ({ Key })), Quiet: true } }));
-        if (r.Errors?.length) throw new Error(`Could not delete ${r.Errors.length} old files, e.g. ${r.Errors[0].Key}: ${r.Errors[0].Message}`);
-        continue;
-      } catch (e) {
-        if (/Could not delete/.test(e.message)) throw e;
-        console.log(`Batch delete refused (${e.name}: ${e.message}); deleting one by one`);
-        batchDeletes = false;
-      }
-    }
-    for (let j = 0; j < chunk.length; j += 16) await Promise.all(chunk.slice(j, j + 16).map(Key => client.send(new DeleteObjectCommand({ Bucket, Key }))));
-  }
-  return keys.length;
 }
 
 /**
@@ -246,32 +231,17 @@ async function load(i, key, precise = false, fix = null) {
   const meshes = precise && svf ? await svf.refine(i, xkt, decoded.meshes, dbIds, fix) : decoded.meshes; // may correct and extend dbIds
   return packMeshes(meshes, e => dbIds[e]);
 }
-/** Write packed groups as c/<name>.glb (counted in `kind`, a stats key or entry); returns { bounds, triangles } or null. */
-async function write(groups, name, kind) {
+/**
+ * Write packed groups as c/<name>.glb (counted in `kind`, a statistics key or entry of the tile's); returns { bounds,
+ * triangles } or null.
+ */
+async function write(groups, name, kind, tile) {
   const out = await encodeGlb(groups);
   if (!out) return null;
-  await upload(`c/${name}.glb`, out.glb);
-  const s = typeof kind === 'string' ? stats[kind] : kind;
+  await upload(`c/${name}.glb`, out.glb, tile.files);
+  const s = typeof kind === 'string' ? tile.stats[kind] : kind;
   s.files++; s.triangles += out.triangles; s.bytes += out.glb.length;
   return { bounds: out.bounds, triangles: out.triangles };
-}
-
-let previous = null;
-const reusedLeaves = new Map();
-if (reuse) {
-  const current = await getJson(`${prefix}/${OUT}/current.json`);
-  const old = current && /^runs\/[a-zA-Z0-9-]+$/.test(current.run ?? '') && await getJson(`${prefix}/${OUT}/${current.run}/tileset.json`);
-  if (!old) throw new Error('No published tileset to reuse');
-  previous = { current, tileset: old };
-  const fromBox = v => { const [cx, cy, cz, hx, , , , hy, , , , hz] = v.box; return [cx - hx, cy - hy, cz - hz, cx + hx, cy + hy, cz + hz]; };
-  // The first per-tile file on the way down from the parents is the tile's leaf.
-  const visit = n => {
-    const m = /^c\/(?:f|d|m\d+-)(\d+)\.glb$/.exec(n.content?.uri ?? '');
-    if (m) reusedLeaves.set(Number(m[1]), { bounds: fromBox(n.boundingVolume), error: n.geometricError, content: n.content.uri, children: n.children ?? [] });
-    else for (const c of n.children ?? []) if (c.extras?.mir !== 'terrain') visit(c);
-  };
-  visit(old.root);
-  console.log(`Reusing ${current.run}: ${reusedLeaves.size} leaves`);
 }
 
 /**
@@ -304,7 +274,7 @@ async function openSvf(knownOrigin) {
   if (!origin) {
     // Converter origin (tiles = SVF world − origin): objects with one fragment vote, from original tiles spread over
     // the scope until 50 have voted (the first 12 tiles of the site had 5; 12 tiles around 949 had 376).
-    const scope = tiles.map((t, i) => i).filter(i => (!region || region.has(i)) && /^[\w.-]+\.xkt$/.test(tiles[i].n ?? ''));
+    const scope = tiles.map((t, i) => i).filter(originalOf);
     const sample = [], picks = Math.min(scope.length, 48);
     let est = null;
     for (let k = 0; k < picks && !(est?.samples >= 50); k++) {
@@ -321,11 +291,13 @@ async function openSvf(knownOrigin) {
   const candidatesOf = fragmentMatcher(source.fragments, origin);
   const fb = source.fragments.boxes, fragmentCount = source.fragments.db.length;
   const around = (f, b) => [0, 1, 2].every(a => { const c = (fb[f * 6 + a] + fb[f * 6 + a + 3]) / 2 - origin[a]; return c >= b[a] && c <= b[a + 3]; });
-  // Per built tile: its statistics, the fragments its entities took (with the match score), its objects and its box.
+  // Per tile: its statistics, the fragments its entities took (with the match score), its objects, its box and the
+  // colour of one mesh of each of its objects.
   const perTile = new Map();
-  const byTile = () => [...perTile].sort((p, q) => p[0] - q[0]); // the parts meet at finalize: tile order, not build order
-  // Object → the colour of one of its meshes (for fragments added to a tile), from the lowest tile holding it.
+  const byTile = () => [...perTile].sort((p, q) => p[0] - q[0]); // tiles meet at finalize: tile order, not build order
+  // Object → the colour of one of its meshes (for fragments added to a tile): the first mesh in the lowest tile holding it.
   const colourOf = new Map(), colourTile = new Map();
+  const takeColours = (i, colours) => { for (const [d, c] of colours) if (!(colourTile.get(d) <= i)) { colourOf.set(d, c); colourTile.set(d, i); } };
   // Fragment boxes (tiles' frame) on a 20 m grid, for the skins' partners; fragments over 4,096 cells are checked always.
   const GRID = 20;
   const cellsOf = (b, pad) => {
@@ -349,6 +321,10 @@ async function openSvf(knownOrigin) {
   const bins = [1, 5, 10, 20, 50];
   return {
     origin,
+    /** The derivative read (its tiles' fingerprints carry it). */
+    id: source.id,
+    get downloadedMB() { return source.downloadedMB; },
+    get downloadSeconds() { return source.downloadSeconds ?? 0; },
     /**
      * Exact triangles for tile i's entities; `dbIds` (per entity) is corrected in place to each matched fragment's
      * object. `fix`: { exclude: fragments this tile must not take, extras: fragments it adds (lost in the conversion) }.
@@ -375,10 +351,9 @@ async function openSvf(knownOrigin) {
         took.set(f, score[e]);
         if (source.fragments.db[f] !== dbIds[e]) { dbIds[e] = source.fragments.db[f]; relabelled++; }
       });
-      for (const m of meshes) {
-        const d = dbIds[m.entity];
-        if (d > 0 && !(colourTile.get(d) <= i)) { colourOf.set(d, meshColour(m)); colourTile.set(d, i); }
-      }
+      const colours = new Map();
+      for (const m of meshes) { const d = dbIds[m.entity]; if (d > 0 && !colours.has(d)) colours.set(d, meshColour(m)); }
+      takeColours(i, colours);
       // Fragments the conversion lost, as entities of their own.
       for (const f of extras) {
         const piece = pieces.get(f);
@@ -391,14 +366,27 @@ async function openSvf(knownOrigin) {
       }
       const misses = s.misses.map(m => ({ tile: i, id: file.ids[m.entity], dbId: dbIds[m.entity], size: [0, 1, 2].map(a => +(file.boxes[m.entity * 6 + a + 3] - file.boxes[m.entity * 6 + a]).toFixed(2)),
         triangles: meshes.filter(x => x.entity === m.entity).reduce((n, x) => n + x.tri.length / 3, 0), candidates: m.candidates, bestFit: m.bestFit, fitTaken: m.fitTaken }));
-      perTile.set(i, { s, relabelled, added, took, misses, objects: new Set(dbIds.filter(d => d > 0)), box: tiles[i].aabb });
+      perTile.set(i, { s, relabelled, added, took, misses, objects: new Set(dbIds.filter(d => d > 0)), box: tiles[i].aabb, colours });
       return out;
     },
-    /** Totals over the built tiles (a rebuilt tile counts once). */
+    /** Tile i's matching record, for its tile record (null: its original was not matched). */
+    tileRecord(i) {
+      const r = perTile.get(i);
+      return r ? { ...r, took: [...r.took], objects: [...r.objects], colours: [...r.colours] } : null;
+    },
+    /** A tile record's matching record (a tile's later record replaces its earlier one, as a rebuild does). */
+    importTile(i, r) {
+      if (!r) return;
+      perTile.set(i, { ...r, took: new Map(r.took), objects: new Set(r.objects), colours: new Map(r.colours) });
+      takeColours(i, r.colours);
+    },
+    /** The colours fragments added to a tile take (part of that rebuild's fingerprint). */
+    coloursFor(list) { return list.map(f => colourOf.get(source.fragments.db[f]) ?? null); },
+    /** Totals over the tiles (a rebuilt tile counts once). */
     totals() {
       const t = { origin, tiles: perTile.size, entities: 0, matched: 0, replaced: 0, rejected: 0, noCandidate: 0, noMesh: 0, relabelled: 0,
         added: 0, trianglesBefore: 0, trianglesAfter: 0, shiftMm: Object.fromEntries([...bins.map(b => [`<=${b}`, 0]), ['more', 0]]), maxShiftMm: 0,
-        downloadedMB: source.downloadedMB + downloadedBefore };
+        downloadedMB: source.downloadedMB + downloadedBefore.mb, downloadSeconds: (source.downloadSeconds ?? 0) + downloadedBefore.seconds };
       for (const [, r] of byTile()) {
         for (const k of ['entities', 'matched', 'replaced', 'rejected', 'noCandidate', 'noMesh', 'trianglesBefore', 'trianglesAfter']) t[k] += r.s[k];
         t.relabelled += r.relabelled; t.added += r.added;
@@ -446,8 +434,8 @@ async function openSvf(knownOrigin) {
       return out;
     },
     /**
-     * Visible fragments no built tile took (lost in the conversion: holes) — of objects that have entities in the
-     * original tiles (the terrain is in the base files), inside a built tile's box — and fragments two tiles took.
+     * Visible fragments no tile took (lost in the conversion: holes) — of objects that have entities in the original
+     * tiles (the terrain is in the base files), inside a matched tile's box — and fragments two tiles took.
      */
     audit() {
       const takers = new Map(), seen = new Set(), boxes = [];
@@ -464,7 +452,7 @@ async function openSvf(knownOrigin) {
       }
       return { missing, twice };
     },
-    /** The built tile for a lost fragment: the smallest box around its centre, among tiles holding its object if any. */
+    /** The tile for a lost fragment: the smallest box around its centre, among tiles holding its object if any. */
     homeOf(f) {
       const d = source.fragments.db[f];
       let best = -1, bestVolume = Infinity, any = -1, anyVolume = Infinity;
@@ -497,33 +485,18 @@ async function openSvf(knownOrigin) {
       const top = [...per].sort((x, y) => y[1] - x[1]).slice(0, 15).map(([db, a]) => [db, Math.round(a * 10) / 10]);
       return { fragments, triangles, areaM2: Math.round(area), objects: per.size, top };
     },
-    /** What a part hands to finalize: the tiles' matching records and the object colours. */
-    exportState() {
-      return { perTile: byTile().map(([i, r]) => [i, { ...r, took: [...r.took], objects: [...r.objects] }]), colourOf: [...colourOf].map(([d, c]) => [d, c, colourTile.get(d)]),
-        downloadedMB: source.downloadedMB };
-    },
-    /** The parts' records (a tile built twice keeps the later part's, as a rebuild does). */
-    importState(states) {
-      for (const state of states) {
-        if (!state) continue;
-        for (const [i, r] of state.perTile) perTile.set(i, { ...r, took: new Map(r.took), objects: new Set(r.objects) });
-        for (const [d, c, i] of state.colourOf) if (!(colourTile.get(d) <= i)) { colourOf.set(d, c); colourTile.set(d, i); }
-        downloadedBefore += state.downloadedMB ?? 0;
-      }
-    },
   };
 }
-let svf = null, downloadedBefore = 0; // MB the parts' sources downloaded (finalize)
+let svf = null, downloadedBefore = { mb: 0, seconds: 0 }; // what the parts' sources downloaded (finalize)
 
 /**
- * Tile i's original level under its simplified copies, as a leaf (null: no original). `fix` (SVF audit) rebuilds a
- * tile: its counts go to a scratch record, the first build's stay in the statistics.
+ * Tile i's original level under its simplified copies, as a leaf (null: no original); its files, statistics and object
+ * boxes go to `tile`. `fix`: the SVF audit's rebuild of the tile.
  */
-async function buildOriginal(i, fix = null) {
+async function buildOriginal(i, fix, tile) {
   const original = await load(i, tiles[i].n, true, fix);
   if (!original) return null;
-  const sink = fix ? { detail: { files: 0, triangles: 0, bytes: 0, vertices: 0, weldedVertices: 0 },
-    mid: Object.fromEntries(MID_ERRORS.map(e => [e, { files: 0, triangles: 0, bytes: 0, skipped: 0, lockedVertices: 0 }])) } : stats;
+  const sink = tile.stats;
   // One vertex per position: the simplifier needs connected surfaces.
   const groups = { opaque: weldGroup(original.opaque), transparent: weldGroup(original.transparent) };
   sink.detail.vertices += (original.opaque?.ids.length ?? 0) + (original.transparent?.ids.length ?? 0);
@@ -536,16 +509,14 @@ async function buildOriginal(i, fix = null) {
     const skins = await containedSkins(groups.opaque, partners);
     const applied = applySkins(groups.opaque, skins.partner, skins.shared);
     groups.opaque = applied.group; shared = applied.lock;
-    if (!fix) {
-      const st = stats.skins;
-      st.tiles++; st.pairs += skins.pairs; st.partnerTriangles += partners.idx.length / 3;
-      st.seconds += (Date.now() - started) / 1000; st.partnerSeconds += (judged - started) / 1000;
-      for (const p of skins.partner) if (p > 0) st.pushed++;
-      for (const x of skins.shared) if (x) st.shared++;
-    }
+    const st = sink.skins;
+    st.tiles++; st.pairs += skins.pairs; st.partnerTriangles += partners.idx.length / 3;
+    st.seconds += (Date.now() - started) / 1000; st.partnerSeconds += (judged - started) / 1000;
+    for (const p of skins.partner) if (p > 0) st.pushed++;
+    for (const x of skins.shared) if (x) st.shared++;
   }
-  growObjects(groups.opaque); growObjects(groups.transparent);
-  const detail = await write(groups, `d${i}`, sink.detail);
+  growObjects(groups.opaque, tile.boxes); growObjects(groups.transparent, tile.boxes);
+  const detail = await write(groups, `d${i}`, 'detail', tile);
   if (!detail) return null;
   let top = { bounds: detail.bounds, content: `c/d${i}.glb`, error: 0, children: [] }, topGroups = groups, topTriangles = detail.triangles;
   // Vertices nearer another object than a copy's error stay in place in that copy (scripts/clearance.mjs): layers a
@@ -566,7 +537,7 @@ async function buildOriginal(i, fix = null) {
     const copyOf = (g, near, keep) => simplifyGroup(g, error, { minHeight: 0, lockBorder: true, lock: lockOf(near, keep) });
     const mid = { opaque: await copyOf(groups.opaque, nearOpaque, shared), transparent: await copyOf(groups.transparent, nearTransparent) };
     const n = triangles(mid.opaque) + triangles(mid.transparent);
-    const out = n && n <= MID_ENOUGH * topTriangles ? await write(mid, `m${k}-${i}`, s) : null;
+    const out = n && n <= MID_ENOUGH * topTriangles ? await write(mid, `m${k}-${i}`, s, tile) : null;
     if (!out) { s.skipped++; continue; }
     top = { bounds: union(out.bounds, top.bounds), content: `c/m${k}-${i}.glb`, error, children: [top] };
     topGroups = mid; topTriangles = out.triangles;
@@ -575,96 +546,241 @@ async function buildOriginal(i, fix = null) {
 }
 const union = (a, b) => [0, 1, 2].map(k => Math.min(a[k], b[k])).concat([3, 4, 5].map(k => Math.max(a[k], b[k])));
 
+/**
+ * Tile i as the parents' stage takes it: its leaf (the original under its copies, else its far file; with the groups
+ * the parents are built from; null: nothing to show), the files written (path → { bytes, hash }), its statistics, its
+ * objects' boxes and (svf) its matching record. `fix`: the SVF audit's rebuild of its original.
+ */
+async function buildTile(i, fix = null) {
+  const tile = { files: new Map(), stats: leafStats(), boxes: new Map() }, t = tiles[i];
+  let leaf = originalOf(i) ? await buildOriginal(i, fix, tile) : null;
+  if (!leaf && !fix && validFar(t)) {
+    const groups = await load(i, t.far.n);
+    const far = groups && await write(groups, `f${i}`, 'far', tile);
+    if (far) {
+      growObjects(groups.opaque, tile.boxes); growObjects(groups.transparent, tile.boxes);
+      leaf = { key: i, centre: centreOf(far.bounds), bounds: far.bounds, groups, content: `c/f${i}.glb`, error: 0, children: [] };
+    }
+  }
+  return { ...tile, leaf, svf: svf?.tileRecord(i) ?? null };
+}
+
+// A tile record (scripts/tiles3d-parts.mjs): everything finalize takes from a built tile, under its fingerprint.
+const RECORD_VERSION = 1;
+function saveRecord(dir, key, i, built) {
+  const ids = [...built.boxes.keys()], box = new Float32Array(ids.length * 6);
+  ids.forEach((id, k) => box.set(built.boxes.get(id), k * 6));
+  const leaf = built.leaf ? { ...built.leaf, groups: undefined } : null;
+  writeRecord(path.join(dir, `${key}.rec`), { v: RECORD_VERSION, key, tile: i, leaf, files: [...built.files], stats: built.stats, svf: built.svf },
+    { opaque: built.leaf?.groups?.opaque ?? null, transparent: built.leaf?.groups?.transparent ?? null, boxes: { ids: Uint32Array.from(ids), box } });
+}
+/** A saved record as finalize takes it: { key, tile, leaf (with its groups) | null, files: Map, stats, boxes, svf }. */
+function loadRecord(file) {
+  const { meta, sections } = readRecord(file);
+  if (meta?.v !== RECORD_VERSION) throw new Error(`Record ${path.basename(file)} has version ${meta?.v}`);
+  const leaf = meta.leaf ? { ...meta.leaf, groups: { opaque: sections.opaque ?? null, transparent: sections.transparent ?? null } } : null;
+  return { key: meta.key, tile: meta.tile, leaf, files: new Map(meta.files), stats: meta.stats, boxes: sections.boxes, svf: meta.svf };
+}
+
+// ─── tile fingerprint ends here ───
+// Below: the stages. Changing them keeps every tile's record valid; changing anything above (or a module it runs)
+// rebuilds every tile.
+const LEAF_MARKER = '// ─── tile fingerprint ends here ───';
+
+const STAGE = env.TILES3D_STAGE || 'all';
+if (!['all', 'plan', 'leaves', 'finalize'].includes(STAGE)) throw new Error(`Unknown stage ${STAGE}`);
+if (env.TILES3D_REUSE === '1' || /(?:^|,)\s*reuse=1\b/.test(env.DIAG_OPTIONS || ''))
+  throw new Error('reuse=1 is gone: every build keeps the tiles whose inputs and code did not change (decision D27)');
+const WORK = path.resolve(env.TILES3D_WORK || path.join(env.RUNNER_TEMP || os.tmpdir(), `tiles3d-${prefix}`));
+// new/: records this build wrote (handed from the parts to finalize); RECORDS: the kept ones, from the last build.
+const NEW = path.join(WORK, 'new'), RECORDS = path.resolve(env.TILES3D_RECORDS || path.join(WORK, 'records'));
+fs.mkdirSync(NEW, { recursive: true });
+fs.mkdirSync(RECORDS, { recursive: true });
+const planFile = path.join(WORK, 'plan.json'), partFile = k => path.join(WORK, `part-${k}.json`);
+const recordFile = key => [path.join(NEW, `${key}.rec`), path.join(RECORDS, `${key}.rec`)].find(f => fs.existsSync(f)) ?? null;
+/** Whether a record exists with this key and every file it lists is stored. */
+function usable(key) {
+  const file = recordFile(key);
+  if (!file) return false;
+  try {
+    const { meta } = readRecord(file, { metaOnly: true });
+    return meta?.v === RECORD_VERSION && meta.key === key && meta.files.every(([, w]) => stored.has(w.hash));
+  } catch { return false; } // a damaged record is built again
+}
+
+const leafCode = () => codeFingerprint(fileURLToPath(import.meta.url), { marker: LEAF_MARKER, skip: ['@aws-sdk/client-s3'],
+  extra: env.TILES3D_SVF_MODULE ? [path.resolve(env.TILES3D_SVF_MODULE)] : [] });
+/**
+ * Tile i's fingerprint: what its result depends on — the code, the output folder, the SVF (derivative and origin), the
+ * object count, the tile's place, box, files (by ETag), the fragment table's entries for it, and whether its original
+ * is built.
+ */
+function fingerprint(i, { code, etags, svfId, origin }) {
+  const t = tiles[i];
+  return sha256(JSON.stringify({ code, out: OUT, svf: svfMode ? { id: svfId, origin } : null, objects: objectCount, tile: i, aabb: t.aabb ?? null,
+    original: originalOf(i) ? { n: t.n, etag: etags.get(t.n) ?? null } : null,
+    far: validFar(t) ? { n: t.far.n, policy: t.far.policy, etag: etags.get(t.far.n) ?? null } : null,
+    alias: [...(aliasOf.get(i) ?? [])] }));
+}
+/** A rebuild's record key: the tile's fingerprint and the fix (with the colours its added fragments take). */
+const fixKey = (fp, fix) => sha256(JSON.stringify({ fp, exclude: [...fix.exclude].sort((a, b) => a - b), extras: fix.extras, colours: svf.coloursFor(fix.extras) }));
+
+async function listKeys(Prefix) {
+  const out = [];
+  let tok;
+  do {
+    const page = await client.send(new ListObjectsV2Command({ Bucket, Prefix, MaxKeys: 1000, ...(tok ? { ContinuationToken: tok } : {}) }));
+    out.push(...(page.Contents ?? []));
+    tok = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (tok);
+  return out;
+}
+/**
+ * Delete keys 1,000 per request (one at a time took 27 minutes for a run's 2,751 files); if the store refuses batch
+ * deletes, 16 single deletes at a time.
+ */
+let batchDeletes = true;
+async function removeKeys(keys) {
+  for (let k = 0; k < keys.length; k += 1000) {
+    const chunk = keys.slice(k, k + 1000);
+    if (batchDeletes) {
+      try {
+        const r = await client.send(new DeleteObjectsCommand({ Bucket, Delete: { Objects: chunk.map(Key => ({ Key })), Quiet: true } }));
+        if (r.Errors?.length) throw new Error(`Could not delete ${r.Errors.length} old files, e.g. ${r.Errors[0].Key}: ${r.Errors[0].Message}`);
+        continue;
+      } catch (e) {
+        if (/Could not delete/.test(e.message)) throw e;
+        console.log(`Batch delete refused (${e.name}: ${e.message}); deleting one by one`);
+        batchDeletes = false;
+      }
+    }
+    for (let j = 0; j < chunk.length; j += 16) await Promise.all(chunk.slice(j, j + 16).map(Key => client.send(new DeleteObjectCommand({ Bucket, Key }))));
+  }
+  return keys.length;
+}
+const add = (into, from) => { for (const [k, v] of Object.entries(from)) if (typeof v === 'number') into[k] = (into[k] ?? 0) + v; else if (v && typeof v === 'object') add(into[k] ??= {}, v); };
+
 // ── plan ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 async function planStage(parts) {
-  run = previous ? previous.current.run : `runs/${randomUUID()}`;
-  let origin = null;
-  if (svfMode && !reuse) { svf = await openSvf(null); origin = svf.origin; }
-  // The parts upload as they go: the room is checked up front, for a run the size of the published one (+10 %).
+  run = `runs/${randomUUID()}`;
+  if (svfMode) svf = await openSvf(null);
+  const code = leafCode();
+  const etags = new Map((await listKeys(`${prefix}/xkt/`)).map(o => [o.Key.slice(`${prefix}/xkt/`.length), o.ETag ?? '']));
+  const fps = tiles.map((_, i) => fingerprint(i, { code, etags, svfId: svf?.id ?? null, origin: svf?.origin ?? null }));
+  for (const o of await listKeys(`${prefix}/${OUT}/files/`)) { const m = /\/([0-9a-f]{64})\.glb$/.exec(o.Key); if (m) stored.add(m[1]); }
+  const build = tiles.map((_, i) => i).filter(i => !usable(fps[i]));
+  // Tile files go up as they are written: the room is checked up front, for the tiles to build at the published run's
+  // size per tile (+10 %, and a tenth of it for the parents and terrain).
   if (!localDir) {
     const published = await getJson(`${prefix}/${OUT}/current.json`);
-    const expected = reuse ? 100_000_000 : Math.round((published?.bytes ?? 2_500_000_000) * 1.1);
+    const expected = Math.round((published?.bytes ?? 2_500_000_000) * 1.1 * Math.min(1, build.length / tiles.length + 0.1));
     const budget = await checkStorageBudget(tok => client.send(new ListObjectsV2Command({ Bucket, MaxKeys: 1000, ...(tok ? { ContinuationToken: tok } : {}) })), expected);
-    console.log(`Storage: ${(budget.bytes / 1e9).toFixed(2)} GB now, ${(budget.projectedBytes / 1e9).toFixed(2)} GB with a run like the published one (limit ${(budget.limit / 1e9).toFixed(1)} GB; the previous run is removed afterwards)`);
+    console.log(`Storage: ${(budget.bytes / 1e9).toFixed(2)} GB now, ${(budget.projectedBytes / 1e9).toFixed(2)} GB with this build's new files (limit ${(budget.limit / 1e9).toFixed(1)} GB; files nothing refers to are removed afterwards)`);
   }
-  const items = tiles.map((t, i) => ({ key: i, centre: Array.isArray(t.aabb) ? centreOf(t.aabb) : [0, 0, 0] }));
-  const plan = { v: 1, run, origin, parts: partition(items, parts, Number(env.TILES3D_CHUNK) || 16) };
+  const chunk = Number(env.TILES3D_CHUNK) || 16;
+  const items = build.map(i => ({ key: i, centre: Array.isArray(tiles[i].aabb) ? centreOf(tiles[i].aabb) : [0, 0, 0] }));
+  const count = build.length ? Math.max(1, Math.min(parts, Math.ceil(build.length / chunk))) : 0;
+  const plan = { v: 2, run, code, origin: svf?.origin ?? null, svfId: svf?.id ?? null, fps, parts: count ? partition(items, count, chunk) : [], stored: [...stored] };
   fs.writeFileSync(planFile, JSON.stringify(plan));
   if (STAGE === 'plan' && env.GITHUB_OUTPUT) fs.appendFileSync(env.GITHUB_OUTPUT, `parts=${JSON.stringify(plan.parts.map((_, k) => k))}\n`);
-  console.log(`Plan: ${run}, ${plan.parts.length} part(s) of ${plan.parts.map(p => p.length).join('/')} tiles`);
+  console.log(`Plan: ${run}; ${tiles.length - build.length} of ${tiles.length} tiles kept from their records, ${build.length} to build`
+    + (count ? ` in ${count} part(s) of ${plan.parts.map(p => p.length).join('/')} tiles` : '') + `; ${stored.size} files stored`);
   return plan;
 }
 
 // ── leaves ────────────────────────────────────────────────────────────────────────────────────────────────────────
 // Per tile, the original under its simplified copies (finest first, each kept when it saves enough); the coarsest is the
-// leaf and carries its groups for the parents. No original (or outside a test region): the far file.
+// leaf and carries its groups for the parents. No original (or outside a test region): the far file. Each tile's
+// record goes to new/ as soon as it is built.
 async function leavesStage(plan, part) {
-  const list = plan.parts[part];
-  const leaves = [], fd = fs.openSync(partFile(part, 'groups'), 'w');
-  let next = 0, done = 0;
+  const list = plan.parts[part], total = leafStats();
+  let next = 0, done = 0, files = 0;
   const progress = () => {
-    if (++done % 100 === 0) console.log(`Leaves ${done}/${list.length} · far ${MB(stats.far.bytes)} MB · ${MID_ERRORS.map(e => `${e} m ${MB(stats.mid[e].bytes)} MB`).join(' · ')} · detail ${MB(stats.detail.bytes)} MB${svf ? (t => ` · SVF ${t.replaced}/${t.entities} entities (${t.relabelled} owners corrected), ${t.downloadedMB} MB`)(svf.totals()) : ''}${svf ? ` · skins ${stats.skins.pushed} pushed, ${Math.round(stats.skins.seconds)} s (partners ${Math.round(stats.skins.partnerSeconds)} s)` : ''}`);
+    if (++done % 25 === 0 || done === list.length) console.log(`Leaves ${done}/${list.length} · far ${MB(total.far.bytes)} MB · ${MID_ERRORS.map(e => `${e} m ${MB(total.mid[e].bytes)} MB`).join(' · ')} · detail ${MB(total.detail.bytes)} MB · uploaded ${uploads.files} files, ${MB(uploads.bytes)} MB${svf ? (t => ` · SVF ${t.replaced}/${t.entities} entities (${t.relabelled} owners corrected), ${t.downloadedMB} MB in ${t.downloadSeconds} s`)(svf.totals()) : ''}${svf ? ` · skins ${total.skins.pushed} pushed, ${Math.round(total.skins.seconds)} s (partners ${Math.round(total.skins.partnerSeconds)} s)` : ''}`);
   };
-  const keep = leaf => { writeGroups(fd, leaf.key, leaf.groups); delete leaf.groups; leaves.push(leaf); };
   await Promise.all(Array.from({ length: 4 }, async () => {
     for (let n = next++; n < list.length; n = next++) {
-      const i = list[n], t = tiles[i];
-      if (reuse) {
-        // Parents are rebuilt from the far files (the copies are not decoded back).
-        const kept = reusedLeaves.get(i);
-        const groups = kept && validFar(t) ? await load(i, t.far.n) : null;
-        if (kept) keep({ key: i, centre: centreOf(kept.bounds), bounds: kept.bounds, groups, content: kept.content, error: kept.error, childrenJson: kept.children });
-        progress();
-        continue;
-      }
-      const leaf = (!region || region.has(i)) && /^[\w.-]+\.xkt$/.test(t.n ?? '') ? await buildOriginal(i) : null;
-      if (leaf) { keep(leaf); progress(); continue; }
-      if (!validFar(t)) { progress(); continue; }
-      const farGroups = await load(i, t.far.n);
-      const far = farGroups && await write(farGroups, `f${i}`, 'far');
-      if (far) {
-        growObjects(farGroups.opaque); growObjects(farGroups.transparent);
-        keep({ key: i, centre: centreOf(far.bounds), bounds: far.bounds, groups: farGroups, content: `c/f${i}.glb`, error: 0, children: [] });
-      }
+      const i = list[n], built = await buildTile(i);
+      saveRecord(NEW, plan.fps[i], i, built);
+      add(total, built.stats); files += built.files.size;
       progress();
     }
   }));
-  fs.closeSync(fd);
   await flushUploads();
-  fs.writeFileSync(partFile(part, 'boxes'), Buffer.from(objectBoxes.buffer, objectBoxes.byteOffset, objectBoxes.byteLength));
-  fs.writeFileSync(partFile(part, 'json'), JSON.stringify({ v: 1, part, run, leaves, written: [...written],
-    stats: { far: stats.far, detail: stats.detail, mid: stats.mid, skins: stats.skins }, svf: svf?.exportState() ?? null }));
-  console.log(`Part ${part}: ${leaves.length} leaves, ${written.size} files, ${MB(writtenBytes())} MB`);
+  fs.writeFileSync(partFile(part), JSON.stringify({ v: 2, part, run, tiles: list, downloadedMB: svf?.downloadedMB ?? 0, downloadSeconds: svf?.downloadSeconds ?? 0 }));
+  console.log(`Part ${part}: ${list.length} tiles, ${files} files (${uploads.files} uploaded, ${MB(uploads.bytes)} MB; the others were stored already)`
+    + (svf ? `; SVF ${svf.downloadedMB} MB downloaded, ${svf.downloadSeconds} s with downloads in flight` : ''));
 }
 
 // ── finalize ──────────────────────────────────────────────────────────────────────────────────────────────────────
-const add = (into, from) => { for (const [k, v] of Object.entries(from)) if (typeof v === 'number') into[k] = (into[k] ?? 0) + v; else if (v && typeof v === 'object') add(into[k] ??= {}, v); };
 async function finalizeStage(plan) {
-  const parts = plan.parts.map((_, k) => JSON.parse(fs.readFileSync(partFile(k, 'json'), 'utf8')));
-  const leaves = [];
-  const fresh = freshStats();
-  for (const [k, p] of parts.entries()) {
-    if (p.run !== run) throw new Error(`Part ${k} belongs to ${p.run}, not ${run}`);
-    for (const key of ['far', 'detail', 'mid', 'skins']) add(fresh[key], p.stats[key]);
-    for (const [rel, w] of p.written) written.set(rel, w);
-    const boxes = fs.readFileSync(partFile(k, 'boxes'));
-    mergeBoxes(objectBoxes, new Float32Array(boxes.buffer.slice(boxes.byteOffset, boxes.byteOffset + boxes.byteLength)));
-    const groups = readGroups(partFile(k, 'groups'));
-    for (const leaf of p.leaves) leaves.push({ ...leaf, groups: groups.get(leaf.key) });
+  const parts = plan.parts.map((_, k) => JSON.parse(fs.readFileSync(partFile(k), 'utf8')));
+  for (const [k, p] of parts.entries()) if (p.v !== 2 || p.run !== run) throw new Error(`Part ${k} belongs to ${p.run}, not ${run}`);
+  const used = new Set(); // records this build took (kept for the next one)
+  try {
+    await finalizeRecords(plan, parts, used);
+  } finally {
+    // This build's records join the kept ones even when it stops here (their files are stored; a rerun keeps them).
+    for (const f of fs.readdirSync(NEW)) if (f.endsWith('.rec') && path.resolve(NEW) !== RECORDS) fs.copyFileSync(path.join(NEW, f), path.join(RECORDS, f));
   }
-  for (const key of ['far', 'detail', 'mid', 'skins']) stats[key] = fresh[key];
+  // The next build starts from this one's records (the others are of tiles that changed or went).
+  let dropped = 0;
+  for (const f of fs.readdirSync(RECORDS)) if (f.endsWith('.rec') && !used.has(f.slice(0, -4))) { fs.rmSync(path.join(RECORDS, f)); dropped++; }
+  console.log(`Records: ${used.size} kept for the next build, ${dropped} dropped`);
+}
+
+async function finalizeRecords(plan, parts, used) {
+  const built = new Set(parts.flatMap(p => p.tiles));
+  const stats = { ...leafStats(), parents: [], terrain: { leaves: 0, triangles: 0, bytes: 0, textures: 0, textureBytes: 0, parents: [] } };
+  const objectBoxes = new Float32Array(objectCount * 6);
+  for (let k = 0; k < objectCount; k++) objectBoxes.set([Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity], k * 6);
+  const growBoxes = ({ ids, box }) => {
+    for (let k = 0; k < ids.length; k++) for (let a = 0; a < 3; a++) {
+      const o = ids[k] * 6;
+      if (box[k * 6 + a] < objectBoxes[o + a]) objectBoxes[o + a] = box[k * 6 + a];
+      if (box[k * 6 + 3 + a] > objectBoxes[o + 3 + a]) objectBoxes[o + 3 + a] = box[k * 6 + 3 + a];
+    }
+  };
+  // The run's files (path → { bytes, hash }) and every stored file a kept record lists (the cleanup keeps them).
+  const files = new Map(), recorded = new Set();
+  const take = key => {
+    const file = recordFile(key);
+    if (!file) throw new Error(`No record ${key}`);
+    const r = loadRecord(file);
+    used.add(key);
+    for (const [, w] of r.files) { recorded.add(w.hash); stored.add(w.hash); }
+    return r;
+  };
+  // Every tile from its record (built by a part now, or kept from an earlier build), in tile order.
+  const leaves = [];
+  for (let i = 0; i < tiles.length; i++) {
+    const r = take(plan.fps[i]);
+    if (r.tile !== i) throw new Error(`Record ${r.key} is tile ${r.tile}'s, not ${i}'s`);
+    if (!built.has(i)) r.stats.skins.seconds = r.stats.skins.partnerSeconds = 0; // kept: no time spent on it now
+    for (const key of ['far', 'detail', 'mid', 'skins']) add(stats[key], r.stats[key]);
+    for (const [rel, w] of r.files) files.set(rel, w);
+    growBoxes(r.boxes);
+    if (r.leaf) leaves.push(r.leaf);
+    svf?.importTile(i, r.svf);
+  }
+  stats.incremental = { tiles: tiles.length, built: built.size, kept: tiles.length - built.size, rebuilt: 0, rebuiltKept: 0 };
   if (svf) {
-    if (STAGE !== 'all') svf.importState(parts.map(p => p.svf)); // (one process: its source has them already)
-    // Second pass over the few tiles the audit points at, before the parents are built from the leaves. A rebuilt tile's
-    // files that the rebuild does not write again (a copy it no longer keeps) are deleted.
+    if (STAGE !== 'all') downloadedBefore = parts.reduce((n, p) => ({ mb: n.mb + (p.downloadedMB ?? 0), seconds: n.seconds + (p.downloadSeconds ?? 0) }), { mb: 0, seconds: 0 });
+    // Second pass over the few tiles the audit points at, before the parents are built from the leaves: from the
+    // rebuild's record when an earlier build made the same one. The first pass's files a rebuild does not write again
+    // (a copy it no longer keeps) leave the run.
     const rebuild = async (i, fix) => {
-      const before = [...written.keys()].filter(k => k === `c/d${i}.glb` || new RegExp(`^c/m\\d+-${i}\\.glb$`).test(k));
-      for (const k of before) written.delete(k);
-      const leaf = await buildOriginal(i, fix), at = leaves.findIndex(l => l.key === i);
-      if (leaf) { if (at >= 0) leaves[at] = leaf; else leaves.push(leaf); } else if (at >= 0) leaves.splice(at, 1);
-      await flushUploads();
-      const stale = before.filter(k => !written.has(k));
-      if (stale.length) await removeKeys(stale.map(k => `${prefix}/${OUT}/${run}/${k}`));
+      const key = fixKey(plan.fps[i], fix);
+      if (usable(key)) stats.incremental.rebuiltKept++;
+      else { const b = await buildTile(i, fix); await flushUploads(); saveRecord(NEW, key, i, b); }
+      stats.incremental.rebuilt++;
+      const r = take(key);
+      svf.importTile(i, r.svf);
+      for (const rel of [...files.keys()]) if (rel === `c/d${i}.glb` || new RegExp(`^c/m\\d+-${i}\\.glb$`).test(rel)) files.delete(rel);
+      for (const [rel, w] of r.files) files.set(rel, w);
+      growBoxes(r.boxes);
+      const at = leaves.findIndex(l => l.key === i);
+      if (r.leaf) { if (at >= 0) leaves[at] = r.leaf; else leaves.push(r.leaf); } else if (at >= 0) leaves.splice(at, 1);
     };
     let plan2 = svf.audit();
     const first = { missing: plan2.missing.length, twice: plan2.twice.size };
@@ -686,7 +802,7 @@ async function finalizeStage(plan) {
       missing: await svf.measure(plan2.missing), twice: await svf.measure([...plan2.twice.keys()]) };
     console.log('SVF', JSON.stringify(stats.svf));
   }
-  console.log('Leaves', JSON.stringify({ far: stats.far, mid: stats.mid, detail: stats.detail, skins: stats.skins }));
+  console.log('Leaves', JSON.stringify({ far: stats.far, mid: stats.mid, detail: stats.detail, skins: stats.skins, incremental: stats.incremental }));
 
   // Coarser levels: merge each group of ≤8 children and simplify with a larger absolute error.
   let parentId = 0;
@@ -708,13 +824,13 @@ async function finalizeStage(plan) {
     for (const k of kids) delete k.groups; // merged into this level; children keep only their tileset entry
     const id = parentId++;
     const content = out ? `c/h${id}.glb` : null;
-    if (out) await upload(content, out.glb);
+    if (out) await upload(content, out.glb, files);
     const level = (stats.parents[depth] ??= { nodes: 0, triangles: 0, bytes: 0, error });
     level.nodes++; level.triangles += out?.triangles ?? 0; level.bytes += out?.glb.length ?? 0;
     const bounds = [0, 1, 2].map(a => Math.min(...kids.map(k => k.bounds[a]))).concat([3, 4, 5].map(a => Math.max(...kids.map(k => k.bounds[a]))));
     return { bounds, content, error, groups: { opaque, transparent }, children: kids };
   }
-  // Tile order (groupSpatially sorts any list over 8; up to 8 it keeps the order given, which was the build's).
+  // Tile order (groupSpatially sorts any list over 8; up to 8 it keeps the order given).
   leaves.sort((a, b) => a.key - b.key);
   const structures = await build(groupSpatially(leaves, 8), 0);
   console.log('Parents', JSON.stringify(stats.parents));
@@ -722,7 +838,7 @@ async function finalizeStage(plan) {
   // Terrain: one leaf per aerial photo, then parents (same photos, simplified surface) up to one root.
   const terrainLeaves = [];
   const textures = []; // KTX2 bytes, indexed across all base files
-  for (const [b, name] of (Array.isArray(base) && !reuse ? base : []).entries()) {
+  for (const [b, name] of (Array.isArray(base) ? base : []).entries()) {
     if (!/^[\w.-]+\.xkt$/.test(name)) continue;
     const xkt = await getBytes(`${prefix}/xkt/${name}`);
     const decoded = xkt && decodeXkt(xkt, { textures: true });
@@ -734,7 +850,7 @@ async function finalizeStage(plan) {
       const out = await encodeTerrainGlb([part], textures);
       if (!out) continue;
       const k = terrainLeaves.length;
-      await upload(`c/t${k}.glb`, out.glb);
+      await upload(`c/t${k}.glb`, out.glb, files);
       Object.assign(stats.terrain, { leaves: stats.terrain.leaves + 1, triangles: stats.terrain.triangles + out.triangles, bytes: stats.terrain.bytes + out.glb.length });
       terrainLeaves.push({ key: k, centre: centreOf(out.bounds), bounds: out.bounds, parts: [part], content: `c/t${k}.glb`, error: 0, children: [] });
     }
@@ -753,7 +869,7 @@ async function finalizeStage(plan) {
     for (const k of kids) delete k.parts;
     const out = await encodeTerrainGlb(parts, textures);
     const content = out ? `c/g${terrainId++}.glb` : null;
-    if (out) await upload(content, out.glb);
+    if (out) await upload(content, out.glb, files);
     const level = (stats.terrain.parents[depth] ??= { nodes: 0, triangles: 0, bytes: 0, error });
     level.nodes++; level.triangles += out?.triangles ?? 0; level.bytes += out?.glb.length ?? 0;
     const bounds = [0, 1, 2].map(a => Math.min(...kids.map(k => k.bounds[a]))).concat([3, 4, 5].map(a => Math.max(...kids.map(k => k.bounds[a]))));
@@ -767,11 +883,10 @@ async function finalizeStage(plan) {
   const toJson = (node, part) => ({
     boundingVolume: boxVolume(node.bounds), geometricError: node.error, refine: 'REPLACE',
     ...(node.content ? { content: { uri: node.content } } : {}),
-    ...(node.childrenJson?.length ? { children: node.childrenJson }
-      : node.children?.length ? { children: node.children.map(c => toJson(c, part)) } : {}),
+    ...(node.children?.length ? { children: node.children.map(c => toJson(c, part)) } : {}),
     ...(part ? { extras: { mir: part } } : {}),
   });
-  const terrainJson = terrain ? toJson(terrain, 'terrain') : previous?.tileset.root.children?.find(c => c.extras?.mir === 'terrain') ?? null;
+  const terrainJson = terrain ? toJson(terrain, 'terrain') : null;
   const fromBox = v => { const [cx, cy, cz, hx, , , , hy, , , , hz] = v.box; return [cx - hx, cy - hy, cz - hz, cx + hx, cy + hy, cz + hz]; };
   const top = [structures.bounds, terrainJson && fromBox(terrainJson.boundingVolume)].filter(Boolean);
   const rootBounds = [0, 1, 2].map(a => Math.min(...top.map(b => b[a]))).concat([3, 4, 5].map(a => Math.max(...top.map(b => b[a]))));
@@ -780,62 +895,52 @@ async function finalizeStage(plan) {
       children: [toJson(structures, 'structure'), ...(terrainJson ? [terrainJson] : [])] },
     extras: { mir: { objects: objectCount, detail: region ? { region: region.size } : 'all', terrain: !!terrainJson,
       ...(stats.svf ? { precise: 'svf' } : {}) } } };
-  await upload('tileset.json', gzipSync(JSON.stringify(tileset)));
-  if (!reuse) {
-    for (let k = 0; k < objectCount * 6; k++) if (!Number.isFinite(objectBoxes[k])) objectBoxes[k] = NaN;
-    await upload('objects.bin', gzipSync(Buffer.from(objectBoxes.buffer)));
-  }
+  await upload('tileset.json', gzipSync(JSON.stringify(tileset)), files);
+  for (let k = 0; k < objectCount * 6; k++) if (!Number.isFinite(objectBoxes[k])) objectBoxes[k] = NaN;
+  await upload('objects.bin', gzipSync(Buffer.from(objectBoxes.buffer)), files);
   await flushUploads();
-  const total = writtenBytes();
-  console.log(`Tileset: ${written.size} files, ${MB(total)} MB; structure root ${triangles(structures.groups?.opaque) + triangles(structures.groups?.transparent)} triangles`);
+  const total = [...files.values()].reduce((n, w) => n + w.bytes, 0);
+  console.log(`Tileset: ${files.size} files, ${MB(total)} MB (${uploads.files} uploaded now, ${MB(uploads.bytes)} MB); structure root ${triangles(structures.groups?.opaque) + triangles(structures.groups?.transparent)} triangles`);
   delete structures.groups;
 
   // compare=1: every file of the published run against this one's (SHA-256), before this one replaces it; compare=strict:
   // and nothing is published unless they are all the same (a restructured build checked against the last one).
   const compare = /(?:^|,)\s*compare=(1|strict)\b/.exec(env.DIAG_OPTIONS || '')?.[1];
   if (compare) {
-    const result = await compareWithPublished();
+    const result = await compareWithPublished(files);
     if (compare === 'strict' && result && (result.differ || result.gone || result.added))
-      throw new Error('compare=strict: this run differs from the published one; not published (its files stay under its run until the next build)');
+      throw new Error('compare=strict: this run differs from the published one; not published (its files stay stored until the next build)');
   }
 
-  // Reuse: the run keeps its leaves; old coarser levels this build no longer has are dropped from the list (and below).
-  const kept = previous ? previous.current.files.filter(f => !/^c\/h\d+\.glb$/.test(f) && !written.has(f)) : [];
-  const published = [...kept, ...written.keys()];
-  const publishedStats = previous ? { ...previous.current.stats, parents: stats.parents } : stats;
-  const bytes = previous ? previous.current.bytes + total : total; // after a reuse: an upper bound (old parents counted)
   await client.send(new PutObjectCommand({ Bucket, Key: `${prefix}/${OUT}/current.json`, ContentType: 'application/json',
-    Body: JSON.stringify({ v: 1, run, files: published, bytes, builtAt: new Date().toISOString(), stats: publishedStats }) }));
-  console.log(`Published ${prefix}/${OUT}/${run}${previous ? ' (coarser levels rebuilt in place)' : ''}`);
-  if (previous) {
-    const keep = new Set(published);
-    await removeKeys(previous.current.files.filter(f => !keep.has(f)).map(f => `${prefix}/${OUT}/${run}/${f}`));
-  }
-  const old = [];
-  let tok;
-  do {
-    const page = await client.send(new ListObjectsV2Command({ Bucket, Prefix: `${prefix}/${OUT}/runs/`, MaxKeys: 1000, ...(tok ? { ContinuationToken: tok } : {}) }));
-    for (const o of page.Contents ?? []) if (!o.Key.startsWith(`${prefix}/${OUT}/${run}/`)) old.push(o.Key);
-    tok = page.IsTruncated ? page.NextContinuationToken : undefined;
-  } while (tok);
+    Body: JSON.stringify({ v: 2, run, files: [...files.keys()], hash: Object.fromEntries([...files].map(([rel, w]) => [rel, w.hash])), bytes: total,
+      builtAt: new Date().toISOString(), stats }) }));
+  console.log(`Published ${prefix}/${OUT}/${run}`);
+  // Other runs' folders, and stored files neither this run nor a kept record lists.
+  const keep = new Set([...recorded, ...[...files.values()].map(w => w.hash)]), old = [];
+  for (const o of await listKeys(`${prefix}/${OUT}/runs/`)) if (!o.Key.startsWith(`${prefix}/${OUT}/${run}/`)) old.push(o.Key);
+  for (const o of await listKeys(`${prefix}/${OUT}/files/`)) if (!keep.has(/\/([0-9a-f]{64})\.glb$/.exec(o.Key)?.[1])) old.push(o.Key);
   console.log(`Done, removed ${await removeKeys(old)} old files`);
 }
 
-/** Files of the published run: the same, different, gone or new in this run (the stats left aside). */
-async function compareWithPublished() {
+/** Files of the published run: the same, different, gone or new in this run (the statistics left aside). */
+async function compareWithPublished(mine) {
   const current = await getJson(`${prefix}/${OUT}/current.json`);
   if (!current?.run || current.run === run) { console.log('Compare: no other published run'); return null; }
   const same = [], differ = [], gone = [];
-  const names = current.files.filter(f => f !== 'current.json');
+  const names = current.files.filter(f => f !== 'current.json'), theirs = new Set(names);
   for (let k = 0; k < names.length; k += 16) await Promise.all(names.slice(k, k + 16).map(async rel => {
-    const mine = written.get(rel);
-    if (!mine) { gone.push(rel); return; }
-    // The store's body, as uploaded (gzip kept: getBytes would unpack tileset.json and objects.bin).
-    const r = await retrying(() => store.send(new GetObjectCommand({ Bucket, Key: `${prefix}/${OUT}/${current.run}/${rel}` })));
-    const hash = createHash('sha256').update(Buffer.from(await r.Body.transformToByteArray())).digest('hex');
-    (hash === mine.hash ? same : differ).push(rel);
+    const m = mine.get(rel);
+    if (!m) { gone.push(rel); return; }
+    let hash = current.v === 2 ? current.hash?.[rel] : null;
+    if (!hash) {
+      // A v1 run: the store's body, as uploaded (gzip kept: getBytes would unpack tileset.json and objects.bin).
+      const r = await retrying(() => store.send(new GetObjectCommand({ Bucket, Key: `${prefix}/${OUT}/${current.run}/${rel}` })));
+      hash = sha256(Buffer.from(await r.Body.transformToByteArray()));
+    }
+    (hash === m.hash ? same : differ).push(rel);
   }));
-  const added = [...written.keys()].filter(rel => !current.files.includes(rel));
+  const added = [...mine.keys()].filter(rel => !theirs.has(rel));
   const result = { same: same.length, differ: differ.length, gone: gone.length, added: added.length };
   console.log(`Compare with ${current.run}: ${same.length} same, ${differ.length} different, ${gone.length} gone, ${added.length} new`
     + (differ.length ? ` · different: ${differ.sort().slice(0, 30).join(' ')}` : '') + (gone.length ? ` · gone: ${gone.sort().slice(0, 30).join(' ')}` : '')
@@ -843,27 +948,32 @@ async function compareWithPublished() {
   return result;
 }
 
-const readPlan = () => {
+/** The plan, for a later stage: its run, and the stored files; this job must run the plan's code on the plan's SVF. */
+async function readPlan() {
   const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
-  if (plan.v !== 1 || !/^runs\/[a-zA-Z0-9-]+$/.test(plan.run ?? '') || !Array.isArray(plan.parts)) throw new Error('Invalid build plan');
+  if (plan.v !== 2 || !/^runs\/[a-zA-Z0-9-]+$/.test(plan.run ?? '') || !Array.isArray(plan.parts) || plan.fps?.length !== tiles.length)
+    throw new Error('Invalid build plan');
+  if (leafCode() !== plan.code) throw new Error('This job runs other code than the plan did (a file or package changed): run the build again');
   run = plan.run;
+  for (const h of plan.stored) stored.add(h);
+  if (svfMode) {
+    svf = await openSvf(plan.origin);
+    if (svf.id !== plan.svfId) throw new Error('The model\'s SVF changed since the plan: run the build again');
+  }
   return plan;
-};
+}
 if (STAGE === 'all') {
   const plan = await planStage(1);
-  await leavesStage(plan, 0);
+  if (plan.parts.length) await leavesStage(plan, 0);
   await finalizeStage(plan);
 } else if (STAGE === 'plan') {
   // parts=<n> in the diagnostic options, else TILES3D_PARTS (the workflow's default), at most 20 (concurrent jobs).
   const parts = Number(/(?:^|,)\s*parts=(\d+)/.exec(env.DIAG_OPTIONS || '')?.[1] || env.TILES3D_PARTS) || 1;
   await planStage(Math.max(1, Math.min(20, parts)));
 } else if (STAGE === 'leaves') {
-  const plan = readPlan(), part = Number(env.TILES3D_PART);
+  const plan = await readPlan(), part = Number(env.TILES3D_PART);
   if (!(part >= 0 && part < plan.parts.length)) throw new Error(`No part ${env.TILES3D_PART} in the plan`);
-  if (svfMode) svf = await openSvf(plan.origin);
   await leavesStage(plan, part);
 } else {
-  const plan = readPlan();
-  if (svfMode) svf = await openSvf(plan.origin);
-  await finalizeStage(plan);
+  await finalizeStage(await readPlan());
 }

@@ -1,6 +1,8 @@
 // Parts of a staged tileset build (scripts/build-tiles3d.mjs, decision D27): which tiles each parallel job builds, and
-// the leaves' coarsest groups handed from those jobs to the one that builds the parents.
+// the tile records — everything the parents' job takes from one built tile, kept between builds by the tile's
+// fingerprint so an unchanged tile is not built again.
 import fs from 'node:fs';
+import path from 'node:path';
 import { groupSpatially } from './tiles3d.mjs';
 
 /**
@@ -21,58 +23,59 @@ export function partition(items, parts, chunk = 16) {
 const TYPES = { Float64Array, Float32Array, Uint32Array, Uint16Array, Uint8Array, Int32Array };
 
 /**
- * Append one leaf's groups ({ opaque, transparent }, each { pos, rgba, ids, idx, skin? } or null) to a file opened for
- * writing: [header bytes u32, data bytes u32, header JSON, the arrays].
+ * Write a record: `meta` (JSON) and `sections` ({ name: { field: typed array, … } | null }) as [header bytes u32, data
+ * bytes u32, header JSON, the arrays]. Written beside and renamed into place, so a record is whole or absent.
  */
-export function writeGroups(fd, key, groups) {
-  const head = { key, groups: {} }, arrays = [];
-  for (const kind of ['opaque', 'transparent']) {
-    const g = groups?.[kind];
-    if (!g) continue;
-    head.groups[kind] = [];
-    for (const [name, a] of Object.entries(g)) {
+export function writeRecord(file, meta, sections = {}) {
+  const head = { meta, sections: {} }, arrays = [];
+  for (const [name, fields] of Object.entries(sections)) {
+    if (!fields) continue;
+    head.sections[name] = [];
+    for (const [field, a] of Object.entries(fields)) {
       if (!ArrayBuffer.isView(a) || !TYPES[a.constructor.name]) continue;
-      head.groups[kind].push([name, a.constructor.name, a.length]);
+      head.sections[name].push([field, a.constructor.name, a.length]);
       arrays.push(a);
     }
   }
   const json = Buffer.from(JSON.stringify(head)), size = Buffer.alloc(8);
   size.writeUInt32LE(json.length, 0);
   size.writeUInt32LE(arrays.reduce((n, a) => n + a.byteLength, 0), 4);
-  fs.writeSync(fd, size);
-  fs.writeSync(fd, json);
-  for (const a of arrays) fs.writeSync(fd, Buffer.from(a.buffer, a.byteOffset, a.byteLength));
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const part = `${file}.${process.pid}.part`, fd = fs.openSync(part, 'w');
+  try {
+    fs.writeSync(fd, size);
+    fs.writeSync(fd, json);
+    for (const a of arrays) fs.writeSync(fd, Buffer.from(a.buffer, a.byteOffset, a.byteLength));
+  } finally { fs.closeSync(fd); }
+  fs.renameSync(part, file);
 }
 
-/** The records of a file written by writeGroups: Map key → { opaque, transparent } (each group or null). */
-export function readGroups(file) {
-  const bytes = fs.readFileSync(file), out = new Map();
-  for (let at = 0; at < bytes.length;) {
-    const headBytes = bytes.readUInt32LE(at), dataBytes = bytes.readUInt32LE(at + 4);
-    const head = JSON.parse(bytes.subarray(at + 8, at + 8 + headBytes).toString());
-    let p = at + 8 + headBytes;
-    const groups = { opaque: null, transparent: null };
-    for (const [kind, list] of Object.entries(head.groups)) {
-      const g = {};
-      for (const [name, type, length] of list) {
-        const T = TYPES[type], n = length * T.BYTES_PER_ELEMENT;
-        g[name] = new T(bytes.buffer.slice(bytes.byteOffset + p, bytes.byteOffset + p + n)); // copied: aligned for its type
-        p += n;
-      }
-      groups[kind] = g;
+/** A record written by writeRecord: { meta, sections: { name: { field: typed array } } }; `metaOnly`: just its meta. */
+export function readRecord(file, { metaOnly = false } = {}) {
+  if (metaOnly) {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const size = Buffer.alloc(8);
+      if (fs.readSync(fd, size, 0, 8, 0) !== 8) throw new Error(`Corrupt record ${path.basename(file)}`);
+      const json = Buffer.alloc(size.readUInt32LE(0));
+      if (fs.readSync(fd, json, 0, json.length, 8) !== json.length) throw new Error(`Corrupt record ${path.basename(file)}`);
+      return { meta: JSON.parse(json.toString()).meta, sections: null };
+    } finally { fs.closeSync(fd); }
+  }
+  const bytes = fs.readFileSync(file);
+  const headBytes = bytes.readUInt32LE(0), dataBytes = bytes.readUInt32LE(4);
+  if (bytes.length !== 8 + headBytes + dataBytes) throw new Error(`Corrupt record ${path.basename(file)}`);
+  const head = JSON.parse(bytes.subarray(8, 8 + headBytes).toString()), sections = {};
+  let p = 8 + headBytes;
+  for (const [name, list] of Object.entries(head.sections)) {
+    const fields = {};
+    for (const [field, type, length] of list) {
+      const T = TYPES[type], n = length * T.BYTES_PER_ELEMENT;
+      fields[field] = new T(bytes.buffer.slice(bytes.byteOffset + p, bytes.byteOffset + p + n)); // copied: aligned for its type
+      p += n;
     }
-    if (p !== at + 8 + headBytes + dataBytes) throw new Error(`Corrupt groups record for ${head.key}`);
-    out.set(head.key, groups);
-    at = p;
+    sections[name] = fields;
   }
-  return out;
-}
-
-/** Object boxes (6 floats per object, ±Infinity where none) of another part grown into `into`. */
-export function mergeBoxes(into, other) {
-  for (let k = 0; k < into.length; k += 6) for (let a = 0; a < 3; a++) {
-    if (other[k + a] < into[k + a]) into[k + a] = other[k + a];
-    if (other[k + 3 + a] > into[k + 3 + a]) into[k + 3 + a] = other[k + 3 + a];
-  }
-  return into;
+  if (p !== bytes.length) throw new Error(`Corrupt record ${path.basename(file)}`);
+  return { meta: head.meta, sections };
 }

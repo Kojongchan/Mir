@@ -15,6 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { createHash } from 'node:crypto';
 import { indexFragments, tolerance } from './entity-alias.mjs';
 
 /** Column-major 4×4 world matrix (float64) of an SVF fragment transform ({t} | {q, t, s} | {matrix, t}). */
@@ -230,32 +231,43 @@ export async function openSvfSource({ urn, getToken, region = 'US', dir, log = (
   const base = svf.urn.slice(0, svf.urn.lastIndexOf('/') + 1), name = svf.urn.slice(svf.urn.lastIndexOf('/') + 1);
   fs.mkdirSync(dir, { recursive: true });
   let bytes = 0;
+  // Wall time with at least one download in flight (what keeping the source between builds could save at most).
+  let inFlight = 0, busySince = 0, busyMs = 0;
   const pending = new Map();
   const get = rel => {
     if (!pending.has(rel)) pending.set(rel, (async () => {
       const file = path.join(dir, rel);
       if (fs.existsSync(file)) return file;
-      for (let attempt = 1; ; attempt++) {
-        try {
-          const r = await fetch(`${API}/derivativeservice/v2/derivatives/${encodeURIComponent(path.posix.normalize(base + rel))}`, { headers: await headers() });
-          if (!r.ok) throw new Error(`${rel}: HTTP ${r.status}`);
-          const b = Buffer.from(await r.arrayBuffer());
-          fs.mkdirSync(path.dirname(file), { recursive: true });
-          fs.writeFileSync(file, b);
-          bytes += b.length;
-          return file;
-        } catch (e) {
-          if (attempt >= 5) throw e;
-          await new Promise(res => setTimeout(res, 5000 * 2 ** (attempt - 1))); // network blips: up to 75 s in all
-        }
-      }
+      if (inFlight++ === 0) busySince = Date.now();
+      try {
+        return await download(rel, file);
+      } finally { if (--inFlight === 0) busyMs += Date.now() - busySince; }
     })());
     return pending.get(rel);
+  };
+  const download = async (rel, file) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const r = await fetch(`${API}/derivativeservice/v2/derivatives/${encodeURIComponent(path.posix.normalize(base + rel))}`, { headers: await headers() });
+        if (!r.ok) throw new Error(`${rel}: HTTP ${r.status}`);
+        const b = Buffer.from(await r.arrayBuffer());
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, b);
+        bytes += b.length;
+        return file;
+      } catch (e) {
+        if (attempt >= 5) throw e;
+        await new Promise(res => setTimeout(res, 5000 * 2 ** (attempt - 1))); // network blips: up to 75 s in all
+      }
+    }
   };
   const svfFile = await get(name);
   const assets = JSON.parse(new AdmZip(svfFile).readAsText('manifest.json')).assets ?? [];
   const uriOf = type => assets.find(a => a.type === type)?.URI;
-  await Promise.all(['Autodesk.CloudPlatform.FragmentList', 'Autodesk.CloudPlatform.GeometryMetadataList'].map(t => get(uriOf(t))));
+  const lists = await Promise.all(['Autodesk.CloudPlatform.FragmentList', 'Autodesk.CloudPlatform.GeometryMetadataList'].map(t => get(uriOf(t))));
+  // The derivative's identity: its address and the files that place every fragment (a new translation is a new one).
+  const identity = createHash('sha256').update(svf.urn);
+  for (const file of [svfFile, ...lists]) identity.update(fs.readFileSync(file));
   const reader = await svfUtils.SVFReader.FromFileSystem(svfFile);
   const list = await reader.readFragments(), geometries = await reader.readGeometries();
   const packUri = new Map();
@@ -268,6 +280,7 @@ export async function openSvfSource({ urn, getToken, region = 'US', dir, log = (
     const asset = assets.find(a => /(^|\/)(Protein)?Materials\.json(\.gz)?$/i.test(a.URI ?? ''));
     if (asset) {
       const raw = fs.readFileSync(await get(asset.URI));
+      identity.update(raw); // which materials draw transparent
       const json = JSON.parse((raw[0] === 0x1f && raw[1] === 0x8b ? zlib.gunzipSync(raw) : raw).toString());
       for (const [k, group] of Object.entries(json.materials ?? {})) {
         const main = group.materials?.[group.userassets?.[0] ?? '0'], diffuse = main?.properties?.colors?.generic_diffuse?.values?.[0];
@@ -276,7 +289,11 @@ export async function openSvfSource({ urn, getToken, region = 'US', dir, log = (
         transparentMaterial.set(Number(k), !!main?.transparent && !(bitmap && white));
       }
     }
-  } catch (e) { log(`SVF materials unreadable (${e.message}): every fragment counts as opaque`); }
+  } catch (e) {
+    log(`SVF materials unreadable (${e.message}): every fragment counts as opaque`);
+    transparentMaterial.clear();
+    identity.update('materials unreadable'); // other tiles than with them: not the same source for the fingerprints
+  }
   // Parsed packs, most recent last (a pack holds ≈ 60 meshes; the fragments of one tile share packs).
   const packs = new Map(), PACKS_KEPT = 256; // the skins' neighbours (scripts/skins.mjs) reach into other tiles' packs
   const packOf = id => {
@@ -288,12 +305,15 @@ export async function openSvfSource({ urn, getToken, region = 'US', dir, log = (
     return p;
   };
   return {
+    /** The derivative this reads (SHA-256, see above): the tiles built from it are fingerprinted with it. */
+    id: identity.digest('hex'),
     fragments: indexFragments(list.map(f => ({ dbId: f.dbID, bbox: f.bbox }))),
     /** Drawn by the source viewers (hidden fragments are not). */
     visible: f => !!list[f]?.visible,
     /** Drawn transparent (its material; see above). */
     transparent: f => transparentMaterial.get(list[f]?.materialID) ?? false,
     get downloadedMB() { return Math.round(bytes / 1048576); },
+    get downloadSeconds() { return Math.round((busyMs + (inFlight ? Date.now() - busySince : 0)) / 1000); },
     /** Exact triangles of these fragments in the tiles' frame: Map fragment → { pos, idx } | null (lines, points). */
     async pieces(indices, origin) {
       const out = new Map();

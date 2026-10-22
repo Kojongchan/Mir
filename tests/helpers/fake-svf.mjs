@@ -1,18 +1,20 @@
 // A stand-in for scripts/svf-precise.mjs in build tests (TILES3D_SVF_MODULE): the model's "SVF" is a JSON file
 // (TILES3D_FAKE_SVF) of fragments { dbId, world: [x, y, z…] in SVF world, idx, visible?, transparent? }.
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import { indexFragments } from '../../scripts/entity-alias.mjs';
 
 export { fragmentMatcher, refineMeshes } from '../../scripts/svf-precise.mjs';
 
 export async function openSvfSource() {
-  const list = JSON.parse(fs.readFileSync(process.env.TILES3D_FAKE_SVF, 'utf8'));
+  const text = fs.readFileSync(process.env.TILES3D_FAKE_SVF, 'utf8'), list = JSON.parse(text);
   const bbox = f => {
     const b = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
     for (let k = 0; k < f.world.length; k++) { b[k % 3] = Math.min(b[k % 3], f.world[k]); b[k % 3 + 3] = Math.max(b[k % 3 + 3], f.world[k]); }
     return b;
   };
   return {
+    id: `fake-${createHash('sha256').update(text).digest('hex').slice(0, 16)}`,
     fragments: indexFragments(list.map(f => ({ dbId: f.dbId, bbox: bbox(f) }))),
     visible: f => list[f]?.visible !== false,
     transparent: f => !!list[f]?.transparent,

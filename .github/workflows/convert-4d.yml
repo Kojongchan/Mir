@@ -103,7 +103,7 @@ on:
         required: false
         default: ''
       diag_options:
-        description: "진단 옵션 — tiles3d: 'svf=1', 'parts=<병렬 작업 수, 기본 8>', 'region=<타일 번호>:<개수>', 'compare=1|strict'(공개본과 파일 비교), 'reuse=1' · ui-check: 'page=2,cpu=4,mobile=1,tiles=all'"
+        description: "진단 옵션 — tiles3d: 'svf=1', 'parts=<병렬 작업 수, 기본 8>', 'region=<타일 번호>:<개수>', 'compare=1|strict'(공개본과 파일 비교) · ui-check: 'page=2,cpu=4,mobile=1,tiles=all'"
         required: false
         default: ''
 
@@ -249,7 +249,9 @@ jobs:
   # 3D Tiles 1.1 tileset for the second viewer engine (decision D23, scripts/build-tiles3d.mjs). Reads the
   # existing tiles; writes only under <prefix>/tiles3d/ (diag_options svf=1: <prefix>/tiles3d-svf/, the third viewer's trial).
   # Staged (decision D27): plan → leaves, its parts in parallel jobs (diag_options parts=<n>, default 8) → finalize;
-  # the jobs hand over plan.json and part-<k>.* as artifacts. reuse=1 (coarser levels only) is built whole in the plan job.
+  # the jobs hand over plan.json, part-<k>.json and new/<tile fingerprint>.rec as artifacts. A tile whose inputs and
+  # code did not change keeps its record from the last build (Actions cache tiles3d-records-<model>-<variant>-…; the
+  # versions installed below are pinned: they are part of every tile's fingerprint). Nothing to build: no leaves jobs.
   tiles3d-plan:
     if: github.event.inputs.diag_only == 'tiles3d'
     runs-on: ubuntu-latest
@@ -258,6 +260,7 @@ jobs:
       contents: read
     outputs:
       parts: ${{ steps.plan.outputs.parts }}
+      records: ${{ steps.records.outputs.cache-matched-key }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -266,8 +269,15 @@ jobs:
       - name: Prepare tiles3d runtime
         run: |
           mkdir -p "$RUNNER_TEMP/tiles3d"
-          cp scripts/build-tiles3d.mjs scripts/tiles3d-parts.mjs scripts/tiles3d.mjs scripts/tile-lod-merge.mjs scripts/storage-budget.mjs scripts/cache-key.mjs scripts/svf-precise.mjs scripts/entity-alias.mjs scripts/clearance.mjs scripts/clearance-worker.mjs scripts/skins.mjs scripts/skins-worker.mjs "$RUNNER_TEMP/tiles3d/"
-          npm install --prefix "$RUNNER_TEMP/tiles3d" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 meshoptimizer@1.3.0 svf-utils@8 adm-zip@0.5 three@0.171.0 three-mesh-bvh@0.7.8
+          cp scripts/build-tiles3d.mjs scripts/tiles3d-parts.mjs scripts/code-fingerprint.mjs scripts/tiles3d.mjs scripts/tile-lod-merge.mjs scripts/storage-budget.mjs scripts/cache-key.mjs scripts/svf-precise.mjs scripts/entity-alias.mjs scripts/clearance.mjs scripts/clearance-worker.mjs scripts/skins.mjs scripts/skins-worker.mjs "$RUNNER_TEMP/tiles3d/"
+          npm install --prefix "$RUNNER_TEMP/tiles3d" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 meshoptimizer@1.3.0 svf-utils@8.0.0 adm-zip@0.5.18 three@0.171.0 three-mesh-bvh@0.7.8 acorn@8.19.0
+      - name: Tile records kept from the last build
+        id: records
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/tiles3d-records
+          key: tiles3d-records-${{ github.event.inputs.item || github.event.inputs.urn }}-${{ contains(github.event.inputs.diag_options, 'svf=1') && 'svf' || 'plain' }}-${{ github.run_id }}
+          restore-keys: tiles3d-records-${{ github.event.inputs.item || github.event.inputs.urn }}-${{ contains(github.event.inputs.diag_options, 'svf=1') && 'svf' || 'plain' }}-
       - name: Plan the build
         id: plan
         env:
@@ -283,15 +293,11 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
           TILES3D_WORK: ${{ runner.temp }}/tiles3d-work
-        run: |
-          if echo "$DIAG_OPTIONS" | grep -Eq '(^|,) *reuse=1'; then
-            TILES3D_STAGE=all node --max-old-space-size=12288 "$RUNNER_TEMP/tiles3d/build-tiles3d.mjs"
-            echo 'parts=[]' >> "$GITHUB_OUTPUT"
-          else
-            TILES3D_STAGE=plan TILES3D_PARTS=8 node --max-old-space-size=12288 "$RUNNER_TEMP/tiles3d/build-tiles3d.mjs"
-          fi
+          TILES3D_RECORDS: ${{ runner.temp }}/tiles3d-records
+          TILES3D_STAGE: plan
+          TILES3D_PARTS: 8
+        run: node --max-old-space-size=12288 "$RUNNER_TEMP/tiles3d/build-tiles3d.mjs"
       - uses: actions/upload-artifact@v4
-        if: steps.plan.outputs.parts != '[]'
         with:
           name: tiles3d-plan
           path: ${{ runner.temp }}/tiles3d-work/plan.json
@@ -315,8 +321,8 @@ jobs:
       - name: Prepare tiles3d runtime
         run: |
           mkdir -p "$RUNNER_TEMP/tiles3d"
-          cp scripts/build-tiles3d.mjs scripts/tiles3d-parts.mjs scripts/tiles3d.mjs scripts/tile-lod-merge.mjs scripts/storage-budget.mjs scripts/cache-key.mjs scripts/svf-precise.mjs scripts/entity-alias.mjs scripts/clearance.mjs scripts/clearance-worker.mjs scripts/skins.mjs scripts/skins-worker.mjs "$RUNNER_TEMP/tiles3d/"
-          npm install --prefix "$RUNNER_TEMP/tiles3d" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 meshoptimizer@1.3.0 svf-utils@8 adm-zip@0.5 three@0.171.0 three-mesh-bvh@0.7.8
+          cp scripts/build-tiles3d.mjs scripts/tiles3d-parts.mjs scripts/code-fingerprint.mjs scripts/tiles3d.mjs scripts/tile-lod-merge.mjs scripts/storage-budget.mjs scripts/cache-key.mjs scripts/svf-precise.mjs scripts/entity-alias.mjs scripts/clearance.mjs scripts/clearance-worker.mjs scripts/skins.mjs scripts/skins-worker.mjs "$RUNNER_TEMP/tiles3d/"
+          npm install --prefix "$RUNNER_TEMP/tiles3d" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 meshoptimizer@1.3.0 svf-utils@8.0.0 adm-zip@0.5.18 three@0.171.0 three-mesh-bvh@0.7.8 acorn@8.19.0
       - uses: actions/download-artifact@v4
         with:
           name: tiles3d-plan
@@ -341,15 +347,19 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: tiles3d-part-${{ matrix.part }}
-          path: ${{ runner.temp }}/tiles3d-work/part-*
+          path: |
+            ${{ runner.temp }}/tiles3d-work/part-*.json
+            ${{ runner.temp }}/tiles3d-work/new/
           retention-days: 1
   tiles3d-finalize:
     needs: [tiles3d-plan, tiles3d-leaves]
-    if: needs.tiles3d-plan.outputs.parts != '[]'
+    # Also when every tile was kept (no leaves jobs).
+    if: always() && needs.tiles3d-plan.result == 'success' && (needs.tiles3d-leaves.result == 'success' || needs.tiles3d-leaves.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
       contents: read
+      actions: write # drop the superseded records cache
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -358,14 +368,22 @@ jobs:
       - name: Prepare tiles3d runtime
         run: |
           mkdir -p "$RUNNER_TEMP/tiles3d"
-          cp scripts/build-tiles3d.mjs scripts/tiles3d-parts.mjs scripts/tiles3d.mjs scripts/tile-lod-merge.mjs scripts/storage-budget.mjs scripts/cache-key.mjs scripts/svf-precise.mjs scripts/entity-alias.mjs scripts/clearance.mjs scripts/clearance-worker.mjs scripts/skins.mjs scripts/skins-worker.mjs "$RUNNER_TEMP/tiles3d/"
-          npm install --prefix "$RUNNER_TEMP/tiles3d" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 meshoptimizer@1.3.0 svf-utils@8 adm-zip@0.5 three@0.171.0 three-mesh-bvh@0.7.8
+          cp scripts/build-tiles3d.mjs scripts/tiles3d-parts.mjs scripts/code-fingerprint.mjs scripts/tiles3d.mjs scripts/tile-lod-merge.mjs scripts/storage-budget.mjs scripts/cache-key.mjs scripts/svf-precise.mjs scripts/entity-alias.mjs scripts/clearance.mjs scripts/clearance-worker.mjs scripts/skins.mjs scripts/skins-worker.mjs "$RUNNER_TEMP/tiles3d/"
+          npm install --prefix "$RUNNER_TEMP/tiles3d" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 meshoptimizer@1.3.0 svf-utils@8.0.0 adm-zip@0.5.18 three@0.171.0 three-mesh-bvh@0.7.8 acorn@8.19.0
+      - name: Tile records kept from the last build
+        if: needs.tiles3d-plan.outputs.records != ''
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/tiles3d-records
+          key: ${{ needs.tiles3d-plan.outputs.records }}
+          fail-on-cache-miss: true
       - uses: actions/download-artifact@v4
         with:
           pattern: tiles3d-*
           path: ${{ runner.temp }}/tiles3d-work
           merge-multiple: true
       - name: Audit, parents, terrain, publish
+        id: finalize
         env:
           MODEL_CACHE_PREFIX: ${{ github.event.inputs.item }}
           DIAG_OPTIONS: ${{ github.event.inputs.diag_options }}
@@ -379,8 +397,30 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
           TILES3D_WORK: ${{ runner.temp }}/tiles3d-work
+          TILES3D_RECORDS: ${{ runner.temp }}/tiles3d-records
           TILES3D_STAGE: finalize
         run: node --max-old-space-size=12288 "$RUNNER_TEMP/tiles3d/build-tiles3d.mjs"
+      # The records the next build starts from (also after a failed publish: the tiles built are stored and kept), then
+      # the ones this build started from are dropped once the new ones are listed (≈1.4 GB each; the cache holds 10 GB).
+      - name: Keep the tile records
+        id: save
+        if: always() && steps.finalize.outcome != 'skipped'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/tiles3d-records
+          key: tiles3d-records-${{ github.event.inputs.item || github.event.inputs.urn }}-${{ contains(github.event.inputs.diag_options, 'svf=1') && 'svf' || 'plain' }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Drop the records this build started from
+        if: always() && steps.save.outcome == 'success' && needs.tiles3d-plan.outputs.records != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OLD: ${{ needs.tiles3d-plan.outputs.records }}
+          NEW: tiles3d-records-${{ github.event.inputs.item || github.event.inputs.urn }}-${{ contains(github.event.inputs.diag_options, 'svf=1') && 'svf' || 'plain' }}-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          if gh cache list --repo "$GITHUB_REPOSITORY" --key "$NEW" --json key --jq '.[].key' | grep -qxF "$NEW"; then
+            gh cache delete "$OLD" --repo "$GITHUB_REPOSITORY"
+          else
+            echo "The new records are not listed; keeping $OLD"
+          fi
   # Approved one-off storage cleanup (scripts/r2-cleanup.mjs): dry run unless diag_options has apply=1.
   r2-cleanup:
     if: github.event.inputs.diag_only == 'r2-cleanup'
