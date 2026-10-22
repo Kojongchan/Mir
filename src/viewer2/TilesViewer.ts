@@ -1,9 +1,8 @@
 import {
   AmbientLight, Box3, Clock, Color, DirectionalLight, DoubleSide, Euler, Group, Matrix3, Matrix4, Mesh, PerspectiveCamera,
   Quaternion, Ray, Raycaster, Scene, Sphere, Spherical, Vector2, Vector3, Vector4, WebGLRenderer, WebGLRenderTarget,
-  type BufferGeometry, type Material, type MeshStandardMaterial, type Object3D,
+  type BufferAttribute, type BufferGeometry, type InterleavedBufferAttribute, type Material, type MeshStandardMaterial, type Object3D,
 } from 'three';
-import { MeshBVH } from 'three-mesh-bvh';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import CameraControls from 'camera-controls';
 import { TilesRenderer } from '3d-tiles-renderer';
@@ -20,6 +19,8 @@ import {
   standingSpot, stepWalker, type Hit, type Walker,
 } from './walk';
 import { WorkerFigure } from './avatar';
+import { CollisionIndex } from './collision';
+import type { MeshBVH } from 'three-mesh-bvh';
 
 CameraControls.install({ THREE: { Vector2, Vector3, Vector4, Quaternion, Matrix4, Spherical, Box3, Sphere, Raycaster } });
 
@@ -59,6 +60,11 @@ export type WalkInfo = { on: boolean; speed: number; gravity: boolean; collide: 
  * not drawn (inside the head).
  */
 const FOLLOW = 4, FOLLOW_UP = 0.6, SHOULDER = 0.45, VIEW_TILT = -0.15, FIGURE_NEAR = 0.9;
+/**
+ * Walking, the tiles within INDEX_AHEAD m are indexed for its rays in the background, the nearest first; a tile shown
+ * and indexed in the last STAND_IN s stands in for a just-loaded one not indexed yet (walkCast).
+ */
+const INDEX_AHEAD = 40, STAND_IN = 15;
 
 export type ViewerStats = {
   fps: number; frames: number; drawCalls: number; triangles: number; geometries: number;
@@ -180,14 +186,26 @@ export class TilesViewer {
     walker: Walker; yaw: number; pitch: number; speed: number; keys: Set<string>; eyeY: number;
     /** Space went down since the last frame: a tap shorter than a frame (a slow one) still jumps. */
     jump: boolean;
-    look: { id: number; x: number; y: number } | null; meshes: Mesh[] | null;
+    /**
+     * Where the person is to stand, found once the tiles there are indexed (the clicked point seen from `eye`, or the
+     * floor under `eye`); until then it waits at the clicked point or eye height.
+     */
+    start: { eye: Vector3; point: Vector3 | null; yaw: number } | null;
+    look: { id: number; x: number; y: number } | null; meshes: Mesh[] | null; standIns: Mesh[] | null;
     /** The construction worker shown in third person (null: first person), its heading and the camera's distance. */
     figure: WorkerFigure | null; heading: number; follow: number;
   } | null = null;
   /** Walk settings kept between walks: the person's height and whether the figure is shown. */
   private walkPrefs = { height: STATURE, figure: true };
-  /** Bounding volume hierarchies of the tile geometries rays were cast against (built when first needed). */
-  private readonly bvhs = new WeakMap<BufferGeometry, MeshBVH>();
+  /** Bounding volume hierarchies of the tile geometries for walk mode's rays (built in a worker). */
+  private readonly collision = new CollisionIndex();
+  /** A ray of this frame passed a geometry not indexed yet (walkCast), and the geometries it passed. */
+  private castMissing = false;
+  private readonly missed = new Set<BufferGeometry>();
+  /** Indexed tile meshes shown during this walk, and when last (the library takes a tile off the scene when hidden). */
+  private readonly shownLately = new Map<Mesh, number>();
+  /** Tile geometries the GPU has (positions and index uploaded): only these are lent to the collision worker. */
+  private readonly uploaded = new WeakSet<BufferGeometry>();
   onWalk?: (info: WalkInfo) => void;
 
   constructor(private readonly canvas: HTMLCanvasElement, tier?: DeviceTier) {
@@ -612,6 +630,7 @@ export class TilesViewer {
 
   dispose(): void {
     this.setWalk(false);
+    this.collision.dispose();
     cancelAnimationFrame(this.raf);
     this.resize.disconnect();
     this.canvas.removeEventListener('pointerdown', this.pivotAtPointer, { capture: true });
@@ -656,6 +675,7 @@ export class TilesViewer {
     scene.traverse(o => {
       const mesh = o as Mesh;
       if (!mesh.isMesh || Array.isArray(mesh.material)) return;
+      this.watchUpload(mesh.geometry);
       if (terrain) {
         const photo = (mesh.material as MeshStandardMaterial).map;
         mesh.material = createTerrainMaterial(photo ?? null);
@@ -665,6 +685,22 @@ export class TilesViewer {
     });
     if (terrain) { this.terrainScenes.add(scene); scene.visible = this.terrainShown; }
     this.dirty = this.sampleWanted = this.roomWanted = true;
+  }
+
+  /** Note when the GPU has a geometry's positions and index (collision.ts lends them to its worker only then). */
+  private watchUpload(geometry: BufferGeometry) {
+    const position = geometry.getAttribute('position') as BufferAttribute | InterleavedBufferAttribute;
+    const holders = [('isInterleavedBufferAttribute' in position && position.isInterleavedBufferAttribute) ? position.data : position as BufferAttribute,
+      ...(geometry.index ? [geometry.index] : [])];
+    const uploaded = this.uploaded;
+    let left = holders.length;
+    for (const holder of holders) {
+      const before = holder.onUploadCallback;
+      holder.onUpload(function (this: unknown) {
+        before.call(this);
+        if (--left === 0) uploaded.add(geometry);
+      });
+    }
   }
 
   /** A tile left the cache: dispose the terrain materials made in adopt (the library disposes its own). */
@@ -976,7 +1012,7 @@ export class TilesViewer {
    * person looked — not from the figure's follow camera, tilted down at the floor beside it: there a wheel notch went
    * 15.7% of the way to that floor, 2.5 → 1.4 m and less (user report "보행모드 끝내고나면 휠로 확대할 때 느림").
    */
-  setWalk(on: boolean, from?: { feet: Vector3; yaw: number }): void {
+  setWalk(on: boolean, from?: { point: Vector3; yaw: number }): void {
     if (on === !!this.walkState) return;
     if (on) {
       if (!this.tiles) return;
@@ -984,15 +1020,13 @@ export class TilesViewer {
       this.controls.update(0);
       this.camera.updateMatrixWorld();
       const eye = this.camera.position.clone(), dir = this.camera.getWorldDirection(new Vector3());
-      const walker: Walker = { feet: (from?.feet ?? eye).clone(), vy: 0, grounded: !!from, gravity: true, collide: true, height: this.walkPrefs.height };
+      const height = this.walkPrefs.height;
+      const walker: Walker = { feet: from ? from.point.clone() : eye.clone().setY(eye.y - eyeHeight({ height })), vy: 0, grounded: false,
+        gravity: true, collide: true, height };
       const yaw = from ? from.yaw : Math.atan2(-dir.x, -dir.z);
       this.walkState = { walker, yaw, pitch: from ? 0 : Math.asin(Math.max(-0.99, Math.min(0.99, dir.y))),
-        speed: WALK_SPEED, keys: new Set(), jump: false, eyeY: eye.y, look: null, meshes: null, figure: null, heading: yaw, follow: 0 };
-      if (!from) {
-        const floor = this.walkCast(eye, new Vector3(0, -1, 0), FLOOR_SEARCH);
-        if (floor) { walker.feet.y = eye.y - floor.distance; walker.grounded = true; } else walker.feet.y = eye.y - eyeHeight(walker);
-      }
-      this.walkState.eyeY = walker.feet.y + eyeHeight(walker);
+        speed: WALK_SPEED, keys: new Set(), jump: false, start: { eye, point: from?.point.clone() ?? null, yaw },
+        eyeY: walker.feet.y + eyeHeight(walker), look: null, meshes: null, standIns: null, figure: null, heading: yaw, follow: 0 };
       this.showFigure(this.walkPrefs.figure);
       this.controls.enabled = false;
       window.addEventListener('keydown', this.walkKey);
@@ -1009,6 +1043,8 @@ export class TilesViewer {
       window.removeEventListener('blur', this.walkBlur);
       window.removeEventListener('contextmenu', this.walkMenu);
       for (const type of WALK_POINTER) this.canvas.removeEventListener(type, this.walkLook);
+      this.shownLately.clear();
+      this.collision.want([]);
       const eye = new Vector3(s.walker.feet.x, s.eyeY, s.walker.feet.z);
       const ahead = new Vector3(0, 0, -5).applyEuler(new Euler(s.pitch, s.yaw, 0, 'YXZ')).add(eye);
       this.controls.enabled = true;
@@ -1097,7 +1133,8 @@ export class TilesViewer {
     const hit = this.pick(x, y);
     if (!hit) return false;
     const dir = this.camera.getWorldDirection(new Vector3());
-    this.setWalk(true, standingSpot(hit.point, this.camera.position, Math.atan2(-dir.x, -dir.z), this.walkCast));
+    // Facing away from the camera; where exactly to stand is found once the tiles there are indexed (walkFrame).
+    this.setWalk(true, { point: hit.point, yaw: standingSpot(hit.point, this.camera.position, Math.atan2(-dir.x, -dir.z), () => null).yaw });
     return true;
   }
 
@@ -1122,15 +1159,27 @@ export class TilesViewer {
   private walkFrame(dt: number): boolean {
     const s = this.walkState!, w = s.walker;
     dt = Math.min(dt, 0.25); // a stalled frame (tab in the background) is not a long fall
-    s.meshes = null; // gathered again when this frame casts its first ray
+    s.meshes = this.visibleMeshes();
+    s.standIns = null;
+    this.missed.clear();
+    const now = performance.now();
+    for (const mesh of s.meshes) if (this.collision.has(mesh.geometry)) this.shownLately.set(mesh, now);
+    for (const [mesh, at] of this.shownLately) if (now - at > STAND_IN * 1000) this.shownLately.delete(mesh);
     const k = keysToMove(s.keys), speed = s.speed * (k.run ? RUN_FACTOR : 1);
-    const move = new Vector3(-Math.sin(s.yaw), 0, -Math.cos(s.yaw)).multiplyScalar(-k.back)
-      .addScaledVector(new Vector3(Math.cos(s.yaw), 0, -Math.sin(s.yaw)), k.right);
-    if (move.lengthSq() > 1) move.normalize();
-    move.multiplyScalar(speed * dt);
-    const from = w.feet.clone();
-    stepWalker(w, move, k.up * speed * dt, dt, this.walkCast, k.jump || s.jump);
-    s.jump = false;
+    let from = w.feet.clone();
+    if (s.start) {
+      if (this.settleStart(s)) from = w.feet.clone();
+    } else {
+      const move = new Vector3(-Math.sin(s.yaw), 0, -Math.cos(s.yaw)).multiplyScalar(-k.back)
+        .addScaledVector(new Vector3(Math.cos(s.yaw), 0, -Math.sin(s.yaw)), k.right);
+      if (move.lengthSq() > 1) move.normalize();
+      move.multiplyScalar(speed * dt);
+      const vy = w.vy, grounded = w.grounded;
+      this.castMissing = false;
+      stepWalker(w, move, k.up * speed * dt, dt, this.walkCast, k.jump || s.jump);
+      // A tile around not indexed yet (just loaded): stand this frame rather than walk through or fall through it.
+      if (this.castMissing) { w.feet.copy(from); w.vy = vy; w.grounded = grounded; } else s.jump = false;
+    }
     // Up a step the eye eases in (about 0.1 s); down and falling it follows at once.
     const eyeY = w.feet.y + eyeHeight(w);
     s.eyeY = eyeY > s.eyeY + 1e-3 ? s.eyeY + (eyeY - s.eyeY) * Math.min(1, dt * 15) : eyeY;
@@ -1159,36 +1208,88 @@ export class TilesViewer {
       figure.group.visible = s.follow > FIGURE_NEAR * scale;
     } else this.camera.position.set(w.feet.x, s.eyeY, w.feet.z);
     this.camera.updateMatrixWorld();
+    this.indexAround(s.meshes, w.feet);
     // Draw while the figure is still moving its limbs to a stand.
     return this.camera.position.distanceToSquared(before) > 1e-10 || this.camera.quaternion.angleTo(turn) > 1e-6
       || (!!figure && (s.keys.size > 0 || !w.grounded || figure.settling));
   }
 
   /**
-   * First visible surface along a ray (scene frame) for walk mode: the meshes on screen, each through a bounding volume
-   * hierarchy built when a ray first comes near it; hidden objects are passed through.
+   * Once the tiles at the start are indexed: the person on the floor at or under the clicked point (walk.ts
+   * standingSpot), or on the floor under the eye (none: at eye height minus the eye's). False while waiting.
+   */
+  private settleStart(s: NonNullable<TilesViewer['walkState']>): boolean {
+    const start = s.start!, w = s.walker;
+    this.castMissing = false;
+    if (start.point) {
+      const spot = standingSpot(start.point, start.eye, start.yaw, this.walkCast);
+      if (this.castMissing) return false;
+      w.feet.copy(spot.feet);
+      w.grounded = true;
+    } else {
+      const floor = this.walkCast(start.eye, new Vector3(0, -1, 0), FLOOR_SEARCH);
+      if (this.castMissing) return false;
+      w.feet.y = floor ? start.eye.y - floor.distance : start.eye.y - eyeHeight(w);
+      w.grounded = !!floor;
+    }
+    s.eyeY = w.feet.y + eyeHeight(w);
+    s.start = null;
+    return true;
+  }
+
+  private visibleMeshes(): Mesh[] {
+    const found: Mesh[] = [];
+    this.tiles?.group.traverseVisible(o => { if ((o as Mesh).isMesh) found.push(o as Mesh); });
+    return found;
+  }
+
+  /** Index for the rays, in the background: the geometries a ray missed this frame, then those within INDEX_AHEAD m. */
+  private indexAround(meshes: Mesh[], feet: Vector3) {
+    const sphere = new Sphere(), near: [BufferGeometry, number][] = [];
+    for (const mesh of meshes) {
+      const g = mesh.geometry;
+      if (this.missed.has(g) || !this.uploaded.has(g)) continue;
+      if (!g.boundingSphere) g.computeBoundingSphere();
+      const d = sphere.copy(g.boundingSphere!).applyMatrix4(mesh.matrixWorld).distanceToPoint(feet);
+      if (d < INDEX_AHEAD) near.push([g, d]);
+    }
+    near.sort((a, b) => a[1] - b[1]);
+    this.collision.want([...[...this.missed].filter(g => this.uploaded.has(g)), ...near.map(([g]) => g)]);
+  }
+
+  /**
+   * Indexed tile meshes shown lately and off screen now — mostly the coarser tile a just-loaded finer one replaced. They
+   * stand in for a mesh on screen not indexed yet: as tiles refined (150 m across, 350–690 thousand triangles, 0.3–1 s
+   * to index) the walk stood waiting.
+   */
+  private standIns(): Mesh[] {
+    const s = this.walkState;
+    if (s?.standIns) return s.standIns;
+    const shown = new Set(s?.meshes ?? this.visibleMeshes());
+    const found = [...this.shownLately.keys()].filter(mesh => !shown.has(mesh) && (this.terrainShown || !this.inTerrain(mesh)));
+    if (s) s.standIns = found;
+    return found;
+  }
+
+  private inTerrain(o: Object3D): boolean {
+    for (let p: Object3D | null = o; p; p = p.parent) if (this.terrainScenes.has(p)) return true;
+    return false;
+  }
+
+  /**
+   * First visible surface along a ray (scene frame) for walk mode: the meshes on screen through their bounding volume
+   * hierarchies (CollisionIndex); hidden objects are passed through. A mesh on the ray not indexed yet is asked for and
+   * the indexed tiles off screen there stand in for it (standIns); with none, castMissing says the ray is not to be
+   * trusted.
    */
   private walkCast = (origin: Vector3, dir: Vector3, far: number): Hit | null => {
     const s = this.walkState;
     if (!this.tiles) return null;
-    let meshes = s?.meshes;
-    if (!meshes) {
-      const found: Mesh[] = [];
-      this.tiles.group.traverseVisible(o => { if ((o as Mesh).isMesh) found.push(o as Mesh); });
-      meshes = found;
-      if (s) s.meshes = found;
-    }
     const ray = new Ray(origin, dir), local = new Ray(), inverse = new Matrix4(), sphere = new Sphere();
     let best: Hit | null = null, reach = far;
-    for (const mesh of meshes) {
-      const g = mesh.geometry;
-      if (!g.boundingSphere) g.computeBoundingSphere();
-      sphere.copy(g.boundingSphere!).applyMatrix4(mesh.matrixWorld);
-      if (sphere.distanceToPoint(origin) > reach || !ray.intersectsSphere(sphere)) continue;
-      let bvh = this.bvhs.get(g);
-      if (!bvh) { bvh = new MeshBVH(g); this.bvhs.set(g, bvh); }
+    const through = (mesh: Mesh, bvh: MeshBVH) => {
       local.copy(ray).applyMatrix4(inverse.copy(mesh.matrixWorld).invert());
-      const ids = g.getAttribute('_feature_id_0');
+      const ids = mesh.geometry.getAttribute('_feature_id_0');
       for (const hit of bvh.raycast(local, DoubleSide)) {
         const distance = hit.point.applyMatrix4(mesh.matrixWorld).distanceTo(origin);
         if (distance > reach || !hit.face) continue;
@@ -1197,6 +1298,29 @@ export class TilesViewer {
         reach = distance;
         best = { distance, normal: hit.face.normal.clone().applyMatrix3(new Matrix3().getNormalMatrix(mesh.matrixWorld)).normalize() };
       }
+    };
+    const onRay = (mesh: Mesh) => {
+      const g = mesh.geometry;
+      if (!g.boundingSphere) g.computeBoundingSphere();
+      sphere.copy(g.boundingSphere!).applyMatrix4(mesh.matrixWorld);
+      return sphere.distanceToPoint(origin) <= reach && ray.intersectsSphere(sphere);
+    };
+    const missing: Sphere[] = [];
+    for (const mesh of s?.meshes ?? this.visibleMeshes()) {
+      if (!onRay(mesh)) continue;
+      const bvh = this.collision.get(mesh.geometry);
+      if (bvh) through(mesh, bvh);
+      else if (!this.collision.gone(mesh.geometry)) { this.missed.add(mesh.geometry); missing.push(sphere.clone()); }
+    }
+    if (missing.length) {
+      const covered = missing.map(() => false);
+      for (const mesh of this.standIns()) {
+        if (!onRay(mesh)) continue;
+        let used = false;
+        missing.forEach((m, i) => { if (m.intersectsSphere(sphere)) used = covered[i] = true; });
+        if (used) through(mesh, this.collision.get(mesh.geometry)!);
+      }
+      if (covered.some(c => !c)) this.castMissing = true;
     }
     return best;
   };

@@ -88,6 +88,9 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
   // Walk mode (3차): on with its speed, gravity and collision, or null; `placing`: waiting for the click on where to start.
   const [walk, setWalk] = useState<WalkInfo | null>(null);
   const [placing, setPlacing] = useState(false);
+  // The height (cm) as typed: "1" and "18" on the way to 180 are out of range and were put back to the height at once.
+  const [heightDraft, setHeightDraft] = useState<string | null>(null);
+  const heightCancelled = useRef(false), heightBefore = useRef(0);
   const placingRef = useRef(false);
   useEffect(() => { placingRef.current = placing; }, [placing]);
   const [colorMode, setColorMode] = useState<ColorMode>(storedColorMode);
@@ -573,8 +576,25 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
                   onClick={() => viewerRef.current?.setWalkOptions({ figure: !walk.figure })}>캐릭터</button>
                 <label className="threed-test2__height" title="키 (140~200cm, 기본 172.5cm: 대한민국 성인 남성 평균) — 눈높이는 키의 93.6%">
                   키
-                  <input type="number" min={140} max={200} step={0.5} value={Math.round(walk.height * 200) / 2}
-                    onChange={e => { const cm = Number(e.target.value); if (cm >= 140 && cm <= 200) viewerRef.current?.setWalkOptions({ height: cm / 100 }); }} />
+                  <input type="number" min={140} max={200} step={0.5} value={heightDraft ?? Math.round(walk.height * 200) / 2}
+                    onChange={e => {
+                      setHeightDraft(e.target.value);
+                      const cm = Number(e.target.value);
+                      if (e.target.value !== '' && cm >= 140 && cm <= 200) viewerRef.current?.setWalkOptions({ height: cm / 100 });
+                    }}
+                    onFocus={() => { heightBefore.current = walk.height; }}
+                    onBlur={() => {
+                      // Out of range when left: the nearest allowed height; Esc: the height before typing.
+                      const cm = Number(heightDraft);
+                      if (heightCancelled.current) viewerRef.current?.setWalkOptions({ height: heightBefore.current });
+                      else if (heightDraft && Number.isFinite(cm)) viewerRef.current?.setWalkOptions({ height: Math.min(200, Math.max(140, cm)) / 100 });
+                      heightCancelled.current = false;
+                      setHeightDraft(null);
+                    }}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') e.currentTarget.blur();
+                      else if (e.key === 'Escape') { heightCancelled.current = true; e.currentTarget.blur(); }
+                    }} />
                   cm
                 </label>
                 <button type="button" className="btn btn--sm" onClick={() => viewerRef.current?.setWalk(false)} title="보행 끝내기 (일반 조작으로)">끝내기</button>
