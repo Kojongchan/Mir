@@ -7,10 +7,11 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { groupSpatially } from './tiles3d.mjs';
 
 /**
- * Tiles ({ key, centre, cost? }) for `parts` jobs: runs of `chunk` neighbouring tiles (the leaf order of groupSpatially —
- * they share SVF packs and skin partners), each run to the part with the least cost so far, costliest run first (a
- * dense stretch took 65 of the 222 minutes of run 223; the parts of run 224 took 16 to 42 minutes, 27 on average). Without costs every
- * tile counts 1 and the runs are dealt round. One part: the tiles in the given order.
+ * Tiles ({ key, centre, cost? }) for `parts` jobs: runs of `chunk` neighbouring tiles (the leaf order of groupSpatially),
+ * each run to the part with the least cost so far, costliest run first, and within a part its costliest runs first
+ * (a part builds 4 tiles at a time: a heavy tile last holds the part up). A dense stretch took 65 of the 222 minutes of
+ * run 223; the parts of run 224 took 16 to 42 minutes, 27 on average, and in run 226 two parts spent their last 50
+ * tiles on the junction's skins. Without costs every tile counts 1: the runs are dealt round, in site order.
  */
 export function partition(items, parts, chunk = 16) {
   if (parts <= 1) return [items.map(it => it.key)];
@@ -28,8 +29,7 @@ export function partition(items, parts, chunk = 16) {
     const part = out.reduce((best, p) => (p.cost < best.cost ? p : best));
     part.runs.push(run); part.cost += run.cost;
   }
-  // Within a part, its runs in site order.
-  return out.map(p => p.runs.sort((a, b) => a.c - b.c).flatMap(r => r.keys));
+  return out.map(p => p.runs.sort((a, b) => b.cost - a.cost || a.c - b.c).flatMap(r => r.keys));
 }
 
 const TYPES = { Float64Array, Float32Array, Uint32Array, Uint16Array, Uint8Array, Int32Array };

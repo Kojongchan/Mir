@@ -719,7 +719,9 @@ async function planStage(parts) {
   const rates = tiles.map((_, i) => (seconds[i] > 0 && bytesOf(i) > 0 ? seconds[i] / bytesOf(i) : null)).filter(r => r !== null).sort((a, b) => a - b);
   const rate = rates.length ? rates[Math.floor(rates.length / 2)] : null;
   const costOf = i => (seconds[i] > 0 ? seconds[i] : rate ? bytesOf(i) * rate : bytesOf(i) + 1);
-  const chunk = Number(env.TILES3D_CHUNK) || 16;
+  // With times known, tile by tile (a part's SVF packs are fetched ahead anyway: ≈all of them, wherever its tiles are);
+  // else runs of 16 neighbours.
+  const chunk = Number(env.TILES3D_CHUNK) || (rate ? 1 : 16);
   const items = build.map(i => ({ key: i, centre: Array.isArray(tiles[i].aabb) ? centreOf(tiles[i].aabb) : [0, 0, 0], cost: costOf(i) }));
   const count = build.length ? Math.max(1, Math.min(parts, Math.ceil(build.length / chunk))) : 0;
   const plan = { v: 2, run, code, origin: svf?.origin ?? null, svfId: svf?.id ?? null, fps, parts: count ? partition(items, count, chunk) : [], stored: [...stored] };
