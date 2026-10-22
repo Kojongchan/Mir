@@ -8,7 +8,7 @@ import { groupSpatially } from './tiles3d.mjs';
 /**
  * Tiles ({ key, centre, cost? }) for `parts` jobs: runs of `chunk` neighbouring tiles (the leaf order of groupSpatially —
  * they share SVF packs and skin partners), each run to the part with the least cost so far, costliest run first (a
- * dense stretch took 65 of the 222 minutes of run 223; the parts of run 224 took 16 to over 33 minutes). Without costs every
+ * dense stretch took 65 of the 222 minutes of run 223; the parts of run 224 took 16 to 42 minutes, 27 on average). Without costs every
  * tile counts 1 and the runs are dealt round. One part: the tiles in the given order.
  */
 export function partition(items, parts, chunk = 16) {
