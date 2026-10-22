@@ -3,6 +3,7 @@
 // fingerprint so an unchanged tile is not built again.
 import fs from 'node:fs';
 import path from 'node:path';
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { groupSpatially } from './tiles3d.mjs';
 
 /**
@@ -32,12 +33,30 @@ export function partition(items, parts, chunk = 16) {
 }
 
 const TYPES = { Float64Array, Float32Array, Uint32Array, Uint16Array, Uint8Array, Int32Array };
+const MAGIC = Buffer.from('MRC1');
+
+// A record leaves the job (artifacts, Actions cache) and holds model geometry: with a key it is sealed, head and body
+// apart (AES-256-GCM, each bound to the file's name and part), so the plan reads every head without the bodies.
+function seal(bytes, key, label) {
+  const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, iv);
+  cipher.setAAD(Buffer.from(label));
+  const out = Buffer.concat([cipher.update(bytes), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), out]);
+}
+function unseal(bytes, key, label) {
+  const decipher = createDecipheriv('aes-256-gcm', key, bytes.subarray(0, 12));
+  decipher.setAAD(Buffer.from(label));
+  decipher.setAuthTag(bytes.subarray(12, 28));
+  return Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]);
+}
 
 /**
- * Write a record: `meta` (JSON) and `sections` ({ name: { field: typed array, … } | null }) as [header bytes u32, data
- * bytes u32, header JSON, the arrays]. Written beside and renamed into place, so a record is whole or absent.
+ * Write a record: `meta` (JSON) and `sections` ({ name: { field: typed array, … } | null }) as ['MRC1', sealed u8,
+ * [head bytes u32, head], [body bytes u32, body]] — head: { meta, sections: the arrays' names, types and lengths },
+ * body: the arrays; each sealed when `key` (32 bytes) is given. Written beside and renamed into place, so a record is
+ * whole or absent.
  */
-export function writeRecord(file, meta, sections = {}) {
+export function writeRecord(file, meta, sections = {}, key = null) {
   const head = { meta, sections: {} }, arrays = [];
   for (const [name, fields] of Object.entries(sections)) {
     if (!fields) continue;
@@ -45,48 +64,53 @@ export function writeRecord(file, meta, sections = {}) {
     for (const [field, a] of Object.entries(fields)) {
       if (!ArrayBuffer.isView(a) || !TYPES[a.constructor.name]) continue;
       head.sections[name].push([field, a.constructor.name, a.length]);
-      arrays.push(a);
+      arrays.push(Buffer.from(a.buffer, a.byteOffset, a.byteLength));
     }
   }
-  const json = Buffer.from(JSON.stringify(head)), size = Buffer.alloc(8);
-  size.writeUInt32LE(json.length, 0);
-  size.writeUInt32LE(arrays.reduce((n, a) => n + a.byteLength, 0), 4);
+  const name = path.basename(file);
+  let headBytes = Buffer.from(JSON.stringify(head)), body = Buffer.concat(arrays);
+  if (key) { headBytes = seal(headBytes, key, `${name}:head`); body = seal(body, key, `${name}:body`); }
+  const size = n => { const b = Buffer.alloc(4); b.writeUInt32LE(n); return b; };
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const part = `${file}.${process.pid}.part`, fd = fs.openSync(part, 'w');
-  try {
-    fs.writeSync(fd, size);
-    fs.writeSync(fd, json);
-    for (const a of arrays) fs.writeSync(fd, Buffer.from(a.buffer, a.byteOffset, a.byteLength));
-  } finally { fs.closeSync(fd); }
+  const part = `${file}.${process.pid}.part`;
+  fs.writeFileSync(part, Buffer.concat([MAGIC, Buffer.from([key ? 1 : 0]), size(headBytes.length), headBytes, size(body.length), body]));
   fs.renameSync(part, file);
 }
 
-/** A record written by writeRecord: { meta, sections: { name: { field: typed array } } }; `metaOnly`: just its meta. */
-export function readRecord(file, { metaOnly = false } = {}) {
-  if (metaOnly) {
-    const fd = fs.openSync(file, 'r');
-    try {
-      const size = Buffer.alloc(8);
-      if (fs.readSync(fd, size, 0, 8, 0) !== 8) throw new Error(`Corrupt record ${path.basename(file)}`);
-      const json = Buffer.alloc(size.readUInt32LE(0));
-      if (fs.readSync(fd, json, 0, json.length, 8) !== json.length) throw new Error(`Corrupt record ${path.basename(file)}`);
-      return { meta: JSON.parse(json.toString()).meta, sections: null };
-    } finally { fs.closeSync(fd); }
-  }
+/**
+ * A record written by writeRecord: { meta, sections: { name: { field: typed array } } }; `metaOnly`: just its meta. A
+ * sealed record needs its `key`; with a key, an unsealed one is refused (every record of a keyed build is sealed).
+ */
+export function readRecord(file, { metaOnly = false, key = null } = {}) {
+  const name = path.basename(file), corrupt = () => new Error(`Corrupt record ${name}`);
+  const fd = fs.openSync(file, 'r');
+  let headBytes, sealed, bodyAt, size;
+  try {
+    const start = Buffer.alloc(9);
+    if (fs.readSync(fd, start, 0, 9, 0) !== 9 || !start.subarray(0, 4).equals(MAGIC)) throw corrupt();
+    sealed = start[4] === 1;
+    if (sealed !== !!key) throw new Error(sealed ? `Record ${name} is sealed: no key` : `Record ${name} is not sealed`);
+    headBytes = Buffer.alloc(start.readUInt32LE(5));
+    if (fs.readSync(fd, headBytes, 0, headBytes.length, 9) !== headBytes.length) throw corrupt();
+    bodyAt = 9 + headBytes.length;
+    size = fs.fstatSync(fd).size;
+  } finally { fs.closeSync(fd); }
+  const head = JSON.parse((sealed ? unseal(headBytes, key, `${name}:head`) : headBytes).toString());
+  if (metaOnly) return { meta: head.meta, sections: null };
   const bytes = fs.readFileSync(file);
-  const headBytes = bytes.readUInt32LE(0), dataBytes = bytes.readUInt32LE(4);
-  if (bytes.length !== 8 + headBytes + dataBytes) throw new Error(`Corrupt record ${path.basename(file)}`);
-  const head = JSON.parse(bytes.subarray(8, 8 + headBytes).toString()), sections = {};
-  let p = 8 + headBytes;
-  for (const [name, list] of Object.entries(head.sections)) {
+  if (size < bodyAt + 4 || bytes.length !== bodyAt + 4 + bytes.readUInt32LE(bodyAt)) throw corrupt();
+  const raw = bytes.subarray(bodyAt + 4), body = sealed ? unseal(raw, key, `${name}:body`) : raw, sections = {};
+  let p = 0;
+  for (const [section, list] of Object.entries(head.sections)) {
     const fields = {};
     for (const [field, type, length] of list) {
       const T = TYPES[type], n = length * T.BYTES_PER_ELEMENT;
-      fields[field] = new T(bytes.buffer.slice(bytes.byteOffset + p, bytes.byteOffset + p + n)); // copied: aligned for its type
+      if (p + n > body.length) throw corrupt();
+      fields[field] = new T(body.buffer.slice(body.byteOffset + p, body.byteOffset + p + n)); // copied: aligned for its type
       p += n;
     }
-    sections[name] = fields;
+    sections[section] = fields;
   }
-  if (p !== bytes.length) throw new Error(`Corrupt record ${path.basename(file)}`);
+  if (p !== body.length) throw corrupt();
   return { meta: head.meta, sections };
 }

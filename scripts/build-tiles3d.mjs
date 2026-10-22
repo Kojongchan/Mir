@@ -29,7 +29,7 @@
 // Object ids: numeric entity ids are dbIds; converter-renamed fragments (`entity-N`) use the model's fragment
 // table (meta/alias), so every level carries the owning object's dbId per vertex. Terrain has no object ids.
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, hkdfSync, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -37,12 +37,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { decodeXkt, xktEntityBoxes } from './tile-lod-merge.mjs';
 import { packMeshes, meshColour, mergeGroups, simplifyGroup, encodeGlb, boxVolume, groupSpatially, triangles, packTerrain, simplifyTerrain,
   encodeTerrainGlb, weldGroup } from './tiles3d.mjs';
-import { checkStorageBudget } from './storage-budget.mjs';
 import { nearOther } from './clearance.mjs';
 import { SKIN_REACH, applySkins, containedSkins } from './skins.mjs';
 import { cacheKey } from './cache-key.mjs';
-import { partition, readRecord, writeRecord } from './tiles3d-parts.mjs';
-import { codeFingerprint } from './code-fingerprint.mjs';
 
 const env = process.env;
 // Far v5 simplifies by 0.25 m but prunes parts < 1 m and drops thin pieces of large merged tiles; at 3 m the original
@@ -369,6 +366,18 @@ async function openSvf(knownOrigin) {
       perTile.set(i, { s, relabelled, added, took, misses, objects: new Set(dbIds.filter(d => d > 0)), box: tiles[i].aabb, colours });
       return out;
     },
+    /** Fragments whose boxes come within `pad` of one of these boxes (tiles' frame): what building those tiles reads. */
+    fragmentsNear(boxes, pad) {
+      fragmentGrid ??= gridOf();
+      const out = [], seen = new Set();
+      for (const b of boxes) for (const list of [fragmentGrid.big, ...cellsOf(b, pad).map(k => fragmentGrid.cells.get(k) ?? [])]) for (const f of list) {
+        if (seen.has(f) || ![0, 1, 2].every(a => fb[f * 6 + a] - origin[a] <= b[a + 3] + pad && fb[f * 6 + a + 3] - origin[a] >= b[a] - pad)) continue;
+        seen.add(f); out.push(f);
+      }
+      return out;
+    },
+    /** Download the mesh packs of these fragments ahead (sources without it: nothing); resolves with the pack count. */
+    prefetch(list, concurrency) { return source.prefetch ? source.prefetch(list, concurrency) : Promise.resolve(0); },
     /** Tile i's matching record, for its tile record (null: its original was not matched). */
     tileRecord(i) {
       const r = perTile.get(i);
@@ -565,30 +574,13 @@ async function buildTile(i, fix = null) {
   return { ...tile, leaf, svf: svf?.tileRecord(i) ?? null };
 }
 
-// A tile record (scripts/tiles3d-parts.mjs): everything finalize takes from a built tile, under its fingerprint.
-const RECORD_VERSION = 1;
-function saveRecord(dir, key, i, built) {
-  const ids = [...built.boxes.keys()], box = new Float32Array(ids.length * 6);
-  ids.forEach((id, k) => box.set(built.boxes.get(id), k * 6));
-  const leaf = built.leaf ? { ...built.leaf, groups: undefined } : null;
-  writeRecord(path.join(dir, `${key}.rec`), { v: RECORD_VERSION, key, tile: i, leaf, files: [...built.files], stats: built.stats, svf: built.svf,
-    seconds: built.seconds ?? null },
-    { opaque: built.leaf?.groups?.opaque ?? null, transparent: built.leaf?.groups?.transparent ?? null, boxes: { ids: Uint32Array.from(ids), box } });
-}
-/**
- * A saved record as finalize takes it: { key, tile, leaf (with its groups) | null, files: Map, stats, boxes, svf, seconds (the
- * tile's build time, for the next plan's parts) }.
- */
-function loadRecord(file) {
-  const { meta, sections } = readRecord(file);
-  if (meta?.v !== RECORD_VERSION) throw new Error(`Record ${path.basename(file)} has version ${meta?.v}`);
-  const leaf = meta.leaf ? { ...meta.leaf, groups: { opaque: sections.opaque ?? null, transparent: sections.transparent ?? null } } : null;
-  return { key: meta.key, tile: meta.tile, leaf, files: new Map(meta.files), stats: meta.stats, boxes: sections.boxes, svf: meta.svf, seconds: meta.seconds };
-}
-
 // ─── tile fingerprint ends here ───
 // Below: the stages. Changing them keeps every tile's record valid; changing anything above (or a module it runs)
-// rebuilds every tile.
+// rebuilds every tile. The record file, the parts and the storage check are the stages' (imported here, out of the
+// fingerprint): a change to what a record holds bumps RECORD_VERSION, a change to its file layout the layout's own mark.
+import { partition, readRecord, writeRecord } from './tiles3d-parts.mjs';
+import { codeFingerprint } from './code-fingerprint.mjs';
+import { checkStorageBudget } from './storage-budget.mjs';
 const LEAF_MARKER = '// ─── tile fingerprint ends here ───';
 
 const STAGE = env.TILES3D_STAGE || 'all';
@@ -601,13 +593,38 @@ const NEW = path.join(WORK, 'new'), RECORDS = path.resolve(env.TILES3D_RECORDS |
 fs.mkdirSync(NEW, { recursive: true });
 fs.mkdirSync(RECORDS, { recursive: true });
 const planFile = path.join(WORK, 'plan.json'), partFile = k => path.join(WORK, `part-${k}.json`);
+// A tile record (scripts/tiles3d-parts.mjs): everything finalize takes from a built tile, under its fingerprint. Sealed
+// with a key from the store's secret (TILES3D_RECORD_SECRET in tests; none on a local folder): records travel as
+// artifacts and in the Actions cache of a public repository.
+const RECORD_VERSION = 2;
+const recordSecret = env.TILES3D_RECORD_SECRET || (localDir ? '' : env.R2_SECRET_ACCESS_KEY || '');
+const recordKey = recordSecret ? Buffer.from(hkdfSync('sha256', recordSecret, 'mir-tiles3d-records', 'record key v1', 32)) : null;
+function saveRecord(dir, key, i, built) {
+  const ids = [...built.boxes.keys()], box = new Float32Array(ids.length * 6);
+  ids.forEach((id, k) => box.set(built.boxes.get(id), k * 6));
+  const leaf = built.leaf ? { ...built.leaf, groups: undefined } : null;
+  writeRecord(path.join(dir, `${key}.rec`), { v: RECORD_VERSION, key, tile: i, leaf, files: [...built.files], stats: built.stats, svf: built.svf,
+    seconds: built.seconds ?? null },
+    { opaque: built.leaf?.groups?.opaque ?? null, transparent: built.leaf?.groups?.transparent ?? null, boxes: { ids: Uint32Array.from(ids), box } }, recordKey);
+}
+/**
+ * A saved record as finalize takes it: { key, tile, leaf (with its groups) | null, files: Map, stats, boxes, svf, seconds (the
+ * tile's build time, for the next plan's parts) }.
+ */
+function loadRecord(file) {
+  const { meta, sections } = readRecord(file, { key: recordKey });
+  if (meta?.v !== RECORD_VERSION) throw new Error(`Record ${path.basename(file)} has version ${meta?.v}`);
+  const leaf = meta.leaf ? { ...meta.leaf, groups: { opaque: sections.opaque ?? null, transparent: sections.transparent ?? null } } : null;
+  return { key: meta.key, tile: meta.tile, leaf, files: new Map(meta.files), stats: meta.stats, boxes: sections.boxes, svf: meta.svf, seconds: meta.seconds };
+}
+
 const recordFile = key => [path.join(NEW, `${key}.rec`), path.join(RECORDS, `${key}.rec`)].find(f => fs.existsSync(f)) ?? null;
 /** Whether a record exists with this key and every file it lists is stored. */
 function usable(key) {
   const file = recordFile(key);
   if (!file) return false;
   try {
-    const { meta } = readRecord(file, { metaOnly: true });
+    const { meta } = readRecord(file, { metaOnly: true, key: recordKey });
     return meta?.v === RECORD_VERSION && meta.key === key && meta.files.every(([, w]) => stored.has(w.hash));
   } catch { return false; } // a damaged record is built again
 }
@@ -713,6 +730,14 @@ async function leavesStage(plan, part) {
   const progress = () => {
     if (++done % 25 === 0 || done === list.length) console.log(`Leaves ${done}/${list.length} · far ${MB(total.far.bytes)} MB · ${MID_ERRORS.map(e => `${e} m ${MB(total.mid[e].bytes)} MB`).join(' · ')} · detail ${MB(total.detail.bytes)} MB · uploaded ${uploads.files} files, ${MB(uploads.bytes)} MB${svf ? (t => ` · SVF ${t.replaced}/${t.entities} entities (${t.relabelled} owners corrected), ${t.downloadedMB} MB in ${t.downloadSeconds} s`)(svf.totals()) : ''}${svf ? ` · skins ${total.skins.pushed} pushed, ${Math.round(total.skins.seconds)} s (partners ${Math.round(total.skins.partnerSeconds)} s)` : ''}`);
   };
+  // The SVF packs this part's tiles read (their entities' fragments and the skins' partners: fragments within a metre
+  // of a tile's box), fetched ahead in tile order while the tiles are built.
+  let ahead = Promise.resolve();
+  if (svf) {
+    const started = Date.now(), wanted = svf.fragmentsNear(list.map(i => tiles[i].aabb).filter(Array.isArray), 1);
+    ahead = svf.prefetch(wanted, 24).then(n => console.log(`SVF: ${n} mesh packs of ${wanted.length} fragments fetched ahead in ${Math.round((Date.now() - started) / 1000)} s`),
+      e => console.log(`SVF fetching ahead stopped (${e.message}); the packs come as the tiles ask`));
+  }
   await Promise.all(Array.from({ length: 4 }, async () => {
     for (let n = next++; n < list.length; n = next++) {
       const i = list[n], started = Date.now(), built = await buildTile(i);
@@ -722,6 +747,7 @@ async function leavesStage(plan, part) {
       progress();
     }
   }));
+  await ahead;
   await flushUploads();
   fs.writeFileSync(partFile(part), JSON.stringify({ v: 2, part, run, tiles: list, downloadedMB: svf?.downloadedMB ?? 0, downloadSeconds: svf?.downloadSeconds ?? 0 }));
   console.log(`Part ${part}: ${list.length} tiles, ${files} files (${uploads.files} uploaded, ${MB(uploads.bytes)} MB; the others were stored already)`

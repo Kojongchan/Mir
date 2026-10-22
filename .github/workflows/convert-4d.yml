@@ -359,7 +359,7 @@ jobs:
     timeout-minutes: 120
     permissions:
       contents: read
-      actions: write # drop the superseded records cache
+      actions: write # drop the superseded records cache and this run's artifacts
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -421,6 +421,14 @@ jobs:
           else
             echo "The new records are not listed; keeping $OLD"
           fi
+      # The run's artifacts (plan, parts and their sealed records) once it has published: this repository is public.
+      - name: Delete this run's artifacts
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" --jq '.artifacts[] | select(.name | startswith("tiles3d-")) | .id' |
+            while read -r id; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"; done
   # Approved one-off storage cleanup (scripts/r2-cleanup.mjs): dry run unless diag_options has apply=1.
   r2-cleanup:
     if: github.event.inputs.diag_only == 'r2-cleanup'

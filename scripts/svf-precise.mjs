@@ -313,6 +313,17 @@ export async function openSvfSource({ urn, getToken, region = 'US', dir, log = (
     /** Drawn transparent (its material; see above). */
     transparent: f => transparentMaterial.get(list[f]?.materialID) ?? false,
     get downloadedMB() { return Math.round(bytes / 1048576); },
+    /**
+     * Download the mesh packs of these fragments ahead, `concurrency` at a time, in the order given (a pack asked for
+     * meanwhile shares the download); resolves with the number of packs. One request at a time a pack is ≈1.2 MB in
+     * ≈2 s: a part's ≈4,000 packs one tile at a time kept downloads in flight for 636 of its 870 s (run 225).
+     */
+    async prefetch(indices, concurrency = 24) {
+      const ids = [...new Set(indices.map(f => geometries[list[f]?.geometryID]?.packID).filter(id => packUri.has(id)))];
+      let next = 0;
+      await Promise.all(Array.from({ length: concurrency }, async () => { while (next < ids.length) await get(packUri.get(ids[next++])); }));
+      return ids.length;
+    },
     get downloadSeconds() { return Math.round((busyMs + (inFlight ? Date.now() - busySince : 0)) / 1000); },
     /** Exact triangles of these fragments in the tiles' frame: Map fragment → { pos, idx } | null (lines, points). */
     async pieces(indices, origin) {

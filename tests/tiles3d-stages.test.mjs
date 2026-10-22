@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, hkdfSync } from 'node:crypto';
 import { promisify } from 'node:util';
 import { writeXkt, boxMesh, slabMesh } from './helpers/xkt-writer.mjs';
 import { partition, readRecord, writeRecord } from '../scripts/tiles3d-parts.mjs';
@@ -72,7 +72,7 @@ async function build(bucket, work, env) {
  * hash, the others from the run's folder). Also checks that one run folder is left and that every stored file is the
  * run's or one a kept record lists (`records`: the records folder, else no stored file outside the run).
  */
-function published(bucket, folder, records = null) {
+function published(bucket, folder, records = null, key = null) {
   const base = path.join(bucket, PREFIX, folder), current = JSON.parse(fs.readFileSync(path.join(base, 'current.json'), 'utf8'));
   assert.equal(current.v, 2);
   const files = new Map(current.files.map(rel => [rel, fs.readFileSync(rel.startsWith('c/') ? path.join(base, 'files', `${current.hash[rel]}.glb`)
@@ -81,7 +81,7 @@ function published(bucket, folder, records = null) {
   assert.deepEqual(fs.readdirSync(path.join(base, 'runs')), [current.run.slice(5)], 'one run kept');
   assert.deepEqual(fs.readdirSync(path.join(base, current.run)).sort(), ['objects.bin', 'tileset.json']);
   const listed = new Set(Object.values(current.hash));
-  if (records) for (const f of recs(records)) for (const [, w] of readRecord(path.join(records, f), { metaOnly: true }).meta.files) listed.add(w.hash);
+  if (records) for (const f of recs(records)) for (const [, w] of readRecord(path.join(records, f), { metaOnly: true, key }).meta.files) listed.add(w.hash);
   for (const f of fs.readdirSync(path.join(base, 'files'))) assert.ok(listed.has(f.replace(/\.glb$/, '')), `stored file ${f} is listed`);
   return { current, files };
 }
@@ -190,6 +190,30 @@ test('parts: runs of neighbours dealt round; one part keeps the order; records s
   assert.deepEqual(fs.readdirSync(path.dirname(file)), ['r.rec'], 'written beside and renamed into place');
   fs.writeFileSync(file, fs.readFileSync(file).subarray(0, 40));
   assert.throws(() => readRecord(file), /Corrupt record/);
+  // Sealed: nothing readable without the key, the right key gives it back, a wrong one or none is refused.
+  const key = Buffer.alloc(32, 7), sealed = path.join(path.dirname(file), 's.rec');
+  writeRecord(sealed, { tile: 4, name: 'readable?' }, { opaque: g }, key);
+  assert.ok(!fs.readFileSync(sealed).includes('readable?'));
+  assert.deepEqual(readRecord(sealed, { key }).sections.opaque, g);
+  assert.deepEqual(readRecord(sealed, { metaOnly: true, key }).meta, { tile: 4, name: 'readable?' });
+  assert.throws(() => readRecord(sealed, { key: Buffer.alloc(32, 8) }));
+  assert.throws(() => readRecord(sealed), /sealed: no key/);
+  assert.throws(() => readRecord(path.join(path.dirname(file), 'r.rec'), { key }), /Corrupt record|not sealed/);
+  fs.renameSync(sealed, path.join(path.dirname(file), 't.rec')); // its name is part of the seal: a record moved to another key is refused
+  assert.throws(() => readRecord(path.join(path.dirname(file), 't.rec'), { key }));
+});
+
+test('sealed records: kept between builds with the same secret, built again with another, never readable in the file', { timeout: 240_000 }, async () => {
+  const site = tmp(), records = path.join(site, 'records'), key = s => Buffer.from(hkdfSync('sha256', s, 'mir-tiles3d-records', 'record key v1', 32));
+  makeSite(site);
+  await build(site, path.join(site, 'w1'), { DIAG_OPTIONS: 'svf=1', TILES3D_RECORDS: records, TILES3D_RECORD_SECRET: 'first' });
+  const first = published(site, 'tiles3d-svf', records, key('first'));
+  for (const f of recs(records)) assert.ok(!fs.readFileSync(path.join(records, f)).includes('"leaf"'), `${f} is sealed`);
+  const again = await build(site, path.join(site, 'w2'), { DIAG_OPTIONS: 'svf=1', TILES3D_RECORDS: records, TILES3D_RECORD_SECRET: 'first' });
+  assert.match(again.stdout, /7 of 7 tiles kept from their records, 0 to build/);
+  const other = await build(site, path.join(site, 'w3'), { DIAG_OPTIONS: 'svf=1', TILES3D_RECORDS: records, TILES3D_RECORD_SECRET: 'second' });
+  assert.match(other.stdout, /0 of 7 tiles kept from their records, 7 to build/);
+  assert.deepEqual(published(site, 'tiles3d-svf', records, key('second')).current.hash, first.current.hash);
 });
 
 test('code fingerprint: comments and layout do not count, code, line breaks before a token, modules and packages do', () => {
