@@ -17,7 +17,7 @@ import { nearestFiles, structureFiles, type NearbyFile } from './prefetch';
 import { PIVOT_REACH, ROOM_H, ROOM_REACH, ROOM_W, roomSize, unpackDepth, wheelStep } from './navigation';
 import {
   FLOOR_SEARCH, MAX_SPEED, MAX_STATURE, MIN_SPEED, MIN_STATURE, RUN_FACTOR, SPEED_STEP, STATURE, WALK_SPEED, eyeHeight, keysToMove,
-  stepWalker, type Hit, type Walker,
+  standingSpot, stepWalker, type Hit, type Walker,
 } from './walk';
 import { WorkerFigure } from './avatar';
 
@@ -178,6 +178,8 @@ export class TilesViewer {
    */
   private walkState: {
     walker: Walker; yaw: number; pitch: number; speed: number; keys: Set<string>; eyeY: number;
+    /** Space went down since the last frame: a tap shorter than a frame (a slow one) still jumps. */
+    jump: boolean;
     look: { id: number; x: number; y: number } | null; meshes: Mesh[] | null;
     /** The construction worker shown in third person (null: first person), its heading and the camera's distance. */
     figure: WorkerFigure | null; heading: number; follow: number;
@@ -968,11 +970,13 @@ export class TilesViewer {
   get walking(): boolean { return !!this.walkState; }
 
   /**
-   * Walk mode on or off (walk.ts). On: the person stands on the floor under the eye (no long fall from a view high
-   * above; outside the model it floats there), the orbit controls rest, keys move it, a drag looks around, the wheel
-   * sets the speed. Off: the orbit controls take over from the person's eye, looking the same way.
+   * Walk mode on or off (walk.ts). On: the person stands at `from` (startWalkAt), else on the floor under the eye (no
+   * long fall from a view high above; outside the model it floats there); the orbit controls rest, keys move it, a drag
+   * looks around, the wheel sets the speed. Off: the orbit controls take over at the person's eye, looking where the
+   * person looked — not from the figure's follow camera, tilted down at the floor beside it: there a wheel notch went
+   * 15.7% of the way to that floor, 2.5 → 1.4 m and less (user report "보행모드 끝내고나면 휠로 확대할 때 느림").
    */
-  setWalk(on: boolean): void {
+  setWalk(on: boolean, from?: { feet: Vector3; yaw: number }): void {
     if (on === !!this.walkState) return;
     if (on) {
       if (!this.tiles) return;
@@ -980,28 +984,36 @@ export class TilesViewer {
       this.controls.update(0);
       this.camera.updateMatrixWorld();
       const eye = this.camera.position.clone(), dir = this.camera.getWorldDirection(new Vector3());
-      const walker: Walker = { feet: eye.clone(), vy: 0, grounded: false, gravity: true, collide: true, height: this.walkPrefs.height };
-      const yaw = Math.atan2(-dir.x, -dir.z);
-      this.walkState = { walker, yaw, pitch: Math.asin(Math.max(-0.99, Math.min(0.99, dir.y))),
-        speed: WALK_SPEED, keys: new Set(), eyeY: eye.y, look: null, meshes: null, figure: null, heading: yaw, follow: 0 };
-      const floor = this.walkCast(eye, new Vector3(0, -1, 0), FLOOR_SEARCH);
-      if (floor) { walker.feet.y = eye.y - floor.distance; walker.grounded = true; } else walker.feet.y = eye.y - eyeHeight(walker);
+      const walker: Walker = { feet: (from?.feet ?? eye).clone(), vy: 0, grounded: !!from, gravity: true, collide: true, height: this.walkPrefs.height };
+      const yaw = from ? from.yaw : Math.atan2(-dir.x, -dir.z);
+      this.walkState = { walker, yaw, pitch: from ? 0 : Math.asin(Math.max(-0.99, Math.min(0.99, dir.y))),
+        speed: WALK_SPEED, keys: new Set(), jump: false, eyeY: eye.y, look: null, meshes: null, figure: null, heading: yaw, follow: 0 };
+      if (!from) {
+        const floor = this.walkCast(eye, new Vector3(0, -1, 0), FLOOR_SEARCH);
+        if (floor) { walker.feet.y = eye.y - floor.distance; walker.grounded = true; } else walker.feet.y = eye.y - eyeHeight(walker);
+      }
       this.walkState.eyeY = walker.feet.y + eyeHeight(walker);
       this.showFigure(this.walkPrefs.figure);
       this.controls.enabled = false;
       window.addEventListener('keydown', this.walkKey);
       window.addEventListener('keyup', this.walkKey);
       window.addEventListener('blur', this.walkBlur);
+      window.addEventListener('contextmenu', this.walkMenu);
       for (const type of WALK_POINTER) this.canvas.addEventListener(type, this.walkLook);
     } else {
-      this.walkState?.figure?.dispose();
+      const s = this.walkState!;
+      s.figure?.dispose();
       this.walkState = null;
       window.removeEventListener('keydown', this.walkKey);
       window.removeEventListener('keyup', this.walkKey);
       window.removeEventListener('blur', this.walkBlur);
+      window.removeEventListener('contextmenu', this.walkMenu);
       for (const type of WALK_POINTER) this.canvas.removeEventListener(type, this.walkLook);
-      const eye = this.camera.position.clone(), ahead = eye.clone().addScaledVector(this.camera.getWorldDirection(new Vector3()), 5);
+      const eye = new Vector3(s.walker.feet.x, s.eyeY, s.walker.feet.z);
+      const ahead = new Vector3(0, 0, -5).applyEuler(new Euler(s.pitch, s.yaw, 0, 'YXZ')).add(eye);
       this.controls.enabled = true;
+      // The focal offset left from before the walk (zoom toward the cursor) put the camera 1.5 m off the eye.
+      void this.controls.setFocalOffset(0, 0, 0, false);
       void this.controls.setLookAt(eye.x, eye.y, eye.z, ahead.x, ahead.y, ahead.z, false);
       this.settleControls();
     }
@@ -1048,18 +1060,46 @@ export class TilesViewer {
       figure: this.walkPrefs.figure, height: this.walkPrefs.height });
   }
 
-  /** Walk keys held (not while typing in a field); arrows and Space do not scroll the page meanwhile. */
+  /**
+   * Walk keys held (pressed outside a text field); arrows and Space do not scroll the page meanwhile, nor does Space
+   * press the focused button (the 「보행」 toggle ended the walk). A release counts wherever the focus is now.
+   */
   private walkKey = (event: KeyboardEvent) => {
     const s = this.walkState, target = event.target as HTMLElement | null;
     if (!s || !WALK_KEYS.has(event.code)) return;
-    if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
-    if (event.type === 'keyup') { s.keys.delete(event.code); return; }
-    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const typing = !!target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+    if (event.type === 'keyup') { s.keys.delete(event.code); if (!typing) event.preventDefault(); return; }
+    if (typing || event.ctrlKey || event.metaKey || event.altKey) return;
     s.keys.add(event.code);
+    if (event.code === 'Space' && !event.repeat) s.jump = true;
     event.preventDefault();
   };
 
   private walkBlur = () => { this.walkState?.keys.clear(); };
+
+  /**
+   * The browser's menu while walking: none over the canvas (a right drag looks around; the orbit controls keep it away
+   * otherwise, but they rest now); elsewhere it opens and takes the keys' releases, so the held keys are let go. Open
+   * over the canvas, it took W's release and the person walked on (user report "W 키를 떼도 앞으로 감").
+   */
+  private walkMenu = (event: MouseEvent) => {
+    if (event.target === this.canvas) event.preventDefault();
+    else this.walkState?.keys.clear();
+  };
+
+  /**
+   * Walk from the surface at a canvas point (CSS px; user request "보행 시작 위치를 마우스 클릭으로 지정"): the person
+   * stands on the floor there, or before the wall or under the ceiling clicked (walk.ts standingSpot), facing away from
+   * the camera. False when nothing is drawn there.
+   */
+  startWalkAt(x: number, y: number): boolean {
+    if (!this.tiles || this.walkState) return false;
+    const hit = this.pick(x, y);
+    if (!hit) return false;
+    const dir = this.camera.getWorldDirection(new Vector3());
+    this.setWalk(true, standingSpot(hit.point, this.camera.position, Math.atan2(-dir.x, -dir.z), this.walkCast));
+    return true;
+  }
 
   /** A drag looks around from where the person stands, or around the figure (right: turn right, up: look up). */
   private walkLook = (event: PointerEvent) => {
@@ -1089,7 +1129,8 @@ export class TilesViewer {
     if (move.lengthSq() > 1) move.normalize();
     move.multiplyScalar(speed * dt);
     const from = w.feet.clone();
-    stepWalker(w, move, k.up * speed * dt, dt, this.walkCast, k.jump);
+    stepWalker(w, move, k.up * speed * dt, dt, this.walkCast, k.jump || s.jump);
+    s.jump = false;
     // Up a step the eye eases in (about 0.1 s); down and falling it follows at once.
     const eyeY = w.feet.y + eyeHeight(w);
     s.eyeY = eyeY > s.eyeY + 1e-3 ? s.eyeY + (eyeY - s.eyeY) * Math.min(1, dt * 15) : eyeY;
@@ -1130,8 +1171,13 @@ export class TilesViewer {
   private walkCast = (origin: Vector3, dir: Vector3, far: number): Hit | null => {
     const s = this.walkState;
     if (!this.tiles) return null;
-    const meshes = s?.meshes ?? [];
-    if (s && !s.meshes) { this.tiles.group.traverseVisible(o => { if ((o as Mesh).isMesh) meshes.push(o as Mesh); }); s.meshes = meshes; }
+    let meshes = s?.meshes;
+    if (!meshes) {
+      const found: Mesh[] = [];
+      this.tiles.group.traverseVisible(o => { if ((o as Mesh).isMesh) found.push(o as Mesh); });
+      meshes = found;
+      if (s) s.meshes = found;
+    }
     const ray = new Ray(origin, dir), local = new Ray(), inverse = new Matrix4(), sphere = new Sphere();
     let best: Hit | null = null, reach = far;
     for (const mesh of meshes) {

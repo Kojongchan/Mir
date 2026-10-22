@@ -9,7 +9,7 @@ const code = ts.transpileModule(fs.readFileSync(new URL('../src/viewer2/walk.ts'
 }).outputText;
 const mod = {};
 new Function('exports', 'require', code)(mod, m => (m === 'three' ? THREE : null));
-const { stepWalker, slide, fly, floorUnder, keysToMove, eyeHeight, STATURE, STEP_HEIGHT, RADIUS, HEAD_CLEARANCE, JUMP_HEIGHT } = mod;
+const { stepWalker, slide, fly, floorUnder, keysToMove, standingSpot, eyeHeight, STATURE, STEP_HEIGHT, RADIUS, HEAD_CLEARANCE, JUMP_HEIGHT } = mod;
 const { Vector3 } = THREE;
 
 /** A world of boxes [minX, minY, minZ, maxX, maxY, maxZ] (Y up): the first box face a ray meets, with its normal. */
@@ -108,4 +108,21 @@ test('Space jumps JUMP_HEIGHT and lands; a low ceiling stops the head; the eye f
   assert.ok(Math.abs(head - (2.0 - HEAD_CLEARANCE)) < 1e-9, `head stopped at ${head} under the ceiling at 2 m`);
   assert.ok(u.grounded && u.feet.y === 0, 'and came down');
   assert.ok(Math.abs(eyeHeight(walker(0, 0, 0)) - 1.6146) < 1e-3 && Math.abs(eyeHeight(walker(0, 0, 0, 1.9)) - 1.7784) < 1e-3);
+});
+
+test('a clicked floor is where the walk starts; a clicked wall or ceiling puts the person on the floor before it', () => {
+  // A room: floor y 0, ceiling 3 m (−10…10 in x and z), a wall at x 5.
+  const room = world([[-10, -1, -10, 10, 0, 10], [-10, 3, -10, 10, 4, 10], [5, 0, -10, 6, 3, 10]]);
+  const eye = new Vector3(0, 1.6, 0);
+  const floor = standingSpot(new Vector3(3, 0, -2), eye, 0, room);
+  assert.ok(Math.abs(floor.feet.y) < 1e-9 && floor.feet.distanceTo(new Vector3(3, 0, -2)) < RADIUS, JSON.stringify(floor.feet));
+  assert.ok(Math.abs(floor.yaw - Math.atan2(-3, 2)) < 1e-9, 'facing away from the eye');
+  const wall = standingSpot(new Vector3(5, 2, 0), eye, 0, room);
+  assert.ok(Math.abs(wall.feet.y) < 1e-9 && wall.feet.x < 5 - 0.9 * RADIUS && wall.feet.x > 4.5, JSON.stringify(wall.feet));
+  const ceiling = standingSpot(new Vector3(1, 3, 1), eye, 0, room);
+  assert.ok(Math.abs(ceiling.feet.y) < 1e-9 && Math.abs(ceiling.feet.x - 1) < RADIUS, JSON.stringify(ceiling.feet));
+  // Looking straight down: the given yaw; nothing below the point: on the point.
+  assert.equal(standingSpot(new Vector3(0, 0, 0), new Vector3(0, 10, 0), 1.2, room).yaw, 1.2);
+  const nowhere = standingSpot(new Vector3(50, 2, 50), eye, 0, room);
+  assert.deepEqual(nowhere.feet.toArray(), [50, 2, 50]);
 });

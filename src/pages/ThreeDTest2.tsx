@@ -85,8 +85,11 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
   const [tier, setTier] = useState<DeviceTier | 'auto'>('auto');
   const [quality, setQuality] = useState<Quality>(storedQuality);
   const [outlines, setOutlines] = useState(storedOutlines);
-  // Walk mode (3차): on with its speed, gravity and collision, or null.
+  // Walk mode (3차): on with its speed, gravity and collision, or null; `placing`: waiting for the click on where to start.
   const [walk, setWalk] = useState<WalkInfo | null>(null);
+  const [placing, setPlacing] = useState(false);
+  const placingRef = useRef(false);
+  useEffect(() => { placingRef.current = placing; }, [placing]);
   const [colorMode, setColorMode] = useState<ColorMode>(storedColorMode);
   // Selected objects in the order picked; the last one is shown in the tree and (alone) in the property panel.
   const [selection, setSelection] = useState<readonly number[]>([]);
@@ -110,7 +113,7 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
     viewer.setQuality(storedQuality());
     viewer.setOutlines(storedOutlines());
     viewer.onStats = next => setStats(prev => prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
-    viewer.onWalk = info => setWalk(info.on ? info : null);
+    viewer.onWalk = info => { setWalk(info.on ? info : null); if (info.on) setPlacing(false); };
     viewerRef.current = viewer;
     return () => { viewer.dispose(); viewerRef.current = null; };
   }, []);
@@ -160,7 +163,8 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
     } catch (e) { boxesRef.current = null; setStatus(`위치 정보를 불러오지 못했습니다: ${errMessage(e)}`); }
   }, [expand]);
 
-  // Click (not drag) selects the object under the pointer; double-click flies toward the clicked point.
+  // Click (not drag) selects the object under the pointer — or, choosing where a walk starts, puts the person there;
+  // double-click flies toward the clicked point.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -170,6 +174,10 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
       const start = down; down = null;
       if (!start || e.button !== 0 || Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4 || performance.now() - start.t > 500) return;
       const rect = canvas.getBoundingClientRect();
+      if (placingRef.current) {
+        if (!viewerRef.current?.startWalkAt(e.clientX - rect.left, e.clientY - rect.top)) setStatus('그곳에는 설 곳이 없습니다 — 모델 위를 클릭하세요.');
+        return;
+      }
       const hit = viewerRef.current?.pick(e.clientX - rect.left, e.clientY - rect.top);
       const id = hit?.dbId || null, additive = e.ctrlKey || e.metaKey || e.shiftKey;
       setSelection(prev => choose(prev, id, additive));
@@ -177,7 +185,7 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
     };
     const onDouble = (e: MouseEvent) => {
       const viewer = viewerRef.current, rect = canvas.getBoundingClientRect();
-      if (!viewer || viewer.walking) return; // walking: the person stays where it stands
+      if (!viewer || viewer.walking || placingRef.current) return; // walking: the person stays where it stands
       const hit = viewer.pick(e.clientX - rect.left, e.clientY - rect.top);
       if (!hit) return;
       const eye = viewer.camera.position.clone().lerp(hit.point, 0.6);
@@ -189,8 +197,8 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
     return () => { canvas.removeEventListener('pointerdown', onDown); canvas.removeEventListener('pointerup', onUp); canvas.removeEventListener('dblclick', onDouble); };
   }, []);
 
-  // Keys, unless a dialog or a text field takes them (the search box clears itself on Escape): Escape clears the
-  // selection (up close there may be no empty spot left to click), H hides it, I shows only it, Shift+H shows
+  // Keys, unless a dialog or a text field takes them (the search box clears itself on Escape): Escape stops choosing
+  // where a walk starts, else clears the selection (up close there may be no empty spot left to click), H hides it, I shows only it, Shift+H shows
   // everything, Ctrl+Z undoes the last visibility change. Physical keys, so a Korean keyboard layout works too.
   const keyActions = useRef<{ hide: () => void; isolate: () => void; showAll: () => void; undo: () => void } | null>(null);
   useEffect(() => {
@@ -202,7 +210,7 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
       const actions = keyActions.current;
       if (typing || !actions) return;
       const mod = e.ctrlKey || e.metaKey;
-      if (e.key === 'Escape') setSelection(prev => (prev.length ? [] : prev));
+      if (e.key === 'Escape') { if (placingRef.current) setPlacing(false); else setSelection(prev => (prev.length ? [] : prev)); }
       else if (e.code === 'KeyZ' && mod && !e.shiftKey && !e.altKey) { e.preventDefault(); actions.undo(); }
       else if (mod || e.altKey) return;
       else if (e.code === 'KeyH') { if (e.shiftKey) actions.showAll(); else actions.hide(); }
@@ -422,9 +430,9 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
           <button className={`btn btn--sm${terrainOn ? ' btn--primary' : ''}`} disabled={!modelName} title="지형(항공사진) 표시"
             onClick={() => { const next = !terrainOn; setTerrainOn(next); viewerRef.current?.setTerrainVisible(next); }}>지형</button>
           {variant === 'svf' && (
-            <button className={`btn btn--sm${walk ? ' btn--primary' : ''}`} aria-pressed={!!walk} disabled={!modelName}
-              title="보행 모드: 사람 눈높이(1.6m)로 걷기 — W·A·S·D(방향키) 이동, Shift 달리기, 드래그로 둘러보기, 휠로 속도. 중력·충돌(보이는 객체에 막힘, 숨긴 객체는 통과)"
-              onClick={() => viewerRef.current?.setWalk(!walk)}>보행</button>
+            <button className={`btn btn--sm${walk || placing ? ' btn--primary' : ''}`} aria-pressed={!!walk || placing} disabled={!modelName}
+              title="보행 모드: 시작할 곳을 클릭한 뒤 사람 눈높이로 걷기 — W·A·S·D(방향키) 이동, Shift 달리기, Space 점프, 드래그로 둘러보기, 휠로 속도. 중력·충돌(보이는 객체에 막힘, 숨긴 객체는 통과)"
+              onClick={() => { if (walk) viewerRef.current?.setWalk(false); else setPlacing(p => !p); }}>보행</button>
           )}
           <button className="btn btn--sm" disabled={!modelName || capturing} onClick={() => void capture()}
             title="지금 화면을 2배 해상도로, 멀리 있는 부분까지 세밀한 단계를 불러온 뒤 PNG 로 저장">{capturing ? '캡처 중…' : '고화질 캡처'}</button>
@@ -473,7 +481,7 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
           <div className="spacer" />
           {status && <span className="muted threed-test2__status" title={status}>{status}</span>}
         </div>
-        <div className="threed-test__viewport">
+        <div className={`threed-test__viewport${placing ? ' threed-test2__placing' : ''}`}>
           <canvas ref={canvasRef} className="threed-test__canvas" />
           {missing && (
             <div className="threed-test__empty">
@@ -540,6 +548,15 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
           )}
           {/* Top centre: what is selected / hidden and what to do with it, then the colour legend. */}
           <div className="threed-test2__top">
+            {placing && !walk && (
+              <div className="threed-test2__selbar" role="toolbar" aria-label="보행 시작 위치">
+                <strong>보행</strong>
+                <span className="muted">시작할 곳을 클릭하세요 (바닥·벽 앞·천장 아래) · 드래그·휠로 찾기 · Esc 취소</span>
+                <button type="button" className="btn btn--sm" title="지금 카메라 아래 바닥에서 시작"
+                  onClick={() => { setPlacing(false); viewerRef.current?.setWalk(true); }}>지금 위치에서</button>
+                <button type="button" className="btn btn--sm" onClick={() => setPlacing(false)}>취소</button>
+              </div>
+            )}
             {walk && (
               <div className="threed-test2__selbar" role="toolbar" aria-label="보행 모드">
                 <strong>보행</strong>

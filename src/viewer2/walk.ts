@@ -106,6 +106,20 @@ export function stepWalker(w: Walker, move: Vector3, rise: number, dt: number, c
 }
 
 /**
+ * Where a walk starts from a surface point clicked from `eye` (user request "보행 시작 위치를 우리가 마우스 클릭으로
+ * 지정"): RADIUS back toward the eye, then down to the floor — a floor keeps the spot, a wall or a ceiling puts the
+ * person on the floor in front of or under it; nothing below: on the point itself. Facing away from the eye (`yaw`
+ * when looking straight down).
+ */
+export function standingSpot(point: Vector3, eye: Vector3, yaw: number, cast: Cast): { feet: Vector3; yaw: number } {
+  const toward = point.clone().sub(eye);
+  const facing = Math.hypot(toward.x, toward.z) > 1e-6 ? Math.atan2(-toward.x, -toward.z) : yaw;
+  const start = point.clone().addScaledVector(toward.normalize(), -RADIUS);
+  const hit = cast(start, DOWN, FLOOR_SEARCH);
+  return { feet: hit ? start.setY(start.y - hit.distance) : point.clone(), yaw: facing };
+}
+
+/**
  * Keys held (KeyboardEvent.code) → the walk direction in the view's own frame: x right, z back; up/down (Q/E, gravity
  * off), Shift runs, Space jumps (gravity on) or rises (off).
  */
