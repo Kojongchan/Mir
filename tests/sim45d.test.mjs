@@ -16,7 +16,7 @@ function compile(file, modules = {}) {
 }
 const xer = compile('src/lib/p6/xer.ts');
 const cpm = compile('src/lib/p6/cpm.ts');
-const p6 = compile('src/lib/p6/schedule.ts', { './xer': xer, './cpm': cpm });
+const p6 = compile('src/lib/p6/schedule.ts', { './xer.js': xer, './cpm.js': cpm });
 const tl = compile('src/lib/sim45d/timeline.ts', { '../p6/schedule': p6 });
 
 const schedule = p6.readSchedule(p6.buildXer({

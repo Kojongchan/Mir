@@ -130,7 +130,7 @@ export function DesignStep({ projectId, canEdit, data, name, persist, setStatus 
                     <td>{s.kind === 'pier'
                       ? <input type="number" min={0} step={0.1} value={s.heightM ?? ''} disabled={!canEdit} onChange={e => setSupport(i, { heightM: e.target.value ? Number(e.target.value) : undefined })} />
                       : '—'}</td>
-                    <td className="muted sim-table__note" title={evidence.get(s.id)}>{evidence.get(s.id) ?? ''}</td>
+                    <td className="muted sim-table__note" title={evidence.get(s.id) ?? s.source}>{evidence.get(s.id) ?? s.source ?? ''}</td>
                   </tr>
                 ))}
               </tbody>

@@ -130,6 +130,12 @@ export function ReportStep({ projectId, canEdit, data, name, sim, openP6, openin
           {check && <li>검토: 오류 {check.findings.filter(f => f.severity === 'error').length} · 경고 {check.findings.filter(f => f.severity === 'warn').length} (자세히는 5단계)</li>}
           <li>BIM 연결 저장: {linkCount.toLocaleString()}개 객체</li>
         </ul>
+        {(data.log?.length ?? 0) > 0 && (
+          <details className="sim-step__details">
+            <summary>저장 기록 {data.log!.length}건(AI 연결 {data.log!.filter(l => l.who === 'AI 연결').length})</summary>
+            <ul className="sim-list">{[...data.log!].reverse().slice(0, 20).map((l, i) => <li key={i}>{l.at.slice(0, 16).replace('T', ' ')} · {l.who} · {l.what}</li>)}</ul>
+          </details>
+        )}
       </section>
 
       <section className="sim-step__block">

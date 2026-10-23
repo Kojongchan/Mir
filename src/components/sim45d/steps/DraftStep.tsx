@@ -48,7 +48,9 @@ export function DraftStep({ projectId, canEdit, data, persist, sim, setStatus }:
   const ai = useAi(projectId);
   const site = data.site;
   const ids = useMemo(() => site?.supports.map(s => s.id) ?? [], [site]);
-  const rates: Rate[] = useMemo(() => DEFAULT_RATES.map(r => (plan.rates[r.key] != null ? { ...r, value: plan.rates[r.key]!, source: `사용자 수정 (기본 ${r.value}${r.unit} — ${r.source})`, assumed: false } : r)), [plan.rates]);
+  const rates: Rate[] = useMemo(() => DEFAULT_RATES.map(r => (plan.rates[r.key] != null
+    ? { ...r, value: plan.rates[r.key]!, source: plan.rateNotes?.[r.key] ?? `사용자 수정 (기본 ${r.value}${r.unit} — ${r.source})`, assumed: false }
+    : r)), [plan.rates, plan.rateNotes]);
   const save = (next: PlanSettings) => { setPlan(next); if (canEdit) void persist({ ...data, plan: next }); };
 
   const toPoint = (p: AiPoint): CriticalPoint | null => {

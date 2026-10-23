@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
 import { autoLink, LINK_PART_LABEL, type LinkActivity, type LinkResult } from '../../../lib/sim45d/autolink';
 import type { LinkSet, SetupFile } from '../../../lib/sim45d/setup';
+import { wbsScope } from '../../../lib/sim45d/wbsScope';
 import { AiBox, AiStatus, useAi, type StepProps } from './common';
 
 /**
@@ -37,26 +38,7 @@ export function LinkStep({ projectId, canEdit, data, persist, sim, setStatus, op
   const model = models.find(m => m.accItemId === modelId);
 
   // WBS: 이름 경로와 하위 작업 수 — 대상 구조물 WBS 를 고르게
-  const wbs = useMemo(() => {
-    if (!s) return { nodes: [] as { id: string; label: string; count: number }[], under: (_: string) => [] as LinkActivity[] };
-    const byId = new Map(s.wbs.map(w => [w.id, w]));
-    const chain = (id: string) => { const out: string[] = []; for (let w = byId.get(id); w; w = w.parentId ? byId.get(w.parentId) : undefined) out.unshift(w.id); return out; };
-    const counts = new Map<string, number>();
-    for (const a of s.activities) for (const id of chain(a.wbsId)) counts.set(id, (counts.get(id) ?? 0) + 1);
-    const shown = s.wbs.filter(w => (counts.get(w.id) ?? 0) > 0 && chain(w.id).length <= 6);
-    const dup = new Set(shown.map(w => w.name).filter((n, i, all) => all.indexOf(n) !== i));
-    // 같은 이름이 여러 단계에 있으면(예: 연제교(상선) 이 준비공·구조물공 양쪽) 상위 이름을 붙여 구분
-    const nodes = shown.map(w => {
-      const parent = w.parentId ? byId.get(w.parentId)?.name : undefined;
-      const name = dup.has(w.name) && parent ? `${w.name} — ${parent}` : w.name;
-      return { id: w.id, label: `${'　'.repeat(Math.max(0, chain(w.id).length - 2))}${name} (${counts.get(w.id)})`, count: counts.get(w.id)! };
-    });
-    const under = (rootId: string): LinkActivity[] => s.activities.flatMap(a => {
-      const c = chain(a.wbsId), i = c.indexOf(rootId);
-      return i < 0 ? [] : [{ code: a.code, name: a.name, path: c.slice(i + 1).map(id => byId.get(id)!.name) }];
-    });
-    return { nodes, under };
-  }, [s]);
+  const wbs = useMemo(() => (s ? wbsScope(s) : { nodes: [], under: () => [] as LinkActivity[] }), [s]);
 
   const load = async () => {
     if (!model?.urn) return;

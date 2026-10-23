@@ -2,7 +2,7 @@
 // (준비 및 조사 → 하부공(개소별 기초 → 교각 → 코핑) → 상부공(거치 → 공동구)) + 장비·작업조 수(투입안)에 따른 연속 작업.
 // 크리티컬 포인트(야간 구간·작업 금지 기간·착수 가능일·우선 구간·인계 기한)는 제약으로 넣는다.
 // AI 는 이 엔진의 입력(설계현황·단위공기 근거·크리티컬 포인트 해석)과 결과 설명만 맡는다(D28).
-import { addDays, daysBetween, draftCpm, type DraftActivity, type DraftRelation, type DraftSchedule, type DraftWbs } from './schedule';
+import { addDays, daysBetween, draftCpm, type DraftActivity, type DraftRelation, type DraftSchedule, type DraftWbs } from './schedule.js';
 
 export interface Support {
   /** 'A1'·'P12' 처럼 공정표·모델과 같은 이름. */
@@ -15,6 +15,8 @@ export interface Support {
   footing?: boolean;
   /** 교각 높이(m) — LOT 수 계산. */
   heightM?: number;
+  /** 값의 근거(예: '수량산출서 12쪽: P12 현장타설말뚝 1본') — AI·사람이 채운 출처. */
+  source?: string;
 }
 
 export interface Span {

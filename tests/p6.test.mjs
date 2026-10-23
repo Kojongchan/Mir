@@ -17,7 +17,7 @@ function compile(file, modules = {}) {
 }
 const xer = compile('src/lib/p6/xer.ts');
 const cpm = compile('src/lib/p6/cpm.ts');
-const p6 = compile('src/lib/p6/schedule.ts', { './xer': xer, './cpm': cpm });
+const p6 = compile('src/lib/p6/schedule.ts', { './xer.js': xer, './cpm.js': cpm });
 
 const SAMPLE = [
   'ERMHDR\t19.12\t2026-10-22\tProject\tadmin\tadmin\tdbxDatabaseNoName\tProject Management\tKRW',
@@ -287,7 +287,7 @@ test('CPM work windows: not-before and blocked periods push the start, and XER c
   assert.deepEqual([t.cstr_type, t.cstr_date], ['CS_MSOA', '2026-01-21 08:00']);
 });
 
-const B = compile('src/lib/p6/bridgePlan.ts', { './schedule': p6 });
+const B = compile('src/lib/p6/bridgePlan.ts', { './schedule.js': p6 });
 
 test('bridge plan: sourced durations, crew chains, girder after copings, critical points, deadline fit', () => {
   const supports = [

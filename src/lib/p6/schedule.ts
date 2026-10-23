@@ -7,8 +7,8 @@
 //
 // 날짜: XER 은 'YYYY-MM-DD HH:MM'(현지 시각). 개략공정은 일 단위 'YYYY-MM-DD' 로 다룬다.
 
-import { getTable, records, toRows, type XerDoc, type XerTable } from './xer';
-import { computeCpm, type CpmRelation, type CpmResult, type RelType } from './cpm';
+import { getTable, records, toRows, type XerDoc, type XerTable } from './xer.js';
+import { computeCpm, type CpmRelation, type CpmResult, type RelType } from './cpm.js';
 import type { ScheduleTask } from '../schedule';
 
 // --- 읽기 -------------------------------------------------------------------

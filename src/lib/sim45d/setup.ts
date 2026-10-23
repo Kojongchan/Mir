@@ -87,6 +87,15 @@ export interface PlanSettings {
   criticalPoints: CriticalPoint[];
   /** 단위공기 중 사용자가 바꾼 값. */
   rates: Partial<Record<RateKey, number>>;
+  /** 바꾼 값의 근거(쪽·인용) — 없으면 '사용자 수정'. */
+  rateNotes?: Partial<Record<RateKey, string>>;
+}
+
+/** 누가(사람·AI 연결) 무엇을 저장했나 — 최근 것만 남긴다. */
+export interface SetupLogEntry {
+  at: string;
+  who: string;
+  what: string;
 }
 
 /** 6단계 연결 결과(객체 키 = Revit UniqueId(externalId), 뷰어 다리용 IfcGUID 함께). */
@@ -109,7 +118,13 @@ export interface SetupData {
   site?: BridgeSite;
   plan?: PlanSettings;
   links?: LinkSet[];
+  /** 저장 기록(AI 연결로 저장한 것 포함), 최근 50개. */
+  log?: SetupLogEntry[];
 }
+
+/** 저장 기록 한 줄을 더한다(최근 50개). */
+export const appendLog = (data: SetupData, who: string, what: string, at = new Date().toISOString()): SetupData =>
+  ({ ...data, log: [...(data.log ?? []), { at, who, what }].slice(-50) });
 
 export const emptySetup = (): SetupData => ({ version: 1, kind: 'bridge', files: {} });
 
@@ -157,9 +172,13 @@ export function normalizeSetup(raw: unknown): SetupData {
       ...emptyPlan(), start: str(plan.start), finish: str(plan.finish), mode: plan.mode === 'fit' ? 'fit' : 'propose',
       criticalText: str(plan.criticalText), criticalPoints: Array.isArray(plan.criticalPoints) ? plan.criticalPoints : [],
       rates: plan.rates && typeof plan.rates === 'object' ? plan.rates : {},
+      ...(plan.rateNotes && typeof plan.rateNotes === 'object' ? { rateNotes: plan.rateNotes } : {}),
     };
   }
   if (Array.isArray(r.links)) out.links = (r.links as LinkSet[]).filter(l => l && typeof l.modelItemId === 'string' && Array.isArray(l.links));
+  if (Array.isArray(r.log)) {
+    out.log = (r.log as SetupLogEntry[]).filter(e => e && typeof e.at === 'string' && typeof e.who === 'string' && typeof e.what === 'string').slice(-50);
+  }
   return out;
 }
 
