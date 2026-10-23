@@ -7,11 +7,15 @@
 //   POST /api/aps-item  { action:'rename', project, item, name,    mirProject }
 //   POST /api/aps-item  { action:'delete', project, item,          mirProject }
 //   POST /api/aps-item  { action:'move',   project, item, folder,  mirProject }
+//   POST /api/aps-item  { action:'createFolder', project, folder(상위), name, mirProject }
 //
 // rename : PATCH item.displayName (ACC 표준).
 // delete : tip 위에 'Deleted' 확장 버전을 올려 휴지통 처리(ACC 표준 — 하드딜리트 X).
 // move   : PATCH item.relationships.parent (ACC 지원 여부는 환경에 따라 — 실패 시
 //          에러 그대로 노출, 추후 commands API 폴백 검토).
+// createFolder : POST folders(확장 folders:autodesk.bim360:Folder, 상위 폴더 아래). 공정·공사비
+//          단계형 진행(D30)에서 자료를 그 자리에서 올릴 때 새 폴더를 만든다. 2-legged 로 거부되면
+//          ACC 오류를 그대로 노출.
 //
 // Required env: APS_CLIENT_ID / APS_CLIENT_SECRET + SUPABASE_URL / SERVICE_ROLE.
 // =====================================================================
@@ -62,7 +66,7 @@ export default async function handler(req: Request): Promise<Response> {
     return json({ error: 'invalid body' }, 400);
   }
   const { action, project, item, name, folder, mirProject } = body ?? {};
-  if (!project || !item) return json({ error: 'project/item 필요' }, 400);
+  if (!project || (!item && action !== 'createFolder')) return json({ error: 'project/item 필요' }, 400);
 
   // 로그인 + 실무자(editor) 이상(RBAC, 0023).
   if (SUPABASE_URL && SERVICE_ROLE) {
@@ -141,6 +145,27 @@ export default async function handler(req: Request): Promise<Response> {
       const d = await res.json();
       if (!res.ok) return json({ error: detail(d, res.status) }, res.status);
       return json({ ok: true });
+    }
+
+    if (action === 'createFolder') {
+      const folderName = typeof name === 'string' ? name.trim() : '';
+      if (!folder || !folderName) return json({ error: 'folder/name 필요' }, 400);
+      if (/[\\/:*?"<>|]/.test(folderName)) return json({ error: '폴더 이름에 \\ / : * ? " < > | 는 쓸 수 없습니다.' }, 400);
+      const res = await fetch(`${APS}/data/v1/projects/${encodeURIComponent(project)}/folders`, {
+        method: 'POST',
+        headers: { ...bearer, ...VND },
+        body: JSON.stringify({
+          jsonapi: { version: '1.0' },
+          data: {
+            type: 'folders',
+            attributes: { name: folderName, extension: { type: 'folders:autodesk.bim360:Folder', version: '1.0' } },
+            relationships: { parent: { data: { type: 'folders', id: folder } } },
+          },
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) return json({ error: detail(d, res.status) }, res.status);
+      return json({ ok: true, id: d?.data?.id ?? null, name: d?.data?.attributes?.displayName ?? d?.data?.attributes?.name ?? folderName });
     }
 
     return json({ error: 'unknown action' }, 400);

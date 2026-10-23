@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { accFetch, uploadToAcc, isAccModel, type AccItem, type AccNamed } from '../lib/aps';
+import { accFetch, createAccFolder, uploadToAcc, isAccModel, type AccItem, type AccNamed } from '../lib/aps';
 import { recordAccUpload } from '../lib/cde';
 import { getProjectAcc } from '../lib/api';
 import { ModalBackdrop } from './ModalBackdrop';
@@ -38,6 +38,7 @@ function writeLastPath(projectId: string, path: Crumb[]) {
  * - 제목줄을 끌어 창 이동(화면 안으로 제한), Esc 로 닫기
  * - 늦게 도착한 이전 폴더 응답은 버리고, 로딩 중 중복 클릭(더블클릭)으로 경로가 쌓이지 않게
  * - 폴더 내 이름 검색, 프로젝트별 마지막 폴더 기억
+ * - 실무자는 현재 폴더 아래에 새 폴더를 만들 수 있고(`allowNewFolder`), 올린 파일을 바로 고를 수 있다(`pickUploaded`)
  */
 export function AccFilePicker({
   projectId,
@@ -47,6 +48,9 @@ export function AccFilePicker({
   title = '자료관리에서 파일 선택',
   actionLabel = '＋ 첨부',
   accept,
+  pickUploaded = false,
+  allowNewFolder = false,
+  hint,
 }: {
   projectId: string;
   canEdit: boolean;
@@ -58,6 +62,12 @@ export function AccFilePicker({
   actionLabel?: string;
   /** Files that can be picked; others are shown dimmed (e.g. only 3D models). */
   accept?: (name: string) => boolean;
+  /** 업로드가 끝나면 그 파일을 바로 고른 것으로 한다(onPick). */
+  pickUploaded?: boolean;
+  /** 실무자에게 '새 폴더' 를 보인다. */
+  allowNewFolder?: boolean;
+  /** 목록 위 안내 한 줄(예: 받을 수 있는 형식). */
+  hint?: string;
 }) {
   const [acc, setAcc] = useState<{ project: string; hub: string; rootId: string | null; rootName: string } | null>(null);
   const [path, setPath] = useState<Crumb[]>([]);
@@ -68,6 +78,8 @@ export function AccFilePicker({
   const [filter, setFilter] = useState('');
   const [progress, setProgress] = useState<number | null>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const [newFolder, setNewFolder] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const uploadInput = useRef<HTMLInputElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const crumbsRef = useRef<HTMLElement>(null);
@@ -174,13 +186,39 @@ export function AccFilePicker({
     try {
       const res = await uploadToAcc(acc.project, curId, file, { onProgress: setProgress, mirProject: projectId });
       if (res.itemUrn) await recordAccUpload(projectId, null, file.name, res.itemUrn, res.versionUrn, file.size).catch(() => {});
+      if (pickUploaded && res.itemUrn && (!accept || accept(file.name))) {
+        onPick({
+          accProjectId: acc.project, accItemId: res.itemUrn, accUrn: res.urn, name: file.name, size: file.size,
+          folderId: curId, folderIds: path.map((p) => p.id), folderNames: path.map((p) => p.name),
+        });
+        return;
+      }
       await show(acc, path);
-      setStatus(`업로드됨: ${file.name} — 아래에서 선택하세요.`);
+      setStatus(accept && !accept(file.name)
+        ? `업로드됨: ${file.name} — 자료관리에는 올라갔지만 이 칸에 넣을 수 없는 형식입니다.`
+        : `업로드됨: ${file.name} — 아래에서 선택하세요.`);
     } catch (err) {
       setStatus(`업로드 실패: ${(err as Error).message}`);
     } finally {
       setProgress(null);
       if (uploadInput.current) uploadInput.current.value = '';
+    }
+  };
+
+  const onCreateFolder = async () => {
+    const name = (newFolder ?? '').trim();
+    if (!acc || !curId || !name || creating) return;
+    setCreating(true);
+    setStatus(`폴더 만드는 중: ${name}`);
+    try {
+      const f = await createAccFolder(acc.project, curId, name, projectId);
+      setNewFolder(null);
+      await show(acc, [...path, { id: f.id, name: f.name }]);
+      setStatus(`새 폴더: ${f.name} — 여기에 올리세요.`);
+    } catch (err) {
+      setStatus(`폴더 만들기 실패: ${(err as Error).message}`);
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -219,6 +257,10 @@ export function AccFilePicker({
         <div className="acc-modal-head acc-picker-head" onPointerDown={onHeadPointerDown} title="끌어서 이동">
           📁 {title}
           <div className="spacer" />
+          {canEdit && allowNewFolder && (
+            <button disabled={!curId || creating || newFolder != null} title={curId ? '현재 폴더 아래에 새 폴더' : '폴더를 먼저 여세요'}
+              onClick={() => setNewFolder('')}>＋ 새 폴더</button>
+          )}
           {canEdit && (
             <>
               <input ref={uploadInput} type="file" style={{ display: 'none' }} onChange={onUpload} />
@@ -242,6 +284,18 @@ export function AccFilePicker({
             )
           ))}
         </nav>
+
+        {newFolder != null && (
+          <form className="acc-picker-newfolder" onSubmit={(e) => { e.preventDefault(); void onCreateFolder(); }}>
+            <input autoFocus value={newFolder} maxLength={120} placeholder="새 폴더 이름" aria-label="새 폴더 이름"
+              onChange={(e) => setNewFolder(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setNewFolder(null); } }} />
+            <button type="submit" className="primary" disabled={!newFolder.trim() || creating}>{creating ? '만드는 중…' : '만들기'}</button>
+            <button type="button" onClick={() => setNewFolder(null)} disabled={creating}>취소</button>
+          </form>
+        )}
+
+        {hint && <div className="muted acc-picker-hint">{hint}</div>}
 
         <input
           className="acc-picker-filter"

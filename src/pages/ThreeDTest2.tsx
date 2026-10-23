@@ -15,6 +15,7 @@ import { PROFILES, QUALITIES, type DeviceTier, type Quality } from '../viewer2/d
 import { COLOR_MODES, paintFor, type ColorMode } from '../viewer2/colorModes';
 import { readSignedTiles, saveSignedTiles, type SignedTiles } from '../viewer2/signedTiles';
 import { Sim45dDock } from '../components/sim45d/Sim45dDock';
+import { Sim45dSetup } from '../components/sim45d/Sim45dSetup';
 import { useSim45d } from '../components/sim45d/useSim45d';
 import { fourDState } from '../lib/sim45d/timeline';
 
@@ -441,15 +442,10 @@ export function ThreeDTest2({ variant, sim }: { variant?: 'svf'; sim?: boolean }
 
   return (
     <div className="threed-test threed-test--v2">
-      <div className="threed-test__note">
+      {!sim && <div className="threed-test__note">
         <UiIcon name="cube" size={16} />
         <span>
-          {sim ? (
-            <>
-              <strong>공정·공사비 (4D/5D)</strong> — P6 공정표(XER)를 열면 3D 객체가 기준일의 시공 상태로 칠해지고, 아래 탭에서
-              공정표·S-curve·5D 내역·물량 대사를 함께 봅니다. 공정표는 다시 XER 로 내려받아 P6 에서 고칠 수 있습니다.
-            </>
-          ) : variant === 'svf' ? (
+          {variant === 'svf' ? (
             <>
               <strong>3D뷰 (신규 테스트 3차)</strong> — 2차 화면과 같은 엔진에서, 가장 세밀한(원본) 단계의 좌표를 모델의
               <strong> SVF 원본 좌표</strong>로 바꾼 시험판입니다(기존 2~20cm 격자 → 1mm 이하). 가까이서 울퉁불퉁하던 면을 2차 화면과 비교해 보세요.
@@ -461,8 +457,10 @@ export function ThreeDTest2({ variant, sim }: { variant?: 'svf'; sim?: boolean }
             </>
           )}
         </span>
-      </div>
+      </div>}
       <div className="threed-test__viewer">
+        {/* 공정·공사비: 단계 바 + 단계 시트(D30). 시트는 3D 위에 펼쳐지고, 4D/5D 단계에서 접힌다. */}
+        {sim && <Sim45dSetup projectId={projectId} canEdit={canEdit} sim={sim45} />}
         <div className="viewer-bar threed-test__bar">
           {/* The tools: in line on wide screens, one scrolling row on phones (status on its own line below). */}
           <div className="threed-test__tools">

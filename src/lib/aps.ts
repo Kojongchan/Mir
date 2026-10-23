@@ -194,6 +194,13 @@ export function moveAccItem(project: string, item: string, folder: string, mirPr
   return apsItem('move', { project, item, folder, mirProject });
 }
 
+/** ACC 폴더 아래에 새 폴더(실무자 이상). 만든 폴더 id·이름을 돌려준다. */
+export async function createAccFolder(project: string, parent: string, name: string, mirProject: string): Promise<AccNamed> {
+  const r = await apsItem('createFolder', { project, folder: parent, name, mirProject });
+  if (!r.id) throw new Error('폴더를 만들었지만 id 를 받지 못했습니다. 목록을 새로고침하세요.');
+  return { id: r.id as string, name: r.name as string };
+}
+
 export type ProgressFn = (fraction: number) => void;
 
 export interface AccUploadResult {
