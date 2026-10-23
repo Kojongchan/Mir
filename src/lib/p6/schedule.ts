@@ -350,7 +350,9 @@ export function buildXer(draft: DraftSchedule, template?: XerDoc): XerDoc {
     }));
   }
 
-  // UDF 유형(작업 표): 값이 하나라도 숫자가 아니면 문자 UDF
+  // UDF 유형(작업 표): 값이 하나라도 숫자가 아니면 문자 UDF.
+  // 템플릿에 같은 라벨의 작업 UDF 가 있으면 그 정의(ID·자료형, 예: 계약금액 = FT_MONEY)를 그대로 써서
+  // 같은 P6 DB 로 불러올 때 같은 이름의 UDF 가 하나 더 생기지 않게 한다.
   const udfKinds = new Map<string, 'text' | 'number'>();
   for (const a of draft.activities) {
     for (const [label, v] of Object.entries(a.udfs ?? {})) {
@@ -358,13 +360,23 @@ export function buildXer(draft: DraftSchedule, template?: XerDoc): XerDoc {
       udfKinds.set(label, udfKinds.get(label) === 'text' ? 'text' : kind);
     }
   }
-  const udfIds = new Map([...udfKinds.keys()].map((label, i) => [label, String(i + 1)]));
-  if (udfIds.size) {
-    put('UDFTYPE', [...udfIds].map(([label, id]) => ({
+  const tplUdfs = new Map(records(template && getTable(template, 'UDFTYPE'))
+    .filter(u => u.table_name === 'TASK').map(u => [u.udf_type_label || u.udf_type_name, u]));
+  let nextUdfId = Math.max(0, ...[...tplUdfs.values()].map(u => Number(u.udf_type_id) || 0)) + 1;
+  const udfTypes = new Map([...udfKinds].map(([label, kind]) => {
+    const own = tplUdfs.get(label);
+    if (own) {
+      udfKinds.set(label, /FLOAT|INT|MONEY/.test(own.logical_data_type) ? 'number' : 'text');
+      return [label, own];
+    }
+    const id = String(nextUdfId++);
+    return [label, {
       udf_type_id: id, table_name: 'TASK', udf_type_name: `user_field_${id}`, udf_type_label: label,
-      logical_data_type: udfKinds.get(label) === 'number' ? 'FT_FLOAT_2_DECIMALS' : 'FT_TEXT', super_flag: 'N', export_flag: 'Y',
-    })));
-  }
+      logical_data_type: kind === 'number' ? 'FT_FLOAT_2_DECIMALS' : 'FT_TEXT', super_flag: 'N', export_flag: 'Y',
+    }];
+  }));
+  const udfIds = new Map([...udfTypes].map(([label, u]) => [label, u.udf_type_id]));
+  if (udfIds.size) put('UDFTYPE', [...udfTypes.values()]);
 
   // 작업
   const taskIds = new Map(draft.activities.map((a, i) => [a.code, String(1001 + i)]));

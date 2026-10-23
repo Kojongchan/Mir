@@ -60,6 +60,15 @@ test('CP949 encoding round trips Korean text; characters outside CP949 become ?'
   assert.equal(xer.decodeXer(new TextEncoder().encode('교량')).encoding, 'utf-8');
 });
 
+test('CP949 extras outside WHATWG euc-kr (€ ®) survive a byte round trip', () => {
+  // 실제 P6 XER 의 CURRTYPE 행: EUR 기호가 CP949 0xA2E6 으로 저장된다.
+  const bytes = Uint8Array.of(0x45, 0x55, 0x52, 0x09, 0xa2, 0xe6, 0x09, 0xc7, 0xd1, 0xa2, 0xe7, 0x0d, 0x0a);
+  const { text, encoding } = xer.decodeXer(bytes);
+  assert.equal(encoding, 'cp949');
+  assert.equal(text, 'EUR\t€\t한®\r\n');
+  assert.deepEqual(xer.encodeXer(text, 'cp949'), bytes);
+});
+
 test('CPM: forward/backward pass with FS, SS+lag and critical path', () => {
   const r = cpm.computeCpm(
     [{ id: 'A', duration: 3 }, { id: 'B', duration: 2 }, { id: 'C', duration: 5 }, { id: 'D', duration: 1 }],
@@ -171,6 +180,27 @@ test('a P6 template supplies the column layout, calendar and hours per day', () 
   const s = p6.readSchedule(xer.parseXer(xer.serializeXer(doc)));
   assert.equal(s.hoursPerDay, 10);
   assert.equal(s.activities.find(a => a.code === 'BR01-P03-C').durationDays, 10);
+});
+
+test('a template UDF with the same label is reused (id and data type), not duplicated', () => {
+  // 실제 IPS XER: 계약금액 = FT_MONEY UDF. 같은 라벨을 새로 만들면 P6 에 같은 이름 UDF 가 하나 더 생긴다.
+  const template = {
+    header: ['23.0', '2025-03-17', 'Project', 'admin', 'admin', 'dbxDatabaseNoName', 'Project Management', 'USD'],
+    tables: [
+      { name: 'UDFTYPE', fields: ['udf_type_id', 'table_name', 'udf_type_name', 'udf_type_label', 'logical_data_type', 'super_flag', 'indicator_expression', 'summary_indicator_expression'],
+        rows: [['299', 'TASK', 'user_field_299', '계약금액', 'FT_MONEY', 'N', '', ''], ['305', 'TASK', 'user_field_305', '공정률', 'FT_FLOAT_2_DECIMALS', 'N', '', '']] },
+    ],
+  };
+  const draft = { ...DRAFT, activities: DRAFT.activities.map((a, i) => ({ ...a, udfs: { ...a.udfs, 계약금액: 1000 * (i + 1) } })) };
+  const doc = p6.buildXer(draft, template);
+  const types = xer.records(xer.getTable(doc, 'UDFTYPE'));
+  const money = types.filter(u => u.udf_type_label === '계약금액');
+  assert.equal(money.length, 1);
+  assert.deepEqual([money[0].udf_type_id, money[0].logical_data_type], ['299', 'FT_MONEY']);
+  assert.ok(types.filter(u => u.udf_type_label !== '계약금액').every(u => Number(u.udf_type_id) > 305), 'new UDF ids do not collide');
+  const s = p6.readSchedule(xer.parseXer(xer.serializeXer(doc)));
+  assert.equal(s.activities.find(a => a.code === 'BR01-P03-C').udfs['계약금액'], 3000);
+  assert.equal(s.activities.find(a => a.code === 'BR01-P03-C').udfs['MIR키'], 'BR01.P03.COL');
 });
 
 test('re-upload diff: added, removed and changed activities by Activity ID', () => {

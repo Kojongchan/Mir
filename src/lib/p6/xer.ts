@@ -114,7 +114,29 @@ export function decodeXer(bytes: Uint8Array): { text: string; encoding: XerEncod
   if (bom) buf = buf.subarray(3);
   const utf8 = new TextDecoder('utf-8').decode(buf);
   if (bom || !utf8.includes('\uFFFD')) return { text: utf8, encoding: 'utf-8' };
-  return { text: new TextDecoder('euc-kr').decode(buf), encoding: 'cp949' };
+  return { text: decodeCp949(buf), encoding: 'cp949' };
+}
+
+/**
+ * WHATWG 'euc-kr' \uD45C\uC5D0 \uC5C6\uB294 CP949 \uBB38\uC790. \uC2E4\uC81C P6 XER(CURRTYPE \uD45C\uC758 \uC720\uB85C \uAE30\uD638)\uC5D0 \uB098\uC628\uB2E4.
+ * \uB0B4\uC7A5 \uB514\uCF54\uB354\uB294 \uC774\uAC83\uC744 U+FFFD \uB85C \uD480\uC5B4\uC11C, \uADF8\uB300\uB85C \uB450\uBA74 \uB2E4\uC2DC \uC4F8 \uB54C '?' \uB85C \uBC14\uB010\uB2E4.
+ */
+const CP949_EXTRA = new Map<number, string>([[0xa2e6, '\u20AC'], [0xa2e7, '\u00AE']]);
+
+function decodeCp949(buf: Uint8Array): string {
+  const dec = new TextDecoder('euc-kr');
+  let out = '';
+  let from = 0;
+  for (let i = 0; i < buf.length; i++) {
+    if (buf[i] < 0x81 || buf[i] === 0xff) continue; // 1\uBC14\uC774\uD2B8 \uBB38\uC790
+    const extra = CP949_EXTRA.get((buf[i] << 8) | buf[i + 1]);
+    if (extra) {
+      out += dec.decode(buf.subarray(from, i)) + extra;
+      from = i + 2;
+    }
+    i++; // 2\uBC14\uC774\uD2B8 \uBB38\uC790\uC758 \uB458\uC9F8 \uBC14\uC774\uD2B8
+  }
+  return out + dec.decode(buf.subarray(from));
 }
 
 export function encodeXer(text: string, encoding: XerEncoding = 'cp949'): Uint8Array {
@@ -142,6 +164,7 @@ function cp949(): Map<number, number> {
       if (!table.has(code)) table.set(code, (lead << 8) | trail);
     }
   }
+  for (const [two, ch] of CP949_EXTRA) table.set(ch.charCodeAt(0), two);
   cp949Table = table;
   return table;
 }
