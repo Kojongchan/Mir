@@ -49,10 +49,18 @@ test('step status: required files decide done; unbuilt steps report what they wi
   assert.deepEqual(st.missing.map(x => x.key).sort(), ['model', 'plan', 'qto']);
   d = s.addFile(s.addFile(s.addFile(d, 'plan', file('a', 'p.pdf')), 'qto', file('b', 'q.pdf')), 'model', file('c', 'm.rvt'));
   assert.equal(s.stepStatus(d, 'files', '연제교').state, 'done');
-  st = s.stepStatus(d, 'link', '연제교');
+  st = s.stepStatus(d, 'export', '연제교');
   assert.equal(st.state, 'planned');
   assert.deepEqual(st.missing.map(x => x.key), ['p6']);
   assert.equal(s.stepStatus(d, 'p6', '연제교').state, 'todo');
+  assert.equal(s.stepStatus(d, 'design', '연제교').state, 'todo');
+  d = { ...d, site: { name: '연제교', code: 'BR01', supports: [{ id: 'P1', kind: 'pier', pileType: 'cast', pileCount: 1 }], spans: [] } };
+  assert.equal(s.stepStatus(d, 'design', '연제교').state, 'done');
+  assert.equal(s.stepStatus(d, 'link', '연제교').state, 'todo');
+  d = { ...d, links: [{ modelItemId: 'c', wbsRoot: 'x', at: '', links: [] }] };
+  assert.equal(s.stepStatus(d, 'link', '연제교').state, 'done');
+  assert.equal(s.normalizeSetup(d).site.supports.length, 1);
+  assert.equal(s.normalizeSetup({ site: { name: 'x', code: 'y', supports: [{ id: 'P1' }], spans: [] } }).site, undefined);
 });
 
 test('normalize drops broken entries, unknown slots and keeps one file in single slots', () => {

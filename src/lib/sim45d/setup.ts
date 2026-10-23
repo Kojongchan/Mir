@@ -1,6 +1,7 @@
 // 공정·공사비(4D/5D) 단계형 진행(D30) — 단계·자료 칸 정의와 진행 상태 계산(순수 함수, 화면·DB 와 분리).
 // 순서는 실제 업무 순서: 설계현황 → AI 개략 IPS → P6 보완 → 확정 IPS 로 BIM 속성 부여 → 4D/5D.
 // 자료는 자료관리(ACC) 파일을 가리킨다(파일 자체는 ACC 에, 여기에는 어느 파일인지만).
+import type { BridgeSite, CriticalPoint, RateKey, Support } from '../p6/bridgePlan';
 
 export type StepKey = 'target' | 'files' | 'design' | 'draft' | 'p6' | 'link' | 'export' | 'sim' | 'report';
 
@@ -52,13 +53,13 @@ export const SLOTS: SlotDef[] = [
 export const STEPS: StepDef[] = [
   { key: 'target', title: '대상 선택', short: '대상', desc: '공정·공사비를 만들 구조물을 고릅니다.', built: true, needs: [] },
   { key: 'files', title: '자료 준비', short: '자료', desc: '필요한 자료를 자료관리에서 고르거나 지금 올립니다.', built: true, needs: ['overview', 'plan', 'bridgeDesign', 'qto', 'qtoSummary', 'boq', 'model', 'ipsStandard'] },
-  { key: 'design', title: '설계현황', short: '설계현황', desc: '구조물·개소(A1, P1…, 경간)·공종·수량을 표로 뽑아 확인합니다.', built: false, needs: ['qto', 'qtoSummary', 'bridgeDesign', 'overview'] },
-  { key: 'draft', title: 'AI 개략 IPS', short: '개략 IPS', desc: '공단 IPS 구성 표준 틀에 수량÷생산성으로 공기를 매기고 근거를 남깁니다.', built: false, needs: ['qto', 'plan', 'ipsStandard'] },
-  { key: 'p6', title: 'P6 보완', short: 'P6 보완', desc: 'P6 에서 고친 공정표를 다시 올려 확정합니다.', built: true, needs: ['p6'] },
-  { key: 'link', title: 'BIM 연결', short: 'BIM 연결', desc: '확정 IPS 의 Activity ID 를 객체에 붙이고 체적을 자동 산정합니다.', built: false, needs: ['model', 'p6'] },
+  { key: 'design', title: '설계현황', short: '설계현황', desc: '구조물·개소(A1, P1…, 경간)·말뚝·교각 높이를 표로 만들고 확인합니다(수량산출서에서 AI 로 채우기).', built: true, needs: ['qto', 'qtoSummary', 'bridgeDesign', 'overview'] },
+  { key: 'draft', title: 'AI 개략 IPS', short: '개략 IPS', desc: '과업시작일 기준 3안 또는 종료일 맞춤. 공기 = 수량 × 단위공기(출처), 크리티컬 포인트는 제약으로.', built: true, needs: ['qto', 'plan', 'ipsStandard'] },
+  { key: 'p6', title: 'P6 보완', short: 'P6 보완', desc: 'P6 에서 고친 공정표를 올려 확정하고, 선후행·구조 순서 역전과 표준 위반을 검토합니다.', built: true, needs: ['p6'] },
+  { key: 'link', title: 'BIM 연결', short: 'BIM 연결', desc: '확정 IPS 의 Activity ID 를 객체에 붙입니다(규칙 → 남는 것 AI). 모델의 기존 코드와 비교합니다.', built: true, needs: ['model', 'p6'] },
   { key: 'export', title: '모델 반영', short: '모델 반영', desc: '객체별 속성(IPS 코드·일자)을 모델에 넣을 파일로 내보냅니다.', built: false, needs: ['model', 'p6'] },
   { key: 'sim', title: '4D/5D', short: '4D/5D', desc: '3D 에서 기준일의 시공 상태와 공사비를 봅니다.', built: true, needs: [] },
-  { key: 'report', title: '검증 보고서', short: '검증', desc: '코드 오기·기간 밖 날짜·실적 누락·수량 차이를 모아 봅니다.', built: false, needs: ['model', 'p6', 'qto', 'boq'] },
+  { key: 'report', title: '검증·질의', short: '검증', desc: '검토·연결 요약, 작업일보 실적 제안, 내역 분류, 공정·공사비 질의.', built: true, needs: ['p6', 'boq'] },
 ];
 
 export const slotDef = (key: SlotKey): SlotDef => SLOTS.find(s => s.key === key)!;
@@ -72,6 +73,28 @@ export interface SetupFile {
   folderNames: string[];
   size: number | null;
   pickedAt: string;
+  /** 뷰어·속성용 base64 버전 URN(모델 파일). */
+  urn?: string;
+}
+
+/** 4단계 개략 IPS 설정. */
+export interface PlanSettings {
+  start: string;
+  /** 방식 2 의 과업종료예정일. */
+  finish: string;
+  mode: 'propose' | 'fit';
+  criticalText: string;
+  criticalPoints: CriticalPoint[];
+  /** 단위공기 중 사용자가 바꾼 값. */
+  rates: Partial<Record<RateKey, number>>;
+}
+
+/** 6단계 연결 결과(객체 키 = Revit UniqueId(externalId), 뷰어 다리용 IfcGUID 함께). */
+export interface LinkSet {
+  modelItemId: string;
+  wbsRoot: string;
+  at: string;
+  links: { ext: string; ifcGuid: string; code: string; by: 'rule' | 'ai' | 'human' }[];
 }
 
 export type StructureKind = 'bridge' | 'tunnel' | 'earthwork';
@@ -82,9 +105,21 @@ export interface SetupData {
   version: 1;
   kind: StructureKind;
   files: Partial<Record<SlotKey, SetupFile[]>>;
+  /** 3단계 설계현황. */
+  site?: BridgeSite;
+  plan?: PlanSettings;
+  links?: LinkSet[];
 }
 
 export const emptySetup = (): SetupData => ({ version: 1, kind: 'bridge', files: {} });
+
+export const emptyPlan = (): PlanSettings => ({ start: '', finish: '', mode: 'propose', criticalText: '', criticalPoints: [], rates: {} });
+
+const isSupport = (v: unknown): v is Support => {
+  const o = v as Support;
+  return !!o && typeof o.id === 'string' && (o.kind === 'abutment' || o.kind === 'pier') && (o.pileType === 'cast' || o.pileType === 'driven')
+    && Number.isFinite(o.pileCount);
+};
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 
@@ -108,10 +143,23 @@ export function normalizeSetup(raw: unknown): SetupData {
         folderNames: Array.isArray(o.folderNames) ? o.folderNames.filter((n): n is string => typeof n === 'string') : [],
         size: typeof o.size === 'number' ? o.size : null,
         pickedAt: str(o.pickedAt),
+        ...(str(o.urn) ? { urn: str(o.urn) } : {}),
       });
     }
     if (ok.length) out.files[slot.key] = slot.multiple ? ok : ok.slice(-1);
   }
+  const site = r.site as BridgeSite | undefined;
+  if (site && typeof site.name === 'string' && typeof site.code === 'string' && Array.isArray(site.supports) && Array.isArray(site.spans)
+    && site.supports.every(isSupport)) out.site = site;
+  const plan = r.plan as PlanSettings | undefined;
+  if (plan && typeof plan === 'object') {
+    out.plan = {
+      ...emptyPlan(), start: str(plan.start), finish: str(plan.finish), mode: plan.mode === 'fit' ? 'fit' : 'propose',
+      criticalText: str(plan.criticalText), criticalPoints: Array.isArray(plan.criticalPoints) ? plan.criticalPoints : [],
+      rates: plan.rates && typeof plan.rates === 'object' ? plan.rates : {},
+    };
+  }
+  if (Array.isArray(r.links)) out.links = (r.links as LinkSet[]).filter(l => l && typeof l.modelItemId === 'string' && Array.isArray(l.links));
   return out;
 }
 
@@ -158,6 +206,13 @@ export function stepStatus(data: SetupData, step: StepKey, name: string): StepSt
   const suggested = slots.filter(s => s.need === 'recommended' && !filled(data, s.key));
   if (!def.built) return { state: 'planned', missing, suggested };
   if (step === 'target') return { state: name.trim() ? 'done' : 'todo', missing, suggested };
-  if (step === 'sim') return { state: 'todo', missing, suggested };
+  if (step === 'sim' || step === 'report') return { state: 'todo', missing, suggested };
+  if (step === 'design') return { state: data.site ? 'done' : 'todo', missing: [], suggested };
+  if (step === 'draft') return { state: data.site && data.plan?.start ? 'done' : 'todo', missing, suggested };
+  if (step === 'link') {
+    const models = data.files.model ?? [];
+    const done = models.length > 0 && models.every(m => data.links?.some(l => l.modelItemId === m.accItemId));
+    return { state: done ? 'done' : 'todo', missing, suggested };
+  }
   return { state: missing.length ? 'todo' : 'done', missing, suggested };
 }

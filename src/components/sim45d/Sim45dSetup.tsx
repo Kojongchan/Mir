@@ -9,6 +9,12 @@ import {
 } from '../../lib/sim45d/setup';
 import { createSetup, deleteSetup, listSetups, saveSetup, type SetupRecord, type SetupWhere } from '../../lib/sim45d/setupStore';
 import type { Sim45d } from './useSim45d';
+import { DesignStep } from './steps/DesignStep';
+import { DraftStep } from './steps/DraftStep';
+import { LinkStep } from './steps/LinkStep';
+import { P6Step } from './steps/P6Step';
+import { ReportStep } from './steps/ReportStep';
+import type { StepProps } from './steps/common';
 
 /**
  * 「공정·공사비 (4D/5D)」 단계형 진행(D30): 위쪽 단계 바 + 3D 위에 펼치는 단계 시트.
@@ -89,6 +95,7 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
     if (!acceptsFile(slot, f.name)) { setStatus(`${slotDef(slot).label} 칸에 넣을 수 없는 형식입니다: ${f.name}`); return; }
     void persist(addFile(data, slot, {
       accProjectId: f.accProjectId, accItemId: f.accItemId, name: f.name, folderNames: f.folderNames, size: f.size, pickedAt: new Date().toISOString(),
+      ...(f.accUrn ? { urn: f.accUrn } : {}),
     }));
     setStatus(`${slotDef(slot).label}: ${f.name}`);
   };
@@ -207,6 +214,11 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
     );
   };
 
+  const stepProps: StepProps = {
+    projectId, canEdit: editable, data, name, persist, sim, setStatus,
+    renderSlot: k => slotCard(slotDef(k)),
+  };
+
   const body = () => {
     if (!loaded) return <p className="muted">불러오는 중…</p>;
     if (needRecord) {
@@ -261,19 +273,11 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
             ))}
           </div>
         );
-      case 'p6':
-        return (
-          <div className="sim-setup__groups">
-            <div className="sim-setup__slots">{slotCard(slotDef('p6'))}</div>
-            <div className="sim-setup__p6-open">
-              <button className="btn btn--sm btn--primary" disabled={!data.files.p6?.length || busy} onClick={() => void openP6()}>
-                <UiIcon name="cube" size={14} /> 이 공정표로 4D/5D 열기
-              </button>
-              {sim.schedule && <span className="muted">지금 열린 공정표: {sim.schedule.projectName} (작업 {sim.schedule.activities.length.toLocaleString()}개)</span>}
-            </div>
-            <p className="muted sim-setup__note">버전 비교(추가·삭제·변경)는 다음 업데이트에서 이 단계에 붙습니다.</p>
-          </div>
-        );
+      case 'design': return <DesignStep key={rec?.id} {...stepProps} />;
+      case 'draft': return <DraftStep key={rec?.id} {...stepProps} />;
+      case 'p6': return <P6Step key={rec?.id} {...stepProps} onOpenP6={() => void openP6()} opening={busy} />;
+      case 'link': return <LinkStep key={rec?.id} {...stepProps} />;
+      case 'report': return <ReportStep key={rec?.id} {...stepProps} />;
       default: {
         const st = statuses.get(ui.step)!;
         return (
@@ -336,7 +340,7 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
             <button className="btn btn--sm" disabled={idx <= 0} onClick={() => go(STEPS[idx - 1].key)}>‹ 이전</button>
             <span className="muted sim-setup__status" aria-live="polite">{status}</span>
             <button className="btn btn--sm btn--primary" disabled={idx >= STEPS.length - 1} onClick={() => go(STEPS[idx + 1].key)}>
-              다음 · {STEPS[idx + 1]?.short ?? ''} ›
+              {STEPS[idx + 1] ? `다음 · ${STEPS[idx + 1].short} ›` : '마지막 단계'}
             </button>
           </footer>
         </section>
