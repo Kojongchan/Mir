@@ -2,7 +2,7 @@
 // MIR — AI 작업 실행(공정·공사비 단계형 진행, D30). POST /api/ai { task, input, mirProject }
 //
 // 작업 정의(프롬프트·출력 JSON 형식)는 api/_ai-tasks.ts 에만 있다 — 브라우저는 작업 이름과 입력만 보낸다.
-// 모델: Claude Opus 5.5, 구조화 출력(json_schema), 거절 시 서버 측 대체 모델(fallbacks 'default').
+// 모델: 아래 MODEL 상수, 구조화 출력(json_schema), 거절 시 서버 측 대체 모델(fallbacks 'default').
 // 실무자(editor) 이상만(비용). 응답은 처음부터 200 으로 열고 기다리는 동안 공백을 흘려 보내(엣지 25초 첫 응답 제한),
 // 끝에 JSON 한 덩어리를 쓴다 — { ok, result, usage } 또는 { error }. JSON.parse 는 앞 공백을 무시한다.
 //

@@ -36,7 +36,7 @@ test('every AI task schema is strict (objects list all keys as required, no extr
 
 test('AI endpoint: request shape, keep-alive stream with JSON result, and error paths', async () => {
   const calls = [];
-  let reply = { stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: '{"points":[],"questions":["홍수기 기간은?"]}' }], model: 'claude-opus-5-5', usage: { input_tokens: 10, output_tokens: 5 } };
+  let reply = { stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: '{"points":[],"questions":["홍수기 기간은?"]}' }], model: 'mock-model', usage: { input_tokens: 10, output_tokens: 5 } };
   class APIError extends Error { constructor(status) { super('x'); this.status = status; } }
   class Anthropic {
     static APIError = APIError;
@@ -60,7 +60,7 @@ test('AI endpoint: request shape, keep-alive stream with JSON result, and error 
     const body = JSON.parse(await r.text());
     assert.deepEqual(body.result, { points: [], questions: ['홍수기 기간은?'] });
     const p = calls[0];
-    assert.equal(p.model, 'claude-opus-5-5');
+    assert.ok(typeof p.model === 'string' && p.model.length > 0);
     assert.equal(p.fallbacks, 'default');
     assert.deepEqual(p.betas, ['server-side-fallback-2026-07-01']);
     assert.equal(p.output_config.format.type, 'json_schema');
