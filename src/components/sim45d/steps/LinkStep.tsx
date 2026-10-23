@@ -8,7 +8,7 @@ import { AiBox, AiStatus, useAi, type StepProps } from './common';
  * 6단계 BIM 연결: 확정 IPS(4D 로 연 공정표)의 Activity ID 를 모델 객체에 붙인다. 규칙(부위·개소) → 남는 것만 AI.
  * 모델에 이미 코드가 있으면 비교해 서로 다른 객체(사람 입력 오류 후보)를 보여준다. 결과는 대상별로 저장(객체 키 = Revit UniqueId).
  */
-interface ModelObject { id: number; ext: string; name: string; label: string; type: string; comment: string; ifcGuid: string; code: string; level7: string; level8: string; volume: number | null }
+interface ModelObject { id: number; ext: string; name: string; label: string; type: string; comment: string; ifcGuid: string; ifcClass?: string; code: string; level7: string; level8: string; volume: number | null }
 
 async function fetchObjects(urn: string, onWait: (n: number) => void): Promise<ModelObject[]> {
   const { data } = await supabase.auth.getSession();
@@ -24,7 +24,7 @@ async function fetchObjects(urn: string, onWait: (n: number) => void): Promise<M
   throw new Error('속성이 아직 준비되지 않았습니다. 잠시 뒤 다시 시도하세요.');
 }
 
-export function LinkStep({ projectId, canEdit, data, persist, sim, setStatus }: StepProps) {
+export function LinkStep({ projectId, canEdit, data, persist, sim, setStatus, openP6, opening }: StepProps) {
   const s = sim.schedule;
   const models = (data.files.model ?? []).filter((f): f is SetupFile => !!f);
   const [modelId, setModelId] = useState(models[0]?.accItemId ?? '');
@@ -43,8 +43,14 @@ export function LinkStep({ projectId, canEdit, data, persist, sim, setStatus }: 
     const chain = (id: string) => { const out: string[] = []; for (let w = byId.get(id); w; w = w.parentId ? byId.get(w.parentId) : undefined) out.unshift(w.id); return out; };
     const counts = new Map<string, number>();
     for (const a of s.activities) for (const id of chain(a.wbsId)) counts.set(id, (counts.get(id) ?? 0) + 1);
-    const nodes = s.wbs.filter(w => (counts.get(w.id) ?? 0) > 0 && chain(w.id).length <= 6)
-      .map(w => ({ id: w.id, label: `${'　'.repeat(Math.max(0, chain(w.id).length - 2))}${w.name} (${counts.get(w.id)})`, count: counts.get(w.id)! }));
+    const shown = s.wbs.filter(w => (counts.get(w.id) ?? 0) > 0 && chain(w.id).length <= 6);
+    const dup = new Set(shown.map(w => w.name).filter((n, i, all) => all.indexOf(n) !== i));
+    // 같은 이름이 여러 단계에 있으면(예: 연제교(상선) 이 준비공·구조물공 양쪽) 상위 이름을 붙여 구분
+    const nodes = shown.map(w => {
+      const parent = w.parentId ? byId.get(w.parentId)?.name : undefined;
+      const name = dup.has(w.name) && parent ? `${w.name} — ${parent}` : w.name;
+      return { id: w.id, label: `${'　'.repeat(Math.max(0, chain(w.id).length - 2))}${name} (${counts.get(w.id)})`, count: counts.get(w.id)! };
+    });
     const under = (rootId: string): LinkActivity[] => s.activities.flatMap(a => {
       const c = chain(a.wbsId), i = c.indexOf(rootId);
       return i < 0 ? [] : [{ code: a.code, name: a.name, path: c.slice(i + 1).map(id => byId.get(id)!.name) }];
@@ -59,6 +65,7 @@ export function LinkStep({ projectId, canEdit, data, persist, sim, setStatus }: 
       const objs = await fetchObjects(model.urn, n => setLoading(`ACC 가 속성을 준비 중입니다(${n})…`));
       setObjects(objs);
       setResults(null);
+      if (!objs.length) setStatus(`${model.name}: 연결할 객체를 찾지 못했습니다 — 변환본에 요소 속성이 없습니다(IFC 는 속성 세트를 포함해 내보내야 함).`);
       setAiLinks(new Map());
     } catch (e) {
       setStatus((e as Error).message);
@@ -69,7 +76,7 @@ export function LinkStep({ projectId, canEdit, data, persist, sim, setStatus }: 
 
   const run = () => {
     if (!objects || !root) return;
-    setResults(autoLink(objects.map(o => ({ id: String(o.id), label: o.label || undefined, name: o.name, type: o.type || undefined, comment: o.comment || undefined })), wbs.under(root)));
+    setResults(autoLink(objects.map(o => ({ id: String(o.id), label: o.label || undefined, name: o.name, type: o.type || undefined, comment: o.comment || undefined, ifcClass: o.ifcClass || undefined })), wbs.under(root)));
     setAiLinks(new Map());
   };
 
@@ -111,12 +118,22 @@ export function LinkStep({ projectId, canEdit, data, persist, sim, setStatus }: 
       const code = r.code ?? aiLinks.get(r.id)?.code;
       return code && o.ext ? [{ ext: o.ext, ifcGuid: o.ifcGuid, code, by: r.code ? 'rule' as const : 'ai' as const }] : [];
     });
+    if (!links.length) { setStatus('저장할 연결이 없습니다.'); return; }
     const set: LinkSet = { modelItemId: model.accItemId, wbsRoot: s?.wbs.find(w => w.id === root)?.name ?? root, at: new Date().toISOString(), links };
     void persist({ ...data, links: [...(data.links ?? []).filter(l => l.modelItemId !== model.accItemId), set] })
       .then(() => setStatus(`연결 ${links.length}개 저장 — ${model.name}`));
   };
 
-  if (!s) return <p className="sim-step__empty">먼저 5단계에서 확정 공정표를 4D/5D 로 여세요(연결 대상 Activity ID).</p>;
+  if (!s) {
+    return (
+      <div className="sim-step__empty">
+        <p>연결할 Activity ID 가 있는 확정 공정표를 먼저 엽니다.</p>
+        {data.files.p6?.length
+          ? <button className="btn btn--sm btn--primary" disabled={opening} onClick={openP6}>{opening ? '여는 중…' : `확정 공정표 열기 — ${data.files.p6[0].name}`}</button>
+          : <p className="muted">5단계 'P6 보완' 에서 확정 공정표(XER)를 고르세요.</p>}
+      </div>
+    );
+  }
   if (!models.length) return <p className="sim-step__empty">자료 준비에서 BIM 모델을 고르세요.</p>;
 
   return (
@@ -177,7 +194,7 @@ export function LinkStep({ projectId, canEdit, data, persist, sim, setStatus }: 
           )}
           <div className="sim-step__actions">
             <button className="btn btn--sm" disabled={!canEdit || !stats.open || !!ai.busy} onClick={() => void askAi()}>AI 로 미정 객체 연결</button>
-            <button className="btn btn--sm btn--primary" disabled={!canEdit} onClick={save}>연결 저장</button>
+            <button className="btn btn--sm btn--primary" disabled={!canEdit || !stats.linked} onClick={save}>연결 저장</button>
             <AiStatus busy={ai.busy} error={ai.error} />
           </div>
           {aiLinks.size > 0 && (

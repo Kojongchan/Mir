@@ -14,6 +14,9 @@ export interface StepProps {
   setStatus: (s: string) => void;
   /** 자료 칸 카드(자료 준비 단계와 같은 것). */
   renderSlot: (key: SlotKey) => ReactNode;
+  /** 확정 공정표(P6 칸 XER)를 열어 4D/5D·검토에 쓴다. 큰 XER 은 브라우저에 보관되지 않아 새로 열 때마다 필요. */
+  openP6: () => void;
+  opening: boolean;
 }
 
 /** AI 호출 상태: 실행 중·오류·사용 토큰. 키가 없으면 안내 문구. */

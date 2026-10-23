@@ -4,9 +4,11 @@
 //
 //   GET /api/aps-props?urn=<base64url 버전 URN>
 //   → { pending: true } (속성 준비 중, 잠시 뒤 다시) | { view, objects: [{ id, ext, name, label, type, comment, ifcGuid,
-//        code, level7, level8, volume }] }  — 객체 = 속성이 있는 끝 객체(이름·유형 그룹 노드 제외)
+//        ifcClass, code, level7, level8, volume }] }  — 객체 = 속성이 있는 끝 객체(이름·유형 그룹 노드 제외)
 //
 // 속성 이름은 Revit 한국어판 기준(유형 이름·해설·체적)과 공단 BIM 속성(A1_객체명칭·A3_*). 영문판 이름도 함께 본다.
+// IFC(Revit 에서 내보낸 것)는 사용자 속성이 빠지는 일이 많다 — 요소(IfcClass 가 있는 객체)의 이름 'Family:Type:Tag' 을
+// 패밀리·유형으로 나눠 Revit 과 같은 칸에 넣는다(10-23 연제교 IFC: 사용자 속성 없음, 요소 840).
 // Required env: APS_CLIENT_ID / APS_CLIENT_SECRET (+ Supabase 로그인 확인).
 // =====================================================================
 import { createClient } from '@supabase/supabase-js';
@@ -44,13 +46,18 @@ const pick = (flat: Record<string, unknown>, ...keys: string[]) => {
 export function summarize(o: { objectid: number; name?: string; externalId?: string; properties?: Props }) {
   const flat: Record<string, unknown> = {};
   for (const g of Object.values(o.properties ?? {})) if (g && typeof g === 'object') Object.assign(flat, g as Record<string, unknown>);
-  const type = pick(flat, '유형 이름', 'Type Name');
+  // IFC: 요소에만 IfcClass 가 있다(유형·재료·형상 노드는 없음). 공간 요소(프로젝트·대지·건물·층)는 뺀다.
+  const ifcClass = pick(flat, 'IfcClass');
+  if (/^Ifc(Project|Site|Building|BuildingStorey|Space)$/.test(ifcClass)) return null;
+  const ifcParts = ifcClass ? (pick(flat, 'IfcName') || o.name || '').split(':') : [];
+  const type = pick(flat, '유형 이름', 'Type Name') || (ifcParts.length > 1 ? ifcParts[1] : '');
   const label = pick(flat, 'A1_객체명칭');
-  if (!type && !label) return null; // 그룹 노드(범주·패밀리)
+  if (!type && !label && !ifcClass) return null; // 그룹 노드(범주·패밀리)
   const vol = /([\d.,]+)\s*m\^?3/.exec(pick(flat, '체적', 'Volume'));
   return {
-    id: o.objectid, ext: o.externalId ?? '', name: (o.name ?? '').replace(/\s*\[\d+\]\s*$/, ''),
-    label, type, comment: pick(flat, '해설', 'Comments'), ifcGuid: pick(flat, 'IfcGUID'),
+    id: o.objectid, ext: o.externalId ?? '',
+    name: ifcParts.length > 1 ? ifcParts[0] : (o.name ?? '').replace(/\s*\[\d+\]\s*$/, ''),
+    label, type, comment: pick(flat, '해설', 'Comments'), ifcGuid: pick(flat, 'IfcGUID'), ifcClass,
     code: pick(flat, 'A3_WBS CODE (IPS)'), level7: pick(flat, 'A3_Level7'), level8: pick(flat, 'A3_Level8'),
     volume: vol ? Number(vol[1].replace(/,/g, '')) : null,
   };

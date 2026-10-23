@@ -21,6 +21,8 @@ export interface LinkObject {
   type?: string;
   /** 주석(해설·Comments). */
   comment?: string;
+  /** IFC 분류(IfcBeam 등) — IFC 로 받은 모델에만. */
+  ifcClass?: string;
 }
 
 export type LinkPart = 'special' | 'deck' | 'bearing' | 'coping' | 'foundation' | 'abutment' | 'pier' | 'girder';
@@ -89,7 +91,11 @@ export function autoLink(objects: LinkObject[], activities: LinkActivity[]): Lin
   const acts = activities.map(a => ({ ...a, n: norm(a.name), places: new Set(a.path.map(p => placeOf(p)).filter((p): p is string => !!p)) }));
   return objects.map(o => {
     const label = clean(o.label), name = clean(o.name), type = clean(o.type), comment = clean(o.comment);
-    const part = partOf(label) ?? partOf(name) ?? partOf(type) ?? partOf(comment);
+    let part = partOf(label) ?? partOf(name) ?? partOf(type) ?? partOf(comment);
+    // 이름이 거더(WPC_40m 등)여도 IFC 에서 보(IfcBeam·IfcMember)가 아니면 같은 패밀리로 그린 상판 조각이다
+    // (연제교 IFC: 거더 135 = IfcBeam, 상부슬래브 270 = IfcBuildingElementProxy, 이름은 둘 다 WPC_*).
+    const deckByIfc = part === 'girder' && !partOf(label) && !!o.ifcClass && !/^Ifc(Beam|Member)/i.test(o.ifcClass);
+    if (deckByIfc) part = 'deck';
     const place = placeOf(label) ?? placeOf(comment) ?? placeOf(type) ?? placeOf(name);
     const none = (reason: string, candidates: string[] = []): LinkResult => ({ id: o.id, code: null, part, place, candidates, reason });
     if (!part) return none('부위를 알 수 없음');
@@ -104,7 +110,7 @@ export function autoLink(objects: LinkObject[], activities: LinkActivity[]): Lin
       if (pref.length) hit = pref;
     }
     if (hit.length === 1) {
-      return { id: o.id, code: hit[0].code, part, place, candidates: [], reason: `${LINK_PART_LABEL[part]}${place ? ` ${place}` : ''} → ${hit[0].name}` };
+      return { id: o.id, code: hit[0].code, part, place, candidates: [], reason: `${LINK_PART_LABEL[part]}${place ? ` ${place}` : ''}${deckByIfc ? `(${o.ifcClass})` : ''} → ${hit[0].name}` };
     }
     return hit.length
       ? none(`${LINK_PART_LABEL[part]}: 작업 후보 ${hit.length}개`, hit.map(a => a.code))

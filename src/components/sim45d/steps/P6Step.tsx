@@ -15,7 +15,7 @@ interface DiffSum { summary: string; highlights: { code: string; change: string;
 
 const SEV_LABEL = { error: '오류', warn: '경고', info: '참고' } as const;
 
-export function P6Step({ projectId, canEdit, data, sim, setStatus, renderSlot, onOpenP6, opening }: StepProps & { onOpenP6: () => void; opening: boolean }) {
+export function P6Step({ projectId, canEdit, data, sim, setStatus, renderSlot, openP6, opening }: StepProps) {
   const [dataDate, setDataDate] = useState('');
   const [open, setOpen] = useState<CheckRule | null>(null);
   const [explain, setExplain] = useState<Explain | null>(null);
@@ -80,14 +80,14 @@ export function P6Step({ projectId, canEdit, data, sim, setStatus, renderSlot, o
       <section className="sim-step__block">
         <div className="sim-setup__slots">{renderSlot('p6')}</div>
         <div className="sim-step__actions">
-          <button className="btn btn--sm btn--primary" disabled={!data.files.p6?.length || opening} onClick={onOpenP6}>이 공정표로 4D/5D 열기</button>
+          <button className="btn btn--sm btn--primary" disabled={!data.files.p6?.length || opening} onClick={openP6}>이 공정표 열어서 검토</button>
           {s && <span className="muted">지금 열린 공정표: {s.projectName} (작업 {s.activities.length.toLocaleString()}개)</span>}
         </div>
       </section>
 
       <section className="sim-step__block">
         <h4>공정표 검토(방식 3)</h4>
-        {!s ? <p className="muted">공정표를 4D/5D 로 열면(위 버튼 또는 도구 줄 '공정표 열기') 바로 검토합니다.</p> : result && (
+        {!s ? <p className="muted">위 '이 공정표 열어서 검토'(또는 도구 줄 '공정표 열기')로 열면 여기에 바로 검토 결과가 나옵니다. 연 공정표는 4D/5D 에도 쓰입니다.</p> : result && (
           <>
             <div className="sim-form sim-form--inline">
               <span><strong>{s.projectName}</strong> · 작업 {result.checked.activities.toLocaleString()} · 관계 {result.checked.relations.toLocaleString()}</span>

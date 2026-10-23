@@ -149,8 +149,8 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
       url = await accFileBlobUrl(f.accProjectId, f.accItemId);
       const blob = await (await fetch(url)).blob();
       await sim.openXer(new File([blob], f.name));
-      setStatus('');
-      go('sim');
+      // 시트를 접지 않는다 — 바로 아래에 검토 결과가 나온다(3D 는 '4D/5D' 단계에서).
+      setStatus(`열었습니다: ${f.name} — 아래 검토 결과를 확인하세요. 3D 는 8 '4D/5D'.`);
     } catch (e) {
       setStatus(`공정표 열기 실패: ${errMessage(e)}`);
     } finally {
@@ -227,6 +227,7 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
   const stepProps: StepProps = {
     projectId, canEdit: editable, data, name, persist, sim, setStatus,
     renderSlot: k => slotCard(slotDef(k)),
+    openP6: () => void openP6(), opening: busy,
   };
 
   const body = () => {
@@ -285,7 +286,7 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
         );
       case 'design': return <DesignStep key={rec?.id} {...stepProps} />;
       case 'draft': return <DraftStep key={rec?.id} {...stepProps} />;
-      case 'p6': return <P6Step key={rec?.id} {...stepProps} onOpenP6={() => void openP6()} opening={busy} />;
+      case 'p6': return <P6Step key={rec?.id} {...stepProps} />;
       case 'link': return <LinkStep key={rec?.id} {...stepProps} />;
       case 'report': return <ReportStep key={rec?.id} {...stepProps} />;
       default: {

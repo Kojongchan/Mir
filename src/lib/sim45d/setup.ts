@@ -211,7 +211,7 @@ export function stepStatus(data: SetupData, step: StepKey, name: string): StepSt
   if (step === 'draft') return { state: data.site && data.plan?.start ? 'done' : 'todo', missing, suggested };
   if (step === 'link') {
     const models = data.files.model ?? [];
-    const done = models.length > 0 && models.every(m => data.links?.some(l => l.modelItemId === m.accItemId));
+    const done = models.length > 0 && models.every(m => data.links?.some(l => l.modelItemId === m.accItemId && l.links.length > 0));
     return { state: done ? 'done' : 'todo', missing, suggested };
   }
   return { state: missing.length ? 'todo' : 'done', missing, suggested };

@@ -3,12 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import ts from 'typescript';
 
-function compile(file) {
+function compile(file, modules = {}) {
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
   const exports = {};
-  new Function('exports', 'require', code)(exports, name => { throw new Error(`unexpected import ${name}`); });
+  new Function('exports', 'require', 'process', code)(exports, name => {
+    if (name in modules) return modules[name];
+    throw new Error(`unexpected import ${name}`);
+  }, process);
   return exports;
 }
 const s = compile('src/lib/sim45d/setup.ts');
@@ -58,6 +61,8 @@ test('step status: required files decide done; unbuilt steps report what they wi
   assert.equal(s.stepStatus(d, 'design', '연제교').state, 'done');
   assert.equal(s.stepStatus(d, 'link', '연제교').state, 'todo');
   d = { ...d, links: [{ modelItemId: 'c', wbsRoot: 'x', at: '', links: [] }] };
+  assert.equal(s.stepStatus(d, 'link', '연제교').state, 'todo', '빈 연결 저장은 완료가 아님');
+  d = { ...d, links: [{ modelItemId: 'c', wbsRoot: 'x', at: '', links: [{ ext: 'e', ifcGuid: 'g', code: 'P2F', by: 'rule' }] }] };
   assert.equal(s.stepStatus(d, 'link', '연제교').state, 'done');
   assert.equal(s.normalizeSetup(d).site.supports.length, 1);
   assert.equal(s.normalizeSetup({ site: { name: 'x', code: 'y', supports: [{ id: 'P1' }], spans: [] } }).site, undefined);
@@ -115,4 +120,50 @@ test('auto link: part and place from object text → activity under the matching
   assert.equal(L.placeOf('기초 P06'), 'P6');
   const s = L.scoreLinks(L.autoLink(objs, acts), new Map([['1', 'P2F'], ['3', 'P2F'], ['11', 'P12F']]));
   assert.deepEqual([s.correct, s.wrong, s.open], [1, 1, 1]);
+});
+
+test('auto link: IFC class separates girders (IfcBeam) from deck pieces drawn with the same WPC family', () => {
+  const acts = [
+    { code: 'GE', name: 'WPC거더 거치', path: ['상부공', '상부공'] },
+    { code: 'DK', name: '공동구(Leveling 콘크리트 포함)', path: ['상부공', '상부공'] },
+  ];
+  const objs = [
+    { id: 'b', name: 'WPC_40m', type: 'WPC_40m', ifcClass: 'IfcBeam' },
+    { id: 'x', name: 'WPC_40m', type: 'WPC_40m', ifcClass: 'IfcBuildingElementProxy' },
+    { id: 'r', name: 'WPC_40m', type: 'WPC_40m' },
+    { id: 'l', label: '상선_거더_S3', name: 'WPC_40m', ifcClass: 'IfcBuildingElementProxy' },
+  ];
+  const got = Object.fromEntries(L.autoLink(objs, acts).map(r => [r.id, r.code]));
+  assert.deepEqual(got, { b: 'GE', x: 'DK', r: 'GE', l: 'GE' });
+});
+
+test('model properties: Revit objects and IFC elements (Family:Type:Tag, no user properties) both summarize', () => {
+  const P = compile('api/aps-props.ts', { '@supabase/supabase-js': {} });
+  const rvt = P.summarize({ objectid: 1, name: '기초_상선_P01,P03_P46 [123]', externalId: 'u1', properties: { 기타: { '유형 이름': 'P12', 'A1_객체명칭': '기초 P12', 'A3_WBS CODE (IPS)': 'X1', IfcGUID: 'g1' }, 치수: { 체적: '12.5 m^3' } } });
+  assert.deepEqual([rvt.name, rvt.type, rvt.label, rvt.code, rvt.volume, rvt.ifcClass], ['기초_상선_P01,P03_P46', 'P12', '기초 P12', 'X1', 12.5, '']);
+  const ifc = P.summarize({ objectid: 2, name: '교각_상선_P01,P03_P46:P12:1128979', externalId: 'g2', properties: {
+    Item: { Name: '교각_상선_P01,P03_P46:P12:1128979', Type: 'IfcBuildingElementProxy: 교각_상선_P01,P03_P46:P12' },
+    Element: { IfcClass: 'IfcBuildingElementProxy', IfcGUID: 'g2', IfcName: '교각_상선_P01,P03_P46:P12:1128979' } } });
+  assert.deepEqual([ifc.name, ifc.type, ifc.ifcClass, ifc.ifcGuid], ['교각_상선_P01,P03_P46', 'P12', 'IfcBuildingElementProxy', 'g2']);
+  assert.equal(P.summarize({ objectid: 3, name: 'WPC:WPC', properties: { Item: { Type: 'Family' }, 'IFC Type': { 'IfcName [Type]': 'WPC:WPC' } } }), null, '유형 노드');
+  assert.equal(P.summarize({ objectid: 4, name: '레벨 1', properties: { Element: { IfcClass: 'IfcBuildingStorey' } } }), null, '공간 요소');
+  // 자동 연결까지: IFC 유형 칸의 개소(P12)와 이름의 부위(교각)
+  const r = L.autoLink([{ id: '2', name: ifc.name, type: ifc.type, ifcClass: ifc.ifcClass }], [{ code: 'P12C', name: '교각시공', path: ['하부공', 'P12'] }]);
+  assert.equal(r[0].code, 'P12C');
+});
+
+test('BOQ: numbered sections with item counts, structure-name guess across 상·하선, items of a section', () => {
+  const B = compile('src/lib/sim45d/boq.ts');
+  const rows = [
+    ['2. 구조물공'],
+    ['2-1. 연제교'], ['(요약표)'],
+    ['2-1. 연제교'], ['콘크리트', '25-24-15', 120, 'M3', 0, 0, 0, 0, 0, 0, 0, 1200000], ['거푸집', '합판', 300, 'M2', 0, 0, 0, 0, 0, 0, 0, 900000], ['공통가설', '', 1, '식', 0, 0, 0, 0, 0, 0, 0, 50],
+    ['2-2. 연제천교'], ['철근', 'D25', 3, 'TON', 0, 0, 0, 0, 0, 0, 0, 3000000],
+  ];
+  const secs = B.boqSections(rows);
+  assert.deepEqual(secs.find(x => x.title === '2-1. 연제교'), { title: '2-1. 연제교', lines: 2 });
+  assert.equal(B.guessBoqSection(secs, '연제교 상선'), '2-1. 연제교');
+  assert.equal(B.guessBoqSection(secs, '연제교(하선)'), '2-1. 연제교');
+  assert.equal(B.guessBoqSection(secs, '오송터널'), null);
+  assert.deepEqual(B.boqLines(rows, '2-1. 연제교').map(l => [l.name, l.unit, l.amount]), [['콘크리트', 'M3', 1200000], ['거푸집', 'M2', 900000]]);
 });

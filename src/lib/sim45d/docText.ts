@@ -4,6 +4,8 @@ import * as pdfjsLib from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { accFileBlobUrl } from '../aps';
 
+export { boqLines, boqSections, guessBoqSection, type BoqLine } from './boq';
+
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
 export interface PageText {
@@ -75,51 +77,15 @@ export function chunkPages(pages: PageText[], maxChars = 200_000): PageText[][] 
   return out;
 }
 
-export interface BoqLine {
-  id: string;
-  name: string;
-  spec: string;
-  unit: string;
-  qty: number;
-  amount: number;
-}
 
-/**
- * 산출내역서(xls/xlsx)의 '내역서' 시트에서 section(예 '2-1. 연제교')부터 같은 깊이의 다음 제목 전까지의 항목 행.
- * 열: 공종명·규격·수량·단위 … 합계 금액(12번째 칸). 단위가 있고 수량이 있는 행만('식' 묶음 행 제외).
- */
-export async function accBoqLines(accProjectId: string, accItemId: string, section: string): Promise<BoqLine[]> {
+/** 산출내역서(xls/xlsx)의 '내역서' 시트 행(없으면 이름에 '내역'이 든 시트, 그것도 없으면 첫 시트). */
+export async function accBoqSheet(accProjectId: string, accItemId: string): Promise<unknown[][]> {
   const url = await accFileBlobUrl(accProjectId, accItemId);
   try {
     const XLSX = await import('xlsx');
     const wb = XLSX.read(await (await fetch(url)).arrayBuffer(), { type: 'array' });
     const ws = wb.Sheets['내역서'] ?? wb.Sheets[wb.SheetNames.find(n => /내역/.test(n)) ?? wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, blankrows: false });
-    const cell = (r: unknown[], i: number) => String(r[i] ?? '').trim();
-    const key = section.replace(/\s/g, '');
-    // 같은 제목이 요약표·본문에 여러 번 나온다 — 항목 행이 가장 많은 곳을 쓴다.
-    const linesFrom = (startIdx: number): BoqLine[] => {
-      const head = /^(\d+(?:-\d+)*)\./.exec(cell(rows[startIdx], 0))?.[1];
-      const depth = head ? head.split('-').length : 0;
-      const lines: BoqLine[] = [];
-      for (let i = startIdx + 1; i < rows.length; i++) {
-        const r = rows[i], c0 = cell(r, 0);
-        const h = /^(\d+(?:-\d+)*)\.\s/.exec(c0)?.[1];
-        if (h && depth && h.split('-').length <= depth && h !== head) break;
-        const unit = cell(r, 3), qty = Number(r[2]);
-        if (!unit || !Number.isFinite(qty) || qty <= 0 || unit === '식') continue;
-        const amount = Number(r[11]);
-        lines.push({ id: String(i + 1), name: c0, spec: cell(r, 1), unit, qty, amount: Number.isFinite(amount) ? amount : 0 });
-      }
-      return lines;
-    };
-    let out: BoqLine[] = [];
-    rows.forEach((r, i) => {
-      if (!cell(r, 0).replace(/\s/g, '').includes(key)) return;
-      const lines = linesFrom(i);
-      if (lines.length > out.length) out = lines;
-    });
-    return out;
+    return XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, blankrows: false });
   } finally {
     URL.revokeObjectURL(url);
   }

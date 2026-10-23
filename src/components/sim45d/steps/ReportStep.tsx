@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { listDailyLogs } from '../../../lib/dashboard';
 import { checkSchedule } from '../../../lib/p6/check';
-import { accBoqLines, type BoqLine } from '../../../lib/sim45d/docText';
+import { accBoqSheet, boqLines, boqSections, guessBoqSection, type BoqLine } from '../../../lib/sim45d/docText';
 import { phaseAt, progressAt } from '../../../lib/sim45d/timeline';
 import { AiBox, AiStatus, fmtWon, useAi, type StepProps } from './common';
 
@@ -18,13 +18,14 @@ const CLS_LABEL = { A: 'A 형상 직접', B: 'B 형상 파생', C: 'C 모델 없
 const DAY = 86_400_000;
 const ymd = (t: number) => new Date(t).toISOString().slice(0, 10);
 
-export function ReportStep({ projectId, canEdit, data, name, sim }: StepProps) {
+export function ReportStep({ projectId, canEdit, data, name, sim, openP6, opening }: StepProps) {
   const s = sim.schedule;
   const ai = useAi(projectId);
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [actuals, setActuals] = useState<Actuals | null>(null);
-  const [section, setSection] = useState(`2-1. ${name.replace(/\(.*\)/, '').trim()}`);
+  const [section, setSection] = useState('');
+  const [sheet, setSheet] = useState<{ rows: unknown[][]; sections: { title: string; lines: number }[] } | null>(null);
   const [boq, setBoq] = useState<BoqLine[] | null>(null);
   const [classes, setClasses] = useState<Classified | null>(null);
   const [note, setNote] = useState('');
@@ -67,14 +68,26 @@ export function ReportStep({ projectId, canEdit, data, name, sim }: StepProps) {
     if (r) { const ok = new Set(acts.map(a => a.code)); setActuals({ ...r, actuals: r.actuals.filter(a => ok.has(a.code)) }); }
   };
 
+  /** 구간 고르기: 내역서는 상·하선을 묶어 공종별로 적는 일이 많아 제목을 목록에서 고르게 한다. */
+  const pickSection = (rows: unknown[][], title: string) => {
+    setSection(title);
+    const lines = boqLines(rows, title);
+    setBoq(lines);
+    setClasses(null);
+    setNote(lines.length ? '' : `'${title}' 구간에 항목이 없습니다.`);
+  };
+
   const loadBoq = async () => {
     const f = data.files.boq?.[0];
     if (!f) return;
+    setNote('내역서 읽는 중…');
     try {
-      const lines = await accBoqLines(f.accProjectId, f.accItemId, section);
-      setBoq(lines);
-      setClasses(null);
-      setNote(lines.length ? '' : `'${section}' 구간에서 항목을 찾지 못했습니다. 내역서의 제목 그대로 적어 주세요(예: 2-1. 연제교).`);
+      const rows = await accBoqSheet(f.accProjectId, f.accItemId);
+      const sections = boqSections(rows);
+      setSheet({ rows, sections });
+      const guess = guessBoqSection(sections, name);
+      if (guess) pickSection(rows, guess);
+      else { setBoq(null); setNote(sections.length ? `'${name}' 이(가) 든 제목이 없습니다 — 아래 목록에서 구간을 고르세요.` : '내역서에서 번호 제목(예: 2-1. 연제교)을 찾지 못했습니다.'); }
     } catch (e) {
       setNote(`내역서 읽기 실패: ${(e as Error).message}`);
     }
@@ -110,7 +123,10 @@ export function ReportStep({ projectId, canEdit, data, name, sim }: StepProps) {
       <section className="sim-step__block">
         <h4>요약</h4>
         <ul className="sim-list">
-          <li>공정표: {s ? `${s.projectName} · 작업 ${s.activities.length.toLocaleString()}` : '열린 공정표 없음(5단계)'}</li>
+          <li>공정표: {s ? `${s.projectName} · 작업 ${s.activities.length.toLocaleString()}` : (
+            data.files.p6?.length
+              ? <button className="btn btn--sm" disabled={opening} onClick={openP6}>{opening ? '여는 중…' : `확정 공정표 열기 — ${data.files.p6[0].name}`}</button>
+              : '열린 공정표 없음(5단계)')}</li>
           {check && <li>검토: 오류 {check.findings.filter(f => f.severity === 'error').length} · 경고 {check.findings.filter(f => f.severity === 'warn').length} (자세히는 5단계)</li>}
           <li>BIM 연결 저장: {linkCount.toLocaleString()}개 객체</li>
         </ul>
@@ -148,8 +164,13 @@ export function ReportStep({ projectId, canEdit, data, name, sim }: StepProps) {
       <section className="sim-step__block">
         <h4>내역 분류(AI 활용 7)</h4>
         <div className="sim-form sim-form--inline">
-          <input value={section} onChange={e => setSection(e.target.value)} aria-label="내역서 구간 제목" />
           <button className="btn btn--sm" disabled={!data.files.boq?.length} onClick={() => void loadBoq()}>내역서 읽기</button>
+          {sheet && (
+            <select value={section} aria-label="내역서 구간" onChange={e => pickSection(sheet.rows, e.target.value)}>
+              {!section && <option value="">— 구간을 고르세요 —</option>}
+              {sheet.sections.map(x => <option key={x.title} value={x.title}>{x.title} ({x.lines})</option>)}
+            </select>
+          )}
           <button className="btn btn--sm" disabled={!canEdit || !boq?.length || !!ai.busy} onClick={() => void classify()}>AI 로 분류</button>
           {boq && <span className="muted">항목 {boq.length} · 합계 {fmtWon(boq.reduce((n, l) => n + l.amount, 0))} ('식' 묶음 제외)</span>}
         </div>
