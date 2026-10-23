@@ -34,6 +34,10 @@ export default async function handler(req: Request): Promise<Response> {
   if (!prof?.is_admin && !mem) return json({ error: '이 프로젝트의 멤버가 아닙니다.' }, 403);
   const exp = Date.now() + MCP_TOKEN_DAYS * 86_400_000;
   const token = await signMcpToken({ u: data.user.id, p: project, exp }, secret);
-  const origin = new URL(req.url).origin;
+  // 배포마다 바뀌는 주소(mir-<해시>-….vercel.app)로 만들면 다음 배포부터 옛 코드에 붙는다 — 고정 주소로:
+  // 운영 = 운영 도메인, 미리보기 = 브랜치 주소(Vercel 시스템 환경변수). 없으면 요청 주소.
+  const env = process.env;
+  const stable = env.VERCEL_ENV === 'production' ? env.VERCEL_PROJECT_PRODUCTION_URL : env.VERCEL_BRANCH_URL;
+  const origin = stable ? `https://${stable}` : new URL(req.url).origin;
   return json({ url: `${origin}/api/mcp/${token}`, expiresAt: new Date(exp).toISOString(), role: prof?.is_admin ? 'admin' : mem?.role ?? 'viewer' });
 }

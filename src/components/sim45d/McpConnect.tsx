@@ -49,8 +49,11 @@ export function McpConnect({ projectId, onClose }: { projectId: string; onClose:
         <details className="sim-step__details" open>
           <summary>등록 방법</summary>
           <ul className="sim-list">
+            <li>등록할 주소는 브라우저 주소창의 화면 주소가 아니라 <strong>위에서 만든 연결 주소</strong>(<code>…/api/mcp/…</code>)입니다.</li>
             <li><strong>Claude</strong>(Pro·Max·Team): 설정 → 커넥터 → 사용자 지정 커넥터 추가 → 이름 "MIR 4D/5D", 주소 붙여넣기. 대화창의 + 메뉴에서 연결을 켜고, 프롬프트(한 바퀴·설계현황·단위공기·개략 IPS·P6 검토·BIM 연결)를 골라 시작.</li>
             <li><strong>ChatGPT</strong>(Plus·Pro·Business, 웹): 설정 → 앱·커넥터 → 고급 → 개발자 모드 켜기 → 만들기 → 주소 붙여넣기(인증 없음). 저장 동작은 매번 확인을 묻습니다.</li>
+            <li>연결이 안 되면: Vercel 미리보기 주소는 <strong>배포 보호(Vercel 로그인)</strong>가 켜져 있으면 Claude·ChatGPT 서버가 들어오지 못합니다 —
+              시험 동안 Vercel → Settings → Deployment Protection 에서 Vercel Authentication 을 끄거나 운영 주소로 시험하세요.</li>
             <li>공통 규칙·점검표는 공유 스킬 <code>docs/skills/mir-4d5d/SKILL.md</code>(Claude 는 설정 → 기능 → 스킬에 올려 쓸 수 있음).</li>
           </ul>
         </details>

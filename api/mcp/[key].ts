@@ -33,7 +33,9 @@ async function handle(req: Request): Promise<Response> {
   if (!secret || !store) return deny(503, 'AI 연결이 설정되지 않았습니다(서버 환경변수).');
   if (!process.env.APS_CLIENT_ID || !process.env.APS_CLIENT_SECRET) return deny(503, 'APS 환경변수 미설정');
   const claims = await verifyMcpToken(key, secret);
-  if (!claims) return deny(401, '연결 주소가 틀렸거나 만료되었습니다 — 플랫폼에서 새로 받으세요.');
+  // 401 을 주면 Claude·ChatGPT 가 OAuth 로그인 등록을 시도하다 엉뚱한 오류("로그인 서비스에 등록할 수 없습니다")를 낸다
+  // — 이 주소는 OAuth 가 아니라 주소 자체가 열쇠이므로 404 로 답한다.
+  if (!claims) return deny(404, '연결 주소가 틀렸거나 만료되었습니다 — 플랫폼 「AI 연결」에서 새로 받으세요.');
   const role = await store.role(claims.u, claims.p);
   if (!role) return deny(403, '이 프로젝트의 멤버가 아닙니다.');
 
