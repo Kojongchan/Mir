@@ -90,14 +90,24 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
     }
   }, [projectId, rec, where]);
 
-  const onPick = (slot: SlotKey, f: PickedAccFile) => {
+  /** 고른(또는 한 번에 올린) 파일을 칸에 넣는다 — 한 번에 저장해야 여러 개가 서로를 덮어쓰지 않는다. */
+  const onPick = (slot: SlotKey, files: PickedAccFile[]) => {
     setPicker(null);
-    if (!acceptsFile(slot, f.name)) { setStatus(`${slotDef(slot).label} 칸에 넣을 수 없는 형식입니다: ${f.name}`); return; }
-    void persist(addFile(data, slot, {
-      accProjectId: f.accProjectId, accItemId: f.accItemId, name: f.name, folderNames: f.folderNames, size: f.size, pickedAt: new Date().toISOString(),
+    const def = slotDef(slot);
+    const ok = files.filter(f => acceptsFile(slot, f.name));
+    const wrong = files.filter(f => !acceptsFile(slot, f.name));
+    if (!ok.length) { setStatus(`${def.label} 칸에 넣을 수 없는 형식입니다: ${wrong.map(f => f.name).join(', ')}`); return; }
+    const take = def.multiple ? ok : ok.slice(-1);
+    const pickedAt = new Date().toISOString();
+    void persist(take.reduce((d, f) => addFile(d, slot, {
+      accProjectId: f.accProjectId, accItemId: f.accItemId, name: f.name, folderNames: f.folderNames, size: f.size, pickedAt,
       ...(f.accUrn ? { urn: f.accUrn } : {}),
-    }));
-    setStatus(`${slotDef(slot).label}: ${f.name}`);
+    }), data));
+    setStatus([
+      `${def.label}: ${take.map(f => f.name).join(', ')}`,
+      ok.length > take.length ? `한 개만 넣는 칸이라 마지막 파일만 넣음(나머지는 자료관리에 있음)` : '',
+      wrong.length ? `형식이 안 맞는 ${wrong.length}개는 자료관리에만 올라감` : '',
+    ].filter(Boolean).join(' · '));
   };
 
   const create = async () => {
@@ -356,9 +366,10 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
           pickUploaded
           allowNewFolder
           hint={picker.upload
-            ? `폴더를 열거나 '＋ 새 폴더' 로 만든 뒤 '⬆ 이 폴더에 업로드' — 올린 파일이 바로 이 칸에 들어갑니다. 형식: ${pickerSlot.accept.join(', ')}`
-            : `형식: ${pickerSlot.accept.join(', ')} · 없으면 이 창에서 바로 올릴 수 있습니다.`}
-          onPick={f => onPick(pickerSlot.key, f)}
+            ? `폴더를 열거나 '＋ 새 폴더' 로 만든 뒤 '⬆ 이 폴더에 업로드'(여러 개 선택 가능) 또는 파일을 이 창에 끌어놓기 — 올린 파일이 바로 이 칸에 들어갑니다. 형식: ${pickerSlot.accept.join(', ')}`
+            : `형식: ${pickerSlot.accept.join(', ')} · 없으면 이 창에서 바로 올릴 수 있습니다(여러 개·끌어놓기).`}
+          onPick={f => onPick(pickerSlot.key, [f])}
+          onPickMany={fs => onPick(pickerSlot.key, fs)}
           onClose={() => setPicker(null)}
         />
       )}

@@ -39,11 +39,13 @@ function writeLastPath(projectId: string, path: Crumb[]) {
  * - 늦게 도착한 이전 폴더 응답은 버리고, 로딩 중 중복 클릭(더블클릭)으로 경로가 쌓이지 않게
  * - 폴더 내 이름 검색, 프로젝트별 마지막 폴더 기억
  * - 실무자는 현재 폴더 아래에 새 폴더를 만들 수 있고(`allowNewFolder`), 올린 파일을 바로 고를 수 있다(`pickUploaded`)
+ * - 업로드는 여러 파일을 한 번에(선택 창 다중 선택 또는 창에 끌어놓기), 차례로 올린다. 같은 이름이 있으면 확인 후 새 버전
  */
 export function AccFilePicker({
   projectId,
   canEdit,
   onPick,
+  onPickMany,
   onClose,
   title = '자료관리에서 파일 선택',
   actionLabel = '＋ 첨부',
@@ -55,6 +57,8 @@ export function AccFilePicker({
   projectId: string;
   canEdit: boolean;
   onPick: (f: PickedAccFile) => void;
+  /** pickUploaded 로 여러 파일을 올렸을 때 한 번에 받는다(형식 검사는 받는 쪽). 없으면 한 개일 때만 onPick. */
+  onPickMany?: (files: PickedAccFile[]) => void;
   onClose: () => void;
   /** Window title (default: issue attachment wording). */
   title?: string;
@@ -80,6 +84,8 @@ export function AccFilePicker({
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const [newFolder, setNewFolder] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
   const uploadInput = useRef<HTMLInputElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const crumbsRef = useRef<HTMLElement>(null);
@@ -178,32 +184,120 @@ export function AccFilePicker({
     });
   };
 
-  const onUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !acc || !curId) return;
-    setProgress(0);
-    setStatus(`업로드 중: ${file.name}`);
-    try {
-      const res = await uploadToAcc(acc.project, curId, file, { onProgress: setProgress, mirProject: projectId });
-      if (res.itemUrn) await recordAccUpload(projectId, null, file.name, res.itemUrn, res.versionUrn, file.size).catch(() => {});
-      if (pickUploaded && res.itemUrn && (!accept || accept(file.name))) {
-        onPick({
-          accProjectId: acc.project, accItemId: res.itemUrn, accUrn: res.urn, name: file.name, size: file.size,
-          folderId: curId, folderIds: path.map((p) => p.id), folderNames: path.map((p) => p.name),
-        });
-        return;
-      }
-      await show(acc, path);
-      setStatus(accept && !accept(file.name)
-        ? `업로드됨: ${file.name} — 자료관리에는 올라갔지만 이 칸에 넣을 수 없는 형식입니다.`
-        : `업로드됨: ${file.name} — 아래에서 선택하세요.`);
-    } catch (err) {
-      setStatus(`업로드 실패: ${(err as Error).message}`);
-    } finally {
-      setProgress(null);
+  const uploading = progress != null;
+
+  /**
+   * 현재 폴더에 차례로 올린다(진행률은 전체 기준). 같은 이름이 이미 있으면 확인 후 그 파일의 새 버전으로 —
+   * ACC 는 같은 폴더에 같은 이름의 새 파일을 거부하고, 이전 버전은 남는다.
+   * 모두 성공했고 pickUploaded 면 바로 고른 것으로 넘기고, 하나라도 실패하면 창을 그대로 두고 실패를 보여 준다.
+   */
+  const uploadFiles = async (files: File[], note = '') => {
+    if (!acc || !curId || !files.length || uploading) return;
+    const existing = new Map(items.map((it) => [it.name, it.id]));
+    const dupes = files.filter((f) => existing.has(f.name));
+    if (dupes.length && !window.confirm(
+      `이 폴더에 같은 이름의 파일이 ${dupes.length}개 있습니다: ${dupes.slice(0, 3).map((f) => f.name).join(', ')}${dupes.length > 3 ? ' …' : ''}\n` +
+      '새 버전으로 올릴까요? 이전 버전은 자료관리에 남습니다.',
+    )) {
       if (uploadInput.current) uploadInput.current.value = '';
+      return;
     }
+    const here = { folderId: curId, folderIds: path.map((p) => p.id), folderNames: path.map((p) => p.name) };
+    const done: PickedAccFile[] = [];
+    const failed: string[] = [];
+    setProgress(0);
+    for (const [i, file] of files.entries()) {
+      setStatus(`업로드 중 (${i + 1}/${files.length}): ${file.name}`);
+      try {
+        const res = await uploadToAcc(acc.project, curId, file, {
+          itemId: existing.get(file.name),
+          onProgress: (p) => setProgress((i + p) / files.length),
+          mirProject: projectId,
+        });
+        if (res.itemUrn) {
+          await recordAccUpload(projectId, null, file.name, res.itemUrn, res.versionUrn, file.size).catch(() => {});
+          done.push({ accProjectId: acc.project, accItemId: res.itemUrn, accUrn: res.urn, name: file.name, size: file.size, ...here });
+        }
+      } catch (err) {
+        failed.push(`${file.name}(${(err as Error).message})`);
+      }
+    }
+    setProgress(null);
+    if (uploadInput.current) uploadInput.current.value = '';
+
+    const usable = done.filter((f) => !accept || accept(f.name));
+    if (pickUploaded && !failed.length && usable.length) {
+      if (onPickMany) { onPickMany(done); return; }
+      if (done.length === 1) { onPick(done[0]); return; }
+    }
+    await show(acc, path);
+    const wrong = done.length - usable.length;
+    setStatus([
+      `올림 ${done.length}/${files.length}`,
+      wrong ? `${wrong}개는 이 칸에 넣을 수 없는 형식(자료관리에만 올라감)` : '',
+      failed.length ? `실패: ${failed.join(', ')}` : '',
+      note,
+      usable.length ? '아래에서 선택하세요.' : '',
+    ].filter(Boolean).join(' · '));
   };
+
+  // 끌어놓기: 창 어디에 놓아도 현재 폴더로 올린다. 파일이 아닌 끌기(글자 등)와 폴더는 무시.
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.types).includes('Files');
+  const onDragEnter = (e: React.DragEvent) => {
+    if (!canEdit || !hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current++;
+    setDragging(true);
+  };
+  const onDragOver = (e: React.DragEvent) => {
+    if (!canEdit || !hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = curId && !uploading ? 'copy' : 'none';
+  };
+  const onDragLeave = (e: React.DragEvent) => {
+    if (!canEdit || !hasFiles(e)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (!dragDepth.current) setDragging(false);
+  };
+  const onDrop = (e: React.DragEvent) => {
+    if (!canEdit || !hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    if (!curId) { setStatus('폴더를 먼저 연 뒤 놓으세요.'); return; }
+    if (uploading) { setStatus('지금 올리는 중입니다. 끝난 뒤 다시 놓으세요.'); return; }
+    const files: File[] = [];
+    let dirs = 0;
+    const entries = Array.from(e.dataTransfer.items ?? []).filter((it) => it.kind === 'file');
+    if (entries.length) {
+      for (const it of entries) {
+        if (it.webkitGetAsEntry?.()?.isDirectory) { dirs++; continue; }
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    } else {
+      files.push(...Array.from(e.dataTransfer.files));
+    }
+    const note = dirs ? `폴더 ${dirs}개는 건너뜀(파일만 올릴 수 있음)` : '';
+    if (!files.length) { setStatus(note || '올릴 파일이 없습니다.'); return; }
+    void uploadFiles(files, note);
+  };
+
+  // 창 밖(뒤 배경)에 잘못 놓아 브라우저가 파일을 열고 화면을 떠나지 않게 한다.
+  useEffect(() => {
+    if (!canEdit) return;
+    const guard = (e: DragEvent) => {
+      if (!e.dataTransfer?.types.includes('Files') || boxRef.current?.contains(e.target as Node)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'none';
+    };
+    window.addEventListener('dragover', guard);
+    window.addEventListener('drop', guard);
+    return () => {
+      window.removeEventListener('dragover', guard);
+      window.removeEventListener('drop', guard);
+    };
+  }, [canEdit]);
 
   const onCreateFolder = async () => {
     const name = (newFolder ?? '').trim();
@@ -248,11 +342,15 @@ export function AccFilePicker({
     <ModalBackdrop className="acc-modal-back acc-picker-back" onClose={onClose}>
       <div
         ref={boxRef}
-        className="acc-modal acc-picker"
+        className={`acc-modal acc-picker${dragging ? ' is-dragging' : ''}`}
         role="dialog"
         aria-label={title}
         style={pos ? { position: 'fixed', left: pos.x, top: pos.y, margin: 0 } : undefined}
         onClick={(e) => e.stopPropagation()}
+        onDragEnter={onDragEnter}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
       >
         <div className="acc-modal-head acc-picker-head" onPointerDown={onHeadPointerDown} title="끌어서 이동">
           📁 {title}
@@ -263,9 +361,12 @@ export function AccFilePicker({
           )}
           {canEdit && (
             <>
-              <input ref={uploadInput} type="file" style={{ display: 'none' }} onChange={onUpload} />
-              <button className="primary" disabled={!curId || progress != null} title={curId ? '현재 폴더에 업로드' : '폴더를 먼저 여세요'} onClick={() => uploadInput.current?.click()}>
-                {progress != null ? '업로드 중…' : '⬆ 이 폴더에 업로드'}
+              <input ref={uploadInput} type="file" multiple style={{ display: 'none' }}
+                onChange={(e) => void uploadFiles(Array.from(e.target.files ?? []))} />
+              <button className="primary" disabled={!curId || uploading}
+                title={curId ? '현재 폴더에 업로드 — 여러 개 선택 가능, 파일을 이 창에 끌어놓아도 됩니다' : '폴더를 먼저 여세요'}
+                onClick={() => uploadInput.current?.click()}>
+                {uploading ? '업로드 중…' : '⬆ 이 폴더에 업로드'}
               </button>
             </>
           )}
@@ -335,6 +436,12 @@ export function AccFilePicker({
         </div>
 
         <div className="muted acc-picker-status" aria-live="polite">{status}</div>
+
+        {dragging && (
+          <div className={`acc-picker-drop${curId && !uploading ? '' : ' is-blocked'}`} aria-hidden>
+            {!curId ? '폴더를 먼저 여세요' : uploading ? '지금 올리는 중입니다' : `여기에 놓으면 「${path[path.length - 1].name}」 폴더에 올립니다`}
+          </div>
+        )}
       </div>
     </ModalBackdrop>,
     document.body,

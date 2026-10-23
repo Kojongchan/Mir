@@ -4870,6 +4870,32 @@ button.issue-block__h,
   margin-top: 8px;
   font-size: 12px;
 }
+/* 끌어놓기: 창 전체를 받는 곳으로 표시(아래 요소가 끌기 이벤트를 계속 받도록 pointer-events 없음) */
+.acc-modal.acc-picker {
+  position: relative;
+}
+.acc-picker-drop {
+  position: absolute;
+  inset: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  border: 2px dashed var(--accent);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
+  z-index: 2;
+}
+.acc-picker-drop.is-blocked {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--panel) 85%, transparent);
+  color: var(--muted);
+}
 @media (max-width: 640px) {
   .acc-modal.acc-picker {
     width: 100vw;
