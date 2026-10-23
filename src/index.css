@@ -8553,3 +8553,17 @@ textarea.input {
   color: var(--text);
   font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+/* 서버 AI 가 꺼져 있을 때 AI 연결 안내 */
+.sim-ai__off {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent-soft);
+  font-size: 13px;
+}

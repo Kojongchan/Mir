@@ -16,6 +16,7 @@ import { P6Step } from './steps/P6Step';
 import { ReportStep } from './steps/ReportStep';
 import type { StepProps } from './steps/common';
 import { McpConnect } from './McpConnect';
+import { AiConnectContext } from './steps/aiConnect';
 
 /**
  * 「공정·공사비 (4D/5D)」 단계형 진행(D30): 위쪽 단계 바 + 3D 위에 펼치는 단계 시트.
@@ -368,7 +369,9 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
               DB 설정 전이라 진행 상태를 이 브라우저에만 저장합니다. 관리자가 Supabase 에서 <code>0040_sim45d_setup.sql</code> 을 실행하면 팀과 공유됩니다.
             </div>
           )}
-          <div className="sim-setup__body">{body()}</div>
+          <AiConnectContext.Provider value={canEdit ? () => setMcpOpen(true) : null}>
+            <div className="sim-setup__body">{body()}</div>
+          </AiConnectContext.Provider>
           <footer className="sim-setup__foot">
             <button className="btn btn--sm" disabled={idx <= 0} onClick={() => go(STEPS[idx - 1].key)}>‹ 이전</button>
             <span className="muted sim-setup__status" aria-live="polite">{status}</span>

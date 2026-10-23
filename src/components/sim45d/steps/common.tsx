@@ -1,7 +1,8 @@
-import { useState, type ReactNode } from 'react';
+import { useContext, useState, type ReactNode } from 'react';
 import { AiError, runAi, type AiTaskName } from '../../../lib/ai';
 import type { SetupData, SlotKey } from '../../../lib/sim45d/setup';
 import type { Sim45d } from '../useSim45d';
+import { AI_OFF, AiConnectContext, MCP_PROMPT_FOR } from './aiConnect';
 
 /** 단계 화면 공통 입력. persist 는 대상(구조물) 진행 상태를 저장(DB 또는 브라우저). */
 export interface StepProps {
@@ -19,7 +20,10 @@ export interface StepProps {
   opening: boolean;
 }
 
-/** AI 호출 상태: 실행 중·오류·사용 토큰. 키가 없으면 안내 문구. */
+/**
+ * AI 호출 상태: 실행 중·오류·사용 토큰. 서버 AI(키 방식)는 쓸 때마다 사용료가 들어 꺼 두었다(D32) —
+ * 키가 없으면 같은 일을 하는 AI 연결(MCP) 프롬프트를 안내한다.
+ */
 export function useAi(projectId: string) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -33,7 +37,7 @@ export function useAi(projectId: string) {
       return r.result;
     } catch (e) {
       setError(e instanceof AiError && e.code === 'not-configured'
-        ? 'AI 키가 아직 설정되지 않았습니다. 관리자가 Vercel 환경변수 ANTHROPIC_API_KEY 를 넣으면 쓸 수 있습니다.'
+        ? `${AI_OFF}이 버튼(플랫폼 서버 AI)은 쓸 때마다 사용료가 들어 꺼 두었습니다. 같은 일을 내 Claude·ChatGPT 에서 하세요 — 「AI 연결」로 연결 주소를 한 번 등록한 뒤 대화창에서 프롬프트 '${MCP_PROMPT_FOR[task]}' 를 고릅니다.`
         : (e as Error).message);
       return null;
     } finally {
@@ -60,7 +64,16 @@ export function AiBox({ title, children, usage }: { title: string; children: Rea
 }
 
 export function AiStatus({ busy, error }: { busy: string | null; error: string }) {
+  const openConnect = useContext(AiConnectContext);
   if (busy) return <p className="muted sim-ai__busy" aria-live="polite">AI 작업 중: {busy} …(수십 초 걸릴 수 있음)</p>;
+  if (error.startsWith(AI_OFF)) {
+    return (
+      <p className="sim-ai__off" role="status">
+        {error.slice(AI_OFF.length)}
+        {openConnect && <button type="button" className="btn btn--sm btn--primary" onClick={openConnect}>AI 연결 열기</button>}
+      </p>
+    );
+  }
   if (error) return <p className="sim-error" role="alert">{error}</p>;
   return null;
 }
