@@ -224,3 +224,43 @@ test('relations to unknown activities and unknown WBS are refused', () => {
   assert.throws(() => p6.buildXer({ ...DRAFT, relations: [{ pred: 'NOPE', succ: 'BR01-G03' }] }), /없는 작업/);
   assert.throws(() => p6.buildXer({ ...DRAFT, activities: [{ ...DRAFT.activities[1], wbs: 'ZZZ' }], relations: [] }), /없는 WBS/);
 });
+
+const check = compile('src/lib/p6/check.ts');
+
+test('schedule check: out-of-sequence actuals, structure order, leads, stale data date, long tasks', () => {
+  const a = (code, name, wbsId, x = {}) => ({
+    taskId: code, code, name, wbsId, wbsPath: wbsId, taskType: 'TT_Task', status: 'TK_NotStart', durationDays: 5, remainingDays: 5,
+    start: null, finish: null, plannedStart: null, plannedFinish: null, actualStart: null, actualFinish: null,
+    totalFloatDays: null, constraint: null, codes: {}, udfs: {}, ...x,
+  });
+  const s = {
+    projectId: '1', projectCode: 'T', projectName: 'T', dataDate: '2024-01-01 00:00', hoursPerDay: 8, wbs: [],
+    activities: [
+      a('F1', '기초', 'P1', { actualStart: '2024-03-01 08:00', actualFinish: '2024-03-10 17:00', start: '2024-03-01 08:00', finish: '2024-03-10 17:00', plannedFinish: '2024-03-10 17:00' }),
+      a('C1', '교각시공', 'P1', { actualStart: '2024-03-05 08:00', start: '2024-03-05 08:00', finish: '2024-03-20 17:00' }),
+      a('K1', '코핑시공', 'P1', { start: '2024-04-01 08:00', finish: '2024-04-20 17:00', durationDays: 75 }),
+      a('X', '측량', 'G', { start: '2024-05-01 08:00', finish: '2024-05-02 17:00', plannedFinish: '2024-02-01 17:00', constraint: { type: 'CS_MSO', date: '2024-05-01 08:00' } }),
+      a('Y', '작업 계획수립', 'G', { actualStart: '2024-01-05 08:00', actualFinish: '2024-01-20 17:00' }),
+    ],
+    relations: [
+      { pred: 'F1', succ: 'C1', type: 'FS', lagDays: 0 }, // 실적 역전 + 구조 순서 역전
+      { pred: 'X', succ: 'Y', type: 'FS', lagDays: -10 }, // 리드: 선행 실적 없음 → 역전
+      { pred: 'Y', succ: 'K1', type: 'SF', lagDays: 45 },
+    ],
+  };
+  const r = check.checkSchedule(s);
+  const has = (rule, codes) => r.findings.some(f => f.rule === rule && (!codes || codes.every(c => f.codes.includes(c))));
+  assert.ok(has('stale-data-date'));
+  assert.equal(r.dataDate, '2024-03-10');
+  assert.ok(has('oos-actual', ['F1', 'C1']));
+  assert.ok(has('oos-actual', ['X', 'Y']));
+  assert.ok(has('part-order', ['F1', 'C1']));
+  assert.ok(has('part-unlinked', ['C1', 'K1']));
+  assert.ok(has('neg-lag', ['X', 'Y']) && has('sf', ['Y', 'K1']) && has('long-lag', ['Y', 'K1']));
+  assert.ok(has('long-duration', ['K1']) && has('hard-constraint', ['X']));
+  assert.ok(has('missing-actual', ['X']));
+  assert.equal(r.findings[0].severity, 'error');
+  assert.equal(check.partRank('PHC 말뚝 기초'), 1);
+  assert.equal(check.partRank('교대 벽체'), 2);
+  assert.equal(check.partRank('작업 진입로 개설'), 0);
+});

@@ -44,6 +44,8 @@ export interface P6Activity {
   actualStart: string | null;
   actualFinish: string | null;
   totalFloatDays: number | null;
+  /** 날짜 제약(P6 cstr_type, 예 CS_MSO·CS_MEO·CS_MSOA). 없으면 null. */
+  constraint: { type: string; date: string | null } | null;
   /** Activity Code 유형 이름 → 코드 값(short_name). */
   codes: Record<string, string>;
   /** UDF 라벨 → 값(숫자 UDF 는 number). */
@@ -141,6 +143,7 @@ export function readSchedule(doc: XerDoc, projectId?: string): P6Schedule {
       actualStart: t.act_start_date || null,
       actualFinish: t.act_end_date || null,
       totalFloatDays: t.total_float_hr_cnt === '' ? null : round2(num(t.total_float_hr_cnt) / hpd),
+      constraint: t.cstr_type ? { type: t.cstr_type, date: t.cstr_date || null } : null,
       codes: taskCodes.get(t.task_id) ?? {},
       udfs: taskUdfs.get(t.task_id) ?? {},
     };
