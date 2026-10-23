@@ -84,12 +84,14 @@ export function DraftStep({ projectId, canEdit, data, persist, sim, setStatus }:
     try {
       const { pages } = await accPdfPages(doc.accProjectId, doc.accItemId, { keep: /공기|가동율|단위공정|소요/ });
       const merged: AiRates = { rates: [], notes: [] };
+      let answered = false;
       for (const chunk of chunkPages(pages, 150_000)) {
         const r = await ai.call<AiRates>('ratesExtract', { pages: chunk, keys: DEFAULT_RATES.map(x => ({ key: x.key, label: x.label, unit: x.unit })) }, `단위공기 추출(${chunk.length}쪽)`);
         if (!r) break;
+        answered = true;
         merged.rates.push(...r.rates); merged.notes.push(...r.notes);
       }
-      setRateHints(merged);
+      if (answered) setRateHints(merged);
     } catch (e) {
       ai.setError(`시공계획 읽기 실패: ${(e as Error).message}`);
     }

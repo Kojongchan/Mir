@@ -23,7 +23,7 @@ export function McpConnect({ projectId, onClose }: { projectId: string; onClose:
   };
 
   return createPortal(
-    <ModalBackdrop className="acc-modal-back" onClose={onClose}>
+    <ModalBackdrop className="acc-modal-back sim-mcp-back" onClose={onClose}>
       <div className="acc-modal sim-mcp" role="dialog" aria-label="AI 연결" onClick={e => e.stopPropagation()}>
         <div className="acc-modal-head">
           AI 연결 — 내 Claude·ChatGPT 에서 이 플랫폼 쓰기

@@ -8530,7 +8530,11 @@ textarea.input {
   .sim-toolbar__name { max-width: 120px; }
 }
 
-/* AI 연결(MCP) 창 */
+/* AI 연결(MCP) 창 — 단계 시트(z 45)·3D 위에 뜨도록 화면 기준(자료관리 창과 같은 층) */
+.sim-mcp-back {
+  position: fixed;
+  z-index: 1000;
+}
 .acc-modal.sim-mcp {
   width: min(560px, 94vw);
 }

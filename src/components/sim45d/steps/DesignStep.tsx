@@ -54,9 +54,11 @@ export function DesignStep({ projectId, canEdit, data, name, persist, setStatus 
       });
       setProgress(`${found.length}쪽을 AI 로 보냅니다`);
       const merged: Extracted = { supports: [], spans: [], notes: [] };
+      let answered = false;
       for (const chunk of chunkPages(found)) {
         const r = await ai.call<Extracted>('designExtract', { structure: name, pages: chunk }, `설계현황 추출(${chunk[0].page}~${chunk[chunk.length - 1].page}쪽)`);
         if (!r) break;
+        answered = true;
         for (const s of r.supports) {
           const k = merged.supports.findIndex(x => x.id === s.id);
           if (k < 0) merged.supports.push(s);
@@ -65,7 +67,7 @@ export function DesignStep({ projectId, canEdit, data, name, persist, setStatus 
         for (const s of r.spans) if (!merged.spans.some(x => x.id === s.id)) merged.spans.push(s);
         merged.notes.push(...r.notes);
       }
-      setExtracted(merged);
+      if (answered) setExtracted(merged);
     } catch (e) {
       ai.setError(`문서 읽기 실패: ${(e as Error).message}`);
     } finally {

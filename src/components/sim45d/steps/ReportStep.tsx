@@ -96,12 +96,14 @@ export function ReportStep({ projectId, canEdit, data, name, sim, openP6, openin
   const classify = async () => {
     if (!boq?.length) return;
     const merged: Classified = { items: [] };
+    let answered = false;
     for (let i = 0; i < boq.length; i += 300) {
       const r = await ai.call<Classified>('boqClassify', { lines: boq.slice(i, i + 300).map(l => ({ id: l.id, name: l.name, spec: l.spec, unit: l.unit })), parts: PARTS }, `내역 분류 ${i + 1}~${Math.min(boq.length, i + 300)}`);
       if (!r) break;
+      answered = true;
       merged.items.push(...r.items);
     }
-    setClasses(merged);
+    if (answered) setClasses(merged);
   };
 
   const classSummary = useMemo(() => {
