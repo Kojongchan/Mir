@@ -8,7 +8,7 @@
 // 날짜: XER 은 'YYYY-MM-DD HH:MM'(현지 시각). 개략공정은 일 단위 'YYYY-MM-DD' 로 다룬다.
 
 import { getTable, records, toRows, type XerDoc, type XerTable } from './xer';
-import { computeCpm, type CpmRelation, type RelType } from './cpm';
+import { computeCpm, type CpmRelation, type CpmResult, type RelType } from './cpm';
 import type { ScheduleTask } from '../schedule';
 
 // --- 읽기 -------------------------------------------------------------------
@@ -254,6 +254,10 @@ export interface DraftActivity {
   codes?: Record<string, string>;
   /** UDF 라벨 → 값(숫자면 숫자 UDF). */
   udfs?: Record<string, string | number>;
+  /** 이 날 이전 시작 금지(YYYY-MM-DD). P6 에는 '이후 시작' 제약(CS_MSOA)으로 쓴다. */
+  notBefore?: string;
+  /** 작업 금지 기간(YYYY-MM-DD, 끝 날 미포함). 걸치면 기간 뒤로 밀고, P6 에는 밀린 시작일을 CS_MSOA 로 쓴다. */
+  blocked?: { from: string; to: string }[];
 }
 
 export interface DraftRelation {
@@ -303,12 +307,7 @@ export function buildXer(draft: DraftSchedule, template?: XerDoc): XerDoc {
   const obsId = records(obs)[0]?.obs_id ?? '1';
 
   // 날짜(CPM)
-  const codesSet = new Set(draft.activities.map(a => a.code));
-  for (const r of draft.relations) {
-    if (!codesSet.has(r.pred) || !codesSet.has(r.succ)) throw new Error(`관계 ${r.pred}→${r.succ}: 없는 작업`);
-  }
-  const rels: CpmRelation[] = draft.relations.map(r => ({ pred: r.pred, succ: r.succ, type: r.type ?? 'FS', lag: r.lagDays ?? 0 }));
-  const cpm = computeCpm(draft.activities.map(a => ({ id: a.code, duration: a.milestone ? 0 : a.durationDays })), rels);
+  const { cpm, rels } = draftCpm(draft);
   const startOf = (offset: number) => `${addDays(draft.project.start, offset)} ${WORK_START}`;
   const endOf = (offset: number, dur: number) => (dur > 0 ? `${addDays(draft.project.start, offset - 1)} ${WORK_END}` : startOf(offset));
   const projectStart = startOf(0);
@@ -393,6 +392,7 @@ export function buildXer(draft: DraftSchedule, template?: XerDoc): XerDoc {
       task_id: taskIds.get(a.code), proj_id: PROJ, wbs_id: wbsIds.get(a.wbs), clndr_id: cal.id,
       task_type: a.milestone === 'start' ? 'TT_Mile' : a.milestone === 'finish' ? 'TT_FinMile' : 'TT_Task',
       task_code: a.code, task_name: a.name,
+      ...(a.notBefore || a.blocked?.length ? { cstr_type: 'CS_MSOA', cstr_date: es } : {}),
       total_float_hr_cnt: hours(t.float, hpd), remain_drtn_hr_cnt: hours(dur, hpd), target_drtn_hr_cnt: hours(dur, hpd),
       early_start_date: es, early_end_date: ef, late_start_date: ls, late_end_date: lf,
       restart_date: es, reend_date: ef, target_start_date: es, target_end_date: ef, rem_late_start_date: ls, rem_late_end_date: lf,
@@ -448,6 +448,28 @@ export function formatXerDate(d: Date): string {
 }
 
 /** 'YYYY-MM-DD' + n일(달력일). */
+/** 개략공정의 CPM(작업 제약 포함). 관계가 없는 작업을 가리키면 오류. */
+export function draftCpm(draft: DraftSchedule): { cpm: CpmResult; rels: CpmRelation[] } {
+  const codesSet = new Set(draft.activities.map(a => a.code));
+  for (const r of draft.relations) {
+    if (!codesSet.has(r.pred) || !codesSet.has(r.succ)) throw new Error(`관계 ${r.pred}→${r.succ}: 없는 작업`);
+  }
+  const rels: CpmRelation[] = draft.relations.map(r => ({ pred: r.pred, succ: r.succ, type: r.type ?? 'FS', lag: r.lagDays ?? 0 }));
+  const off = (ymd: string) => daysBetween(draft.project.start, ymd);
+  const cpm = computeCpm(draft.activities.map(a => ({
+    id: a.code,
+    duration: a.milestone ? 0 : a.durationDays,
+    notBefore: a.notBefore ? Math.max(0, off(a.notBefore)) : undefined,
+    blocked: a.blocked?.map(b => [off(b.from), off(b.to)] as [number, number]),
+  })), rels);
+  return { cpm, rels };
+}
+
+/** 두 날짜(YYYY-MM-DD) 사이 일수. */
+export function daysBetween(from: string, to: string): number {
+  return Math.round((Date.parse(`${to.slice(0, 10)}T00:00:00Z`) - Date.parse(`${from.slice(0, 10)}T00:00:00Z`)) / 86_400_000);
+}
+
 export function addDays(ymd: string, n: number): string {
   const [y, m, d] = ymd.split('-').map(Number);
   return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);

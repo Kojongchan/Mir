@@ -5,6 +5,7 @@
 // 여기서 날짜는 4D 미리보기와 P6 의 초기값 용도다.
 //
 // 관계: FS·SS·FF·SF + 지연(lag, 일). 순환이 있으면 관련 작업을 담아 오류를 낸다.
+// 작업 제약: notBefore(이 날 이전 시작 금지) · blocked(작업 금지 기간 — 예: 하천 구간 홍수기, 걸치면 기간 뒤로 민다).
 
 export type RelType = 'FS' | 'SS' | 'FF' | 'SF';
 
@@ -12,6 +13,10 @@ export interface CpmActivity {
   id: string;
   /** 작업 일수(0 = 마일스톤). */
   duration: number;
+  /** 가장 이른 시작(일 오프셋). */
+  notBefore?: number;
+  /** 작업하면 안 되는 기간 [시작, 끝) 일 오프셋. 작업이 걸치면 그 기간 뒤로 민다. */
+  blocked?: [number, number][];
 }
 
 export interface CpmRelation {
@@ -38,6 +43,7 @@ export class CpmCycleError extends Error {
 
 export function computeCpm(activities: CpmActivity[], relations: CpmRelation[]): CpmResult {
   const dur = new Map(activities.map(a => [a.id, Math.max(0, a.duration)]));
+  const byId = new Map(activities.map(a => [a.id, a]));
   const preds = new Map<string, CpmRelation[]>();
   const succs = new Map<string, CpmRelation[]>();
   for (const a of activities) { preds.set(a.id, []); succs.set(a.id, []); }
@@ -74,7 +80,7 @@ export function computeCpm(activities: CpmActivity[], relations: CpmRelation[]):
       const pEf = pEs + dur.get(r.pred)!;
       start = Math.max(start, earliestStart(r.type, pEs, pEf, d, r.lag));
     }
-    es.set(id, start);
+    es.set(id, pushStart(byId.get(id)!, Math.max(start, byId.get(id)!.notBefore ?? 0), d));
   }
   let total = 0;
   for (const id of order) total = Math.max(total, es.get(id)! + dur.get(id)!);
@@ -90,7 +96,7 @@ export function computeCpm(activities: CpmActivity[], relations: CpmRelation[]):
       const sLs = sLf - dur.get(r.succ)!;
       finish = Math.min(finish, latestFinish(r.type, sLs, sLf, d, r.lag));
     }
-    lf.set(id, finish);
+    lf.set(id, pullFinish(byId.get(id)!, finish, d));
   }
 
   const times: CpmResult['times'] = new Map();
@@ -103,6 +109,30 @@ export function computeCpm(activities: CpmActivity[], relations: CpmRelation[]):
     if (float <= 0) critical.push(id);
   }
   return { times, duration: total, critical };
+}
+
+/** 작업 금지 기간에 걸치면 그 기간 끝으로 민다(여러 기간이면 반복). */
+function pushStart(a: CpmActivity, start: number, d: number): number {
+  if (!a.blocked?.length) return start;
+  for (let moved = true, guard = 0; moved && guard < 100; guard++) {
+    moved = false;
+    for (const [from, to] of a.blocked) {
+      if (start < to && start + Math.max(d, 1) > from) { start = to; moved = true; }
+    }
+  }
+  return start;
+}
+
+/** 후진 계산에서 작업 금지 기간에 걸치면 그 기간 시작으로 당긴다. */
+function pullFinish(a: CpmActivity, finish: number, d: number): number {
+  if (!a.blocked?.length) return finish;
+  for (let moved = true, guard = 0; moved && guard < 100; guard++) {
+    moved = false;
+    for (const [from, to] of a.blocked) {
+      if (finish - Math.max(d, 1) < to && finish > from) { finish = from; moved = true; }
+    }
+  }
+  return finish;
 }
 
 /** 선행 하나가 후행 시작에 거는 하한. */

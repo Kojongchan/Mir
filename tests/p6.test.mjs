@@ -264,3 +264,72 @@ test('schedule check: out-of-sequence actuals, structure order, leads, stale dat
   assert.equal(check.partRank('교대 벽체'), 2);
   assert.equal(check.partRank('작업 진입로 개설'), 0);
 });
+
+test('CPM work windows: not-before and blocked periods push the start, and XER carries a start-on-or-after constraint', () => {
+  const r = cpm.computeCpm([
+    { id: 'A', duration: 5 },
+    { id: 'B', duration: 10, blocked: [[8, 20]] }, // A 끝(5)에 시작하면 [5,15) 가 금지 기간 [8,20) 에 걸침 → 20
+    { id: 'C', duration: 3, notBefore: 40 },
+  ], [{ pred: 'A', succ: 'B', type: 'FS', lag: 0 }, { pred: 'B', succ: 'C', type: 'FS', lag: 0 }]);
+  assert.equal(r.times.get('B').es, 20);
+  assert.equal(r.times.get('C').es, 40);
+  const draft = {
+    project: { code: 'W', name: 'W', start: '2026-01-01' },
+    wbs: [{ code: 'W', name: 'W' }],
+    activities: [
+      { code: 'A', name: 'A', wbs: 'W', durationDays: 5 },
+      { code: 'B', name: '하천 교각 기초', wbs: 'W', durationDays: 10, blocked: [{ from: '2026-01-09', to: '2026-01-21' }] },
+    ],
+    relations: [{ pred: 'A', succ: 'B' }],
+  };
+  const t = xer.records(xer.getTable(p6.buildXer(draft), 'TASK')).find(x => x.task_code === 'B');
+  assert.equal(t.early_start_date, '2026-01-21 08:00');
+  assert.deepEqual([t.cstr_type, t.cstr_date], ['CS_MSOA', '2026-01-21 08:00']);
+});
+
+const B = compile('src/lib/p6/bridgePlan.ts', { './schedule': p6 });
+
+test('bridge plan: sourced durations, crew chains, girder after copings, critical points, deadline fit', () => {
+  const supports = [
+    { id: 'A1', kind: 'abutment', pileType: 'driven', pileCount: 20 },
+    ...[1, 2, 3, 4, 5, 6, 7, 8].map(i => ({ id: `P${i}`, kind: 'pier', pileType: 'cast', pileCount: 1, heightM: i === 4 ? 7 : 2 })),
+  ];
+  const site = { name: '시험교', code: 'T', supports, spans: B.spansFromSupports(supports, { S1: { name: '하로교', days: 40 } }) };
+  assert.deepEqual(site.spans.slice(0, 3).map(s => [s.id, s.from, s.to, s.kind]), [['S1', 'A1', 'P1', 'special'], ['S2', 'P1', 'P2', 'girder'], ['S3', 'P2', 'P3', 'girder']]);
+  assert.equal(site.spans.length, 8);
+  const input = { site, start: '2026-01-01', criticalPoints: [{ kind: 'deadline', name: '궤도 인계', date: '2026-12-31', scope: 'all' }] };
+  const one = B.buildBridgePlan(input, { rigs: 1, pierCrews: 1, copingSets: 1, launchers: 1, deckCrews: 1, girderBatch: 2 });
+  const two = B.buildBridgePlan(input, { rigs: 2, pierCrews: 2, copingSets: 2, launchers: 1, deckCrews: 1, girderBatch: 2 });
+  const act = (r, c) => r.draft.activities.find(a => a.code === c);
+  assert.equal(act(one, 'T-P1-F').durationDays, 11); // 현장타설 1본 × 11일
+  assert.equal(act(one, 'T-P4-C').durationDays, 10 + 7 * 2); // 7m → 3 LOT
+  assert.equal(act(one, 'T-P1-K').durationDays, 27);
+  assert.equal(act(one, 'T-A1-F').durationDays, 74);
+  assert.ok(act(one, 'T-P1-F').udfs['산정근거'].includes('현장타설말뚝'));
+  assert.ok(one.durationDays > two.durationDays, '작업조가 많으면 빨라짐');
+  // 거치 묶음 S2~S3 는 P1·P2·P3 코핑이 끝난 뒤
+  const g = one.draft.activities.find(a => a.name.startsWith('WPC거더 거치 S2~S3')).code;
+  for (const k of ['T-P1-K', 'T-P2-K', 'T-P3-K']) assert.ok(one.draft.relations.some(r => r.pred === k && r.succ === g), k);
+  assert.ok(one.dates.get(g).start > one.dates.get('T-P3-K').finish);
+  assert.equal(one.deadlines[0].name, '궤도 인계');
+  // 크리티컬 포인트: 야간 코핑, 작업 금지 기간, 착수 가능일
+  const cp = B.buildBridgePlan({ ...input, criticalPoints: [
+    { kind: 'night', supports: ['P3', 'P4'] },
+    { kind: 'blocked', supports: ['P1'], from: '2026-03-01', to: '2026-06-01' },
+    { kind: 'notBefore', supports: ['P4'], date: '2026-09-01' },
+  ] }, { rigs: 1, pierCrews: 1, copingSets: 1, launchers: 1, deckCrews: 1, girderBatch: 2 });
+  assert.equal(act(cp, 'T-P3-K').durationDays, 25);
+  const p1k = cp.dates.get('T-P1-K');
+  assert.ok(!(p1k.start < '2026-06-01' && p1k.finish >= '2026-03-01'), '금지 기간에 걸치지 않음');
+  assert.ok(cp.dates.get('T-P4-F').start >= '2026-09-01');
+  // 방식 2: 기한 안 → 가장 적은 투입, 기한이 너무 이르면 부족 일수
+  const fit = B.fitToDeadline(input, '2027-12-31');
+  assert.equal(fit.feasible, true);
+  assert.equal(fit.options[0].title, '작업조 1개 · 런처 1대');
+  const tight = B.fitToDeadline(input, '2026-02-01');
+  assert.equal(tight.feasible, false);
+  assert.ok(tight.shortfallDays > 0);
+  assert.equal(B.proposePlans(input).length, 3);
+  assert.deepEqual(B.parseSupportList('P2~P3, A1 p04', supports.map(s => s.id)), ['A1', 'P2', 'P3', 'P4']);
+  assert.deepEqual(B.parseSupportList('P7-8', supports.map(s => s.id)), ['P7', 'P8']);
+});
