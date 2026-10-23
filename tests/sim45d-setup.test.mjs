@@ -71,3 +71,40 @@ test('normalize drops broken entries, unknown slots and keeps one file in single
   assert.deepEqual(s.normalizeSetup(null), s.emptySetup());
   assert.equal(s.normalizeSetup({ kind: 'nope' }).kind, 'bridge');
 });
+
+const L = compile('src/lib/sim45d/autolink.ts');
+
+test('auto link: part and place from object text → activity under the matching WBS place', () => {
+  const acts = [
+    { code: 'A1F', name: '기초', path: ['하부공', 'A1'] },
+    { code: 'A1W', name: '벽체', path: ['하부공', 'A1'] },
+    { code: 'P2F', name: '기초', path: ['하부공', 'P2'] },
+    { code: 'P2C', name: '교각시공', path: ['하부공', 'P2'] },
+    { code: 'P2K', name: '코핑시공', path: ['하부공', 'P2'] },
+    { code: 'P12F', name: '기초', path: ['하부공', 'P12'] },
+    { code: 'GF', name: 'WPC거더 제작(182/8/8)', path: ['상부공', '상부공'] },
+    { code: 'GE', name: 'WPC거더 거치', path: ['상부공', '상부공'] },
+    { code: 'DK', name: '공동구(Leveling 콘크리트 포함)', path: ['상부공', '상부공'] },
+    { code: 'HR', name: '연제교 상선 S1,S2(하로교)', path: ['상부공', '상부공'] },
+  ];
+  const objs = [
+    { id: '1', label: '교각 P2 말뚝', name: '강관말뚝 [1279059]', type: '22700 P2' },
+    { id: '2', label: '코핑 P2', name: '코핑_상선_P03,P05~P42 [1]', comment: '상선 교각 P2' },
+    { id: '3', label: '기초 P12', name: '기초_상선_P01,P03_P46 [2]' },
+    { id: '4', name: '교대 [3]', label: '교대 A1' },
+    { id: '5', label: '교대 A1 버림콘크리트', name: '버림콘크리트 [4]' },
+    { id: '6', label: '상선_거더_S39', name: 'WPC_40m_우_1' },
+    { id: '7', label: '상선_상부슬래브_S30', name: 'WPC_40m' },
+    { id: '8', label: '교량받침', name: '받침', comment: '상선 교좌 P01' },
+    { id: '9', label: '하교로_U거더_바닥판', name: '하로교_U거더_1' },
+    { id: '10', label: '하교로_U거더_공동구 및 방호벽', name: '하로교_U거더_2' },
+    { id: '11', name: '기초_상선_P01,P03_P46 [5]' },
+    { id: '12', label: '난간' },
+  ];
+  const got = Object.fromEntries(L.autoLink(objs, acts).map(r => [r.id, r.code]));
+  assert.deepEqual(got, { 1: 'P2F', 2: 'P2K', 3: 'P12F', 4: 'A1W', 5: 'A1F', 6: 'GE', 7: 'DK', 8: 'GE', 9: 'HR', 10: 'DK', 11: null, 12: null });
+  assert.equal(L.placeOf('기초_상선_P01,P03_P46'), null);
+  assert.equal(L.placeOf('기초 P06'), 'P6');
+  const s = L.scoreLinks(L.autoLink(objs, acts), new Map([['1', 'P2F'], ['3', 'P2F'], ['11', 'P12F']]));
+  assert.deepEqual([s.correct, s.wrong, s.open], [1, 1, 1]);
+});
