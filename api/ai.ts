@@ -3,16 +3,18 @@
 //
 // 작업 정의(프롬프트·출력 JSON 형식)는 api/_ai-tasks.ts 에만 있다 — 브라우저는 작업 이름과 입력만 보낸다.
 // 모델: 아래 MODEL 상수, 구조화 출력(json_schema), 거절 시 서버 측 대체 모델(fallbacks 'default').
-// 실무자(editor) 이상만(비용). 응답은 처음부터 200 으로 열고 기다리는 동안 공백을 흘려 보내(엣지 25초 첫 응답 제한),
+// 실무자(editor) 이상만(비용). 응답은 처음부터 200 으로 열고 기다리는 동안 공백을 흘려 보내(프록시 유휴 끊김 방지),
 // 끝에 JSON 한 덩어리를 쓴다 — { ok, result, usage } 또는 { error }. JSON.parse 는 앞 공백을 무시한다.
+// Node 런타임 + Web 핸들러(POST): 엣지로 두었을 때 이 함수가 들어간 커밋부터 배포가 실패했다(10-23). SDK 가
+// Node 전용 모듈(fs·child_process — 인증 파일 읽기용)을 품고 있어 엣지 번들과 맞지 않는다고 본다. 로컬 모듈은 Node ESM 이라 .js 를 붙인다.
 //
 // Required env: ANTHROPIC_API_KEY + SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY.
 // =====================================================================
 import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
-import { AI_TASKS } from './_ai-tasks';
+import { AI_TASKS } from './_ai-tasks.js';
 
-export const config = { runtime: 'edge' };
+export const config = { runtime: 'nodejs', maxDuration: 300 };
 
 const MODEL = 'claude-opus-5-5';
 const SUPABASE_URL = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
@@ -38,8 +40,7 @@ async function allowed(req: Request, mirProject: string | undefined): Promise<Re
   return json({ error: 'AI 기능은 실무자 이상만 쓸 수 있습니다.' }, 403);
 }
 
-export default async function handler(req: Request): Promise<Response> {
-  if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
+export async function POST(req: Request): Promise<Response> {
   if (!process.env.ANTHROPIC_API_KEY) return json({ error: 'AI 키가 설정되지 않았습니다(관리자: Vercel 환경변수 ANTHROPIC_API_KEY).', code: 'not-configured' }, 503);
   let body: any;
   try { body = await req.json(); } catch { return json({ error: 'invalid body' }, 400); }

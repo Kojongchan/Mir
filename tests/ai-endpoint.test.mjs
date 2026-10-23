@@ -42,8 +42,9 @@ test('AI endpoint: request shape, keep-alive stream with JSON result, and error 
     static APIError = APIError;
     beta = { messages: { stream: params => { calls.push(params); return { finalMessage: async () => reply }; } } };
   }
-  const ai = compile('api/ai.ts', { '@anthropic-ai/sdk': { __esModule: true, default: Anthropic }, '@supabase/supabase-js': {}, './_ai-tasks': tasks });
-  const post = body => ai.default(new Request('http://x/api/ai', { method: 'POST', body: JSON.stringify(body) }));
+  const ai = compile('api/ai.ts', { '@anthropic-ai/sdk': { __esModule: true, default: Anthropic }, '@supabase/supabase-js': {}, './_ai-tasks.js': tasks });
+  assert.equal(ai.config.runtime, 'nodejs'); // SDK 는 Node 런타임에서(엣지 배포 실패, api/ai.ts 머리말)
+  const post = body => ai.POST(new Request('http://x/api/ai', { method: 'POST', body: JSON.stringify(body) }));
   const saved = { key: process.env.ANTHROPIC_API_KEY, url: process.env.SUPABASE_URL, vurl: process.env.VITE_SUPABASE_URL };
   delete process.env.SUPABASE_URL; delete process.env.VITE_SUPABASE_URL;
   try {

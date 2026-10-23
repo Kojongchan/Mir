@@ -18,6 +18,10 @@
   7 모델 반영만 "준비 중". CPM 에 착수 가능일·작업 금지 기간 추가(XER 에 CS_MSOA).
 - 검증: 테스트 28(p6 16 · setup 6 · sim45d 4 · ai 2, 레포 전체 198 통과), 타입·빌드. 실자료 시험 스크립트는 세션 임시 폴더(레포 미포함).
   **확인 못 함: 실제 AI 호출(이 세션에 ANTHROPIC_API_KEY 없음), 배포 화면, ACC 2-legged 새 폴더, 우리 XER 의 P6 불러오기.**
+- **배포 오류 수정**: `api/ai.ts` 를 넣은 커밋(e54ca5b)부터 Vercel 배포가 Error. 로컬 `vercel build` 는 통과 → 배포 단계 엣지 번들 문제로 판단
+  (SDK 1.x 가 인증 파일용 Node 전용 모듈 fs·child_process 를 품음). `api/ai.ts` 만 **Node 런타임(maxDuration 300) + `export POST`** 로,
+  로컬 모듈은 `./_ai-tasks.js`. 빌드 산출물(`.vercel/output/.../ai.func`)을 실제 SDK + 모의 Messages API 로 실행해 503(키 없음)·200(구조화 결과)·
+  베타 헤더·fallbacks 확인. 배포 로그 원문은 못 봄(접근 권한 없음) — 다음 배포가 Ready 인지로 확인.
 다음: ① Vercel 에 ANTHROPIC_API_KEY(발주처 외부 AI 승인 후) → 9종 실호출 확인, AI-1 보정 효과를 같은 정답셋으로 측정
 ② 6 연결 결과를 4D 뷰어 dbId 에 적용(externalId/IfcGUID) ③ 체적 자동 산정 서버 작업 ④ 7 모델 반영(속성 반영 파일·IFC)
 ⑤ 일보 실적 → P6 갱신 XER, 내역 분류 → 객체 배분(5D) ⑥ P6 엑셀 내보내기 읽기.
