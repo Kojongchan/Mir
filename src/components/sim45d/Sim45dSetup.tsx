@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AccFilePicker, type PickedAccFile } from '../AccFilePicker';
 import { UiIcon } from '../icons/UiIcon';
 import { accFileBlobUrl } from '../../lib/aps';
@@ -15,6 +15,7 @@ import { LinkStep } from './steps/LinkStep';
 import { P6Step } from './steps/P6Step';
 import { ReportStep } from './steps/ReportStep';
 import type { StepProps } from './steps/common';
+import { McpConnect } from './McpConnect';
 
 /**
  * 「공정·공사비 (4D/5D)」 단계형 진행(D30): 위쪽 단계 바 + 3D 위에 펼치는 단계 시트.
@@ -53,6 +54,9 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
   const [newName, setNewName] = useState('');
   const [newKind, setNewKind] = useState<StructureKind>('bridge');
   const [busy, setBusy] = useState(false);
+  const [mcpOpen, setMcpOpen] = useState(false);
+  /** 다른 곳(다른 창·AI 연결)에서 바뀐 것을 다시 불러오면 올려 단계 화면을 새로 그린다. */
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -72,6 +76,23 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
   }, [projectId]);
 
   useEffect(() => { writeUi(projectId, ui); }, [projectId, ui]);
+
+  // 창으로 돌아오면 다시 읽는다 — AI 연결(MCP)·다른 사람이 저장한 것이 보이게. 내용이 같으면 그대로 둔다.
+  const recordsRef = useRef(records);
+  useEffect(() => { recordsRef.current = records; }, [records]);
+  useEffect(() => {
+    const refresh = () => {
+      listSetups(projectId).then(r => {
+        const cur = recordsRef.current;
+        const changed = r.records.length !== cur.length || r.records.some(x => cur.find(c => c.id === x.id)?.updatedAt !== x.updatedAt);
+        if (!changed) return;
+        setRecords(r.records);
+        setReload(n => n + 1);
+      }).catch(() => { /* 다음 기회에 */ });
+    };
+    window.addEventListener('focus', refresh);
+    return () => window.removeEventListener('focus', refresh);
+  }, [projectId]);
 
   const rec = records.find(r => r.id === ui.setupId) ?? null;
   const data = rec?.data ?? emptySetup();
@@ -284,11 +305,11 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
             ))}
           </div>
         );
-      case 'design': return <DesignStep key={rec?.id} {...stepProps} />;
-      case 'draft': return <DraftStep key={rec?.id} {...stepProps} />;
-      case 'p6': return <P6Step key={rec?.id} {...stepProps} />;
-      case 'link': return <LinkStep key={rec?.id} {...stepProps} />;
-      case 'report': return <ReportStep key={rec?.id} {...stepProps} />;
+      case 'design': return <DesignStep key={`${rec?.id}:${reload}`} {...stepProps} />;
+      case 'draft': return <DraftStep key={`${rec?.id}:${reload}`} {...stepProps} />;
+      case 'p6': return <P6Step key={`${rec?.id}:${reload}`} {...stepProps} />;
+      case 'link': return <LinkStep key={`${rec?.id}:${reload}`} {...stepProps} />;
+      case 'report': return <ReportStep key={`${rec?.id}:${reload}`} {...stepProps} />;
       default: {
         const st = statuses.get(ui.step)!;
         return (
@@ -339,6 +360,7 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
               <p className="muted">{step.desc}</p>
             </div>
             <span className="spacer" />
+            {canEdit && <button className="btn btn--sm" onClick={() => setMcpOpen(true)} title="내 Claude·ChatGPT 에서 이 플랫폼을 쓰는 연결 주소">AI 연결</button>}
             <button className="btn btn--sm" onClick={() => go('sim')} title="시트를 접고 3D 보기"><UiIcon name="cube" size={14} /> 3D 보기</button>
           </header>
           {where === 'local' && (
@@ -356,6 +378,8 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
           </footer>
         </section>
       )}
+
+      {mcpOpen && <McpConnect projectId={projectId} onClose={() => setMcpOpen(false)} />}
 
       {picker && pickerSlot && (
         <AccFilePicker

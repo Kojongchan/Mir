@@ -8529,3 +8529,27 @@ textarea.input {
   .sim-dock__kpi { display: none; }
   .sim-toolbar__name { max-width: 120px; }
 }
+
+/* AI 연결(MCP) 창 */
+.acc-modal.sim-mcp {
+  width: min(560px, 94vw);
+}
+.sim-mcp p {
+  font-size: 13px;
+  margin: 8px 0;
+}
+.sim-mcp__url {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+.sim-mcp__url input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+}

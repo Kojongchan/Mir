@@ -63,6 +63,26 @@ export function summarize(o: { objectid: number; name?: string; externalId?: str
   };
 }
 
+export type ModelObject = NonNullable<ReturnType<typeof summarize>>;
+
+/** 변환본 첫 3D 뷰의 객체 요약. 준비 중이면 { pending }. 6단계 화면(이 API)과 AI 연결(MCP)이 같이 쓴다. */
+export async function readModelObjects(urn: string, token: string):
+  Promise<{ pending: true } | { view: string; objects: ModelObject[] } | { error: string; status: number }> {
+  const headers = { authorization: `Bearer ${token}` };
+  const meta = await fetch(`${APS}/modelderivative/v2/designdata/${urn}/metadata`, { headers });
+  if (meta.status === 202) return { pending: true };
+  const m = (await meta.json()) as { data?: { metadata?: { guid: string; name: string; role: string }[] } };
+  if (!meta.ok) return { error: `metadata ${meta.status}`, status: 502 };
+  const views = (m.data?.metadata ?? []).filter(v => v.role === '3d');
+  const view = views.find(v => v.name === '{3D}') ?? views[0];
+  if (!view) return { error: '3D 뷰가 없는 모델입니다.', status: 422 };
+  const pr = await fetch(`${APS}/modelderivative/v2/designdata/${urn}/metadata/${view.guid}/properties?forceget=true`, { headers });
+  if (pr.status === 202) return { pending: true };
+  if (!pr.ok) return { error: `properties ${pr.status}`, status: 502 };
+  const p = (await pr.json()) as { data?: { collection?: { objectid: number; name?: string; externalId?: string; properties?: Props }[] } };
+  return { view: view.name, objects: (p.data?.collection ?? []).map(summarize).filter((o): o is ModelObject => o !== null) };
+}
+
 export default async function handler(req: Request): Promise<Response> {
   if (!APS_CLIENT_ID || !APS_CLIENT_SECRET) return json({ error: 'APS 환경변수 미설정' }, 500);
   if (SUPABASE_URL && SERVICE_ROLE) {
@@ -75,20 +95,8 @@ export default async function handler(req: Request): Promise<Response> {
   const urn = new URL(req.url).searchParams.get('urn') ?? '';
   if (!/^[A-Za-z0-9_-]+$/.test(urn)) return json({ error: 'urn 누락/형식 오류' }, 400);
   try {
-    const headers = { authorization: `Bearer ${await mintToken()}` };
-    const meta = await fetch(`${APS}/modelderivative/v2/designdata/${urn}/metadata`, { headers });
-    if (meta.status === 202) return json({ pending: true });
-    const m = (await meta.json()) as { data?: { metadata?: { guid: string; name: string; role: string }[] } };
-    if (!meta.ok) return json({ error: `metadata ${meta.status}` }, 502);
-    const views = (m.data?.metadata ?? []).filter(v => v.role === '3d');
-    const view = views.find(v => v.name === '{3D}') ?? views[0];
-    if (!view) return json({ error: '3D 뷰가 없는 모델입니다.' }, 422);
-    const pr = await fetch(`${APS}/modelderivative/v2/designdata/${urn}/metadata/${view.guid}/properties?forceget=true`, { headers });
-    if (pr.status === 202) return json({ pending: true });
-    if (!pr.ok) return json({ error: `properties ${pr.status}` }, 502);
-    const p = (await pr.json()) as { data?: { collection?: { objectid: number; name?: string; externalId?: string; properties?: Props }[] } };
-    const objects = (p.data?.collection ?? []).map(summarize).filter(o => o !== null);
-    return json({ view: view.name, objects });
+    const r = await readModelObjects(urn, await mintToken());
+    return 'error' in r ? json({ error: r.error }, r.status) : json(r);
   } catch (e) {
     return json({ error: (e as Error).message }, 502);
   }
