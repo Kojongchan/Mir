@@ -593,14 +593,7 @@ jobs:
           npm install --no-save @aws-sdk/client-s3@3
           node scripts/uploadDxfGlb.mjs
 
-      - name: (DXF) DXF 아티팩트 업로드(백업)
-        if: always() && github.event.inputs.dxf_test == '1'
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: dwg-dxf
-          path: out/original.dxf
-          if-no-files-found: ignore
+      # 변환 결과(DXF·GLB)는 아티팩트로 올리지 않음: 공개 저장소라 GitHub 로그인한 누구나 받을 수 있음(2026-10-26 사용자 결정, 기존 것 삭제).
 
       # ===== 기존 SVF→GLB 경로(dxf_test 아닐 때만) =====
       - name: Install converter deps
@@ -701,11 +694,3 @@ jobs:
             echo '=== c0 top-down 확대 ==='; PW_ZOOM=0.16 node scripts/renderDiag.mjs out/xkt/c0.xkt; \
           else echo "c0.xkt 없음 — 텍스처 렌더 검증 건너뜀"; fi
 
-      - name: Upload glb as workflow artifact (백업)
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: model-glb
-          path: out/model.glb
-          if-no-files-found: ignore
