@@ -53,8 +53,10 @@ test('step status: required files decide done; unbuilt steps report what they wi
   d = s.addFile(s.addFile(s.addFile(d, 'plan', file('a', 'p.pdf')), 'qto', file('b', 'q.pdf')), 'model', file('c', 'm.rvt'));
   assert.equal(s.stepStatus(d, 'files', '연제교').state, 'done');
   st = s.stepStatus(d, 'export', '연제교');
-  assert.equal(st.state, 'planned');
+  assert.equal(st.state, 'todo', '7단계: 확정 공정표·반영 확인 전');
   assert.deepEqual(st.missing.map(x => x.key), ['p6']);
+  assert.equal(s.stepStatus({ ...d, modelSync: { at: 'x', modelItemId: 'c', modelName: 'm.rvt', rows: 10, same: 9, missing: 1, withDates: false } }, 'export', '연제교').state, 'todo');
+  assert.equal(s.stepStatus({ ...d, modelSync: { at: 'x', modelItemId: 'c', modelName: 'm.rvt', rows: 10, same: 10, missing: 0, withDates: false } }, 'export', '연제교').state, 'done', '모두 반영되면 완료');
   assert.equal(s.stepStatus(d, 'p6', '연제교').state, 'todo');
   assert.equal(s.stepStatus(d, 'design', '연제교').state, 'todo');
   d = { ...d, site: { name: '연제교', code: 'BR01', supports: [{ id: 'P1', kind: 'pier', pileType: 'cast', pileCount: 1 }], spans: [] } };
@@ -229,4 +231,76 @@ test('skip: an already-made schedule skips design and draft; done wins over skip
   d = s.setSkipped(d, ['design', 'draft'], false);
   assert.equal('skipped' in d, false);
   for (const st of s.STEPS) assert.ok(st.guide.length > 10, `${st.key} 안내`);
+});
+
+test('model dates: RVT A5 dates join the draft by place+part; start aligned; order and part durations', () => {
+  const xer = compile('src/lib/p6/xer.ts');
+  const cpm = compile('src/lib/p6/cpm.ts');
+  const p6 = compile('src/lib/p6/schedule.ts', { './xer.js': xer, './cpm.js': cpm });
+  const B = compile('src/lib/p6/bridgePlan.ts', { './schedule.js': p6 });
+  const L = compile('src/lib/sim45d/autolink.ts');
+  const M = compile('src/lib/sim45d/modelDates.ts', { '../p6/bridgePlan.js': B, '../p6/schedule.js': p6, './autolink.js': L });
+  assert.equal(M.ymd('2025.6.3'), '2025-06-03');
+  assert.equal(M.ymd(''), null);
+  // 현장: P2 를 먼저, P1 을 나중에(엔진은 시점부터)
+  const o = (name, label, s, f) => ({ name, label, actualStart: s, actualFinish: f, plannedStart: s, plannedFinish: f });
+  const objs = [
+    o('기초_상선', '기초 P2', '2024-05-01', '2024-05-08'), o('기초_상선', '기초 P1', '2024-07-01', '2024-07-08'),
+    o('교각_상선', '교각 P2', '2024-05-20', '2024-06-10'), o('교각_상선', '교각 P1', '2024-07-20', '2024-08-10'),
+    o('코핑_상선', '코핑 P2', '2024-06-15', '2024-07-05'), o('코핑_상선', '코핑 P1', '2024-08-15', '2024-09-05'),
+    o('WPC_40m', '', '2024-10-01', '2024-11-30'), o('잡것', '', '2024-01-01', '2024-01-02'),
+    { name: '교각_상선', label: '교각 P3' }, // 날짜 없음 → 뺌
+  ];
+  const model = M.modelSpans(objs, 'actual');
+  assert.deepEqual([...model.keys()].sort(), ['P1|coping', 'P1|foundation', 'P1|pier', 'P2|coping', 'P2|foundation', 'P2|pier', 'super']);
+  assert.equal(M.firstSubStart(model), '2024-05-01');
+  assert.deepEqual(M.startOrder(model, 'pier'), ['P2', 'P1']);
+  assert.deepEqual(M.concurrency(model, 'pier'), { max: 1, mean: 0.5 }); // 22일 × 2 / 5/20~8/10(83일)
+  const supports = ['A1', 'P1', 'P2', 'A2'].map(id => ({ id, kind: id[0] === 'A' ? 'abutment' : 'pier', pileType: 'cast', pileCount: 1 }));
+  const site = { name: '시험교', code: 'T1', supports, spans: B.spansFromSupports(supports) };
+  const r = M.compareOptions(model, { site, start: '2023-01-01' }, B.PRESETS.map(p => ({ title: p.title, levers: p.levers })));
+  assert.equal(r.aligned, '2024-05-01');
+  for (const x of r.options) {
+    assert.equal(M.firstSubStart(M.planSpans(x.result)), '2024-05-01', `${x.title}: 첫 하부 작업일을 모델에 맞춤`);
+    assert.equal(x.cmp.rows.length, 6);
+    assert.deepEqual(x.cmp.planOnly.sort(), ['A1|abutment', 'A1|foundation', 'A2|abutment', 'A2|foundation']);
+    assert.ok(x.cmp.superstructure.model && x.cmp.superstructure.plan);
+  }
+  const a = r.options[0];
+  assert.ok(a.cmp.order < 1, '현장 순서(P2 먼저)와 엔진 순서(P1 먼저)가 다르면 상관이 낮다');
+  const days = M.partDays(a.cmp.rows);
+  assert.deepEqual(days.map(d => [d.part, d.n, d.model]), [['foundation', 2, 8], ['pier', 2, 22], ['coping', 2, 22]]);
+});
+
+test('model sync: rows from confirmed schedule + links, compare with model, CSV, dates guard, stale codes excluded', () => {
+  const S = compile('src/lib/sim45d/modelSync.ts');
+  const models = [{ accProjectId: 'p', accItemId: 'rvt', name: 'BR01.rvt', folderNames: [], size: 1, pickedAt: '' }, { accProjectId: 'p', accItemId: 'ifc', name: 'BR01.ifc', folderNames: [], size: 1, pickedAt: '' }];
+  const links = [
+    { modelItemId: 'rvt', wbsRoot: 'x', at: '', links: [{ ext: 'u1', ifcGuid: 'g1', code: 'T1-P1-F', by: 'rule' }, { ext: 'u2', ifcGuid: 'g2', code: 'T1-P1-C', by: 'ai' }, { ext: 'u9', ifcGuid: 'g9', code: 'OLD-CODE', by: 'rule' }] },
+    { modelItemId: 'ifc', wbsRoot: 'x', at: '', links: [{ ext: 'i3', ifcGuid: 'g3', code: 'T1-P2-F', by: 'rule' }, { ext: 'i1', ifcGuid: 'g1', code: 'T1-P1-F', by: 'rule' }] },
+  ];
+  const acts = [
+    { code: 'T1-P1-F', name: '기초', start: '2024-05-01 08:00', finish: '2024-05-08 17:00' },
+    { code: 'T1-P1-C', name: '교각시공', start: '2024-05-09', finish: '2024-05-20' },
+    { code: 'T1-P2-F', name: '기초', start: '2024-06-01', finish: '2024-06-08' },
+  ];
+  let r = S.buildSync(links, models, acts, { withDates: true });
+  assert.equal(r.counts.total, 3, '같은 객체(g1)는 한 번');
+  assert.deepEqual(r.noActivity, [{ key: 'g9', code: 'OLD-CODE' }]);
+  assert.deepEqual(r.rows.map(x => [x.uniqueId, x.ifcGuid, x.status]), [['u1', 'g1', 'unknown'], ['u2', 'g2', 'unknown'], ['', 'g3', 'unknown']], 'IFC 외부 ID 는 UniqueId 로 내보내지 않음');
+  const objects = [
+    { ext: 'u1', ifcGuid: 'g1', name: '기초', code: 'T1-P1-F', plannedStart: '2024-05-01', plannedFinish: '2024-05-08' },
+    { ext: 'u2', ifcGuid: 'g2', name: '교각', code: 'WRONG', plannedStart: '2025-01-01', plannedFinish: '2025-01-10' },
+  ];
+  r = S.buildSync(links, models, acts, { withDates: true, objects });
+  assert.deepEqual(r.rows.map(x => [x.status, x.changes.join('+')]), [['same', ''], ['change', 'code+start+finish'], ['missing', '']]);
+  assert.equal(r.counts.overwriteDates, 1, '현장 일정이 있는 객체 날짜를 바꿈');
+  assert.equal(r.counts.overwriteCodes, 1, '다른 코드가 있는 객체(WRONG)');
+  const codeOnly = S.buildSync(links, models, acts, { withDates: false, objects });
+  assert.deepEqual(codeOnly.rows.map(x => x.changes.join('+')), ['', 'code', '']);
+  const csv = S.syncCsv(r.rows, true);
+  assert.ok(csv.startsWith('﻿Revit UniqueId,IfcGUID,객체 이름,A3_WBS CODE (IPS),A5_계획공정시작일,A5_계획공정종료일,'));
+  assert.match(csv, /\r\nu2,g2,교각,T1-P1-C,2024-05-09,2024-05-20,교각시공,WRONG,2025-01-01,2025-01-10,code\+start\+finish,ai\r\n/);
+  assert.ok(!S.syncCsv(r.rows, false).includes('A5_계획공정시작일'), '날짜 끄면 A5 칸 없음(스크립트가 안 넣음)');
+  assert.ok(!S.DYNAMO_SCRIPT.includes('A5_실시공정시작일') && S.DYNAMO_SCRIPT.includes('IfcGUID'));
 });

@@ -26,12 +26,15 @@ export const MCP_PROMPT_FOR: Record<AiTaskName, string> = {
 };
 
 /** Claude 창에 넣을 지시문 — 대상 이름을 넣어 커넥터 도구를 바로 쓰게 한다. */
-export function claudeAsk(task: AiTaskName | 'cycle', target: string, extra?: string): string {
+/** 서버 AI 작업 + AI 연결(커넥터)로만 하는 일. */
+export type AskTask = AiTaskName | 'cycle' | 'compareDates' | 'modelSync';
+
+export function claudeAsk(task: AskTask, target: string, extra?: string): string {
   const base = claudeAskBase(task, target);
   return extra?.trim() ? `${base}${task === 'qa' ? '' : '\n\n'}${extra.trim()}` : base;
 }
 
-function claudeAskBase(task: AiTaskName | 'cycle', target: string): string {
+function claudeAskBase(task: AskTask, target: string): string {
   const t = `MIR 4D/5D 에서 '${target}'`;
   const confirm = '저장 전에는 표로 보여 주고 내 확인을 받아.';
   switch (task) {
@@ -43,6 +46,8 @@ function claudeAskBase(task: AiTaskName | 'cycle', target: string): string {
     case 'linkLeftovers': return `${t} BIM 연결을 마무리해 줘. 규칙이 못 정한 객체만 근거와 함께 작업을 고르고, ${confirm}`;
     case 'boqClassify': return `${t} 산출내역서 구간 항목을 A(형상 직접)/B(형상 파생)/C(모델 없음)/D(간접비)와 부위로 분류해 표로 보여 줘.`;
     case 'qa': return `${t} 공정·공사비에 대해 질문할게: `;
+    case 'compareDates': return `${t} 원본 모델(RVT)의 공정 날짜(A5 실적·계획)와 개략 IPS A/B/C 를 compare_model_dates 로 비교해 줘. 어느 안이 현장에 가장 가까운지, 작업 기간 차이로 고칠 단위공기, 현장 시공 순서를 크리티컬 포인트로 넣을지 제안하고, 바꿀 것은 ${confirm}`;
+    case 'modelSync': return `${t} 7단계 모델 반영 전에 확정 공정표·연결 결과를 점검해 줘: 확정 공정표에 없는 코드로 저장된 연결, 상부 객체처럼 연결이 비는 곳, 모델에 이미 있는 현장 일정을 덮어쓸 위험을 정리해 줘.`;
     case 'cycle': return `${t} 를 한 바퀴 진행해 줘: 설계현황(교각 높이는 도면) → 단위공기 → 개략 IPS(과업시작일은 나에게 물어, 내가 고른 안을 채택 = 확정 공정표) → P6 검토 → BIM 연결. 이미 짠 공정표가 올라가 있으면(list_targets 의 confirmedSchedule) 앞 단계는 건너뛸지 묻고 P6 검토부터. 단계마다 결과를 보여 주고, ${confirm}`;
   }
 }

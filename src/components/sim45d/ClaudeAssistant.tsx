@@ -16,8 +16,10 @@ const QUICK: { label: string; task: Parameters<typeof claudeAsk>[0]; steps: Step
   { label: '설계현황 채우기', task: 'designExtract', steps: ['files', 'design'] },
   { label: '단위공기 근거 찾기', task: 'ratesExtract', steps: ['design', 'draft'] },
   { label: '크리티컬 포인트·공기 비교', task: 'criticalPoints', steps: ['draft'] },
+  { label: '현장 일정과 3안 비교', task: 'compareDates', steps: ['draft'] },
   { label: 'P6 검토 정리', task: 'explainCheck', steps: ['p6', 'report'] },
   { label: 'BIM 연결 마무리', task: 'linkLeftovers', steps: ['link'] },
+  { label: '모델 반영 전 점검', task: 'modelSync', steps: ['export'] },
   { label: '내역 분류', task: 'boqClassify', steps: ['report'] },
 ];
 

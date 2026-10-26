@@ -27,7 +27,7 @@ description: MIR 공정·공사비(4D/5D) 플랫폼을 AI 연결(MCP 커넥터 "
 | 0 확인 | `list_targets` | 대상·필수 자료(수량산출서·시공계획·BIM 모델)가 있다. 설계 도면이 있으면 교각 높이에 쓴다 |
 | 3 설계현황 | `read_document`(qto·qtoSummary) → (높이·형식) `drawing_index` → `read_document`/`view_drawing`(drawings) → `save_design_status` | 개소가 노선 순서(A1, P1 … A2)로 다 있고, 개소마다 근거가 있다. 집계표가 있으면 합계가 맞는다. 교각 높이는 도면 근거(권·쪽·도면명) |
 | 4 단위공기 | `plan_schedule`(rates 확인) → `read_document`(plan) → `save_unit_rates` | '가정' 단위공기마다 근거를 찾았거나 "확인 필요"로 남겼다 |
-| 4 개략 IPS | `save_plan_settings` → `save_critical_points` → `plan_schedule` → `save_plan_settings(adopt)` | A/B/C(또는 종료일 맞춤) 결과와 기한 여유를 표로 보였고, 사용자가 고른 안을 채택했다(= 확정 공정표) |
+| 4 개략 IPS | `save_plan_settings` → `save_critical_points` → `plan_schedule` → (원본 RVT 에 현장 일정이 있으면 `compare_model_dates`) → `save_plan_settings(adopt)` | A/B/C(또는 종료일 맞춤) 결과와 기한 여유를 표로 보였고, 사용자가 고른 안을 채택했다(= 확정 공정표) |
 | 5 P6 검토 | `check_schedule` → (실적) `read_daily_logs` | 확정 공정표(채택안 또는 P6 수정본)의 오류부터 우선순위와 P6 에서 할 일을 정리했다. P6 파일 업로드를 기다리지 않는다 |
 | 6 BIM 연결 | `model_link_status` → `save_object_links` | 규칙이 못 정한 객체만 AI 가 근거와 함께 골랐고, 모르는 것은 비워 뒀다 |
 
@@ -47,7 +47,13 @@ description: MIR 공정·공사비(4D/5D) 플랫폼을 AI 연결(MCP 커넥터 "
   교각마다 크게 달라(LOT 1~4개) 역산·추정값을 넣으면 공기가 틀어진다 — 도면 근거가 없으면 '확인 필요'.
 - 교각 일반도에 텍스트 층이 있으면 `read_document`(search '기둥')로 빨리 훑고, 글자 순서가 섞여 애매한 쪽만 `view_drawing` region 으로 확대한다.
 
+- **현장 일정 비교**(10-26): 원본 RVT 의 A5 날짜는 개소+부위로 개략 IPS 와 이어진다(IFC 에는 A5 없음 — 원본 RVT 로). 작업 기간 차이는 단위공기 보정,
+  순서 상관이 낮으면 현장이 시작한 구간을 크리티컬 포인트 '우선 구간'으로 제안한다. 실적(A5 실시)을 계획보다 우선 근거로.
+- **모델 반영(7단계)**: 플랫폼은 모델을 고치지 않는다 — 반영 CSV·Dynamo 스크립트로 사람이 원본 RVT 에 넣고 다시 올린다. 모델에 이미 실제 IPS 코드·현장 일정이 있으면
+  개략 IPS 값으로 덮어쓰지 않도록 사용자에게 먼저 묻는다. A5 실시(실적)는 넣지 않는다.
+
 ## 주의 (아직 확인 안 됨)
+- 7단계 Dynamo 스크립트는 Revit 에서 실행해 보지 못했다 — 사본으로 먼저.
 - 채택안으로 BIM 연결하면 상부(거더·받침·상판) 객체는 경간을 몰라 규칙이 못 붙인다(이름에 경간 정보 없음) — 경간을 근거 없이 고르지 말고 비워 둔다.
 - 설계 단계 단위공기(시공계획)는 실제 IPS 보다 길다(기초 11일 vs 8일, 코핑 27일 vs 21일). '가정' 값 8종은 현장 확인 전이다.
 - 4D 화면의 3D 색칠은 아직 연결 결과를 쓰지 않는다(저장까지만).

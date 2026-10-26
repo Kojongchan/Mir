@@ -4,7 +4,8 @@
 //
 //   GET /api/aps-props?urn=<base64url 버전 URN>
 //   → { pending: true } (속성 준비 중, 잠시 뒤 다시) | { view, objects: [{ id, ext, name, label, type, comment, ifcGuid,
-//        ifcClass, code, level7, level8, volume }] }  — 객체 = 속성이 있는 끝 객체(이름·유형 그룹 노드 제외)
+//        ifcClass, code, level7, level8, plannedStart, plannedFinish, actualStart, actualFinish, volume }] }
+//        — 객체 = 속성이 있는 끝 객체(이름·유형 그룹 노드 제외)
 //
 // 속성 이름은 Revit 한국어판 기준(유형 이름·해설·체적)과 공단 BIM 속성(A1_객체명칭·A3_*). 영문판 이름도 함께 본다.
 // IFC(Revit 에서 내보낸 것)는 사용자 속성이 빠지는 일이 많다 — 요소(IfcClass 가 있는 객체)의 이름 'Family:Type:Tag' 을
@@ -59,6 +60,9 @@ export function summarize(o: { objectid: number; name?: string; externalId?: str
     name: ifcParts.length > 1 ? ifcParts[0] : (o.name ?? '').replace(/\s*\[\d+\]\s*$/, ''),
     label, type, comment: pick(flat, '해설', 'Comments'), ifcGuid: pick(flat, 'IfcGUID'), ifcClass,
     code: pick(flat, 'A3_WBS CODE (IPS)'), level7: pick(flat, 'A3_Level7'), level8: pick(flat, 'A3_Level8'),
+    // 공단 BIM 속성 A5(공정 날짜) — 모델 반영(7단계) 비교·개략 IPS 와 현장 일정 비교에 쓴다
+    plannedStart: pick(flat, 'A5_계획공정시작일'), plannedFinish: pick(flat, 'A5_계획공정종료일'),
+    actualStart: pick(flat, 'A5_실시공정시작일'), actualFinish: pick(flat, 'A5_실시공정종료일'),
     volume: vol ? Number(vol[1].replace(/,/g, '')) : null,
   };
 }

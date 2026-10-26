@@ -72,8 +72,9 @@ export const STEPS: StepDef[] = [
   { key: 'link', title: 'BIM 연결', short: 'BIM 연결', desc: '확정 IPS 의 Activity ID 를 객체에 붙입니다(규칙 → 남는 것 AI). 모델의 기존 코드와 비교합니다.', built: true, needs: ['model', 'p6'],
     guide: '모델과 대상 WBS 를 고르면 규칙이 붙이고, 남은 객체는 AI·사람이 고릅니다. 저장하면 완료(4D 색칠·5D 배분에 씀).',
     skippable: '4D/5D 없이 공정표만 필요할 때' },
-  { key: 'export', title: '모델 반영', short: '모델 반영', desc: '객체별 속성(IPS 코드·일자)을 모델에 넣을 파일로 내보냅니다.', built: false, needs: ['model', 'p6'],
-    guide: '준비 중 — 연결 결과를 모델 속성으로 넣을 파일을 만듭니다.', skippable: '준비 중인 단계' },
+  { key: 'export', title: '모델 반영', short: '모델 반영', desc: '확정 공정표의 코드·일자를 객체별 공단 BIM 속성(A3 코드·A5 계획일)으로 넣을 파일을 만들고, 원본에 적용해 다시 올리면 반영을 확인합니다.', built: true, needs: ['model', 'p6'],
+    guide: '반영 CSV 와 Dynamo 스크립트를 받아 Revit 원본(RVT)에 적용 → 저장 → 2단계에서 같은 이름으로 다시 올림(새 버전) → 「반영 확인」에서 모두 같으면 완료. 플랫폼은 모델을 직접 고치지 않습니다.',
+    skippable: '모델에 코드·일자를 넣지 않고 플랫폼 안에서만 4D/5D 를 볼 때' },
   { key: 'sim', title: '4D/5D', short: '4D/5D', desc: '3D 에서 기준일의 시공 상태와 공사비를 봅니다.', built: true, needs: [],
     guide: '시트를 접고 3D 와 하단 공정 막대로 기준일의 시공 상태를 봅니다.' },
   { key: 'report', title: '검증·질의', short: '검증', desc: '검토·연결 요약, 작업일보 실적 제안, 내역 분류, 공정·공사비 질의.', built: true, needs: ['p6', 'boq'],
@@ -152,6 +153,19 @@ export interface SetupData {
   log?: SetupLogEntry[];
   /** 사람이 건너뛴 단계(예: 이미 짠 공정표를 올려 3·4단계 생략). 끝낸 단계는 완료가 우선. */
   skipped?: StepKey[];
+  /** 7단계 마지막 반영 확인(모델 현재 값 ↔ 반영할 값). */
+  modelSync?: ModelSyncCheck;
+}
+
+export interface ModelSyncCheck {
+  at: string;
+  modelItemId: string;
+  modelName: string;
+  /** 반영할 객체 수 · 모델 값이 이미 같은 수 · 모델에서 못 찾은 수. */
+  rows: number;
+  same: number;
+  missing: number;
+  withDates: boolean;
 }
 
 /** 단계 건너뛰기(on) / 되돌리기. */
@@ -218,6 +232,8 @@ export function normalizeSetup(raw: unknown): SetupData {
     };
   }
   if (Array.isArray(r.links)) out.links = (r.links as LinkSet[]).filter(l => l && typeof l.modelItemId === 'string' && Array.isArray(l.links));
+  const ms = r.modelSync as ModelSyncCheck | undefined;
+  if (ms && typeof ms.at === 'string' && typeof ms.modelItemId === 'string' && [ms.rows, ms.same, ms.missing].every(Number.isFinite)) out.modelSync = ms;
   if (Array.isArray(r.skipped)) {
     const ok = (r.skipped as unknown[]).filter((k): k is StepKey => STEPS.some(x => x.key === k && !!x.skippable));
     if (ok.length) out.skipped = ok;
@@ -292,6 +308,10 @@ function rawStatus(data: SetupData, step: StepKey, name: string): StepStatus {
   if (step === 'sim' || step === 'report') return { state: 'todo', missing, suggested };
   if (step === 'design') return { state: data.site ? 'done' : 'todo', missing: [], suggested };
   if (step === 'draft') return { state: data.site && data.plan?.start && data.plan.adopted ? 'done' : 'todo', missing, suggested };
+  if (step === 'export') {
+    const m = data.modelSync;
+    return { state: m && m.rows > 0 && m.same === m.rows ? 'done' : 'todo', missing, suggested };
+  }
   if (step === 'link') {
     const models = data.files.model ?? [];
     const done = models.length > 0 && models.every(m => data.links?.some(l => l.modelItemId === m.accItemId && l.links.length > 0));

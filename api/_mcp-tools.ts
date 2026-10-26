@@ -10,10 +10,11 @@ import { decodeXer, parseXer } from '../src/lib/p6/xer.js';
 import { readSchedule, type P6Schedule } from '../src/lib/p6/schedule.js';
 import { CHECK_RULES, checkSchedule, type CheckRule } from '../src/lib/p6/check.js';
 import {
-  DEFAULT_RATES, fitToDeadline, parseSupportList, proposePlans, spansFromSupports,
+  DEFAULT_RATES, fitToDeadline, parseSupportList, PRESETS, proposePlans, spansFromSupports,
   type CriticalPoint, type PlanResult, type RateKey, type Span, type Support,
 } from '../src/lib/p6/bridgePlan.js';
 import { adoptedSchedule, confirmedSource, NO_CONFIRMED, planRates } from '../src/lib/sim45d/confirmed.js';
+import { compareOptions, concurrency, modelSpans, PART_NAME, partDays, startOrder } from '../src/lib/sim45d/modelDates.js';
 import { autoLink, LINK_PART_LABEL } from '../src/lib/sim45d/autolink.js';
 import { wbsScope } from '../src/lib/sim45d/wbsScope.js';
 import { boqLines, boqSections, guessBoqSection } from '../src/lib/sim45d/boq.js';
@@ -44,7 +45,7 @@ export const MCP_INSTRUCTIONS = `MIR 공정·공사비(4D/5D) 플랫폼 연결 �
 저장(save_*) 전에는 무엇을 저장할지 요약해 사용자 확인을 받는다.
 보통 순서: list_targets → 설계현황(read_document slot=qto·qtoSummary, search '말뚝|교각|집계'; 교각 높이·기초 형식은 도면 —
 drawing_index → view_drawing 의 교각 일반도 → save_design_status) → 단위공기(read_document slot=plan, search '공기|가동율|단위공정' → save_unit_rates)
-→ save_plan_settings → plan_schedule → 안 채택(save_plan_settings adopt) = 확정 공정표(P6 업로드는 사람이 P6 에서 고쳤을 때만)
+→ save_plan_settings → plan_schedule → (원본 RVT 에 현장 일정이 있으면 compare_model_dates 로 안과 비교) → 안 채택(save_plan_settings adopt) = 확정 공정표(P6 업로드는 사람이 P6 에서 고쳤을 때만)
 → P6 검토(check_schedule, list_activities, actual_durations) → BIM 연결(model_link_status → save_object_links)
 사람이 이미 짠 공정표를 올린 대상(list_targets 의 confirmedSchedule 이 '올린 P6 공정표 …', 또는 설계현황·개략 IPS 가 skipped)은 설계현황·개략 IPS 를 건너뛰고 P6 검토부터.
 → 유사 사례(find_similar_cases)를 참고하고, 배운 점은 save_lesson 으로 남긴다.`;
@@ -368,6 +369,51 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
       setupId: row.id,
       out: { mode: p.mode, start: p.start, options: p.options.map(o => brief(o.title, o.result)), basisSample: p.options[1]?.result.basis.slice(0, 15), rates, adopted, next },
       summary: p.options.map(o => `${o.title.split(' ')[0]} ${o.result.durationDays}일`).join(' '),
+    };
+  });
+
+  tool('compare_model_dates', {
+    title: '현장 일정(모델 A5 날짜) ↔ 개략 IPS 안 비교',
+    description: '원본 모델(RVT)의 공정 날짜(A5 실시공정=실적 / A5 계획공정)를 개소·부위(기초·교각·코핑·교대)로 묶어 개략 IPS A/B/C(와 채택안)와 비교한다. '
+      + '시작일은 모델의 첫 하부 작업일에 맞춰 엔진이 다시 계산(일괄 차이 제거). 안마다 하부 완료 차이·개소별 평균 차이·작업 기간 차이·순서 상관, '
+      + '부위별 평균 기간(단위공기 보정 근거), 현장 시공 순서와 동시 진행 수(투입 규모 추정). 상부는 경간 정보가 없어 전체 구간만. 저장하지 않는다.',
+    input: { target: z.string(), model: z.string().optional().describe('모델 파일 이름 일부(원본 RVT 권장)'), kind: z.enum(['actual', 'planned']).optional().describe('actual=A5 실시(기본), planned=A5 계획') },
+  }, async a => {
+    const row = await target(a.target);
+    const site = row.data.site;
+    if (!site) throw new Error('설계현황이 없습니다 — save_design_status 먼저.');
+    const plan = row.data.plan ?? emptyPlan();
+    if (!plan.start) throw new Error('과업시작일이 없습니다 — save_plan_settings(start).');
+    const f = a.model ? fileOf(row, 'model', a.model) : (row.data.files.model ?? []).find(x => /\.rvt$/i.test(x.name)) ?? fileOf(row, 'model');
+    if (!f.urn) throw new Error(`${f.name}: 변환 URN 없음 — 플랫폼에서 다시 고르세요.`);
+    const m = await ctx.acc.modelObjects(f.urn);
+    if ('pending' in m) return { setupId: row.id, out: 'ACC 가 모델 속성을 준비 중입니다. 1~2분 뒤 다시 부르세요.' };
+    if ('error' in m) throw new Error(m.error);
+    const kind = a.kind ?? 'actual';
+    const spans = modelSpans(m.objects, kind);
+    const opts = PRESETS.map(p => ({ title: p.title, levers: p.levers }));
+    if (plan.adopted && !opts.some(o => o.title === plan.adopted!.title)) opts.push({ title: plan.adopted.title, levers: plan.adopted.levers });
+    const r = compareOptions(spans, { site, start: plan.start, rates: planRates(plan), criticalPoints: plan.criticalPoints }, opts);
+    if (!r.aligned) return { setupId: row.id, out: { model: f.name, kind, note: `이 모델에는 ${kind === 'actual' ? 'A5 실시공정' : 'A5 계획공정'} 날짜가 든 하부 객체가 없습니다(IFC 는 사용자 속성이 빠졌을 수 있음 — 원본 RVT 로).` }, summary: '날짜 없음' };
+    const best = r.options.reduce((b, o) => (Math.abs(o.cmp.sub.finishDiff ?? 1e9) < Math.abs(b.cmp.sub.finishDiff ?? 1e9) ? o : b));
+    const order = startOrder(spans, 'foundation');
+    return {
+      setupId: row.id,
+      out: {
+        model: f.name, kind, alignedTo: r.aligned,
+        modelSub: best.cmp.sub.model, modelSuper: best.cmp.superstructure.model,
+        options: r.options.map(o => ({
+          title: o.title, alignedStart: o.start, subFinish: o.cmp.sub.plan?.finish, subFinishDiffDays: o.cmp.sub.finishDiff,
+          superFinishDiffDays: o.cmp.superstructure.finishDiff, matched: o.cmp.rows.length, modelOnly: o.cmp.modelOnly.length, planOnly: o.cmp.planOnly.length,
+          meanAbsDiffDays: o.cmp.mae, biasDays: o.cmp.bias, orderCorrelation: o.cmp.order, closest: o === best, adopted: plan.adopted?.title === o.title,
+        })),
+        partDays: partDays(best.cmp.rows).map(d => ({ part: PART_NAME[d.part], n: d.n, siteMeanDays: d.model, planMeanDays: d.plan, concurrency: concurrency(spans, d.part) })),
+        siteOrderFoundation: { first: order.slice(0, 12), last: order.slice(-6) },
+        worstRows: [...best.cmp.rows].sort((x, y) => Math.abs(y.finishDiff) - Math.abs(x.finishDiff)).slice(0, 15)
+          .map(x => ({ place: x.place, part: PART_NAME[x.part], model: `${x.model.start}~${x.model.finish}`, plan: `${x.plan.start}~${x.plan.finish}`, finishDiff: x.finishDiff })),
+        note: '차이 = 안 − 모델(+ 면 안이 늦음). 작업 기간 차이는 단위공기 보정, 순서 상관이 낮으면 크리티컬 포인트(우선 구간·착수 가능일)로 현장 순서를 반영할지 사용자에게 제안.',
+      },
+      summary: `${kind} 가장 가까움 ${best.title.split(' ')[0]} (하부 완료 ${best.cmp.sub.finishDiff}일)`,
     };
   });
 

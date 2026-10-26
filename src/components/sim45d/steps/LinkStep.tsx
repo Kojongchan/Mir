@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { supabase } from '../../../lib/supabase';
+import { fetchModelObjects, type ModelObject } from '../../../lib/sim45d/modelObjects';
 import { autoLink, LINK_PART_LABEL, type LinkActivity, type LinkResult } from '../../../lib/sim45d/autolink';
 import type { LinkSet, SetupFile } from '../../../lib/sim45d/setup';
 import { wbsScope } from '../../../lib/sim45d/wbsScope';
@@ -10,22 +10,6 @@ import { confirmedSource, NO_CONFIRMED } from '../../../lib/sim45d/confirmed';
  * 6단계 BIM 연결: 확정 IPS(4D 로 연 공정표)의 Activity ID 를 모델 객체에 붙인다. 규칙(부위·개소) → 남는 것만 AI.
  * 모델에 이미 코드가 있으면 비교해 서로 다른 객체(사람 입력 오류 후보)를 보여준다. 결과는 대상별로 저장(객체 키 = Revit UniqueId).
  */
-interface ModelObject { id: number; ext: string; name: string; label: string; type: string; comment: string; ifcGuid: string; ifcClass?: string; code: string; level7: string; level8: string; volume: number | null }
-
-async function fetchObjects(urn: string, onWait: (n: number) => void): Promise<ModelObject[]> {
-  const { data } = await supabase.auth.getSession();
-  const headers = data.session ? { authorization: `Bearer ${data.session.access_token}` } : undefined;
-  for (let attempt = 1; attempt <= 12; attempt++) {
-    const r = await fetch(`/api/aps-props?urn=${encodeURIComponent(urn)}`, { headers });
-    const body = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(body.error ?? `속성 읽기 실패(${r.status})`);
-    if (!body.pending) return body.objects as ModelObject[];
-    onWait(attempt);
-    await new Promise(res => setTimeout(res, 5000));
-  }
-  throw new Error('속성이 아직 준비되지 않았습니다. 잠시 뒤 다시 시도하세요.');
-}
-
 export function LinkStep({ projectId, canEdit, data, persist, sim, setStatus, openP6, opening }: StepProps) {
   const s = sim.schedule;
   const models = (data.files.model ?? []).filter((f): f is SetupFile => !!f);
@@ -45,7 +29,7 @@ export function LinkStep({ projectId, canEdit, data, persist, sim, setStatus, op
     if (!model?.urn) return;
     setLoading('모델 속성 읽는 중…');
     try {
-      const objs = await fetchObjects(model.urn, n => setLoading(`ACC 가 속성을 준비 중입니다(${n})…`));
+      const objs = await fetchModelObjects(model.urn, n => setLoading(`ACC 가 속성을 준비 중입니다(${n})…`));
       setObjects(objs);
       setResults(null);
       if (!objs.length) setStatus(`${model.name}: 연결할 객체를 찾지 못했습니다 — 변환본에 요소 속성이 없습니다(IFC 는 속성 세트를 포함해 내보내야 함).`);

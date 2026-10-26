@@ -7,6 +7,7 @@ import { planRates, planXerBytes, planXerName } from '../../../lib/sim45d/confir
 import { accPdfPages, chunkPages } from '../../../lib/sim45d/docText';
 import { emptyPlan, type PlanSettings } from '../../../lib/sim45d/setup';
 import { AiBox, AiStatus, useAi, type StepProps } from './common';
+import { ModelDateCompare } from './ModelDateCompare';
 
 /**
  * 4단계 개략 IPS: 과업시작일(필수) → 방식 1(시작일 기준 3안) 또는 방식 2(시작·종료일 안에 맞춤).
@@ -290,6 +291,8 @@ export function DraftStep({ projectId, canEdit, data, persist, sim, setStatus }:
           </>
         )}
       </section>
+
+      <ModelDateCompare data={data} plan={plan} rates={rates} setStatus={setStatus} />
     </div>
   );
 }

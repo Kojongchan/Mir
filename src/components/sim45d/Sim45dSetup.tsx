@@ -14,6 +14,7 @@ import { DraftStep } from './steps/DraftStep';
 import { LinkStep } from './steps/LinkStep';
 import { P6Step } from './steps/P6Step';
 import { ReportStep } from './steps/ReportStep';
+import { ExportStep } from './steps/ExportStep';
 import type { StepProps } from './steps/common';
 import { McpConnect } from './McpConnect';
 import { ClaudeAssistant } from './ClaudeAssistant';
@@ -371,6 +372,7 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
       case 'draft': return <DraftStep key={`${rec?.id}:${reload}`} {...stepProps} />;
       case 'p6': return <P6Step key={`${rec?.id}:${reload}`} {...stepProps} />;
       case 'link': return <LinkStep key={`${rec?.id}:${reload}`} {...stepProps} />;
+      case 'export': return <ExportStep key={`${rec?.id}:${reload}`} {...stepProps} />;
       case 'report': return <ReportStep key={`${rec?.id}:${reload}`} {...stepProps} />;
       default: {
         const st = statuses.get(ui.step)!;
