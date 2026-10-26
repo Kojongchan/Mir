@@ -37,8 +37,8 @@ export interface McpStore {
   logCall(entry: ToolLog): Promise<void>;
   /** 0041 이 없으면 false. 배운 점(lesson) 말고는 같은 대상·종류의 이전 사례를 바꾼다(최신 판단 하나). */
   addCase(c: CaseInput): Promise<boolean>;
-  /** 0041 이 없으면 null. */
-  findCases(q: { kind?: string; text?: string; structureKind?: string; limit: number }): Promise<CaseRow[] | null>;
+  /** 0041 이 없으면 null. excludeSetup: 그 대상 자신의 사례는 뺀다(지금 작업 중인 대상). */
+  findCases(q: { kind?: string; text?: string; structureKind?: string; excludeSetup?: string; limit: number }): Promise<CaseRow[] | null>;
 }
 
 const missingTable = (e: { code?: string; message?: string } | null) => !!e && (e.code === 'PGRST205' || e.code === '42P01' || /does not exist|schema cache/i.test(e.message ?? ''));
@@ -98,6 +98,7 @@ export function supabaseStore(url: string, serviceRole: string): McpStore {
       let query = db.from('sim45d_cases').select('*').order('created_at', { ascending: false }).limit(q.limit);
       if (q.kind) query = query.eq('kind', q.kind);
       if (q.structureKind) query = query.eq('structure_kind', q.structureKind);
+      if (q.excludeSetup && /^[0-9a-f-]{36}$/i.test(q.excludeSetup)) query = query.or(`setup_id.is.null,setup_id.neq.${q.excludeSetup}`);
       if (q.text) query = query.or(`title.ilike.%${q.text.replace(/[%,()]/g, ' ')}%,structure.ilike.%${q.text.replace(/[%,()]/g, ' ')}%`);
       const { data, error } = await query;
       if (missingTable(error)) return null;
@@ -145,7 +146,7 @@ export function fileStore(file: string): McpStore {
       const db = read();
       const t = q.text?.replace(/\s/g, '');
       return db.cases.filter(c => (!q.kind || c.kind === q.kind) && (!q.structureKind || c.structureKind === q.structureKind)
-        && (!t || `${c.title}${c.structure}`.replace(/\s/g, '').includes(t)))
+        && (!q.excludeSetup || c.setupId !== q.excludeSetup) && (!t || `${c.title}${c.structure}`.replace(/\s/g, '').includes(t)))
         .slice(-q.limit).reverse().map(c => ({ ...c, projectName: db.projects[c.projectId]?.name ?? c.projectId }));
     },
   };

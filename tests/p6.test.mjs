@@ -263,6 +263,12 @@ test('schedule check: out-of-sequence actuals, structure order, leads, stale dat
   assert.equal(check.partRank('PHC 말뚝 기초'), 1);
   assert.equal(check.partRank('교대 벽체'), 2);
   assert.equal(check.partRank('작업 진입로 개설'), 0);
+  // 같은 종류(개소별 기초)의 순서가 현장과 다름 → 오류가 아니라 '진행 순서 다름'(경고)
+  const seq = check.checkSchedule({ ...s, activities: [
+    a('F1', '기초', 'P1', { actualStart: '2024-05-01 08:00', actualFinish: '2024-05-10 17:00' }),
+    a('F2', '기초', 'P2', { actualStart: '2024-03-01 08:00', actualFinish: '2024-03-10 17:00' }),
+  ], relations: [{ pred: 'F1', succ: 'F2', type: 'FS', lagDays: 0 }] });
+  assert.deepEqual(seq.findings.filter(f => f.codes.includes('F2') && f.rule.startsWith('oos')).map(f => [f.rule, f.severity]), [['oos-sequence', 'warn']]);
 });
 
 test('CPM work windows: not-before and blocked periods push the start, and XER carries a start-on-or-after constraint', () => {
@@ -304,7 +310,10 @@ test('bridge plan: sourced durations, crew chains, girder after copings, critica
   assert.equal(act(one, 'T-P1-F').durationDays, 11); // 현장타설 1본 × 11일
   assert.equal(act(one, 'T-P4-C').durationDays, 10 + 7 * 2); // 7m → 3 LOT
   assert.equal(act(one, 'T-P1-K').durationDays, 27);
-  assert.equal(act(one, 'T-A1-F').durationDays, 74);
+  // 교대 74일 > 60일: 근거(순 29+12일) 비율로 말뚝·가시설·토공 52 + 기초 22, 벽체는 기초 뒤
+  assert.deepEqual([act(one, 'T-A1-F').name, act(one, 'T-A1-F').durationDays, act(one, 'T-A1-F2').name, act(one, 'T-A1-F2').durationDays], ['말뚝·가시설·토공', 52, '기초', 22]);
+  assert.ok(one.draft.relations.some(r => r.pred === 'T-A1-F' && r.succ === 'T-A1-F2') && one.draft.relations.some(r => r.pred === 'T-A1-F2' && r.succ === 'T-A1-W'));
+  assert.ok(one.draft.activities.every(a => a.durationDays <= B.MAX_ACTIVITY_DAYS), '60일 넘는 작업 없음');
   assert.ok(act(one, 'T-P1-F').udfs['산정근거'].includes('현장타설말뚝'));
   assert.ok(one.durationDays > two.durationDays, '작업조가 많으면 빨라짐');
   // 거치 묶음 S2~S3 는 P1·P2·P3 코핑이 끝난 뒤
@@ -332,4 +341,29 @@ test('bridge plan: sourced durations, crew chains, girder after copings, critica
   assert.equal(B.proposePlans(input).length, 3);
   assert.deepEqual(B.parseSupportList('P2~P3, A1 p04', supports.map(s => s.id)), ['A1', 'P2', 'P3', 'P4']);
   assert.deepEqual(B.parseSupportList('P7-8', supports.map(s => s.id)), ['P7', 'P8']);
+});
+
+test('bridge plan: long pier foundations split into piles and footing, the rest into equal pieces; model codes replace engine codes', () => {
+  const supports = [
+    { id: 'P1', kind: 'pier', pileType: 'cast', pileCount: 6, footing: true, heightM: 3 }, // 66 + 22 → 말뚝 66 → 33·33, 확대기초 22
+    { id: 'P2', kind: 'pier', pileType: 'cast', pileCount: 1, heightM: 30 }, // 교각 10 LOT = 73일 → 37·36
+    { id: 'P3', kind: 'pier', pileType: 'cast', pileCount: 1, heightM: 3 },
+  ];
+  const site = { name: '시험교', code: 'T', supports, spans: B.spansFromSupports(supports) };
+  const levers = { rigs: 1, pierCrews: 1, copingSets: 1, launchers: 1, deckCrews: 1, girderBatch: 5 };
+  const r = B.buildBridgePlan({ site, start: '2026-01-01' }, levers);
+  const act = c => r.draft.activities.find(a => a.code === c);
+  assert.deepEqual(['T-P1-F', 'T-P1-F-2', 'T-P1-F2'].map(c => [act(c).name, act(c).durationDays]), [['말뚝 (1/2)', 33], ['말뚝 (2/2)', 33], ['확대기초', 22]]);
+  assert.deepEqual(['T-P2-C', 'T-P2-C-2'].map(c => act(c).durationDays), [37, 36]);
+  const has = (p, q) => r.draft.relations.some(x => x.pred === p && x.succ === q);
+  assert.ok(has('T-P1-F', 'T-P1-F-2') && has('T-P1-F-2', 'T-P1-F2') && has('T-P1-F2', 'T-P1-C'), '말뚝 조각 → 확대기초 → 교각');
+  assert.ok(has('T-P2-C-2', 'T-P2-K') && has('T-P1-F2', 'T-P2-F'), '후행은 마지막 조각, 작업조 사슬은 기초 끝 → 다음 기초 시작');
+  assert.ok(r.draft.activities.every(a => a.durationDays <= B.MAX_ACTIVITY_DAYS));
+  assert.ok(r.basis.some(b => b.code === 'T-P2-C-2'));
+  // 모델 코드: 관계·근거·날짜가 모두 실제 코드로
+  const m = B.buildBridgePlan({ site, start: '2026-01-01', codeMap: { 'T-P3-F': '311311C5C20040050', 'T-P3-C': '311311C5C20040051' } }, levers);
+  assert.ok(m.draft.activities.some(a => a.code === '311311C5C20040050') && !m.draft.activities.some(a => a.code === 'T-P3-F'));
+  assert.ok(m.draft.relations.some(x => x.pred === '311311C5C20040050' && x.succ === '311311C5C20040051'));
+  assert.equal(m.dates.get('311311C5C20040050').start, r.dates.get('T-P3-F').start);
+  assert.ok(m.basis.some(b => b.code === '311311C5C20040051'));
 });

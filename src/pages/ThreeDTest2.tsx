@@ -18,6 +18,7 @@ import { Sim45dDock } from '../components/sim45d/Sim45dDock';
 import { Sim45dSetup } from '../components/sim45d/Sim45dSetup';
 import { useSim45d } from '../components/sim45d/useSim45d';
 import { fourDState } from '../lib/sim45d/timeline';
+import { linkEntries, resolveLinks } from '../lib/sim45d/viewerLinks';
 
 const authHeaders = async () => {
   const { data } = await supabase.auth.getSession();
@@ -151,10 +152,28 @@ export function ThreeDTest2({ variant, sim }: { variant?: 'svf'; sim?: boolean }
   const selected = useMemo(() => expand(selection), [selection, expand]);
   const highlighted = useMemo(() => expand(highlightIds ?? []), [highlightIds, expand]);
   // 4D(공정·공사비 메뉴): 기준일의 시공 상태 — 연결된 객체만 칠하고, 미시공은 숨기거나 회색으로. 색 구분보다 우선.
-  const { acts: simActs, links: simLinks, time: simTime, fourD: simFourD, hideFuture: simHideFuture } = sim45;
-  const fourD = useMemo(() => (sim && tree && simFourD && simLinks.size
-    ? fourDState(simActs, simLinks, simTime, tree.n, { hideFuture: simHideFuture }) : null),
-  [sim, tree, simFourD, simLinks, simActs, simTime, simHideFuture]);
+  const { acts: simActs, links: simLinks, time: simTime, fourD: simFourD, hideFuture: simHideFuture, savedLinks: simSaved, setLinks: simSetLinks } = sim45;
+  // 작업 → 이 모델의 객체: 6단계 연결(다른 파일 — 요소 IfcGUID·UniqueId 로) + 모델 코드(A3)가 작업 코드와 같은 객체. 속성 색인에서 찾는다.
+  const { lookupValues } = index;
+  useEffect(() => {
+    if (!sim || !tree) return;
+    const codes = simActs.filter(a => !a.summary).map(a => a.code);
+    if (!codes.length) { simSetLinks(null); return; }
+    let alive = true;
+    lookupValues(linkEntries(simSaved, codes))
+      .then(found => { if (alive) simSetLinks(resolveLinks(simSaved, codes, found)); })
+      .catch(e => { if (alive) setStatus(`4D 연결 객체를 찾지 못했습니다: ${errMessage(e)}`); });
+    return () => { alive = false; };
+  }, [sim, tree, simActs, simSaved, lookupValues, simSetLinks]);
+  // 칠하기·3D 선택 → 작업은 요소 아래 형상 노드까지
+  const paintLinks = useMemo(() => {
+    const out = new Map<string, number[]>();
+    for (const [code, ids] of simLinks) { const all: number[] = []; for (const id of ids) { if (tree) for (const d of tree.subtree(id)) all.push(d); else all.push(id); } out.set(code, all); }
+    return out;
+  }, [simLinks, tree]);
+  const fourD = useMemo(() => (sim && tree && simFourD && paintLinks.size
+    ? fourDState(simActs, paintLinks, simTime, tree.n, { hideFuture: simHideFuture }) : null),
+  [sim, tree, simFourD, paintLinks, simActs, simTime, simHideFuture]);
   const hidden = useMemo(() => {
     const out = expand(hiddenNodes);
     if (fourD) for (const id of fourD.hidden) out.push(id);
@@ -176,9 +195,9 @@ export function ThreeDTest2({ variant, sim }: { variant?: 'svf'; sim?: boolean }
   }, [simSelectActivity, simLinks]);
   const activitiesOf = useMemo(() => {
     const m = new Map<number, string[]>();
-    for (const [code, ids] of simLinks) for (const id of ids) { const l = m.get(id); if (l) l.push(code); else m.set(id, [code]); }
+    for (const [code, ids] of paintLinks) for (const id of ids) { const l = m.get(id); if (l) l.push(code); else m.set(id, [code]); }
     return m;
-  }, [simLinks]);
+  }, [paintLinks]);
   useEffect(() => {
     if (!sim || !activitiesOf.size) return;
     if (fromDock.current) { fromDock.current = false; return; }
@@ -578,7 +597,8 @@ export function ThreeDTest2({ variant, sim }: { variant?: 'svf'; sim?: boolean }
           {!modelName && !initError && (
             <div className="threed-test__empty">
               <UiIcon name="cube" size={40} />
-              <p>상단 <em>ACC에서 열기</em>로 모델을 여세요. (2차 엔진용 타일이 생성된 모델만 열립니다)</p>
+              <p>상단 <em>ACC에서 열기</em>로 모델을 여세요. ({variant ? '3차 화면 타일을 만든 모델만 열립니다' : '2차 엔진용 타일이 생성된 모델만 열립니다'})</p>
+              {sim && <p className="threed-test__empty-sub">4D 는 현장 통합 모델(예: 5공구_통합모델.nwd)을 열면 확정 공정표의 작업 상태로 칠해집니다 — 6단계 연결과 모델의 IPS 코드로 객체를 찾습니다.</p>}
             </div>
           )}
           {tree && treeOpen && (

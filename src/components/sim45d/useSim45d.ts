@@ -3,6 +3,9 @@ import { decodeXer, encodeXer, parseXer, serializeXer, type XerDoc, type XerEnco
 import { readSchedule, type P6Schedule } from '../../lib/p6/schedule';
 import { DAY, scheduleRange, startOfDay, timedActivities, type TimedActivity } from '../../lib/sim45d/timeline';
 import type { BoqLine, QtyRow } from '../../lib/sim45d/types';
+import { applyActuals, type ModelActuals } from '../../lib/sim45d/modelActuals';
+import type { LinkSet } from '../../lib/sim45d/setup';
+import type { ResolvedLinks } from '../../lib/sim45d/viewerLinks';
 
 /**
  * 공정·공사비(4D/5D) 화면 상태: 공정표(XER), 기준일·재생, 작업 선택, 작업 ↔ 객체 연결, 작업별 공사비, 내역·물량.
@@ -32,8 +35,17 @@ export interface Sim45d {
   selected: ReadonlySet<string>;
   selectActivity: (code: string, additive: boolean) => void;
   setSelected: (codes: ReadonlySet<string>) => void;
-  /** 작업(Activity ID) → 객체(dbId). */
+  /** 작업(Activity ID) → 화면 객체(dbId, 요소 노드). 3D 뷰어가 6단계 연결·모델 코드로 찾아 넣는다(lib/sim45d/viewerLinks.ts). */
   links: ReadonlyMap<string, readonly number[]>;
+  setLinks: (r: ResolvedLinks | null) => void;
+  /** 찾은 결과 요약(6단계 연결 중 화면 모델에서 찾은 것·못 찾은 것, 모델 코드로 이은 객체). */
+  linkInfo: Omit<ResolvedLinks, 'byCode'> | null;
+  /** 대상에 저장된 6단계 연결(단계 시트가 넣음). */
+  savedLinks: LinkSet['links'];
+  setSavedLinks: (links: LinkSet['links']) => void;
+  /** 모델의 현장 실적(A5)을 공정표에 넣었으면 그 요약. */
+  actualsInfo: { filled: number; dated: number; linked: number } | null;
+  setModelActuals: (m: ModelActuals | null) => void;
   /** 작업 → 공사비(계약 기준). */
   cost: ReadonlyMap<string, number>;
   boq: BoqLine[];
@@ -58,16 +70,24 @@ export function useSim45d(projectId: string, enabled: boolean): Sim45d {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [fourD, setFourD] = useState(true);
   const [hideFuture, setHideFuture] = useState(true);
-  // 연결·공사비·내역·물량은 자료 파서·연결 엔진이 채운다(다음 단계).
-  const [links] = useState<ReadonlyMap<string, readonly number[]>>(new Map());
+  const [resolved, setResolved] = useState<ResolvedLinks | null>(null);
+  const [savedLinks, setSavedLinks] = useState<LinkSet['links']>([]);
+  const [modelActuals, setModelActuals] = useState<ModelActuals | null>(null);
+  // 공사비·내역·물량은 수량분개가 채운다.
   const [cost] = useState<ReadonlyMap<string, number>>(new Map());
   const [boq] = useState<BoqLine[]>([]);
   const [qty] = useState<QtyRow[]>([]);
+  const links = useMemo<ReadonlyMap<string, readonly number[]>>(() => resolved?.byCode ?? new Map(), [resolved]);
+  const linkInfo = useMemo(() => (resolved ? { found: resolved.found, missing: resolved.missing, byModelCode: resolved.byModelCode } : null), [resolved]);
+  const setLinks = useCallback((r: ResolvedLinks | null) => setResolved(r), []);
 
-  const schedule = useMemo(() => {
+  const withActuals = useMemo(() => {
     if (!doc) return null;
-    try { return readSchedule(doc); } catch { return null; }
-  }, [doc]);
+    try { return applyActuals(readSchedule(doc), modelActuals); } catch { return null; }
+  }, [doc, modelActuals]);
+  const schedule = withActuals?.schedule ?? null;
+  const actualsInfo = useMemo(() => (withActuals && modelActuals && withActuals.filled
+    ? { filled: withActuals.filled, dated: modelActuals.dated, linked: modelActuals.linked } : null), [withActuals, modelActuals]);
   const acts = useMemo(() => (schedule ? timedActivities(schedule) : []), [schedule]);
   const actsByCode = useMemo(() => new Map(acts.map(a => [a.code, a])), [acts]);
   const range = useMemo(() => scheduleRange(acts), [acts]);
@@ -80,8 +100,8 @@ export function useSim45d(projectId: string, enabled: boolean): Sim45d {
     setSourceEncoding(encoding);
     setError('');
     setSelected(new Set());
-    const r = scheduleRange(timedActivities(s));
-    setTimeState(r ? startOfDay(r.start + (r.end - r.start) * 0.35) : 0);
+    setModelActuals(null); // 이 공정표용 실적은 단계 시트가 다시 넣는다
+    setTimeState(defaultTime(s));
   }, []);
 
   // 이 브라우저에 보관한 마지막 공정표
@@ -152,8 +172,31 @@ export function useSim45d(projectId: string, enabled: boolean): Sim45d {
     });
   }, []);
 
+  // 모델 실적이 들어오면 기준일을 데이터 기준일(가장 늦은 실적)로 — 실적이 바뀔 때 한 번.
+  const timedFor = useRef<object | null>(null);
+  useEffect(() => {
+    if (!schedule || !modelActuals || timedFor.current === modelActuals) return;
+    timedFor.current = modelActuals;
+    setTimeState(defaultTime(schedule));
+  }, [schedule, modelActuals]);
+
   return {
     schedule, fileName, sourceEncoding, error, acts, actsByCode, range, time, setTime, playing, setPlaying, speed, setSpeed,
-    selected, selectActivity, setSelected, links, cost, boq, qty, fourD, setFourD, hideFuture, setHideFuture, openXer, downloadXer, close,
+    selected, selectActivity, setSelected, links, setLinks, linkInfo, savedLinks, setSavedLinks, actualsInfo, setModelActuals,
+    cost, boq, qty, fourD, setFourD, hideFuture, setHideFuture, openXer, downloadXer, close,
   };
+}
+
+/**
+ * 처음 기준일: 공정표의 데이터 기준일(실적을 넣었으면 가장 늦은 실적일)이 기간 안이면 그날, 아니면 오늘이 기간 안이면 오늘,
+ * 둘 다 아니면 기간의 35% 지점(계획만 있는 먼 공정표).
+ */
+export function defaultTime(s: P6Schedule): number {
+  const r = scheduleRange(timedActivities(s));
+  if (!r) return 0;
+  const inRange = (t: number | null): t is number => t !== null && Number.isFinite(t) && t > r.start && t <= r.end;
+  const data = s.dataDate ? Date.parse(s.dataDate.slice(0, 10)) : null, today = startOfDay(Date.now());
+  if (inRange(data)) return startOfDay(data);
+  if (inRange(today)) return today;
+  return startOfDay(r.start + (r.end - r.start) * 0.35);
 }

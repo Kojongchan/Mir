@@ -66,6 +66,7 @@ const ACTIVITY_RULES: Record<LinkPart, { name: RegExp; atPlace: boolean; prefer?
 };
 
 const PLACE = /(?:^|[^A-Za-z0-9])([AP])\s?0*(\d{1,3})(?!\d)/g;
+const SPAN = /(?:^|[^A-Za-z0-9])S\s?0*(\d{1,3})(?!\d)/g;
 
 /** 글에서 개소 하나(A1·P12)를 읽는다. 둘 이상이면(예 'P01,P03_P46') 모르는 것으로. */
 export function placeOf(text: string | undefined): string | null {
@@ -73,6 +74,23 @@ export function placeOf(text: string | undefined): string | null {
   const found = new Set([...text.toUpperCase().matchAll(PLACE)].map(m => `${m[1]}${Number(m[2])}`));
   return found.size === 1 ? [...found][0] : null;
 }
+
+/** 글에서 경간 번호 하나(객체명칭 '상선_거더_S03' → 3)를 읽는다. 없거나 둘 이상이면 null. */
+export function spanOf(text: string | undefined): number | null {
+  if (!text) return null;
+  const found = new Set([...text.toUpperCase().matchAll(SPAN)].map(m => Number(m[1])));
+  return found.size === 1 ? [...found][0] : null;
+}
+
+/** 작업 이름이 맡는 경간('WPC거더 거치 S1~S5' → 1~5, '… S46' → 46). 경간이 없으면 null. */
+export function spansOfName(name: string): { lo: number; hi: number } | null {
+  const range = /S\s?0*(\d{1,3})\s*[~∼-]\s*S?\s?0*(\d{1,3})(?!\d)/i.exec(name);
+  if (range) { const a = Number(range[1]), b = Number(range[2]); return { lo: Math.min(a, b), hi: Math.max(a, b) }; }
+  const one = spanOf(name);
+  return one === null ? null : { lo: one, hi: one };
+}
+
+const PILE = /말뚝|파일|PHC|현장타설|강관/i;
 
 export function partOf(text: string | undefined): LinkPart | null {
   if (!text) return null;
@@ -86,9 +104,11 @@ const norm = (s: string) => s.replace(/\s/g, '');
 /**
  * 객체마다 작업 하나를 고른다. 부위는 객체명칭 → 이름 → 유형 → 주석 순(주석은 '상선 교각 P35' 처럼 개소를 말해도
  * 부위는 틀리기 쉬움), 개소는 객체명칭 → 주석 → 유형 → 이름 순(패밀리 이름은 'P01,P03_P46' 처럼 여러 개).
+ * 상부(거더·상판·받침·특수 경간)는 개소 대신 경간: 객체명칭의 'S03' 이 작업 이름의 경간 범위('S1~S5')에 드는 작업.
+ * 기초가 말뚝과 확대기초(교대: 말뚝·가시설·토공과 기초)로 나뉜 개소는 말뚝 객체는 말뚝 작업, 나머지는 기초 작업.
  */
 export function autoLink(objects: LinkObject[], activities: LinkActivity[]): LinkResult[] {
-  const acts = activities.map(a => ({ ...a, n: norm(a.name), places: new Set(a.path.map(p => placeOf(p)).filter((p): p is string => !!p)) }));
+  const acts = activities.map(a => ({ ...a, n: norm(a.name), spans: spansOfName(a.name), places: new Set(a.path.map(p => placeOf(p)).filter((p): p is string => !!p)) }));
   return objects.map(o => {
     const label = clean(o.label), name = clean(o.name), type = clean(o.type), comment = clean(o.comment);
     let part = partOf(label) ?? partOf(name) ?? partOf(type) ?? partOf(comment);
@@ -109,8 +129,18 @@ export function autoLink(objects: LinkObject[], activities: LinkActivity[]): Lin
       const pref = hit.filter(a => rule.prefer!.test(a.n));
       if (pref.length) hit = pref;
     }
+    if (hit.length > 1 && part === 'foundation') {
+      const pile = PILE.test([label, name, type].filter(Boolean).join(' '));
+      const pref = hit.filter(a => /말뚝/.test(a.n) === pile);
+      if (pref.length) hit = pref;
+    }
+    const span = rule.atPlace ? null : spanOf(label) ?? spanOf(comment) ?? spanOf(name);
+    if (hit.length > 1 && span !== null) {
+      const inSpan = hit.filter(a => a.spans && span >= a.spans.lo && span <= a.spans.hi);
+      if (inSpan.length) hit = inSpan;
+    }
     if (hit.length === 1) {
-      return { id: o.id, code: hit[0].code, part, place, candidates: [], reason: `${LINK_PART_LABEL[part]}${place ? ` ${place}` : ''}${deckByIfc ? `(${o.ifcClass})` : ''} → ${hit[0].name}` };
+      return { id: o.id, code: hit[0].code, part, place, candidates: [], reason: `${LINK_PART_LABEL[part]}${place ? ` ${place}` : ''}${span !== null ? ` S${span}` : ''}${deckByIfc ? `(${o.ifcClass})` : ''} → ${hit[0].name}` };
     }
     return hit.length
       ? none(`${LINK_PART_LABEL[part]}: 작업 후보 ${hit.length}개`, hit.map(a => a.code))

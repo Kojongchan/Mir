@@ -47,6 +47,21 @@ export class PropSearchIndex {
 
   get size(): number { return this.objects.length; }
 
+  /**
+   * Objects having one of these exact "label value" entries (case-insensitive), per entry — e.g. 'IfcGUID 1YtB3…' to find the
+   * objects of another model's links (4D/5D) in this one.
+   */
+  lookup(wanted: string[]): Record<string, number[]> {
+    const pos = new Map(wanted.map((w, i) => [w.toLowerCase(), i]));
+    const slot = new Int32Array(this.vocab.length).fill(-1);
+    for (let v = 0; v < this.vocab.length; v++) { const i = pos.get(this.vocab[v]); if (i !== undefined) slot[v] = i; }
+    const out: number[][] = wanted.map(() => []);
+    for (let o = 0; o < this.objects.length; o++) {
+      for (let i = this.starts[o]; i < this.starts[o + 1]; i++) { const k = slot[this.entries[i]]; if (k >= 0) out[k].push(this.objects[o]); }
+    }
+    return Object.fromEntries(wanted.map((w, i) => [w, out[i]]));
+  }
+
   /** Objects whose properties contain every term (case-insensitive substring of "label value"). */
   search(query: string): number[] {
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean);

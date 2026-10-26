@@ -17,6 +17,8 @@ export interface StepProps {
   renderSlot: (key: SlotKey) => ReactNode;
   /** 확정 공정표(P6 칸 XER)를 열어 4D/5D·검토에 쓴다. 큰 XER 은 브라우저에 보관되지 않아 새로 열 때마다 필요. */
   openP6: () => void;
+  /** 방금 저장한 상태로 다시 연다(6단계에서 모델 코드로 맞춰 작업 코드가 바뀌었을 때). */
+  reopenP6: (next: SetupData) => void;
   opening: boolean;
 }
 

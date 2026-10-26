@@ -5,7 +5,7 @@ import {
 } from '../../../lib/p6/bridgePlan';
 import { planRates, planXerBytes, planXerName } from '../../../lib/sim45d/confirmed';
 import { accPdfPages, chunkPages } from '../../../lib/sim45d/docText';
-import { emptyPlan, type PlanSettings } from '../../../lib/sim45d/setup';
+import { codeMapOf, emptyPlan, type PlanSettings } from '../../../lib/sim45d/setup';
 import { AiBox, AiStatus, useAi, type StepProps } from './common';
 import { ModelDateCompare } from './ModelDateCompare';
 
@@ -100,7 +100,8 @@ export function DraftStep({ projectId, canEdit, data, persist, sim, setStatus }:
   const generate = () => {
     if (!site) return;
     if (!plan.start) { setStatus('과업시작일을 넣으세요.'); return; }
-    const input = { site, start: plan.start, rates, criticalPoints: plan.criticalPoints };
+    // 6단계에서 모델의 실제 IPS 코드로 맞춘 작업은 그 코드로(내려받는 XER 도 같은 ID)
+    const input = { site, start: plan.start, rates, criticalPoints: plan.criticalPoints, codeMap: codeMapOf(data) };
     try {
       let list: { title: string; result: PlanResult }[];
       if (plan.mode === 'fit') {

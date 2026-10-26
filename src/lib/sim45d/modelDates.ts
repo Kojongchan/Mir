@@ -1,6 +1,7 @@
 // 모델(RVT)에 들어 있는 공정 날짜(A5_계획/실시공정 시작·종료일)와 플랫폼 개략 IPS 안을 비교한다(D36).
 // 잇는 키는 Activity ID 가 아니라 '개소 + 부위'(개략 IPS 코드와 실제 IPS 코드가 다르므로) — 모델 객체는 6단계와 같은 규칙
-// (autolink 의 placeOf·partOf), 개략 IPS 작업은 코드 꼴(BR01-P12-F 기초 · -C 교각 · -K 코핑 · -W 교대 벽체 · -Gnn 거더 · -Dnn 공동구 · -X 특수 경간).
+// (autolink 의 placeOf·partOf), 개략 IPS 작업은 코드 꼴(BR01-P12-F 기초 · -F2 나눈 기초 · -C 교각 · -K 코핑 · -W 교대 벽체 · -Gnn 거더 · -Dnn 공동구 ·
+// -X 특수 경간, 60일 넘어 나눈 조각은 뒤에 -2…) — 그래서 비교에는 모델 코드로 바꾸기(PlanInput.codeMap) 전의 엔진 코드를 쓴다.
 // 상부(거더·받침·상판)는 객체에 경간이 없어 개소별로 못 잇고 상부 전체 구간으로만 본다. 순수 함수 — 화면·AI 연결 공통.
 import { buildBridgePlan, type Levers, type PlanInput, type PlanResult } from '../p6/bridgePlan.js';
 import { addDays, daysBetween } from '../p6/schedule.js';
@@ -65,9 +66,9 @@ export function planSpans(r: PlanResult): Map<string, Span> {
   for (const a of r.draft.activities) {
     const d = r.dates.get(a.code);
     if (!d) continue;
-    const sub = /-([AP]\d+)-([FCKW])$/.exec(a.code);
+    const sub = /-([AP]\d+)-([FCKW])2?(?:-\d+)?$/.exec(a.code);
     if (sub) widen(out, `${sub[1]}|${SUFFIX[sub[2]]}`, d.start, d.finish);
-    else if (/-(G|D)\d+$|-X/.test(a.code)) widen(out, SUPER_KEY, d.start, d.finish);
+    else if (/-(G|D)\d+(?:-\d+)?$|-X/.test(a.code)) widen(out, SUPER_KEY, d.start, d.finish);
   }
   return out;
 }
@@ -196,9 +197,10 @@ export interface OptionCompare { title: string; levers: Levers; start: string; r
  * 안마다 비교: 과업시작일을 '모델의 첫 하부 작업일 − (그 안에서 첫 하부 작업까지 걸리는 준비 기간)'으로 맞춰 다시 계산한 뒤 잇는다
  * — 시작일이 달라 생기는 일괄 차이를 빼고 순서·속도만 본다. 모델에 날짜가 없으면 aligned = null.
  */
-export function compareOptions(model: Map<string, Span>, input: PlanInput, options: { title: string; levers: Levers }[]): { aligned: string | null; options: OptionCompare[] } {
+export function compareOptions(model: Map<string, Span>, withCodes: PlanInput, options: { title: string; levers: Levers }[]): { aligned: string | null; options: OptionCompare[] } {
   const first = firstSubStart(model);
   if (!first) return { aligned: null, options: [] };
+  const input: PlanInput = { ...withCodes, codeMap: undefined }; // 개소+부위는 엔진 코드 꼴에서 읽는다
   return {
     aligned: first,
     options: options.map(o => {

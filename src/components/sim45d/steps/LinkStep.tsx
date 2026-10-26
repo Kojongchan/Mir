@@ -1,22 +1,26 @@
 import { useMemo, useState } from 'react';
 import { fetchModelObjects, type ModelObject } from '../../../lib/sim45d/modelObjects';
-import { autoLink, LINK_PART_LABEL, type LinkActivity, type LinkResult } from '../../../lib/sim45d/autolink';
-import type { LinkSet, SetupFile } from '../../../lib/sim45d/setup';
+import { LINK_PART_LABEL, type LinkActivity, type LinkResult } from '../../../lib/sim45d/autolink';
+import type { CodeMapSet, LinkSet, SetupFile } from '../../../lib/sim45d/setup';
 import { wbsScope } from '../../../lib/sim45d/wbsScope';
+import { linkWithCodes, type CodeMatch } from '../../../lib/sim45d/codeMatch';
 import { AiBox, AiStatus, useAi, type StepProps } from './common';
-import { confirmedSource, NO_CONFIRMED } from '../../../lib/sim45d/confirmed';
+import { adoptedSchedule, confirmedSource, NO_CONFIRMED } from '../../../lib/sim45d/confirmed';
 
 /**
  * 6단계 BIM 연결: 확정 IPS(4D 로 연 공정표)의 Activity ID 를 모델 객체에 붙인다. 규칙(부위·개소) → 남는 것만 AI.
- * 모델에 이미 코드가 있으면 비교해 서로 다른 객체(사람 입력 오류 후보)를 보여준다. 결과는 대상별로 저장(객체 키 = Revit UniqueId).
+ * 채택안(개략 IPS)이고 모델에 실제 IPS 코드가 있으면, 1:1 로 대응하는 작업은 그 코드를 받는다(codeMatch.ts) — 저장하면 채택안이 그 코드로
+ * 다시 만들어져 P6·7단계 반영·4D 가 같은 ID 를 쓴다. 결과는 대상별로 저장(객체 키 = 외부 ID·IfcGUID).
  */
-export function LinkStep({ projectId, canEdit, data, persist, sim, setStatus, openP6, opening }: StepProps) {
+export function LinkStep({ projectId, canEdit, data, persist, sim, setStatus, openP6, reopenP6, opening }: StepProps) {
   const s = sim.schedule;
   const models = (data.files.model ?? []).filter((f): f is SetupFile => !!f);
   const [modelId, setModelId] = useState(models[0]?.accItemId ?? '');
   const [root, setRoot] = useState('');
   const [objects, setObjects] = useState<ModelObject[] | null>(null);
   const [results, setResults] = useState<LinkResult[] | null>(null);
+  const [match, setMatch] = useState<CodeMatch | null>(null);
+  const [scopeActs, setScopeActs] = useState<LinkActivity[]>([]);
   const [aiLinks, setAiLinks] = useState<Map<string, { code: string; reason: string }>>(new Map());
   const [loading, setLoading] = useState('');
   const ai = useAi(projectId);
@@ -43,7 +47,13 @@ export function LinkStep({ projectId, canEdit, data, persist, sim, setStatus, op
 
   const run = () => {
     if (!objects || !root) return;
-    setResults(autoLink(objects.map(o => ({ id: String(o.id), label: o.label || undefined, name: o.name, type: o.type || undefined, comment: o.comment || undefined, ifcClass: o.ifcClass || undefined })), wbs.under(root)));
+    // 채택안이면 엔진 코드 공정표(같은 WBS)로 잇고 모델 코드와 맞춘다 — WBS 는 코드 맞춤과 상관없이 같다.
+    const raw = confirmedSource(data)?.kind === 'draft' ? adoptedSchedule(data, { raw: true }) : null;
+    const r = linkWithCodes(objects.map(o => ({ id: String(o.id), label: o.label || undefined, name: o.name, type: o.type || undefined, comment: o.comment || undefined,
+      ifcClass: o.ifcClass || undefined, code: o.code || undefined })), wbs.under(root), raw ? wbsScope(raw).under(root) : undefined);
+    setResults(r.results);
+    setMatch(r.match);
+    setScopeActs(r.activities);
     setAiLinks(new Map());
   };
 
@@ -71,7 +81,7 @@ export function LinkStep({ projectId, canEdit, data, persist, sim, setStatus, op
     const byId = new Map(objects.map(o => [String(o.id), o]));
     const open = results.filter(r => !r.code).slice(0, 300).map(r => { const o = byId.get(r.id)!; return { id: r.id, label: o.label, name: o.name, type: o.type, comment: o.comment }; });
     if (!open.length) return;
-    const acts = wbs.under(root).slice(0, 600);
+    const acts = scopeActs.slice(0, 600);
     const r = await ai.call<{ links: { id: string; code: string; reason: string }[] }>('linkLeftovers', { objects: open, activities: acts }, `미정 객체 ${open.length}개 연결`);
     if (!r) return;
     const valid = new Set(acts.map(a => a.code));
@@ -87,9 +97,17 @@ export function LinkStep({ projectId, canEdit, data, persist, sim, setStatus, op
       return code && o.ext ? [{ ext: o.ext, ifcGuid: o.ifcGuid, code, by: r.code ? 'rule' as const : 'ai' as const }] : [];
     });
     if (!links.length) { setStatus('저장할 연결이 없습니다.'); return; }
-    const set: LinkSet = { modelItemId: model.accItemId, wbsRoot: s?.wbs.find(w => w.id === root)?.name ?? root, at: new Date().toISOString(), links };
-    void persist({ ...data, links: [...(data.links ?? []).filter(l => l.modelItemId !== model.accItemId), set] })
-      .then(() => setStatus(`연결 ${links.length}개 저장 — ${model.name}`));
+    const at = new Date().toISOString();
+    const set: LinkSet = { modelItemId: model.accItemId, wbsRoot: s?.wbs.find(w => w.id === root)?.name ?? root, at, links };
+    const codeMaps: CodeMapSet[] = [...(data.codeMaps ?? []).filter(c => c.modelItemId !== model.accItemId),
+      ...(match && Object.keys(match.map).length ? [{ modelItemId: model.accItemId, at, map: match.map }] : [])];
+    const { codeMaps: _old, ...rest } = data;
+    const next = { ...rest, links: [...(data.links ?? []).filter(l => l.modelItemId !== model.accItemId), set], ...(codeMaps.length ? { codeMaps } : {}) };
+    const changed = JSON.stringify(data.codeMaps ?? []) !== JSON.stringify(codeMaps);
+    void persist(next).then(() => {
+      setStatus(`연결 ${links.length}개 저장 — ${model.name}${match ? ` · 모델 코드로 맞춘 작업 ${Object.keys(match.map).length}개` : ''}`);
+      if (changed) reopenP6(next); // 작업 코드가 바뀌었으니 4D·검토가 새 코드로 보게
+    });
   };
 
   if (!s) {
@@ -133,6 +151,11 @@ export function LinkStep({ projectId, canEdit, data, persist, sim, setStatus, op
       {stats && results && (
         <section className="sim-step__block">
           <h4>연결 {stats.linked.toLocaleString()} / {results.length.toLocaleString()} · 미정 {stats.open}</h4>
+          {match && (match.matched > 0 || match.split.length > 0) && (
+            <p>모델의 실제 IPS 코드로 맞춘 작업 <strong>{match.matched}</strong>개
+              <span className="muted"> — 저장하면 채택안이 이 코드로 나갑니다(P6·모델 반영·4D 가 같은 ID). 묶음이 달라 엔진 코드로 남는 작업 {match.unmatched}개
+                {match.split.length > 0 && `(예: 모델 코드 ${match.split[0].real} 가 ${match.split[0].draft.slice(0, 4).join('·')}${match.split[0].draft.length > 4 ? '…' : ''} 에 나뉨)`}.</span></p>
+          )}
           {stats.hadCode > 0 && (
             <p>모델에 이미 들어 있던 코드 {stats.hadCode.toLocaleString()}개와 비교: <span className="sim-ok">같음 {stats.agree.toLocaleString()}</span> · <span className="sim-error">다름 {stats.differ}</span>
               <span className="muted"> — 다른 것은 사람 입력 오류이거나 규칙 오류입니다. 아래에서 객체의 개소(Level7)와 함께 확인하세요.</span></p>

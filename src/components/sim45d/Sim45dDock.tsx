@@ -123,12 +123,10 @@ export function Sim45dDock({ sim, onOpenXer, objectCount, onSelectActivity }: {
         <div className="sim-dock__body" role="tabpanel">
           {!s || !range ? (
             <EmptyState icon={<UiIcon name="file-text" size={32} />} title="공정표가 없습니다"
-              desc={<>P6 에서 내보낸 공정표(XER)를 열면 공정표·간트·S-curve 가 나타나고, 연결된 객체가 기준일에 맞춰 3D 에서 칠해집니다.
+              desc={<>단계 시트(5·6단계)의 「확정 공정표 열기」로 4단계에서 채택한 개략 IPS(또는 올린 P6 공정표)를 열면 공정표·간트·S-curve 가 나타나고,
+                연결된 객체가 기준일에 맞춰 3D 에서 칠해집니다. 다른 XER 을 잠깐 볼 때는 아래 버튼으로 엽니다.
                 {sim.error && <><br /><span className="sim-error">{sim.error}</span></>}</>}
-              cta={<>
-                <button type="button" className="btn btn--primary btn--sm" onClick={onOpenXer}>P6 공정표(XER) 열기</button>
-                <button type="button" className="btn btn--sm" disabled title="사업 자료(보고서·도면)·모델·수량산출서로 IPS 표준안 기반 개략공정을 만듭니다 — 준비 중">AI 개략공정 만들기 (준비 중)</button>
-              </>} />
+              cta={<button type="button" className="btn btn--sm" onClick={onOpenXer}>XER 파일 열기</button>} />
           ) : tab === 'schedule' ? (
             <ScheduleGantt schedule={s} acts={sim.actsByCode} range={range} time={sim.time} onTime={sim.setTime}
               selected={sim.selected} onSelect={onSelectActivity ?? sim.selectActivity} linkCount={linkCount} cost={sim.cost} />
@@ -205,16 +203,24 @@ function LinksTab({ sim, objectCount }: { sim: Sim45d; objectCount: number }) {
   const acts = sim.schedule?.activities.filter(a => a.taskType !== 'TT_LOE' && a.taskType !== 'TT_WBS' && a.taskType !== 'TT_Mile' && a.taskType !== 'TT_FinMile') ?? [];
   const linkedActs = acts.filter(a => (sim.links.get(a.code)?.length ?? 0) > 0).length;
   const linkedBoq = sim.boq.filter(b => (b.objects?.length ?? 0) > 0).length;
+  const objects = [...sim.links.values()].reduce((n, ids) => n + ids.length, 0);
   const pct = (n: number, d: number) => (d ? `${((n / d) * 100).toFixed(0)}%` : '—');
+  const info = sim.linkInfo, actuals = sim.actualsInfo;
   return (
-    <TabFrame title="연결 현황" note="작업·내역·객체가 얼마나 이어졌는지. 연결 키(WBS·구조물·부위·STA) 규칙으로 잇고, 남는 것만 AI 가 제안합니다.">
+    <TabFrame title="연결 현황" note="작업·내역·객체가 얼마나 이어졌는지. 3D 객체는 6단계 연결(요소 IfcGUID)과 모델의 IPS 코드(A3)로 찾습니다.">
       <div className="sim-links">
         <div className="kpi-card"><span className="kpi-card__label">작업 ↔ 객체</span><span className="kpi-card__value tabular">{pct(linkedActs, acts.length)}</span>
-          <span className="kpi-card__meta tabular">{linkedActs} / {acts.length} 작업</span></div>
+          <span className="kpi-card__meta tabular">{linkedActs} / {acts.length} 작업 · 객체 {objects.toLocaleString()}</span></div>
+        <div className="kpi-card"><span className="kpi-card__label">6단계 연결 → 이 모델</span>
+          <span className="kpi-card__value tabular">{info ? info.found.toLocaleString() : '—'}</span>
+          <span className="kpi-card__meta tabular">{info ? `못 찾음 ${info.missing.toLocaleString()} · 모델 코드로 ${info.byModelCode.toLocaleString()}` : '모델을 열면 찾습니다'}</span></div>
+        <div className="kpi-card"><span className="kpi-card__label">모델 실적 반영</span>
+          <span className="kpi-card__value tabular">{actuals ? actuals.filled.toLocaleString() : '—'}</span>
+          <span className="kpi-card__meta tabular">{actuals ? `작업 · 실적 날짜 객체 ${actuals.dated.toLocaleString()} 중 ${actuals.linked.toLocaleString()} 이음` : '모델에 A5 실시 날짜가 없거나 아직 안 읽음'}</span></div>
         <div className="kpi-card"><span className="kpi-card__label">내역 ↔ 객체</span><span className="kpi-card__value tabular">{pct(linkedBoq, sim.boq.length)}</span>
           <span className="kpi-card__meta tabular">{linkedBoq} / {sim.boq.length} 항목</span></div>
         <div className="kpi-card"><span className="kpi-card__label">3D 선택</span><span className="kpi-card__value tabular">{objectCount.toLocaleString()}</span>
-          <span className="kpi-card__meta">선택한 객체를 작업에 직접 연결(수동) — 준비 중</span></div>
+          <span className="kpi-card__meta">3D 에서 고른 객체가 걸린 작업이 공정표에서 선택됩니다</span></div>
       </div>
     </TabFrame>
   );

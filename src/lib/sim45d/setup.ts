@@ -137,6 +137,23 @@ export interface LinkSet {
   links: { ext: string; ifcGuid: string; code: string; by: 'rule' | 'ai' | 'human' }[];
 }
 
+/**
+ * 6단계에서 객체로 맞춘 엔진 코드(BR01-P3-F) → 모델에 이미 있는 실제 IPS Activity ID(lib/sim45d/codeMatch.ts). 채택안 공정표는 이 코드로
+ * 나간다(P6·모델 반영·4D 가 같은 ID). 모델마다 하나.
+ */
+export interface CodeMapSet {
+  modelItemId: string;
+  at: string;
+  map: Record<string, string>;
+}
+
+/** 모든 모델의 코드 맞춤을 하나로(먼저 저장한 모델이 우선). */
+export function codeMapOf(data: SetupData): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const set of data.codeMaps ?? []) for (const [k, v] of Object.entries(set.map)) if (!(k in out)) out[k] = v;
+  return out;
+}
+
 export type StructureKind = 'bridge' | 'tunnel' | 'earthwork';
 export const STRUCTURE_KIND_LABEL: Record<StructureKind, string> = { bridge: '교량', tunnel: '터널', earthwork: '토공' };
 
@@ -149,6 +166,8 @@ export interface SetupData {
   site?: BridgeSite;
   plan?: PlanSettings;
   links?: LinkSet[];
+  /** 엔진 코드 → 모델의 실제 IPS 코드(6단계 연결과 함께 저장). */
+  codeMaps?: CodeMapSet[];
   /** 저장 기록(AI 연결로 저장한 것 포함), 최근 50개. */
   log?: SetupLogEntry[];
   /** 사람이 건너뛴 단계(예: 이미 짠 공정표를 올려 3·4단계 생략). 끝낸 단계는 완료가 우선. */
@@ -232,6 +251,11 @@ export function normalizeSetup(raw: unknown): SetupData {
     };
   }
   if (Array.isArray(r.links)) out.links = (r.links as LinkSet[]).filter(l => l && typeof l.modelItemId === 'string' && Array.isArray(l.links));
+  if (Array.isArray(r.codeMaps)) {
+    const ok = (r.codeMaps as CodeMapSet[]).filter(c => c && typeof c.modelItemId === 'string' && c.map && typeof c.map === 'object')
+      .map(c => ({ modelItemId: c.modelItemId, at: str(c.at), map: Object.fromEntries(Object.entries(c.map).filter(([k, v]) => typeof v === 'string' && k && v)) }));
+    if (ok.length) out.codeMaps = ok;
+  }
   const ms = r.modelSync as ModelSyncCheck | undefined;
   if (ms && typeof ms.at === 'string' && typeof ms.modelItemId === 'string' && [ms.rows, ms.same, ms.missing].every(Number.isFinite)) out.modelSync = ms;
   if (Array.isArray(r.skipped)) {

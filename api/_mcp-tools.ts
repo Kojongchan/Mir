@@ -15,10 +15,12 @@ import {
 } from '../src/lib/p6/bridgePlan.js';
 import { adoptedSchedule, confirmedSource, NO_CONFIRMED, planRates } from '../src/lib/sim45d/confirmed.js';
 import { compareOptions, concurrency, modelSpans, PART_NAME, partDays, startOrder } from '../src/lib/sim45d/modelDates.js';
-import { autoLink, LINK_PART_LABEL } from '../src/lib/sim45d/autolink.js';
+import { LINK_PART_LABEL } from '../src/lib/sim45d/autolink.js';
+import { linkWithCodes } from '../src/lib/sim45d/codeMatch.js';
+import { actualsFromModel, applyActuals } from '../src/lib/sim45d/modelActuals.js';
 import { wbsScope } from '../src/lib/sim45d/wbsScope.js';
 import { boqLines, boqSections, guessBoqSection } from '../src/lib/sim45d/boq.js';
-import { appendLog, emptyPlan, SLOTS, STEPS, stepStatus, type LinkSet, type SetupData, type SlotKey } from '../src/lib/sim45d/setup.js';
+import { appendLog, codeMapOf, emptyPlan, SLOTS, STEPS, stepStatus, type LinkSet, type SetupData, type SlotKey } from '../src/lib/sim45d/setup.js';
 import type { McpRole, McpStore, SetupRow } from './_mcp-store.js';
 
 export interface McpCtx {
@@ -48,7 +50,8 @@ drawing_index → view_drawing 의 교각 일반도 → save_design_status) → 
 → save_plan_settings → plan_schedule → (원본 RVT 에 현장 일정이 있으면 compare_model_dates 로 안과 비교) → 안 채택(save_plan_settings adopt) = 확정 공정표(P6 업로드는 사람이 P6 에서 고쳤을 때만)
 → P6 검토(check_schedule, list_activities, actual_durations) → BIM 연결(model_link_status → save_object_links)
 사람이 이미 짠 공정표를 올린 대상(list_targets 의 confirmedSchedule 이 '올린 P6 공정표 …', 또는 설계현황·개략 IPS 가 skipped)은 설계현황·개략 IPS 를 건너뛰고 P6 검토부터.
-→ 유사 사례(find_similar_cases)를 참고하고, 배운 점은 save_lesson 으로 남긴다.`;
+채택안으로 BIM 연결하면 모델에 이미 있는 실제 IPS 코드와 1:1 인 작업은 그 코드로 맞춰진다(save_object_links 가 함께 저장). 검토·작업 목록은 모델의 현장 실적(A5 실시)을 넣어 본다.
+→ 유사 사례(find_similar_cases, target=지금 대상 — 자기 사례는 빠짐)를 참고하고, 배운 점은 save_lesson 으로 남긴다.`;
 
 type Out = string | Record<string, unknown> | unknown[];
 const text = (o: Out) => ({ content: [{ type: 'text' as const, text: typeof o === 'string' ? o : JSON.stringify(o) }] });
@@ -71,6 +74,7 @@ const parsePages = (spec: string) => spec.split(',').flatMap(part => {
 });
 
 const schedules = new Map<string, { s: P6Schedule; at: number }>();
+const modelCache = new Map<string, { objects: any[]; at: number }>();
 
 /** 작업마다 WBS 이름 경로(예 '평택~오송 > 5공구 > 연제교(상선) > 하부공 > P12') — P6 의 wbsPath 는 코드 경로라 이름으로 거를 때 쓴다. */
 const wbsNames = (s: P6Schedule) => {
@@ -157,6 +161,44 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
     return { node: loose[0], acts: under(loose[0].id) };
   };
   const scheduleLabel = (row: SetupRow) => confirmedSource(row.data)?.label ?? null;
+  /**
+   * 6단계 규칙 연결(화면과 같은 linkWithCodes): 채택안이면 엔진 코드 공정표의 같은 WBS 로 잇고 모델의 실제 IPS 코드와 맞춘다.
+   * 객체 id = 외부 ID(없으면 객체 번호).
+   */
+  const linkRun = (row: SetupRow, s: P6Schedule, wbsId: string, objects: any[]) => {
+    const raw = confirmedSource(row.data)?.kind === 'draft' ? adoptedSchedule(row.data, { raw: true }) : null;
+    return linkWithCodes(objects.map(o => ({ id: o.ext || String(o.id), label: o.label || undefined, name: o.name, type: o.type || undefined, comment: o.comment || undefined,
+      ifcClass: o.ifcClass || undefined, code: o.code || undefined })), wbsScope(s).under(wbsId), raw ? wbsScope(raw).under(wbsId) : undefined);
+  };
+  /** 대상 모델들의 객체(속성 요약) — 10분 보관. 준비 중·오류인 모델은 건너뛴다. */
+  const allModelObjects = async (row: SetupRow) => {
+    const out: any[] = [];
+    for (const f of (row.data.files.model ?? []).filter(x => x.urn)) {
+      const hit = modelCache.get(f.urn!);
+      if (hit && Date.now() - hit.at < 10 * 60_000) { out.push(...hit.objects); continue; }
+      const m = await ctx.acc.modelObjects(f.urn!);
+      if ('objects' in m) { modelCache.set(f.urn!, { objects: m.objects, at: Date.now() }); out.push(...m.objects); }
+    }
+    return out;
+  };
+  /**
+   * 확정 공정표 + 모델의 현장 실적(A5 실시, 3번 결정): 6단계 연결 → 모델 코드 → (채택안이면) 규칙 연결로 작업에 잇고, 실적이 빈 작업에만 넣는다.
+   * 모델을 못 읽으면 공정표 그대로.
+   */
+  const scheduleWithActuals = async (row: SetupRow): Promise<{ s: P6Schedule; actuals: { filled: number; objects: number; linked: number } | null }> => {
+    const s = await schedule(row);
+    try {
+      const objects = await allModelObjects(row);
+      if (!objects.length) return { s, actuals: null };
+      const top = s.wbs.find(w => !w.parentId);
+      const rule = confirmedSource(row.data)?.kind === 'draft' && top ? wbsScope(s).under(top.id) : undefined;
+      const m = actualsFromModel(objects, new Set(s.activities.map(x => x.code)), { links: (row.data.links ?? []).flatMap(l => l.links), rule });
+      const r = applyActuals(s, m);
+      return { s: r.schedule, actuals: r.filled ? { filled: r.filled, objects: m.dated, linked: m.linked } : null };
+    } catch {
+      return { s, actuals: null };
+    }
+  };
   /** 지금 설정으로 계산한 안들(방식 1: A/B/C, 방식 2: 종료일 안에 드는 투입안). */
   const planOptions = (data: SetupData, over: { mode?: 'propose' | 'fit'; start?: string; finish?: string } = {}) => {
     const site = data.site;
@@ -164,7 +206,7 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
     const plan = data.plan ?? emptyPlan();
     const start = over.start ?? plan.start;
     if (!start) throw new Error('과업시작일이 없습니다 — start 를 주거나 save_plan_settings.');
-    const input = { site, start, rates: planRates(plan), criticalPoints: plan.criticalPoints };
+    const input = { site, start, rates: planRates(plan), criticalPoints: plan.criticalPoints, codeMap: codeMapOf(data) };
     const mode = over.mode ?? plan.mode;
     if (mode === 'fit') {
       const finish = over.finish ?? plan.finish;
@@ -249,13 +291,14 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
     input: { target: z.string(), rule: z.string().optional().describe('규칙 키, 예 oos-actual'), data_date: z.string().optional().describe('검토 기준일 YYYY-MM-DD') },
   }, async a => {
     const row = await target(a.target);
-    const s = await schedule(row);
+    const { s, actuals } = await scheduleWithActuals(row);
     const r = checkSchedule(s, { dataDate: a.data_date ?? null });
     const rules = (Object.keys(r.counts) as CheckRule[]).map(k => ({
       rule: k, title: CHECK_RULES[k].title, severity: CHECK_RULES[k].severity, why: CHECK_RULES[k].why, count: r.counts[k],
       examples: r.findings.filter(x => x.rule === k).slice(0, a.rule === k ? 200 : 8).map(x => x.message),
     }));
-    return { setupId: row.id, out: { schedule: scheduleLabel(row), project: s.projectName, dataDate: r.dataDate, checked: r.checked, rules }, summary: rules.map(x => `${x.rule}:${x.count}`).join(' ') };
+    const modelActuals = actuals ? `모델의 현장 실적(A5 실시)을 ${actuals.filled}개 작업에 넣고 검토(실적 날짜 객체 ${actuals.objects} 중 ${actuals.linked} 이음) — 기준일은 가장 늦은 실적일.` : null;
+    return { setupId: row.id, out: { schedule: scheduleLabel(row), project: s.projectName, dataDate: r.dataDate, checked: r.checked, modelActuals, rules }, summary: rules.map(x => `${x.rule}:${x.count}`).join(' ') };
   });
 
   tool('list_activities', {
@@ -264,7 +307,7 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
     input: { target: z.string(), wbs: z.string().optional(), query: z.string().optional(), limit: z.number().int().min(1).max(1000).optional() },
   }, async a => {
     const row = await target(a.target);
-    const s = await schedule(row);
+    const { s } = await scheduleWithActuals(row);
     const q = toRegex(a.query);
     const path = wbsNames(s);
     const acts = s.activities.filter(x => (!a.wbs || path(x.wbsId).includes(a.wbs)) && (!q || q.test(x.name)));
@@ -288,7 +331,7 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
     input: { target: z.string(), wbs: z.string().optional().describe('WBS 이름 일부(예 연제교(상선))'), save: z.boolean().optional() },
   }, async a => {
     const row = await target(a.target);
-    const s = await schedule(row);
+    const { s } = await scheduleWithActuals(row);
     const groups = new Map<string, { actual: number[]; planned: number[] }>();
     const path = wbsNames(s);
     for (const x of s.activities) {
@@ -324,11 +367,12 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
     const f = fileOf(row, 'model', a.model);
     if (!f.urn) throw new Error(`${f.name}: 변환 URN 없이 골라졌습니다 — 플랫폼에서 다시 고르세요.`);
     const s = await schedule(row);
-    const { node, acts } = scope(s, a.wbs);
+    const { node } = scope(s, a.wbs);
     const m = await ctx.acc.modelObjects(f.urn);
     if ('pending' in m) return { setupId: row.id, out: 'ACC 가 모델 속성을 준비 중입니다. 1~2분 뒤 다시 부르세요.' };
     if ('error' in m) throw new Error(m.error);
-    const res = autoLink(m.objects.map(o => ({ id: o.ext || String(o.id), label: o.label || undefined, name: o.name, type: o.type || undefined, comment: o.comment || undefined, ifcClass: o.ifcClass || undefined })), acts);
+    const run = linkRun(row, s, node.id, m.objects);
+    const res = run.results, acts = run.activities;
     const byId = new Map(m.objects.map(o => [o.ext || String(o.id), o]));
     const saved = new Map((row.data.links ?? []).find(l => l.modelItemId === f.accItemId)?.links.map(l => [l.ext, l.code]) ?? []);
     const open = res.filter(r => !r.code && !saved.has(r.id));
@@ -341,6 +385,8 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
       out: {
         schedule: scheduleLabel(row), model: f.name, wbs: node.name, objects: m.objects.length, ruleLinked: res.length - res.filter(r => !r.code).length, savedLinks: saved.size, open: open.length,
         byPart: parts, existingCodeCompare: agree + differ ? { agree, differ } : null,
+        codeMatch: run.match ? { matchedToModelCodes: run.match.matched, keptEngineCodes: run.match.unmatched, split: run.match.split.slice(0, 10),
+          note: '채택안 작업 중 모델의 실제 IPS 코드와 1:1 인 것은 그 코드로 바뀐다(save_object_links 로 저장하면 채택안이 그 코드로 나감). 묶음이 다른 작업은 엔진 코드.' } : null,
         openObjects: open.slice(0, a.limit ?? 200).map(r => { const o = byId.get(r.id)!; return { object: r.id, name: o.name, type: o.type, label: o.label, ifcClass: o.ifcClass, level7: o.level7, reason: r.reason, candidates: r.candidates }; }),
         activities: acts.slice(0, 400).map(x => ({ code: x.code, name: x.name, path: x.path.join(' > ') })),
       },
@@ -495,12 +541,18 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
 
   tool('find_similar_cases', {
     title: '유사 사례 찾기',
-    description: '다른 대상·프로젝트에서 저장된 사례: 단위공기와 근거(rates), 설계현황 요약(design), 크리티컬 포인트(critical), 실적 공기(actuals), 배운 점(lesson). query 는 제목·구조물 이름 일부.',
-    input: { kind: z.enum(['rates', 'design', 'critical', 'actuals', 'lesson', 'links']).optional(), query: z.string().optional(), structure_kind: z.enum(['bridge', 'tunnel', 'earthwork']).optional(), limit: z.number().int().min(1).max(50).optional() },
+    description: '다른 대상·프로젝트에서 저장된 사례: 단위공기와 근거(rates), 설계현황 요약(design), 크리티컬 포인트(critical), 실적 공기(actuals), 배운 점(lesson). query 는 제목·구조물 이름 일부. '
+      + 'target 에 지금 작업 중인 대상을 주면 그 대상 자신이 저장한 사례는 뺀다.',
+    input: {
+      kind: z.enum(['rates', 'design', 'critical', 'actuals', 'lesson', 'links']).optional(), query: z.string().optional(), structure_kind: z.enum(['bridge', 'tunnel', 'earthwork']).optional(),
+      target: z.string().optional().describe('지금 작업 중인 대상(그 대상의 사례는 제외)'), limit: z.number().int().min(1).max(50).optional(),
+    },
   }, async a => {
-    const rows = await ctx.store.findCases({ kind: a.kind, text: a.query, structureKind: a.structure_kind, limit: a.limit ?? 10 });
+    const self = a.target ? await target(a.target) : null;
+    const rows = await ctx.store.findCases({ kind: a.kind, text: a.query, structureKind: a.structure_kind, excludeSetup: self?.id, limit: a.limit ?? 10 });
     if (rows === null) return { out: '사례 저장소가 아직 없습니다(관리자: supabase/migrations/0041_ai_connect.sql 적용).' };
-    return { out: { count: rows.length, cases: rows.map(c => ({ project: c.projectName, structure: c.structure, kind: c.kind, title: c.title, body: c.body, source: c.source, tags: c.tags, at: c.createdAt })) }, summary: `${rows.length}건` };
+    const note = !rows.length ? `${self ? `${self.name} 말고 ` : ''}저장된 사례가 아직 없습니다 — 다른 대상(예: 하선·다른 교량)을 진행하면 쌓입니다.` : undefined;
+    return { setupId: self?.id, out: { count: rows.length, note, cases: rows.map(c => ({ project: c.projectName, structure: c.structure, kind: c.kind, title: c.title, body: c.body, source: c.source, tags: c.tags, at: c.createdAt })) }, summary: `${rows.length}건` };
   });
 
   // ---------------------------------------------------------------- 저장(실무자 이상)
@@ -642,25 +694,35 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
     const f = fileOf(row, 'model', a.model);
     if (!f.urn) throw new Error(`${f.name}: 변환 URN 없음`);
     const s = await schedule(row);
-    const { node, acts } = scope(s, a.wbs);
+    const { node } = scope(s, a.wbs);
     const m = await ctx.acc.modelObjects(f.urn);
     if ('pending' in m) throw new Error('ACC 가 모델 속성을 준비 중입니다. 잠시 뒤 다시.');
     if ('error' in m) throw new Error(m.error);
-    const codes = new Set(acts.map(x => x.code));
+    const run = linkRun(row, s, node.id, m.objects);
+    const codes = new Set(run.activities.map(x => x.code));
     const byId = new Map(m.objects.map(o => [o.ext || String(o.id), o]));
     const bad = a.links.filter(l => !byId.has(l.object) || !codes.has(l.code));
-    if (bad.length) throw new Error(`맞지 않는 연결 ${bad.length}개(객체 없음 또는 범위 밖 코드): ${bad.slice(0, 5).map(l => `${l.object}→${l.code}`).join(', ')}`);
-    const rule = autoLink(m.objects.map(o => ({ id: o.ext || String(o.id), label: o.label || undefined, name: o.name, type: o.type || undefined, comment: o.comment || undefined, ifcClass: o.ifcClass || undefined })), acts);
+    if (bad.length) throw new Error(`맞지 않는 연결 ${bad.length}개(객체 없음 또는 범위 밖 코드 — model_link_status 의 activities 코드로): ${bad.slice(0, 5).map(l => `${l.object}→${l.code}`).join(', ')}`);
     const links: LinkSet['links'] = [];
     const ai = new Map(a.links.map(l => [l.object, l]));
-    for (const r of rule) {
+    for (const r of run.results) {
       const o = byId.get(r.id)!;
       const code = r.code ?? ai.get(r.id)?.code;
       if (code && o.ext) links.push({ ext: o.ext, ifcGuid: o.ifcGuid, code, by: r.code ? 'rule' : 'ai' });
     }
-    const set: LinkSet = { modelItemId: f.accItemId, wbsRoot: node.name, at: new Date().toISOString(), links };
-    await save(row, { ...row.data, links: [...(row.data.links ?? []).filter(l => l.modelItemId !== f.accItemId), set] }, `연결 ${links.length}개(AI ${links.filter(l => l.by === 'ai').length})`);
-    return { setupId: row.id, out: { saved: links.length, rule: links.filter(l => l.by === 'rule').length, ai: links.filter(l => l.by === 'ai').length, open: rule.length - links.length }, summary: `${links.length}개` };
+    const at = new Date().toISOString();
+    const set: LinkSet = { modelItemId: f.accItemId, wbsRoot: node.name, at, links };
+    const map = run.match?.map ?? {};
+    const codeMaps = [...(row.data.codeMaps ?? []).filter(c => c.modelItemId !== f.accItemId), ...(Object.keys(map).length ? [{ modelItemId: f.accItemId, at, map }] : [])];
+    const { codeMaps: _old, ...rest } = row.data;
+    await save(row, { ...rest, links: [...(row.data.links ?? []).filter(l => l.modelItemId !== f.accItemId), set], ...(codeMaps.length ? { codeMaps } : {}) },
+      `연결 ${links.length}개(AI ${links.filter(l => l.by === 'ai').length})${Object.keys(map).length ? ` · 모델 코드 ${Object.keys(map).length}작업` : ''}`);
+    return {
+      setupId: row.id,
+      out: { saved: links.length, rule: links.filter(l => l.by === 'rule').length, ai: links.filter(l => l.by === 'ai').length, open: run.results.length - links.length,
+        codesMatchedToModel: Object.keys(map).length },
+      summary: `${links.length}개`,
+    };
   });
 
   tool('save_lesson', {

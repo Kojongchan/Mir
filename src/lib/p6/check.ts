@@ -5,11 +5,13 @@ import type { P6Activity, P6Relation, P6Schedule } from './schedule';
 
 export type CheckSeverity = 'error' | 'warn' | 'info';
 export type CheckRule =
-  | 'oos-actual' | 'part-order' | 'future-actual' | 'stale-data-date' | 'logic-reversal' | 'missing-actual' | 'part-unlinked'
+  | 'oos-actual' | 'oos-sequence' | 'part-order' | 'future-actual' | 'stale-data-date' | 'logic-reversal' | 'missing-actual' | 'part-unlinked'
   | 'long-duration' | 'hard-constraint' | 'neg-lag' | 'open-start' | 'open-end' | 'long-lag' | 'sf' | 'dup-name';
 
 export const CHECK_RULES: Record<CheckRule, { title: string; severity: CheckSeverity; why: string }> = {
   'oos-actual': { title: '선후행 역전(실적)', severity: 'error', why: '후행 작업이 선행 작업보다 먼저 시작·완료된 실적. 관계가 틀렸거나 실적이 잘못 들어감.' },
+  'oos-sequence': { title: '진행 순서 다름(실적)', severity: 'warn',
+    why: '같은 종류 작업(예: 개소별 기초)이 공정표의 투입 순서와 다르게 진행됨 — 물리적 역전이 아니라 작업조 순서 관계를 현장 순서에 맞게 고칠 일.' },
   'part-order': { title: '구조 순서 역전', severity: 'error', why: '같은 개소에서 기초 → 교각/벽체 → 코핑 순서가 뒤집힌 일정.' },
   'future-actual': { title: '기준일 이후 실적', severity: 'error', why: '데이터 기준일보다 뒤의 실적 날짜.' },
   'stale-data-date': { title: '재계산 안 한 공정표', severity: 'warn', why: '데이터 기준일이 가장 늦은 실적보다 이름 — P6 에서 일정 계산(F9) 없이 날짜만 고친 공정표.' },
@@ -66,6 +68,8 @@ export function partRank(name: string): number {
 }
 
 const isWork = (a: P6Activity) => a.taskType !== 'TT_LOE' && a.taskType !== 'TT_WBS';
+/** 작업 종류: 이름에서 번호·공백을 뺀 것('WPC거더 거치 S1~S5' 와 '… S6~S10' 은 같은 종류). */
+const workKind = (name: string) => name.replace(/\d+/g, '#').replace(/\s/g, '');
 const HARD = new Set(['CS_MSO', 'CS_MEO', 'CS_MANDSTART', 'CS_MANDFIN']);
 
 export function checkSchedule(s: P6Schedule, opts: CheckOptions = {}): CheckResult {
@@ -106,7 +110,8 @@ export function checkSchedule(s: P6Schedule, opts: CheckOptions = {}): CheckResu
     else if (r.type === 'FS' && qs) oos = !pf || qs < pf;
     else if (r.type === 'SS' && qs) oos = !ps || qs < ps;
     else if (r.type === 'FF' && qf) oos = !pf || qf < pf;
-    if (oos) add('oos-actual', [p.code, q.code], `${rel}: 후행 실적 ${qs ?? '-'}~${qf ?? '-'}, 선행 실적 ${ps ?? '없음'}~${pf ?? '없음'}`);
+    // 같은 종류 작업 사이(개소별 기초 → 다음 개소 기초, 거치 S1~S5 → S6~S10)는 작업조 투입 순서 — 어긋나면 순서 다름(경고)
+    if (oos) add(workKind(p.name) === workKind(q.name) ? 'oos-sequence' : 'oos-actual', [p.code, q.code], `${rel}: 후행 실적 ${qs ?? '-'}~${qf ?? '-'}, 선행 실적 ${ps ?? '없음'}~${pf ?? '없음'}`);
     // 계획 역전: 둘 다 아직 실적이 없는 작업의 현재 날짜가 관계를 어김(같은 날은 허용)
     if (!oos && !lead && !q.actualStart && !p.actualFinish) {
       const pS = day(p.start), pF = day(p.finish), qS = day(q.start), qF = day(q.finish);

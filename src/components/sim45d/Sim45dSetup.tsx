@@ -21,6 +21,11 @@ import { ClaudeAssistant } from './ClaudeAssistant';
 import { AiConnectContext, claudeAsk, type AiConnect } from './steps/aiConnect';
 import { openClaude } from '../../lib/claudePopup';
 import { adoptedPlan, confirmedSource, NO_CONFIRMED, planXerBytes, planXerName } from '../../lib/sim45d/confirmed';
+import { buildXer, readSchedule, type P6Schedule } from '../../lib/p6/schedule';
+import { decodeXer, parseXer } from '../../lib/p6/xer';
+import { fetchModelObjects } from '../../lib/sim45d/modelObjects';
+import { actualsFromModel } from '../../lib/sim45d/modelActuals';
+import { wbsScope } from '../../lib/sim45d/wbsScope';
 
 /**
  * 「공정·공사비 (4D/5D)」 단계형 진행(D30): 위쪽 단계 바 + 3D 위에 펼치는 단계 시트.
@@ -172,15 +177,42 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
     }
   };
 
-  // 확정 공정표 열기: P6 수정본을 올렸으면 그것, 아니면 채택한 개략 IPS 를 지금 입력으로 다시 만들어 연다(D34).
-  const openP6 = async () => {
-    const f = data.files.p6?.[0];
+  // 6단계 연결은 4D 색칠에 쓴다(3D 뷰어가 화면 모델 객체로 찾음).
+  const { setSavedLinks, setModelActuals } = sim;
+  const allLinks = useMemo(() => (data.links ?? []).flatMap(l => l.links), [data.links]);
+  useEffect(() => { setSavedLinks(allLinks); }, [allLinks, setSavedLinks]);
+
+  /**
+   * 모델의 현장 실적(A5 실시)을 연 공정표에 넣는다(3번 결정) — 모델 속성을 읽어(1~2초) 6단계 연결 → 모델 코드 → (개략 IPS 면) 규칙 연결로
+   * 작업에 잇는다. 실패해도 공정표는 그대로 쓴다.
+   */
+  const loadActuals = async (d: SetupData, s: P6Schedule) => {
+    const models = (d.files.model ?? []).filter(m => m.urn);
+    if (!models.length) return;
+    try {
+      const objects = (await Promise.all(models.map(m => fetchModelObjects(m.urn!, () => {})))).flat();
+      const top = s.wbs.find(w => !w.parentId);
+      const rule = confirmedSource(d)?.kind === 'draft' && top ? wbsScope(s).under(top.id) : undefined;
+      const m = actualsFromModel(objects, new Set(s.activities.map(a => a.code)), { links: (d.links ?? []).flatMap(l => l.links), rule });
+      setModelActuals(m.byCode.size ? m : null);
+      if (m.byCode.size) setStatus(st => `${st} · 모델 실적(A5 실시) ${m.byCode.size}개 작업에 반영(객체 ${m.linked}/${m.dated})`);
+    } catch (e) {
+      setStatus(st => `${st} · 모델 실적은 읽지 못함(${errMessage(e)})`);
+    }
+  };
+
+  // 확정 공정표 열기: P6 수정본을 올렸으면 그것, 아니면 채택한 개략 IPS 를 지금 입력으로 다시 만들어 연다(D34). `next`: 방금 저장한 상태.
+  const openP6 = async (next?: SetupData) => {
+    const d = next ?? data;
+    const f = d.files.p6?.[0];
     if (!f) {
       try {
-        const r = adoptedPlan(data);
-        if (!r || !data.plan?.adopted) { setStatus(NO_CONFIRMED); return; }
-        await sim.openXer(new File([planXerBytes(r) as BlobPart], planXerName(data.site?.code, data.plan.adopted.title)));
-        setStatus(`열었습니다: 채택한 개략 IPS(${data.plan.adopted.title}) — 아래 결과를 확인하세요. 3D 는 8 '4D/5D'.`);
+        const r = adoptedPlan(d);
+        if (!r || !d.plan?.adopted) { setStatus(NO_CONFIRMED); return; }
+        const xer = planXerBytes(r);
+        await sim.openXer(new File([xer as BlobPart], planXerName(d.site?.code, d.plan.adopted.title)));
+        setStatus(`열었습니다: 채택한 개략 IPS(${d.plan.adopted.title}) — 아래 결과를 확인하세요. 3D 는 8 '4D/5D'.`);
+        await loadActuals(d, readSchedule(buildXer(r.draft)));
       } catch (e) {
         setStatus(`공정표 만들기 실패: ${errMessage(e)}`);
       }
@@ -196,6 +228,7 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
       await sim.openXer(new File([blob], f.name));
       // 시트를 접지 않는다 — 바로 아래에 검토 결과가 나온다(3D 는 '4D/5D' 단계에서).
       setStatus(`열었습니다: ${f.name} — 아래 검토 결과를 확인하세요. 3D 는 8 '4D/5D'.`);
+      await loadActuals(d, readSchedule(parseXer(decodeXer(new Uint8Array(await blob.arrayBuffer())).text)));
     } catch (e) {
       setStatus(`공정표 열기 실패: ${errMessage(e)}`);
     } finally {
@@ -294,7 +327,7 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
   const stepProps: StepProps = {
     projectId, canEdit: editable, data, name, persist, sim, setStatus,
     renderSlot: k => slotCard(slotDef(k)),
-    openP6: () => void openP6(), opening: busy,
+    openP6: () => void openP6(), reopenP6: next => void openP6(next), opening: busy,
   };
 
   const body = () => {

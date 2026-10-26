@@ -101,7 +101,17 @@ export interface PlanInput {
   start: string;
   rates?: Rate[];
   criticalPoints?: CriticalPoint[];
+  /**
+   * 엔진 코드 → 모델에 이미 있는 실제 IPS Activity ID(6단계에서 객체로 맞춘 것, lib/sim45d/codeMatch.ts). 주면 그 작업은
+   * 실제 코드로 나간다(P6·모델 반영이 같은 ID 를 쓴다). 개소+부위로 잇는 비교(modelDates)는 엔진 코드 그대로 쓴다.
+   */
+  codeMap?: Readonly<Record<string, string>>;
 }
+
+/** 공단 IPS 구성 표준: 작업 하나는 연속 공정도 60일까지(lib/p6/check.ts 의 '긴 작업'과 같은 기준). 넘으면 나눈다. */
+export const MAX_ACTIVITY_DAYS = 60;
+/** 교대 말뚝·가시설·토공·기초 74일의 근거(시공계획 11.6.4(2) 순 29+12일) — 넘으면 이 비율로 '말뚝·가시설·토공'과 '기초'로 나눈다. */
+const ABUT_SPLIT = 29 / 41;
 
 export interface BasisRow {
   code: string;
@@ -175,34 +185,50 @@ export function buildBridgePlan(input: PlanInput, levers: Levers): PlanResult {
   fs(`${P}-M000`, `${P}-PR01`);
   fs(`${P}-M000`, `${P}-PR02`);
 
-  // 하부공: 개소별 WBS 와 작업
-  const parts = new Map<string, { F: string; C?: string; K?: string; W?: string }>();
+  // 하부공: 개소별 WBS 와 작업. 기초가 60일을 넘으면 말뚝(교대는 말뚝·가시설·토공)과 기초로 나눈다(F → F2).
+  // F = 기초의 첫 작업, Fe = 마지막 작업(교각·벽체는 Fe 뒤).
+  const parts = new Map<string, { F: string; Fe: string; C?: string; K?: string; W?: string }>();
   for (const s of site.supports) {
     const w = `${P}.2.${s.id}`;
     wbs.push({ code: w, name: s.id, parent: `${P}.2` });
     const extra = { notBefore: notBeforeOf(s.id), blocked: blockedOf(s.id) };
-    const F = `${P}-${s.id}-F`;
+    const F = `${P}-${s.id}-F`, F2 = `${P}-${s.id}-F2`;
+    let Fe = F;
     if (s.kind === 'abutment') {
-      add({ code: F, name: '기초', wbs: w, durationDays: R.abutFoundation, ...extra }, `교대 ${s.id}(말뚝 ${s.pileCount}본 포함)`, 'abutFoundation');
+      if (R.abutFoundation > MAX_ACTIVITY_DAYS) {
+        const first = Math.round(R.abutFoundation * ABUT_SPLIT);
+        add({ code: F, name: '말뚝·가시설·토공', wbs: w, durationDays: first, ...extra }, `교대 ${s.id} 말뚝 ${s.pileCount}본·가시설·토공(${R.abutFoundation}일 중 순 29/41)`, 'abutFoundation');
+        add({ code: F2, name: '기초', wbs: w, durationDays: R.abutFoundation - first, ...extra }, `교대 ${s.id} 기초(${R.abutFoundation}일 중 순 12/41)`, 'abutFoundation');
+        fs(F, F2);
+        Fe = F2;
+      } else {
+        add({ code: F, name: '기초', wbs: w, durationDays: R.abutFoundation, ...extra }, `교대 ${s.id}(말뚝 ${s.pileCount}본 포함)`, 'abutFoundation');
+      }
       const W = `${P}-${s.id}-W`;
       add({ code: W, name: '벽체', wbs: w, durationDays: R.abutBody, ...extra }, `교대 ${s.id}`, 'abutBody');
-      fs(F, W);
-      parts.set(s.id, { F, W });
+      fs(Fe, W);
+      parts.set(s.id, { F, Fe, W });
     } else {
       const pileDays = s.pileType === 'cast' ? s.pileCount * R.castPile : Math.ceil(s.pileCount / Math.max(1, R.drivenPile));
       const footDays = s.footing ? R.pierFooting : 0;
-      add({ code: F, name: '기초', wbs: w, durationDays: pileDays + footDays, ...extra },
-        `${s.pileType === 'cast' ? '현장타설' : '기성'}말뚝 ${s.pileCount}본${s.footing ? ' + 확대기초' : ''}`,
-        `${s.pileType === 'cast' ? 'castPile' : 'drivenPile'}${s.footing ? ' + pierFooting' : ''}`);
+      const pileText = `${s.pileType === 'cast' ? '현장타설' : '기성'}말뚝 ${s.pileCount}본`, pileKey = s.pileType === 'cast' ? 'castPile' : 'drivenPile';
+      if (pileDays + footDays > MAX_ACTIVITY_DAYS && footDays > 0) {
+        add({ code: F, name: '말뚝', wbs: w, durationDays: pileDays, ...extra }, pileText, pileKey);
+        add({ code: F2, name: '확대기초', wbs: w, durationDays: footDays, ...extra }, '확대기초', 'pierFooting');
+        fs(F, F2);
+        Fe = F2;
+      } else {
+        add({ code: F, name: '기초', wbs: w, durationDays: pileDays + footDays, ...extra }, `${pileText}${s.footing ? ' + 확대기초' : ''}`, `${pileKey}${s.footing ? ' + pierFooting' : ''}`);
+      }
       const lots = Math.max(1, Math.ceil((s.heightM ?? R.pierLotHeightM) / R.pierLotHeightM));
       const C = `${P}-${s.id}-C`;
       add({ code: C, name: '교각시공', wbs: w, durationDays: R.pierLot + R.pierLotNext * (lots - 1), ...extra }, `높이 ${s.heightM ?? '?'}m → ${lots} LOT`, lots > 1 ? 'pierLot + pierLotNext' : 'pierLot');
       const K = `${P}-${s.id}-K`;
       const nightK = night.has(s.id);
       add({ code: K, name: '코핑시공', wbs: w, durationDays: nightK ? R.copingNight : R.coping, ...extra }, nightK ? '야간 구간' : '주간', nightK ? 'copingNight' : 'coping');
-      fs(F, C);
+      fs(Fe, C);
       fs(C, K);
-      parts.set(s.id, { F, C, K });
+      parts.set(s.id, { F, Fe, C, K });
     }
     fs(`${P}-PR01`, F);
   }
@@ -211,7 +237,7 @@ export function buildBridgePlan(input: PlanInput, levers: Levers): PlanResult {
   const piers = site.supports.filter(s => s.kind === 'pier');
   const ordered = [...piers.filter(s => priority.has(s.id)), ...piers.filter(s => !priority.has(s.id))];
   const chain = (ids: string[]) => { for (let i = 1; i < ids.length; i++) fs(ids[i - 1], ids[i]); };
-  for (const seg of chunks(ordered, levers.rigs)) chain(seg.map(s => parts.get(s.id)!.F));
+  for (const seg of chunks(ordered, levers.rigs)) for (let i = 1; i < seg.length; i++) fs(parts.get(seg[i - 1].id)!.Fe, parts.get(seg[i].id)!.F);
   for (const seg of chunks(ordered, levers.pierCrews)) chain(seg.map(s => parts.get(s.id)!.C!));
   for (const seg of chunks(ordered, levers.copingSets)) chain(seg.map(s => parts.get(s.id)!.K!));
 
@@ -254,6 +280,16 @@ export function buildBridgePlan(input: PlanInput, levers: Levers): PlanResult {
     for (const c of d.scope === 'substructure' ? subEnds : d.scope === 'superstructure' ? supEnds : [END]) fs(c, code);
   });
 
+  splitLong(acts, rels, basis);
+  // 모델에 이미 있는 실제 IPS 코드로(6단계에서 객체로 맞춘 것) — 관계·근거·날짜 모두 같은 코드로.
+  const map = input.codeMap ?? {};
+  const rn = (code: string) => map[code] ?? code;
+  if (Object.keys(map).length) {
+    for (const a of acts) a.code = rn(a.code);
+    for (const r of rels) { r.pred = rn(r.pred); r.succ = rn(r.succ); }
+    for (const b of basis) b.code = rn(b.code);
+  }
+
   const draft: DraftSchedule = { project: { code: P, name: site.name, start }, wbs, activities: acts, relations: rels };
   const { cpm } = draftCpm(draft);
   const dates = new Map<string, { start: string; finish: string; float: number }>();
@@ -265,11 +301,32 @@ export function buildBridgePlan(input: PlanInput, levers: Levers): PlanResult {
   return {
     levers, draft, basis, finish, durationDays: cpm.duration, critical: cpm.critical,
     deadlines: deadlines.map((d, i) => {
-      const planned = dates.get(`${P}-M9${String(i + 1).padStart(2, '0')}`)!.start;
+      const planned = dates.get(rn(`${P}-M9${String(i + 1).padStart(2, '0')}`))!.start;
       return { name: d.name, date: d.date, planned, slackDays: daysBetween(planned, d.date) };
     }),
     dates,
   };
+}
+
+/**
+ * 60일(MAX_ACTIVITY_DAYS)을 넘는 작업을 같은 길이에 가깝게 차례로 나눈다: 코드 뒤에 -2·-3…(첫 조각은 원래 코드), 이름 뒤에 (1/n).
+ * 선행은 첫 조각, 후행은 마지막 조각으로 옮긴다. 기초처럼 의미 있게 나눌 수 있는 작업은 만들 때 나눈다(위) — 이것은 나머지(현장타설 말뚝이
+ * 많은 교각 기초, 높은 교각, 사용자가 늘린 단위공기 등).
+ */
+function splitLong(acts: DraftActivity[], rels: DraftRelation[], basis: BasisRow[]) {
+  for (const a of [...acts]) {
+    if (a.milestone || a.durationDays <= MAX_ACTIVITY_DAYS) continue;
+    const n = Math.ceil(a.durationDays / MAX_ACTIVITY_DAYS);
+    const codes = Array.from({ length: n }, (_, i) => (i ? `${a.code}-${i + 1}` : a.code));
+    const days = Array.from({ length: n }, (_, i) => Math.floor(a.durationDays / n) + (i < a.durationDays % n ? 1 : 0));
+    const at = acts.indexOf(a), b = basis.find(x => x.code === a.code);
+    const pieces = codes.map((code, i) => ({ ...a, code, name: `${a.name} (${i + 1}/${n})`, durationDays: days[i],
+      udfs: { ...(a.udfs ?? {}), 산정근거: `${a.udfs?.산정근거 ?? ''} — ${MAX_ACTIVITY_DAYS}일 넘어 ${n}개로 나눔(${i + 1}/${n})` } }));
+    acts.splice(at, 1, ...pieces);
+    for (const r of rels) if (r.pred === a.code) r.pred = codes[n - 1];
+    for (let i = 1; i < n; i++) rels.push({ pred: codes[i - 1], succ: codes[i], type: 'FS', lagDays: 0 });
+    if (b) basis.splice(basis.indexOf(b), 1, ...pieces.map((p, i) => ({ ...b, code: p.code, name: p.name, days: days[i] })));
+  }
 }
 
 export const PRESETS: { key: string; title: string; levers: Levers }[] = [

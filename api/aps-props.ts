@@ -84,7 +84,15 @@ export async function readModelObjects(urn: string, token: string):
   if (pr.status === 202) return { pending: true };
   if (!pr.ok) return { error: `properties ${pr.status}`, status: 502 };
   const p = (await pr.json()) as { data?: { collection?: { objectid: number; name?: string; externalId?: string; properties?: Props }[] } };
-  return { view: view.name, objects: (p.data?.collection ?? []).map(summarize).filter((o): o is ModelObject => o !== null) };
+  return { view: view.name, objects: elementsOnly((p.data?.collection ?? []).map(summarize).filter((o): o is ModelObject => o !== null)) };
+}
+
+/**
+ * IFC 모델이면 요소(IfcClass 가 있는 객체)만 — 유형 이름만 있는 노드('WPC_27.5m_2.3m_1:WPC_27.5m_2.3m', 외부 ID '…/0/0')는
+ * 같은 요소의 유형·형상 조각이라 연결 대상이 아니다(연제교 상선 IFC: 1,029 중 193). Revit 모델(IfcClass 없음)은 그대로.
+ */
+export function elementsOnly(objects: ModelObject[]): ModelObject[] {
+  return objects.some(o => o.ifcClass) ? objects.filter(o => o.ifcClass) : objects;
 }
 
 export default async function handler(req: Request): Promise<Response> {

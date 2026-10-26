@@ -5,6 +5,7 @@ import { accBoqSheet, boqLines, boqSections, guessBoqSection, type BoqLine } fro
 import { phaseAt, progressAt } from '../../../lib/sim45d/timeline';
 import { AiBox, AiStatus, fmtWon, useAi, type StepProps } from './common';
 import { confirmedSource } from '../../../lib/sim45d/confirmed';
+import { codeMapOf } from '../../../lib/sim45d/setup';
 
 /**
  * 9단계 검증·질의: 공정표 검토·연결 결과 요약, 그리고 AI 활용 6·7·8 —
@@ -135,6 +136,8 @@ export function ReportStep({ projectId, canEdit, data, name, sim, openP6, openin
               ? <button className="btn btn--sm" disabled={opening} onClick={openP6}>{opening ? '여는 중…' : `확정 공정표 열기 — ${confirmed.label}`}</button>
               : '확정 공정표 없음(4단계에서 안 채택)')}</li>
           {check && <li>검토: 오류 {check.findings.filter(f => f.severity === 'error').length} · 경고 {check.findings.filter(f => f.severity === 'warn').length} (자세히는 5단계)</li>}
+          {sim.actualsInfo && <li>모델 실적(A5 실시) 반영: 작업 {sim.actualsInfo.filled.toLocaleString()}개 · 데이터 기준일 {s?.dataDate?.slice(0, 10)}</li>}
+          {(data.codeMaps?.length ?? 0) > 0 && <li>모델의 실제 IPS 코드로 맞춘 작업: {Object.keys(codeMapOf(data)).length.toLocaleString()}개</li>}
           <li>BIM 연결 저장: {linkCount.toLocaleString()}개 객체</li>
         </ul>
         {(data.log?.length ?? 0) > 0 && (
@@ -152,7 +155,9 @@ export function ReportStep({ projectId, canEdit, data, name, sim, openP6, openin
             onKeyDown={e => { if (e.key === 'Enter' && question.trim() && !ai.busy) void ask(); }} aria-label="질문" />
           <button className="btn btn--sm btn--primary" disabled={!canEdit || !s || !question.trim() || !!ai.busy} onClick={() => void ask()}>묻기</button>
         </div>
-        <p className="muted">답은 4D/5D 의 조회일({ymd(sim.time)}) 기준으로 플랫폼이 계산한 값만 씁니다.</p>
+        <p className="muted">{s && sim.range
+          ? `답은 4D/5D 의 조회일(${ymd(sim.time)}) 기준으로 플랫폼이 계산한 값만 씁니다 — 조회일은 8단계 기준일 막대에서 바꿉니다.`
+          : '공정표를 열면 그 데이터 기준일(모델 실적을 넣었으면 가장 늦은 실적일)이 조회일이 됩니다. 답은 플랫폼이 계산한 값만 씁니다.'}</p>
         {answer && <AiBox title={answer.cannotAnswer ? '이 정보로는 답할 수 없음' : '답'} usage={ai.usage}><p>{answer.answer}</p></AiBox>}
       </section>
 

@@ -139,6 +139,40 @@ test('auto link: IFC class separates girders (IfcBeam) from deck pieces drawn wi
   assert.deepEqual(got, { b: 'GE', x: 'DK', r: 'GE', l: 'GE' });
 });
 
+test('auto link: superstructure by the span in the object label, split foundations by pile or not', () => {
+  const acts = [
+    { code: 'G01', name: 'WPC거더 거치 S1~S5', path: ['상부공'] },
+    { code: 'G02', name: 'WPC거더 거치 S6~S10', path: ['상부공'] },
+    { code: 'G10', name: 'WPC거더 거치 S46', path: ['상부공'] },
+    { code: 'D01', name: '공동구(Leveling 콘크리트 포함) S1~S5', path: ['상부공'] },
+    { code: 'D02', name: '공동구(Leveling 콘크리트 포함) S6~S10', path: ['상부공'] },
+    { code: 'A1F', name: '말뚝·가시설·토공', path: ['하부공', 'A1'] },
+    { code: 'A1F2', name: '기초', path: ['하부공', 'A1'] },
+    { code: 'A1W', name: '벽체', path: ['하부공', 'A1'] },
+  ];
+  const objs = [
+    { id: 'g3', label: '상선_거더_S03', name: 'WPC_27.5m_2.3m_1', ifcClass: 'IfcBeam' },
+    { id: 'g6', label: '상선_거더_S06', name: 'WPC_35m_우_1', ifcClass: 'IfcBeam' },
+    { id: 'g46', label: '상선_거더_S46', name: 'WPC_40m_1', ifcClass: 'IfcBeam' },
+    { id: 's7', label: '상선_상부슬래브_S07', name: 'Structural Framing 1' },
+    { id: 'b', label: '교량받침', name: '받침' },
+    { id: 'p', label: '교대 A1 말뚝', name: '강관말뚝' },
+    { id: 'lean', label: '교대 A1 버림콘크리트', name: '버림콘크리트' },
+    { id: 'w', label: '교대 A1', name: '교대' },
+  ];
+  const got = Object.fromEntries(L.autoLink(objs, acts).map(r => [r.id, r.code]));
+  assert.deepEqual(got, { g3: 'G01', g6: 'G02', g46: 'G10', s7: 'D02', b: null, p: 'A1F', lean: 'A1F2', w: 'A1W' });
+  assert.deepEqual([L.spanOf('상선_거더_S03'), L.spanOf('SHEET PILE'), L.spanOf('S1,S2')], [3, null, null]);
+  assert.deepEqual(L.spansOfName('WPC거더 거치 S11~S15'), { lo: 11, hi: 15 });
+});
+
+test('model properties: an IFC model keeps its elements only (type nodes have no IfcClass); Revit models unchanged', () => {
+  const P = compile('api/aps-props.ts', { '@supabase/supabase-js': {} });
+  const el = { id: 1, ifcClass: 'IfcBeam' }, typeNode = { id: 2, ifcClass: '' }, rvt = { id: 3, ifcClass: '' };
+  assert.deepEqual(P.elementsOnly([el, typeNode]).map(o => o.id), [1]);
+  assert.deepEqual(P.elementsOnly([rvt, typeNode]).map(o => o.id), [3, 2]);
+});
+
 test('model properties: Revit objects and IFC elements (Family:Type:Tag, no user properties) both summarize', () => {
   const P = compile('api/aps-props.ts', { '@supabase/supabase-js': {} });
   const rvt = P.summarize({ objectid: 1, name: '기초_상선_P01,P03_P46 [123]', externalId: 'u1', properties: { 기타: { '유형 이름': 'P12', 'A1_객체명칭': '기초 P12', 'A3_WBS CODE (IPS)': 'X1', IfcGUID: 'g1' }, 치수: { 체적: '12.5 m^3' } } });
@@ -175,7 +209,7 @@ test('confirmed schedule: adopted draft IPS counts without a P6 upload; an uploa
   const cpm = compile('src/lib/p6/cpm.ts');
   const p6 = compile('src/lib/p6/schedule.ts', { './xer.js': xer, './cpm.js': cpm });
   const B = compile('src/lib/p6/bridgePlan.ts', { './schedule.js': p6 });
-  const C = compile('src/lib/sim45d/confirmed.ts', { '../p6/bridgePlan.js': B, '../p6/schedule.js': p6, '../p6/xer.js': xer });
+  const C = compile('src/lib/sim45d/confirmed.ts', { '../p6/bridgePlan.js': B, '../p6/schedule.js': p6, '../p6/xer.js': xer, './setup.js': s });
   const supports = ['A1', 'P1', 'P2', 'P3', 'A2'].map((id, i) => ({ id, kind: id[0] === 'A' ? 'abutment' : 'pier', pileType: 'cast', pileCount: 1, ...(i === 2 ? { heightM: 10.1 } : {}) }));
   let d = s.emptySetup();
   d = s.addFile(d, 'model', file('m', 'BR01.ifc'));
@@ -202,6 +236,13 @@ test('confirmed schedule: adopted draft IPS counts without a P6 upload; an uploa
   const reread = p6.readSchedule(xer.parseXer(xer.decodeXer(C.planXerBytes(C.adoptedPlan(d))).text));
   assert.equal(reread.activities.length, sch.activities.length, 'XER 로 내보내 다시 읽어도 같음');
   assert.equal(C.planXerName('BR01', b.title), 'BR01_개략IPS_B안.xer');
+  // 6단계에서 맞춘 모델 코드: 채택안은 그 코드로, raw 는 엔진 코드 그대로(다시 맞출 때), 저장·불러오기에 남음
+  const withMap = { ...d, codeMaps: [{ modelItemId: 'm', at: 'x', map: { 'BR01-P1-F': '311311C5C20020045', 'BR01-P1-C': 'BAD' } }, { modelItemId: 'n', at: 'y', map: { 'BR01-P1-F': 'LATER' } }] };
+  assert.deepEqual(s.codeMapOf(withMap), { 'BR01-P1-F': '311311C5C20020045', 'BR01-P1-C': 'BAD' }, '먼저 저장한 모델이 우선');
+  assert.ok(C.adoptedSchedule(withMap).activities.some(a => a.code === '311311C5C20020045'));
+  assert.ok(C.adoptedSchedule(withMap, { raw: true }).activities.some(a => a.code === 'BR01-P1-F'));
+  assert.deepEqual(s.normalizeSetup({ ...withMap, codeMaps: [...withMap.codeMaps, { modelItemId: 3 }, { modelItemId: 'z', map: { a: 1, b: 'ok' } }] }).codeMaps.map(c => c.map),
+    [withMap.codeMaps[0].map, withMap.codeMaps[1].map, { b: 'ok' }]);
   // 저장·불러오기: 채택안은 남고, 망가진 값은 버린다
   assert.deepEqual(s.normalizeSetup(d).plan.adopted, d.plan.adopted);
   assert.equal(s.normalizeSetup({ ...d, plan: { ...d.plan, adopted: { title: 'x', at: 'y', levers: { rigs: 0 } } } }).plan.adopted, undefined);
