@@ -52,7 +52,9 @@ test('AI endpoint: request shape, keep-alive stream with JSON result, and error 
     let r = await post({ task: 'criticalPoints', input: { text: 'x' } });
     assert.equal(r.status, 503);
     assert.equal((await r.json()).code, 'not-configured');
+    assert.deepEqual(await (await ai.GET()).json(), { configured: false }); // 화면이 Claude 창으로 넘길지 정한다
     process.env.ANTHROPIC_API_KEY = 'test';
+    assert.deepEqual(await (await ai.GET()).json(), { configured: true }); // 키 값은 내보내지 않는다
     assert.equal((await post({ task: 'nope', input: {} })).status, 400);
     assert.equal((await post({ task: 'criticalPoints', input: { text: '  ' } })).status, 400);
 

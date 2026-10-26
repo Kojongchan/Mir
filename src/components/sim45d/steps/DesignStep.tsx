@@ -47,6 +47,7 @@ export function DesignStep({ projectId, canEdit, data, name, persist, setStatus 
 
   const extract = async () => {
     if (!qto) return;
+    if (ai.toClaude('designExtract')) return;
     setProgress('수량산출서 글 읽는 중…');
     try {
       const { pages: found } = await accPdfPages(qto.accProjectId, qto.accItemId, {

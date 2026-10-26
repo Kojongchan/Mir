@@ -1,5 +1,5 @@
-import { useContext, useState, type ReactNode } from 'react';
-import { AiError, runAi, type AiTaskName } from '../../../lib/ai';
+import { useContext, useEffect, useState, type ReactNode } from 'react';
+import { AiError, runAi, serverAiConfigured, type AiTaskName } from '../../../lib/ai';
 import type { SetupData, SlotKey } from '../../../lib/sim45d/setup';
 import type { Sim45d } from '../useSim45d';
 import { AI_OFF, AiConnectContext, MCP_PROMPT_FOR } from './aiConnect';
@@ -28,6 +28,23 @@ export function useAi(projectId: string) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [usage, setUsage] = useState<{ input: number; output: number } | null>(null);
+  const [off, setOff] = useState<boolean | null>(null);
+  const connect = useContext(AiConnectContext);
+  useEffect(() => {
+    let alive = true;
+    void serverAiConfigured().then(c => { if (alive) setOff(!c); });
+    return () => { alive = false; };
+  }, []);
+  /**
+   * 서버 AI 가 꺼져 있으면 문서를 읽기 전에 바로 내 Claude 창(팝업)으로 넘긴다. 넘겼으면 true — 부르는 쪽은 멈춘다.
+   * 사용자 클릭 안에서(첫 await 전에) 불러야 팝업이 막히지 않는다.
+   */
+  function toClaude(task: AiTaskName, extra?: string): boolean {
+    if (off !== true || !connect) return false;
+    connect.askClaude(task, extra);
+    setError(`${AI_OFF}${task}|Claude 창(오른쪽 팝업)에서 진행합니다. 지시문이 자동으로 안 들어가 있으면 붙여넣기(Ctrl+V) — 복사해 두었습니다. 저장되면 이 화면이 저절로 바뀝니다.`);
+    return true;
+  }
   async function call<T>(task: AiTaskName, input: unknown, label: string): Promise<T | null> {
     setBusy(label);
     setError('');
@@ -37,14 +54,14 @@ export function useAi(projectId: string) {
       return r.result;
     } catch (e) {
       setError(e instanceof AiError && e.code === 'not-configured'
-        ? `${AI_OFF}이 버튼(플랫폼 서버 AI)은 쓸 때마다 사용료가 들어 꺼 두었습니다. 같은 일을 내 Claude·ChatGPT 에서 하세요 — 「AI 연결」로 연결 주소를 한 번 등록한 뒤 대화창에서 프롬프트 '${MCP_PROMPT_FOR[task]}' 를 고릅니다.`
+        ? `${AI_OFF}${task}|이 버튼(플랫폼 서버 AI)은 쓸 때마다 사용료가 들어 꺼 두었습니다. 같은 일을 내 Claude 창에서 합니다(커넥터 프롬프트 '${MCP_PROMPT_FOR[task]}').`
         : (e as Error).message);
       return null;
     } finally {
       setBusy(null);
     }
   }
-  return { busy, error, usage, call, setError };
+  return { busy, error, usage, call, setError, toClaude };
 }
 
 /** AI 결과 상자 — 사람이 확인할 제안이라는 표시와 함께. */
@@ -64,13 +81,17 @@ export function AiBox({ title, children, usage }: { title: string; children: Rea
 }
 
 export function AiStatus({ busy, error }: { busy: string | null; error: string }) {
-  const openConnect = useContext(AiConnectContext);
+  const connect = useContext(AiConnectContext);
   if (busy) return <p className="muted sim-ai__busy" aria-live="polite">AI 작업 중: {busy} …(수십 초 걸릴 수 있음)</p>;
   if (error.startsWith(AI_OFF)) {
+    const body = error.slice(AI_OFF.length);
+    const bar = body.indexOf('|');
+    const task = body.slice(0, bar) as AiTaskName;
     return (
       <p className="sim-ai__off" role="status">
-        {error.slice(AI_OFF.length)}
-        {openConnect && <button type="button" className="btn btn--sm btn--primary" onClick={openConnect}>AI 연결 열기</button>}
+        {body.slice(bar + 1)}
+        {connect && <button type="button" className="btn btn--sm btn--primary" onClick={() => connect.askClaude(task)}>Claude 창 열기</button>}
+        {connect && <button type="button" className="btn btn--sm" onClick={connect.openConnect} title="처음 한 번: 내 Claude 에 MIR 커넥터 등록">연결 설정</button>}
       </p>
     );
   }

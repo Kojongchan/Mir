@@ -81,6 +81,7 @@ export function LinkStep({ projectId, canEdit, data, persist, sim, setStatus, op
   }, [results, objects, aiLinks]);
 
   const askAi = async () => {
+    if (ai.toClaude('linkLeftovers')) return;
     if (!results || !objects) return;
     const byId = new Map(objects.map(o => [String(o.id), o]));
     const open = results.filter(r => !r.code).slice(0, 300).map(r => { const o = byId.get(r.id)!; return { id: r.id, label: o.label, name: o.name, type: o.type, comment: o.comment }; });

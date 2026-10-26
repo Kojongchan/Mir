@@ -64,6 +64,7 @@ export function DraftStep({ projectId, canEdit, data, persist, sim, setStatus }:
   };
 
   const interpret = async () => {
+    if (ai.toClaude('criticalPoints', plan.criticalText)) return;
     const r = await ai.call<{ points: AiPoint[]; questions: string[] }>('criticalPoints', { text: plan.criticalText, start: plan.start, supports: ids }, '크리티컬 포인트 해석');
     if (!r) return;
     const pts = r.points.map(toPoint).filter((p): p is CriticalPoint => !!p);
@@ -79,6 +80,7 @@ export function DraftStep({ projectId, canEdit, data, persist, sim, setStatus }:
   };
 
   const extractRates = async () => {
+    if (ai.toClaude('ratesExtract')) return;
     const doc = data.files.plan?.[0];
     if (!doc) return;
     try {

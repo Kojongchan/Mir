@@ -55,11 +55,13 @@ export function ReportStep({ projectId, canEdit, data, name, sim, openP6, openin
   };
 
   const ask = async () => {
+    if (ai.toClaude('qa', question)) return;
     const r = await ai.call<Answer>('qa', { question, facts: facts() }, '질의');
     if (r) setAnswer(r);
   };
 
   const proposeActuals = async () => {
+    if (ai.toClaude('dailyActuals')) return;
     if (!s) return;
     const logs = (await listDailyLogs(projectId, 120)).filter(l => l.content?.trim()).map(l => ({ date: l.log_date, text: l.content!.slice(0, 2000) }));
     if (!logs.length) { setNote('작업일보에 내용이 있는 날이 없습니다.'); return; }
@@ -94,6 +96,7 @@ export function ReportStep({ projectId, canEdit, data, name, sim, openP6, openin
   };
 
   const classify = async () => {
+    if (ai.toClaude('boqClassify')) return;
     if (!boq?.length) return;
     const merged: Classified = { items: [] };
     let answered = false;

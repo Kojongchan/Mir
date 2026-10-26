@@ -40,6 +40,11 @@ async function allowed(req: Request, mirProject: string | undefined): Promise<Re
   return json({ error: 'AI 기능은 실무자 이상만 쓸 수 있습니다.' }, 403);
 }
 
+/** 서버 AI 를 쓸 수 있나(키가 있나) — 화면이 버튼을 'Claude 창으로 넘기기'로 바꿀지 정한다. 키 값은 알려 주지 않는다. */
+export async function GET(): Promise<Response> {
+  return json({ configured: !!process.env.ANTHROPIC_API_KEY });
+}
+
 export async function POST(req: Request): Promise<Response> {
   if (!process.env.ANTHROPIC_API_KEY) return json({ error: 'AI 키가 설정되지 않았습니다(관리자: Vercel 환경변수 ANTHROPIC_API_KEY).', code: 'not-configured' }, 503);
   let body: any;

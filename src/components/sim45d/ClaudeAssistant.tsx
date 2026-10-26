@@ -1,0 +1,121 @@
+import { useEffect, useRef, useState } from 'react';
+import { claudeWindowOpen, openClaude } from '../../lib/claudePopup';
+import { listToolLog, TOOL_LABEL, type ToolLogRow } from '../../lib/aiActivity';
+import type { StepKey } from '../../lib/sim45d/setup';
+import { claudeAsk } from './steps/aiConnect';
+
+/**
+ * AI 도우미 — 플랫폼 안의 입력·진행 기록 + 오른쪽에 붙는 내 Claude 창(팝업, 각자 로그인·구독, D32).
+ * claude.ai 는 다른 사이트 안에 끼워 넣지 못해(iframe 차단) 별도 창으로 연다. Claude 가 MIR 커넥터(MCP)로 도구를 부르면
+ * 그 기록(ai_tool_log)이 여기에 뜨고, 저장이 보이면 화면을 다시 읽는다.
+ */
+const QUICK: { label: string; task: Parameters<typeof claudeAsk>[0]; steps: StepKey[] }[] = [
+  { label: '한 바퀴 진행', task: 'cycle', steps: ['target', 'files', 'design', 'draft', 'p6', 'link', 'export', 'sim', 'report'] },
+  { label: '설계현황 채우기', task: 'designExtract', steps: ['files', 'design'] },
+  { label: '단위공기 근거 찾기', task: 'ratesExtract', steps: ['design', 'draft'] },
+  { label: '크리티컬 포인트·공기 비교', task: 'criticalPoints', steps: ['draft'] },
+  { label: 'P6 검토 정리', task: 'explainCheck', steps: ['p6', 'report'] },
+  { label: 'BIM 연결 마무리', task: 'linkLeftovers', steps: ['link'] },
+  { label: '내역 분류', task: 'boqClassify', steps: ['report'] },
+];
+
+const POLL_MS = 4000;
+const time = (iso: string) => new Date(iso).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+export function ClaudeAssistant({ projectId, target, step, onSaved, onOpenConnect, onClose }: {
+  projectId: string;
+  /** 지금 대상 이름(예 연제교 상선). */
+  target: string;
+  step: StepKey;
+  /** Claude 가 저장했을 때 — 대상 진행 상태를 다시 읽는다. */
+  onSaved: () => void;
+  onOpenConnect: () => void;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState('');
+  const [note, setNote] = useState('');
+  const [rows, setRows] = useState<ToolLogRow[]>([]);
+  const [noLog, setNoLog] = useState(false);
+  const [since] = useState(() => new Date(Date.now() - 30 * 60_000).toISOString());
+  const seen = useRef(new Set<number>());
+  /** 첫 읽기 전 기록은 '새 저장'으로 치지 않는다(열 때 이미 있던 것). */
+  const primed = useRef(false);
+  const onSavedRef = useRef(onSaved);
+  useEffect(() => { onSavedRef.current = onSaved; }, [onSaved]);
+
+  // 진행 기록: 열려 있고 화면이 보일 때만 몇 초마다. 새 저장(save_*)이 보이면 화면을 다시 읽는다.
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      if (document.hidden) return;
+      try {
+        const r = await listToolLog(projectId, since);
+        if (!alive) return;
+        if (r === null) { setNoLog(true); return; }
+        const fresh = r.filter(x => !seen.current.has(x.id));
+        for (const x of r) seen.current.add(x.id);
+        setRows(r);
+        if (primed.current && fresh.some(x => x.ok && x.tool.startsWith('save_'))) onSavedRef.current();
+        primed.current = true;
+      } catch { /* 다음 차례에 */ }
+    };
+    void tick();
+    const t = window.setInterval(() => void tick(), POLL_MS);
+    return () => { alive = false; window.clearInterval(t); };
+  }, [projectId, since]);
+
+  const send = (sentence: string) => {
+    const { opened, copied } = openClaude(sentence);
+    setNote(opened ? 'Claude 창에 보냈습니다. 지시문이 안 들어가 있으면 붙여넣기(Ctrl+V).' : '팝업이 막혔습니다 — 주소창 오른쪽에서 이 사이트의 팝업을 허용해 주세요.');
+    void copied.then(ok => { if (!ok && opened) setNote('Claude 창에 보냈습니다. 지시문이 안 들어가 있으면 이 칸의 글을 복사해 붙여 넣으세요.'); });
+  };
+
+  const quick = QUICK.filter(q => q.steps.includes(step));
+
+  return (
+    <aside className="sim-assist" aria-label="AI 도우미">
+      <header className="sim-assist__head">
+        <strong>AI 도우미</strong>
+        <span className="muted">내 Claude · {target || '대상 없음'}</span>
+        <span className="spacer" />
+        <button type="button" className="sim-setup__x" aria-label="닫기" onClick={onClose}>✕</button>
+      </header>
+
+      <div className="sim-assist__quick">
+        {quick.map(q => (
+          <button key={q.label} type="button" className="btn btn--sm" disabled={!target} onClick={() => send(claudeAsk(q.task, target))}>{q.label}</button>
+        ))}
+      </div>
+
+      <form className="sim-assist__ask" onSubmit={e => { e.preventDefault(); if (text.trim()) send(claudeAsk('qa', target, text)); }}>
+        <textarea value={text} rows={3} placeholder="Claude 에게 시킬 일 (예: P2 는 강관말뚝 49본이야. 설계현황 다시 확인해 줘)"
+          onChange={e => setText(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && text.trim()) { e.preventDefault(); send(claudeAsk('qa', target, text)); } }} />
+        <div className="sim-assist__row">
+          <button type="submit" className="btn btn--sm btn--primary" disabled={!target || !text.trim()}>Claude 로 보내기</button>
+          <button type="button" className="btn btn--sm" onClick={() => send('')}>{claudeWindowOpen() ? 'Claude 창 앞으로' : 'Claude 창 열기'}</button>
+          <span className="spacer" />
+          <button type="button" className="btn btn--sm" onClick={onOpenConnect} title="처음 한 번: 내 Claude 에 MIR 커넥터 등록">연결 설정</button>
+        </div>
+        {note && <p className="muted sim-assist__note" aria-live="polite">{note}</p>}
+      </form>
+
+      <section className="sim-assist__log" aria-live="polite">
+        <h5>진행 기록 <span className="muted">(최근 30분 · 저장되면 화면이 바뀝니다)</span></h5>
+        {noLog ? <p className="muted">진행 기록을 보려면 관리자가 0041_ai_connect.sql 을 적용해야 합니다(작업은 그대로 됩니다).</p>
+          : rows.length === 0 ? <p className="muted">아직 없습니다. Claude 창에서 시키면 여기에 도구 호출이 뜹니다.</p>
+            : (
+              <ul>
+                {rows.map(r => (
+                  <li key={r.id} className={r.ok ? '' : 'is-fail'}>
+                    <span className="sim-assist__time">{time(r.created_at)}</span>
+                    <span>{r.ok ? '✓' : '✕'} {TOOL_LABEL[r.tool] ?? r.tool}</span>
+                    {r.result && <span className="muted sim-assist__res" title={r.result}>{r.result}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+      </section>
+    </aside>
+  );
+}

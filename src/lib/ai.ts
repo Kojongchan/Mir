@@ -12,6 +12,14 @@ export class AiError extends Error {
   constructor(message: string, readonly code?: string) { super(message); }
 }
 
+let configured: Promise<boolean> | null = null;
+
+/** 서버 AI(키 방식)를 쓸 수 있나. 한 번만 묻고 기억한다. 못 물으면 '없음'(D32: 기본은 내 Claude 창). */
+export function serverAiConfigured(): Promise<boolean> {
+  configured ??= fetch('/api/ai').then(r => (r.ok ? r.json() : { configured: false })).then(j => !!j?.configured).catch(() => false);
+  return configured;
+}
+
 export async function runAi<T>(task: AiTaskName, input: unknown, mirProject: string): Promise<{ result: T; usage?: { input: number; output: number } }> {
   const { data } = await supabase.auth.getSession();
   const res = await fetch('/api/ai', {

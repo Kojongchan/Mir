@@ -37,6 +37,7 @@ export function P6Step({ projectId, canEdit, data, sim, setStatus, renderSlot, o
   }), [result]);
 
   const askExplain = async () => {
+    if (ai.toClaude('explainCheck')) return;
     if (!s || !result) return;
     const examples = rules.flatMap(rule => result.findings.filter(f => f.rule === rule).slice(0, 8).map(f => ({ rule, message: f.message })));
     const r = await ai.call<Explain>('explainCheck', {
@@ -62,6 +63,7 @@ export function P6Step({ projectId, canEdit, data, sim, setStatus, renderSlot, o
   };
 
   const askDiff = async () => {
+    if (ai.toClaude('diffSummary')) return;
     if (!s || !prev || !diff) return;
     const pick = (a: { code: string; name: string; start: string | null; finish: string | null; durationDays: number }) => ({ code: a.code, name: a.name, start: a.start, finish: a.finish, days: a.durationDays });
     const crit = (x: P6Schedule) => x.activities.filter(a => a.totalFloatDays != null && a.totalFloatDays <= 0).map(a => a.code).slice(0, 200);

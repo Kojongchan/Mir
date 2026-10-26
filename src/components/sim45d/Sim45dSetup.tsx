@@ -16,7 +16,9 @@ import { P6Step } from './steps/P6Step';
 import { ReportStep } from './steps/ReportStep';
 import type { StepProps } from './steps/common';
 import { McpConnect } from './McpConnect';
-import { AiConnectContext } from './steps/aiConnect';
+import { ClaudeAssistant } from './ClaudeAssistant';
+import { AiConnectContext, claudeAsk, type AiConnect } from './steps/aiConnect';
+import { openClaude } from '../../lib/claudePopup';
 
 /**
  * 「공정·공사비 (4D/5D)」 단계형 진행(D30): 위쪽 단계 바 + 3D 위에 펼치는 단계 시트.
@@ -56,6 +58,7 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
   const [newKind, setNewKind] = useState<StructureKind>('bridge');
   const [busy, setBusy] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
+  const [assistOpen, setAssistOpen] = useState(false);
   /** 다른 곳(다른 창·AI 연결)에서 바뀐 것을 다시 불러오면 올려 단계 화면을 새로 그린다. */
   const [reload, setReload] = useState(0);
 
@@ -78,28 +81,35 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
 
   useEffect(() => { writeUi(projectId, ui); }, [projectId, ui]);
 
-  // 창으로 돌아오면 다시 읽는다 — AI 연결(MCP)·다른 사람이 저장한 것이 보이게. 내용이 같으면 그대로 둔다.
+  // 창으로 돌아오거나 AI 도우미가 Claude 의 저장을 보면 다시 읽는다 — AI 연결(MCP)·다른 사람이 저장한 것이 보이게.
+  // 내용이 같으면 그대로 둔다.
   const recordsRef = useRef(records);
   useEffect(() => { recordsRef.current = records; }, [records]);
+  const refresh = useCallback(() => {
+    listSetups(projectId).then(r => {
+      const cur = recordsRef.current;
+      const changed = r.records.length !== cur.length || r.records.some(x => cur.find(c => c.id === x.id)?.updatedAt !== x.updatedAt);
+      if (!changed) return;
+      setRecords(r.records);
+      setReload(n => n + 1);
+    }).catch(() => { /* 다음 기회에 */ });
+  }, [projectId]);
   useEffect(() => {
-    const refresh = () => {
-      listSetups(projectId).then(r => {
-        const cur = recordsRef.current;
-        const changed = r.records.length !== cur.length || r.records.some(x => cur.find(c => c.id === x.id)?.updatedAt !== x.updatedAt);
-        if (!changed) return;
-        setRecords(r.records);
-        setReload(n => n + 1);
-      }).catch(() => { /* 다음 기회에 */ });
-    };
     window.addEventListener('focus', refresh);
     return () => window.removeEventListener('focus', refresh);
-  }, [projectId]);
+  }, [refresh]);
 
   const rec = records.find(r => r.id === ui.setupId) ?? null;
   const data = rec?.data ?? emptySetup();
   const name = rec?.name ?? '';
   const sheetOpen = ui.step !== 'sim';
   const go = (step: StepKey) => setUi(u => ({ ...u, step }));
+
+  // 단계 화면의 AI 버튼 → 내 Claude 창(팝업) + AI 도우미 패널(D32). 보기 권한만 있으면 넘기지 않는다(저장 못 함).
+  const aiConnect = useMemo<AiConnect | null>(() => (canEdit ? {
+    askClaude: (task, extra) => { openClaude(claudeAsk(task, name, extra)); setAssistOpen(true); },
+    openConnect: () => setMcpOpen(true),
+  } : null), [canEdit, name]);
 
   const persist = useCallback(async (next: SetupData) => {
     if (!rec) return;
@@ -361,7 +371,10 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
               <p className="muted">{step.desc}</p>
             </div>
             <span className="spacer" />
-            {canEdit && <button className="btn btn--sm" onClick={() => setMcpOpen(true)} title="내 Claude·ChatGPT 에서 이 플랫폼을 쓰는 연결 주소">AI 연결</button>}
+            {canEdit && (
+              <button className={`btn btn--sm${assistOpen ? ' is-on' : ''}`} aria-pressed={assistOpen} onClick={() => setAssistOpen(o => !o)}
+                title="내 Claude(각자 로그인·구독)로 이 단계 일을 시키고 진행을 봅니다">AI 도우미</button>
+            )}
             <button className="btn btn--sm" onClick={() => go('sim')} title="시트를 접고 3D 보기"><UiIcon name="cube" size={14} /> 3D 보기</button>
           </header>
           {where === 'local' && (
@@ -369,7 +382,7 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
               DB 설정 전이라 진행 상태를 이 브라우저에만 저장합니다. 관리자가 Supabase 에서 <code>0040_sim45d_setup.sql</code> 을 실행하면 팀과 공유됩니다.
             </div>
           )}
-          <AiConnectContext.Provider value={canEdit ? () => setMcpOpen(true) : null}>
+          <AiConnectContext.Provider value={aiConnect}>
             <div className="sim-setup__body">{body()}</div>
           </AiConnectContext.Provider>
           <footer className="sim-setup__foot">
@@ -382,6 +395,10 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
         </section>
       )}
 
+      {assistOpen && canEdit && (
+        <ClaudeAssistant projectId={projectId} target={name} step={ui.step} onSaved={refresh}
+          onOpenConnect={() => setMcpOpen(true)} onClose={() => setAssistOpen(false)} />
+      )}
       {mcpOpen && <McpConnect projectId={projectId} onClose={() => setMcpOpen(false)} />}
 
       {picker && pickerSlot && (
