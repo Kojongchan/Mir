@@ -19,6 +19,7 @@ import { McpConnect } from './McpConnect';
 import { ClaudeAssistant } from './ClaudeAssistant';
 import { AiConnectContext, claudeAsk, type AiConnect } from './steps/aiConnect';
 import { openClaude } from '../../lib/claudePopup';
+import { adoptedPlan, confirmedSource, NO_CONFIRMED, planXerBytes, planXerName } from '../../lib/sim45d/confirmed';
 
 /**
  * 「공정·공사비 (4D/5D)」 단계형 진행(D30): 위쪽 단계 바 + 3D 위에 펼치는 단계 시트.
@@ -39,7 +40,7 @@ function writeUi(projectId: string, ui: UiState) {
 }
 
 const FILE_GROUPS: { title: string; slots: SlotKey[] }[] = [
-  { title: '설계 보고서', slots: ['overview', 'plan', 'bridgeDesign'] },
+  { title: '설계 보고서·도면', slots: ['overview', 'plan', 'bridgeDesign', 'drawings'] },
   { title: '수량·내역', slots: ['qto', 'qtoSummary', 'boq'] },
   { title: 'BIM 모델', slots: ['model'] },
   { title: '기준 자료', slots: ['ipsStandard'] },
@@ -170,9 +171,20 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
     }
   };
 
+  // 확정 공정표 열기: P6 수정본을 올렸으면 그것, 아니면 채택한 개략 IPS 를 지금 입력으로 다시 만들어 연다(D34).
   const openP6 = async () => {
     const f = data.files.p6?.[0];
-    if (!f) return;
+    if (!f) {
+      try {
+        const r = adoptedPlan(data);
+        if (!r || !data.plan?.adopted) { setStatus(NO_CONFIRMED); return; }
+        await sim.openXer(new File([planXerBytes(r) as BlobPart], planXerName(data.site?.code, data.plan.adopted.title)));
+        setStatus(`열었습니다: 채택한 개략 IPS(${data.plan.adopted.title}) — 아래 결과를 확인하세요. 3D 는 8 '4D/5D'.`);
+      } catch (e) {
+        setStatus(`공정표 만들기 실패: ${errMessage(e)}`);
+      }
+      return;
+    }
     if (!/\.xer$/i.test(f.name)) { setStatus('P6 엑셀 내보내기 읽기는 준비 중입니다. 지금은 XER 파일로 열어 주세요.'); return; }
     setBusy(true);
     setStatus(`공정표 여는 중: ${f.name}`);
@@ -246,6 +258,14 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
       <ul className="sim-setup__needs">
         {def.needs.map(k => {
           const d = slotDef(k), ok = (data.files[k]?.length ?? 0) > 0;
+          if (k === 'p6') { // 확정 공정표 = 채택한 개략 IPS 또는 P6 수정본(D34)
+            const c = confirmedSource(data);
+            return (
+              <li key={k} className={c ? 'is-ok' : 'is-missing'}>
+                <span aria-hidden>{c ? '✓' : '○'}</span> 확정 공정표 <span className="muted">({c ? c.label : '4단계에서 안 채택 또는 P6 수정본'})</span>
+              </li>
+            );
+          }
           return (
             <li key={k} className={ok ? 'is-ok' : d.need === 'required' ? 'is-missing' : ''}>
               <span aria-hidden>{ok ? '✓' : '○'}</span> {d.label} <span className="muted">({NEED_LABEL[d.need]}{ok ? ` · ${data.files[k]!.length}개` : ''})</span>

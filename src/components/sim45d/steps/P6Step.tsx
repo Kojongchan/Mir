@@ -5,6 +5,7 @@ import { CHECK_RULES, checkSchedule, type CheckRule } from '../../../lib/p6/chec
 import { diffSchedules, readSchedule, type P6Schedule } from '../../../lib/p6/schedule';
 import { decodeXer, parseXer } from '../../../lib/p6/xer';
 import { AiBox, AiStatus, useAi, type StepProps } from './common';
+import { confirmedSource } from '../../../lib/sim45d/confirmed';
 
 /**
  * 5단계 P6 보완: 확정 공정표(XER)를 자료관리에서 골라 4D 로 열고, 방식 3 — 그 공정표를 규칙으로 검토(선후행·구조 순서 역전,
@@ -24,6 +25,7 @@ export function P6Step({ projectId, canEdit, data, sim, setStatus, renderSlot, o
   const [picker, setPicker] = useState(false);
   const ai = useAi(projectId);
   const s = sim.schedule;
+  const confirmed = confirmedSource(data);
   const result = useMemo(() => (s ? checkSchedule(s, { dataDate: dataDate || null }) : null), [s, dataDate]);
   const diff = useMemo(() => (s && prev ? diffSchedules(prev.schedule, s) : null), [s, prev]);
   const bySev = useMemo(() => {
@@ -80,16 +82,21 @@ export function P6Step({ projectId, canEdit, data, sim, setStatus, renderSlot, o
   return (
     <div className="sim-step">
       <section className="sim-step__block">
+        <p className="muted">
+          확정 공정표: <strong>{confirmed?.label ?? '없음'}</strong>
+          {confirmed?.kind === 'draft' && ' — 플랫폼 안을 그대로 쓰면 올릴 것이 없습니다. P6 에서 고쳤을 때만 아래에 수정본(XER)을 올립니다.'}
+          {!confirmed && ' — 4단계 개략 IPS 에서 안을 채택하거나, P6 에서 고친 공정표를 아래에 올리세요.'}
+        </p>
         <div className="sim-setup__slots">{renderSlot('p6')}</div>
         <div className="sim-step__actions">
-          <button className="btn btn--sm btn--primary" disabled={!data.files.p6?.length || opening} onClick={openP6}>이 공정표 열어서 검토</button>
+          <button className="btn btn--sm btn--primary" disabled={!confirmed || opening} onClick={openP6}>확정 공정표 열어서 검토</button>
           {s && <span className="muted">지금 열린 공정표: {s.projectName} (작업 {s.activities.length.toLocaleString()}개)</span>}
         </div>
       </section>
 
       <section className="sim-step__block">
         <h4>공정표 검토(방식 3)</h4>
-        {!s ? <p className="muted">위 '이 공정표 열어서 검토'(또는 도구 줄 '공정표 열기')로 열면 여기에 바로 검토 결과가 나옵니다. 연 공정표는 4D/5D 에도 쓰입니다.</p> : result && (
+        {!s ? <p className="muted">위 '확정 공정표 열어서 검토'(또는 도구 줄 '공정표 열기')로 열면 여기에 바로 검토 결과가 나옵니다. 연 공정표는 4D/5D 에도 쓰입니다.</p> : result && (
           <>
             <div className="sim-form sim-form--inline">
               <span><strong>{s.projectName}</strong> · 작업 {result.checked.activities.toLocaleString()} · 관계 {result.checked.relations.toLocaleString()}</span>

@@ -4,6 +4,7 @@ import { checkSchedule } from '../../../lib/p6/check';
 import { accBoqSheet, boqLines, boqSections, guessBoqSection, type BoqLine } from '../../../lib/sim45d/docText';
 import { phaseAt, progressAt } from '../../../lib/sim45d/timeline';
 import { AiBox, AiStatus, fmtWon, useAi, type StepProps } from './common';
+import { confirmedSource } from '../../../lib/sim45d/confirmed';
 
 /**
  * 9단계 검증·질의: 공정표 검토·연결 결과 요약, 그리고 AI 활용 6·7·8 —
@@ -20,6 +21,7 @@ const ymd = (t: number) => new Date(t).toISOString().slice(0, 10);
 
 export function ReportStep({ projectId, canEdit, data, name, sim, openP6, opening }: StepProps) {
   const s = sim.schedule;
+  const confirmed = confirmedSource(data);
   const ai = useAi(projectId);
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState<Answer | null>(null);
@@ -129,9 +131,9 @@ export function ReportStep({ projectId, canEdit, data, name, sim, openP6, openin
         <h4>요약</h4>
         <ul className="sim-list">
           <li>공정표: {s ? `${s.projectName} · 작업 ${s.activities.length.toLocaleString()}` : (
-            data.files.p6?.length
-              ? <button className="btn btn--sm" disabled={opening} onClick={openP6}>{opening ? '여는 중…' : `확정 공정표 열기 — ${data.files.p6[0].name}`}</button>
-              : '열린 공정표 없음(5단계)')}</li>
+            confirmed
+              ? <button className="btn btn--sm" disabled={opening} onClick={openP6}>{opening ? '여는 중…' : `확정 공정표 열기 — ${confirmed.label}`}</button>
+              : '확정 공정표 없음(4단계에서 안 채택)')}</li>
           {check && <li>검토: 오류 {check.findings.filter(f => f.severity === 'error').length} · 경고 {check.findings.filter(f => f.severity === 'warn').length} (자세히는 5단계)</li>}
           <li>BIM 연결 저장: {linkCount.toLocaleString()}개 객체</li>
         </ul>

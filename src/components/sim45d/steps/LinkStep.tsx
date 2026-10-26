@@ -4,6 +4,7 @@ import { autoLink, LINK_PART_LABEL, type LinkActivity, type LinkResult } from '.
 import type { LinkSet, SetupFile } from '../../../lib/sim45d/setup';
 import { wbsScope } from '../../../lib/sim45d/wbsScope';
 import { AiBox, AiStatus, useAi, type StepProps } from './common';
+import { confirmedSource, NO_CONFIRMED } from '../../../lib/sim45d/confirmed';
 
 /**
  * 6단계 BIM 연결: 확정 IPS(4D 로 연 공정표)의 Activity ID 를 모델 객체에 붙인다. 규칙(부위·개소) → 남는 것만 AI.
@@ -108,12 +109,13 @@ export function LinkStep({ projectId, canEdit, data, persist, sim, setStatus, op
   };
 
   if (!s) {
+    const confirmed = confirmedSource(data);
     return (
       <div className="sim-step__empty">
         <p>연결할 Activity ID 가 있는 확정 공정표를 먼저 엽니다.</p>
-        {data.files.p6?.length
-          ? <button className="btn btn--sm btn--primary" disabled={opening} onClick={openP6}>{opening ? '여는 중…' : `확정 공정표 열기 — ${data.files.p6[0].name}`}</button>
-          : <p className="muted">5단계 'P6 보완' 에서 확정 공정표(XER)를 고르세요.</p>}
+        {confirmed
+          ? <button className="btn btn--sm btn--primary" disabled={opening} onClick={openP6}>{opening ? '여는 중…' : `확정 공정표 열기 — ${confirmed.label}`}</button>
+          : <p className="muted">{NO_CONFIRMED}</p>}
       </div>
     );
   }

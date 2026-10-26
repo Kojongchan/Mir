@@ -1,7 +1,7 @@
 // 공정·공사비(4D/5D) 단계형 진행(D30) — 단계·자료 칸 정의와 진행 상태 계산(순수 함수, 화면·DB 와 분리).
 // 순서는 실제 업무 순서: 설계현황 → AI 개략 IPS → P6 보완 → 확정 IPS 로 BIM 속성 부여 → 4D/5D.
 // 자료는 자료관리(ACC) 파일을 가리킨다(파일 자체는 ACC 에, 여기에는 어느 파일인지만).
-import type { BridgeSite, CriticalPoint, RateKey, Support } from '../p6/bridgePlan';
+import type { BridgeSite, CriticalPoint, Levers, RateKey, Support } from '../p6/bridgePlan';
 
 export type StepKey = 'target' | 'files' | 'design' | 'draft' | 'p6' | 'link' | 'export' | 'sim' | 'report';
 
@@ -17,7 +17,7 @@ export interface StepDef {
   needs: SlotKey[];
 }
 
-export type SlotKey = 'overview' | 'plan' | 'bridgeDesign' | 'qto' | 'qtoSummary' | 'boq' | 'model' | 'ipsStandard' | 'p6';
+export type SlotKey = 'overview' | 'plan' | 'bridgeDesign' | 'drawings' | 'qto' | 'qtoSummary' | 'boq' | 'model' | 'ipsStandard' | 'p6';
 export type SlotNeed = 'required' | 'recommended' | 'optional';
 
 export interface SlotDef {
@@ -42,20 +42,21 @@ export const SLOTS: SlotDef[] = [
   { key: 'overview', step: 'files', label: '과업의 개요', hint: '실시설계 보고서 — 사업 범위·구조물 목록', need: 'recommended', accept: DOCS, multiple: false },
   { key: 'plan', step: 'files', label: '시공계획', hint: '실시설계 보고서 — 공법·장비·순서(공기 근거)', need: 'required', accept: DOCS, multiple: false },
   { key: 'bridgeDesign', step: 'files', label: '교량설계', hint: '실시설계 보고서 — 형식·경간 구성', need: 'recommended', accept: DOCS, multiple: false },
+  { key: 'drawings', step: 'files', label: '설계 도면', hint: '실시설계 도면 PDF(권별) — 교각 일반도의 기둥 높이·기초 형식. 큰 파일도 필요한 쪽만 읽음', need: 'recommended', accept: ['pdf'], multiple: true },
   { key: 'qto', step: 'files', label: '수량산출서', hint: '해당 구조물 장(예: 2편 1장 연제교)', need: 'required', accept: [...DOCS, ...SHEETS], multiple: true },
   { key: 'qtoSummary', step: 'files', label: '개소별·자재 집계표', hint: '수량산출서 안에 있으면 생략', need: 'optional', accept: [...DOCS, ...SHEETS], multiple: true },
   { key: 'boq', step: 'files', label: '산출내역서', hint: '5D 공사비(엑셀)', need: 'recommended', accept: SHEETS, multiple: false },
   { key: 'model', step: 'files', label: 'BIM 모델', hint: 'ACC 에 올린 모델(상선·하선처럼 여러 개 가능)', need: 'required', accept: MODELS, multiple: true },
   { key: 'ipsStandard', step: 'files', label: 'IPS 구성 표준·WBS 정의서', hint: '공단 표준(개략 IPS 의 틀)', need: 'recommended', accept: [...DOCS, ...SHEETS, 'pptx'], multiple: true },
-  { key: 'p6', step: 'p6', label: '확정 공정표', hint: 'P6 에서 고친 XER(또는 P6 엑셀 내보내기)', need: 'required', accept: ['xer', ...SHEETS], multiple: false },
+  { key: 'p6', step: 'p6', label: 'P6 수정 공정표', hint: 'P6 에서 고쳤을 때만 — 올리지 않으면 4단계에서 채택한 개략 IPS 가 확정 공정표', need: 'optional', accept: ['xer', ...SHEETS], multiple: false },
 ];
 
 export const STEPS: StepDef[] = [
   { key: 'target', title: '대상 선택', short: '대상', desc: '공정·공사비를 만들 구조물을 고릅니다.', built: true, needs: [] },
-  { key: 'files', title: '자료 준비', short: '자료', desc: '필요한 자료를 자료관리에서 고르거나 지금 올립니다.', built: true, needs: ['overview', 'plan', 'bridgeDesign', 'qto', 'qtoSummary', 'boq', 'model', 'ipsStandard'] },
-  { key: 'design', title: '설계현황', short: '설계현황', desc: '구조물·개소(A1, P1…, 경간)·말뚝·교각 높이를 표로 만들고 확인합니다(수량산출서에서 AI 로 채우기).', built: true, needs: ['qto', 'qtoSummary', 'bridgeDesign', 'overview'] },
+  { key: 'files', title: '자료 준비', short: '자료', desc: '필요한 자료를 자료관리에서 고르거나 지금 올립니다.', built: true, needs: ['overview', 'plan', 'bridgeDesign', 'drawings', 'qto', 'qtoSummary', 'boq', 'model', 'ipsStandard'] },
+  { key: 'design', title: '설계현황', short: '설계현황', desc: '구조물·개소(A1, P1…, 경간)·말뚝·교각 높이를 표로 만들고 확인합니다(수량산출서·도면에서 AI 로 채우기).', built: true, needs: ['qto', 'qtoSummary', 'drawings', 'bridgeDesign', 'overview'] },
   { key: 'draft', title: 'AI 개략 IPS', short: '개략 IPS', desc: '과업시작일 기준 3안 또는 종료일 맞춤. 공기 = 수량 × 단위공기(출처), 크리티컬 포인트는 제약으로.', built: true, needs: ['qto', 'plan', 'ipsStandard'] },
-  { key: 'p6', title: 'P6 보완', short: 'P6 보완', desc: 'P6 에서 고친 공정표를 올려 확정하고, 선후행·구조 순서 역전과 표준 위반을 검토합니다.', built: true, needs: ['p6'] },
+  { key: 'p6', title: 'P6 보완', short: 'P6 보완', desc: '확정 공정표(채택한 개략 IPS, 또는 P6 에서 고쳐 올린 것)를 선후행·구조 순서 역전과 표준 위반으로 검토합니다. P6 에서 고쳤을 때만 올립니다.', built: true, needs: ['p6'] },
   { key: 'link', title: 'BIM 연결', short: 'BIM 연결', desc: '확정 IPS 의 Activity ID 를 객체에 붙입니다(규칙 → 남는 것 AI). 모델의 기존 코드와 비교합니다.', built: true, needs: ['model', 'p6'] },
   { key: 'export', title: '모델 반영', short: '모델 반영', desc: '객체별 속성(IPS 코드·일자)을 모델에 넣을 파일로 내보냅니다.', built: false, needs: ['model', 'p6'] },
   { key: 'sim', title: '4D/5D', short: '4D/5D', desc: '3D 에서 기준일의 시공 상태와 공사비를 봅니다.', built: true, needs: [] },
@@ -89,6 +90,18 @@ export interface PlanSettings {
   rates: Partial<Record<RateKey, number>>;
   /** 바꾼 값의 근거(쪽·인용) — 없으면 '사용자 수정'. */
   rateNotes?: Partial<Record<RateKey, string>>;
+  /**
+   * 확정으로 채택한 개략 IPS 안(투입안). P6 수정본을 올리지 않으면 이 안을 지금 저장된 설계현황·단위공기·크리티컬 포인트로
+   * 다시 계산한 공정표가 확정 공정표다(BIM 연결·검토·4D 가 씀). 날짜는 입력을 따라 바뀌고 투입안만 고정.
+   */
+  adopted?: AdoptedPlan;
+}
+
+export interface AdoptedPlan {
+  /** 안 이름(예 'B안 · 병행 투입'). */
+  title: string;
+  levers: Levers;
+  at: string;
 }
 
 /** 누가(사람·AI 연결) 무엇을 저장했나 — 최근 것만 남긴다. */
@@ -173,6 +186,7 @@ export function normalizeSetup(raw: unknown): SetupData {
       criticalText: str(plan.criticalText), criticalPoints: Array.isArray(plan.criticalPoints) ? plan.criticalPoints : [],
       rates: plan.rates && typeof plan.rates === 'object' ? plan.rates : {},
       ...(plan.rateNotes && typeof plan.rateNotes === 'object' ? { rateNotes: plan.rateNotes } : {}),
+      ...(isAdopted(plan.adopted) ? { adopted: plan.adopted } : {}),
     };
   }
   if (Array.isArray(r.links)) out.links = (r.links as LinkSet[]).filter(l => l && typeof l.modelItemId === 'string' && Array.isArray(l.links));
@@ -214,6 +228,17 @@ export interface StepStatus {
 
 const filled = (data: SetupData, key: SlotKey) => (data.files[key]?.length ?? 0) > 0;
 
+const LEVER_KEYS: (keyof Levers)[] = ['rigs', 'pierCrews', 'copingSets', 'launchers', 'deckCrews', 'girderBatch'];
+const isAdopted = (v: unknown): v is AdoptedPlan => {
+  const o = v as AdoptedPlan;
+  return !!o && typeof o.title === 'string' && typeof o.at === 'string' && !!o.levers
+    && LEVER_KEYS.every(k => Number.isInteger(o.levers[k]) && o.levers[k] > 0);
+};
+
+/** 확정 공정표가 있나: P6 수정본을 올렸거나, 개략 IPS 안을 채택했다(설계현황·과업시작일과 함께). */
+export const hasConfirmedSchedule = (data: SetupData): boolean =>
+  filled(data, 'p6') || (!!data.site && !!data.plan?.start && !!data.plan.adopted);
+
 /**
  * 단계 상태: 기능이 없는 단계는 'planned'(필요 자료만 알려줌). 대상은 이름이 있으면, 자료·P6 단계는 필수 자료를
  * 다 고르면 'done'. 4D/5D 는 언제든 열 수 있어 'todo' 로 둔다.
@@ -223,11 +248,13 @@ export function stepStatus(data: SetupData, step: StepKey, name: string): StepSt
   const slots = def.needs.map(slotDef);
   const missing = slots.filter(s => s.need === 'required' && !filled(data, s.key));
   const suggested = slots.filter(s => s.need === 'recommended' && !filled(data, s.key));
+  // 확정 공정표(채택안 또는 P6 수정본)가 없으면 공정표를 쓰는 단계는 그것부터 — P6 파일 업로드가 필수인 것은 아니다.
+  if (def.needs.includes('p6') && !hasConfirmedSchedule(data)) missing.push(slotDef('p6'));
   if (!def.built) return { state: 'planned', missing, suggested };
   if (step === 'target') return { state: name.trim() ? 'done' : 'todo', missing, suggested };
   if (step === 'sim' || step === 'report') return { state: 'todo', missing, suggested };
   if (step === 'design') return { state: data.site ? 'done' : 'todo', missing: [], suggested };
-  if (step === 'draft') return { state: data.site && data.plan?.start ? 'done' : 'todo', missing, suggested };
+  if (step === 'draft') return { state: data.site && data.plan?.start && data.plan.adopted ? 'done' : 'todo', missing, suggested };
   if (step === 'link') {
     const models = data.files.model ?? [];
     const done = models.length > 0 && models.every(m => data.links?.some(l => l.modelItemId === m.accItemId && l.links.length > 0));

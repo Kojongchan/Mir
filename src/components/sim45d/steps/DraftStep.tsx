@@ -3,8 +3,7 @@ import {
   DEFAULT_RATES, PRESETS, fitToDeadline, parseSupportList, proposePlans,
   type CriticalPoint, type PlanResult, type Rate, type RateKey,
 } from '../../../lib/p6/bridgePlan';
-import { buildXer } from '../../../lib/p6/schedule';
-import { encodeXer, serializeXer } from '../../../lib/p6/xer';
+import { planRates, planXerBytes, planXerName } from '../../../lib/sim45d/confirmed';
 import { accPdfPages, chunkPages } from '../../../lib/sim45d/docText';
 import { emptyPlan, type PlanSettings } from '../../../lib/sim45d/setup';
 import { AiBox, AiStatus, useAi, type StepProps } from './common';
@@ -48,9 +47,7 @@ export function DraftStep({ projectId, canEdit, data, persist, sim, setStatus }:
   const ai = useAi(projectId);
   const site = data.site;
   const ids = useMemo(() => site?.supports.map(s => s.id) ?? [], [site]);
-  const rates: Rate[] = useMemo(() => DEFAULT_RATES.map(r => (plan.rates[r.key] != null
-    ? { ...r, value: plan.rates[r.key]!, source: plan.rateNotes?.[r.key] ?? `사용자 수정 (기본 ${r.value}${r.unit} — ${r.source})`, assumed: false }
-    : r)), [plan.rates, plan.rateNotes]);
+  const rates: Rate[] = useMemo(() => planRates(plan), [plan]);
   const save = (next: PlanSettings) => { setPlan(next); if (canEdit) void persist({ ...data, plan: next }); };
 
   const toPoint = (p: AiPoint): CriticalPoint | null => {
@@ -104,26 +101,37 @@ export function DraftStep({ projectId, canEdit, data, persist, sim, setStatus }:
     if (!plan.start) { setStatus('과업시작일을 넣으세요.'); return; }
     const input = { site, start: plan.start, rates, criticalPoints: plan.criticalPoints };
     try {
+      let list: { title: string; result: PlanResult }[];
       if (plan.mode === 'fit') {
         if (!plan.finish) { setStatus('방식 2 는 과업종료예정일이 필요합니다.'); return; }
         const fit = fitToDeadline(input, plan.finish);
-        setResults(fit.options.map(o => ({ title: o.title, result: o.result })));
+        list = fit.options.map(o => ({ title: o.title, result: o.result }));
         setFitNote(fit.feasible
           ? `종료예정일 ${plan.finish} 안에 끝나는 투입안 ${fit.options.length}개(투입이 적은 순). 작업 일수는 줄이지 않았습니다.`
           : `작업조 6개·런처 2대로도 ${fit.shortfallDays}일 부족합니다 — 단위공기·크리티컬 포인트를 다시 보거나 종료일을 조정해야 합니다.`);
       } else {
-        setResults(proposePlans(input).map(p => ({ title: p.title, result: p.result })));
+        list = proposePlans(input).map(p => ({ title: p.title, result: p.result }));
         setFitNote('');
       }
-      setChosen(0);
+      setResults(list);
+      setChosen(Math.max(0, list.findIndex(x => x.title === plan.adopted?.title)));
     } catch (e) {
       setStatus(`공정표 계산 실패: ${(e as Error).message}`);
     }
   };
 
   const pick = results?.[chosen]?.result;
-  const xerBytes = () => (pick ? encodeXer(serializeXer(buildXer(pick.draft)), 'cp949') : null);
-  const fileName = () => `${site?.code ?? 'IPS'}_개략IPS_${results?.[chosen]?.title.split(' ')[0] ?? ''}.xer`;
+  const pickTitle = results?.[chosen]?.title ?? '';
+  const xerBytes = () => (pick ? planXerBytes(pick) : null);
+  const fileName = () => planXerName(site?.code, pickTitle);
+  const adopted = plan.adopted;
+  const adoptedHere = !!adopted && !!pick && adopted.title === pickTitle && JSON.stringify(adopted.levers) === JSON.stringify(pick.levers);
+  // 채택: 투입안만 저장 — 확정 공정표는 이 안을 지금 입력으로 다시 계산한 것(P6 수정본을 올리지 않는 한, D34).
+  const adopt = () => {
+    if (!pick) return;
+    save({ ...plan, adopted: { title: pickTitle, levers: pick.levers, at: new Date().toISOString() } });
+    setStatus(`확정: ${pickTitle} — 공기 ${pick.durationDays.toLocaleString()}일, ${pick.finish} 완료. P6 에서 고치지 않으면 이대로 검토·BIM 연결·4D 에 씁니다.`);
+  };
 
   if (!site) return <p className="sim-step__empty">먼저 3단계 설계현황(개소 표)을 저장하세요.</p>;
 
@@ -229,6 +237,7 @@ export function DraftStep({ projectId, canEdit, data, persist, sim, setStatus }:
           <button className="btn btn--sm btn--primary" disabled={!plan.start} onClick={generate}>공정표 만들기</button>
           <span className="muted">작업 {site.supports.length * 3 + site.spans.length}개 안팎 · 투입안: {PRESETS.map(p => p.title.split(' · ')[1]).join(' / ')}</span>
         </div>
+        {adopted && !results && <p className="muted">확정 공정표: {adopted.title}({adopted.at.slice(0, 10)} 채택) — 「공정표 만들기」로 지금 입력 기준 일정을 다시 봅니다.</p>}
         {fitNote && <p className={results && results.length && fitNote.includes('부족') ? 'sim-error' : 'muted'}>{fitNote}</p>}
         {results && (
           <>
@@ -251,10 +260,15 @@ export function DraftStep({ projectId, canEdit, data, persist, sim, setStatus }:
             {pick && (
               <>
                 <div className="sim-step__actions">
+                  <button className="btn btn--sm btn--primary" disabled={!canEdit || adoptedHere} onClick={adopt}
+                    title="이 안을 확정 공정표로 — 검토·BIM 연결·4D 가 씁니다">{adoptedHere ? '✓ 확정한 안' : '이 안으로 확정'}</button>
                   <button className="btn btn--sm" onClick={() => { const b = xerBytes(); if (b) download(b, fileName()); }}>XER 내려받기(P6)</button>
-                  <button className="btn btn--sm btn--primary" onClick={() => { const b = xerBytes(); if (b) void sim.openXer(new File([b as BlobPart], fileName())).then(() => setStatus('4D/5D 에 열었습니다 — 8단계에서 보세요.')); }}>4D/5D 로 열기</button>
-                  <span className="muted">P6 에서 고친 뒤 5단계에 다시 올립니다. 활동마다 '산정근거' UDF 가 함께 갑니다.</span>
+                  <button className="btn btn--sm" onClick={() => { const b = xerBytes(); if (b) void sim.openXer(new File([b as BlobPart], fileName())).then(() => setStatus('4D/5D 에 열었습니다 — 8단계에서 보세요.')); }}>4D/5D 로 열기</button>
                 </div>
+                <p className="muted">
+                  {adopted ? `확정 공정표: ${adopted.title}(${adopted.at.slice(0, 10)} 채택). ` : '아직 확정한 안이 없습니다. '}
+                  그대로 쓰면 올릴 것이 없고, P6 에서 고쳤을 때만 5단계에 수정본을 올립니다. XER 에는 활동마다 '산정근거' UDF 가 함께 갑니다.
+                </p>
                 <div className="sim-table-wrap sim-table-wrap--tall">
                   <table className="sim-table">
                     <thead><tr><th>Activity ID</th><th>작업</th><th>수량</th><th>일수</th><th>시작</th><th>종료</th><th>여유</th><th>근거</th></tr></thead>

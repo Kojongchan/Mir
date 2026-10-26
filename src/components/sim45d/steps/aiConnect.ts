@@ -35,7 +35,7 @@ function claudeAskBase(task: AiTaskName | 'cycle', target: string): string {
   const t = `MIR 4D/5D 에서 '${target}'`;
   const confirm = '저장 전에는 표로 보여 주고 내 확인을 받아.';
   switch (task) {
-    case 'designExtract': return `${t} 설계현황을 채워줘. 수량산출서·개소별 집계표에서 개소(A1, P1…)마다 말뚝 종류·본수·확대기초·교각 높이를 근거(쪽)와 함께 찾고, ${confirm}`;
+    case 'designExtract': return `${t} 설계현황을 채워줘. 수량산출서·개소별 집계표에서 개소(A1, P1…)마다 말뚝 종류·본수·확대기초를, 교각 높이(기둥)는 설계 도면의 교각 일반도에서 근거(파일·쪽)와 함께 찾고, ${confirm}`;
     case 'ratesExtract': return `${t} 단위공기를 시공계획에서 근거(쪽·인용)와 함께 찾아 지금 값과 비교해 줘. '가정' 값부터. 바꿀 것만 ${confirm}`;
     case 'criticalPoints': return `${t} 크리티컬 포인트(야간 구간·작업 금지 기간·착수 가능일·우선 시공·기한)를 아래 내 메모(없으면 나에게 물어)로 정리하고, 플랫폼으로 공기를 다시 계산해 비교해 줘. ${confirm}`;
     case 'explainCheck': case 'diffSummary': return `${t} 확정 공정표를 검토해서 오류(선후행·구조 순서 역전)부터 우선순위와 P6 에서 할 일을 정리해 줘.`;
@@ -43,7 +43,7 @@ function claudeAskBase(task: AiTaskName | 'cycle', target: string): string {
     case 'linkLeftovers': return `${t} BIM 연결을 마무리해 줘. 규칙이 못 정한 객체만 근거와 함께 작업을 고르고, ${confirm}`;
     case 'boqClassify': return `${t} 산출내역서 구간 항목을 A(형상 직접)/B(형상 파생)/C(모델 없음)/D(간접비)와 부위로 분류해 표로 보여 줘.`;
     case 'qa': return `${t} 공정·공사비에 대해 질문할게: `;
-    case 'cycle': return `${t} 를 한 바퀴 진행해 줘: 설계현황 → 단위공기 → 개략 IPS(과업시작일은 나에게 물어) → P6 검토 → BIM 연결. 단계마다 결과를 보여 주고, ${confirm}`;
+    case 'cycle': return `${t} 를 한 바퀴 진행해 줘: 설계현황(교각 높이는 도면) → 단위공기 → 개략 IPS(과업시작일은 나에게 물어, 내가 고른 안을 채택 = 확정 공정표) → P6 검토 → BIM 연결. 단계마다 결과를 보여 주고, ${confirm}`;
   }
 }
 

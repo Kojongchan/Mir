@@ -4,12 +4,12 @@
 // 를 등록하면, 그 AI 가 플랫폼 자료를 읽고 결과를 저장한다 — AI 사용료는 각자의 구독(D32, 시험 구성).
 // Streamable HTTP, 상태 없음(요청마다 서버를 만든다), JSON 응답. 도구는 api/_mcp-tools.ts.
 // 권한: 토큰 서명·만료 확인 → 요청마다 프로젝트 멤버 역할 확인(빠지면 바로 막힘). 저장은 실무자 이상.
-// Node 런타임: PDF 글 읽기(pdfjs)·큰 XER 처리에 엣지 메모리(128MB)가 모자라다.
+// Node 런타임: PDF 글 읽기·도면 그림(pdfjs + 캔버스)·큰 XER 처리에 엣지 메모리(128MB)가 모자라다.
 // Required env: APS_CLIENT_ID / APS_CLIENT_SECRET + SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY (+ 선택 MCP_TOKEN_SECRET).
 // =====================================================================
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
-import { accFileBytes, modelObjects, pdfText } from '../_mcp-acc.js';
+import { accFileBytes, modelObjects, pdfImages, pdfOutline, pdfText } from '../_mcp-acc.js';
 import { mcpStore } from '../_mcp-store.js';
 import { mcpSecret, verifyMcpToken } from '../_mcp-token.js';
 import { MCP_INSTRUCTIONS, registerMcpPrompts, registerMcpTools } from '../_mcp-tools.js';
@@ -42,7 +42,7 @@ async function handle(req: Request): Promise<Response> {
   const server = new McpServer({ name: 'mir-4d5d', title: 'MIR 공정·공사비(4D/5D)', version: '0.1.0' }, { instructions: MCP_INSTRUCTIONS });
   registerMcpTools(server, {
     projectId: claims.p, userId: claims.u, role, store,
-    acc: { fileBytes: accFileBytes, pdfText, modelObjects },
+    acc: { fileBytes: accFileBytes, pdfText, pdfOutline, pdfImages, modelObjects },
     sheetRows,
   });
   registerMcpPrompts(server);

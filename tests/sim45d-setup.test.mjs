@@ -167,3 +167,48 @@ test('BOQ: numbered sections with item counts, structure-name guess across 상·
   assert.equal(B.guessBoqSection(secs, '오송터널'), null);
   assert.deepEqual(B.boqLines(rows, '2-1. 연제교').map(l => [l.name, l.unit, l.amount]), [['콘크리트', 'M3', 1200000], ['거푸집', 'M2', 900000]]);
 });
+
+test('confirmed schedule: adopted draft IPS counts without a P6 upload; an uploaded P6 revision wins', () => {
+  const xer = compile('src/lib/p6/xer.ts');
+  const cpm = compile('src/lib/p6/cpm.ts');
+  const p6 = compile('src/lib/p6/schedule.ts', { './xer.js': xer, './cpm.js': cpm });
+  const B = compile('src/lib/p6/bridgePlan.ts', { './schedule.js': p6 });
+  const C = compile('src/lib/sim45d/confirmed.ts', { '../p6/bridgePlan.js': B, '../p6/schedule.js': p6, '../p6/xer.js': xer });
+  const supports = ['A1', 'P1', 'P2', 'P3', 'A2'].map((id, i) => ({ id, kind: id[0] === 'A' ? 'abutment' : 'pier', pileType: 'cast', pileCount: 1, ...(i === 2 ? { heightM: 10.1 } : {}) }));
+  let d = s.emptySetup();
+  d = s.addFile(d, 'model', file('m', 'BR01.ifc'));
+  d = { ...d, site: { name: '연제교 상선', code: 'BR01', supports, spans: B.spansFromSupports(supports) }, plan: { ...s.emptyPlan(), start: '2024-01-05' } };
+  // 처음에는 P6 가 없다 — 업로드가 아니라 '안 채택'이 빠진 것
+  assert.equal(C.confirmedSource(d), null);
+  assert.equal(s.hasConfirmedSchedule(d), false);
+  assert.equal(s.stepStatus(d, 'draft', 'x').state, 'todo', '시작일만 있고 채택 전');
+  assert.deepEqual(s.stepStatus(d, 'link', 'x').missing.map(m => m.key), ['p6']);
+  assert.equal(s.stepStatus(d, 'p6', 'x').state, 'todo');
+  assert.equal(C.adoptedSchedule(d), null);
+
+  const plans = B.proposePlans({ site: d.site, start: '2024-01-05', rates: C.planRates(d.plan) });
+  const b = plans.find(p => p.key === 'B');
+  d = { ...d, plan: { ...d.plan, adopted: { title: b.title, levers: b.result.levers, at: '2026-10-26T00:00:00Z' } } };
+  assert.equal(s.hasConfirmedSchedule(d), true);
+  assert.deepEqual(C.confirmedSource(d), { kind: 'draft', title: b.title, at: '2026-10-26T00:00:00Z', label: `채택한 개략 IPS(${b.title})` });
+  assert.equal(s.stepStatus(d, 'draft', 'x').state, 'done');
+  assert.equal(s.stepStatus(d, 'p6', 'x').state, 'done', 'P6 수정본은 선택');
+  assert.deepEqual(s.stepStatus(d, 'link', 'x').missing, []);
+  const sch = C.adoptedSchedule(d);
+  assert.equal(sch.activities.length, b.result.draft.activities.length, '화면에서 본 안과 같은 공정표');
+  assert.ok(sch.activities.every(a => a.code.startsWith('BR01')));
+  const reread = p6.readSchedule(xer.parseXer(xer.decodeXer(C.planXerBytes(C.adoptedPlan(d))).text));
+  assert.equal(reread.activities.length, sch.activities.length, 'XER 로 내보내 다시 읽어도 같음');
+  assert.equal(C.planXerName('BR01', b.title), 'BR01_개략IPS_B안.xer');
+  // 저장·불러오기: 채택안은 남고, 망가진 값은 버린다
+  assert.deepEqual(s.normalizeSetup(d).plan.adopted, d.plan.adopted);
+  assert.equal(s.normalizeSetup({ ...d, plan: { ...d.plan, adopted: { title: 'x', at: 'y', levers: { rigs: 0 } } } }).plan.adopted, undefined);
+  // 단위공기를 바꾸면 같은 투입안이라도 날짜가 따라 바뀐다(투입안만 고정)
+  const slower = { ...d, plan: { ...d.plan, rates: { castPile: 30 }, rateNotes: { castPile: '시험' } } };
+  assert.ok(C.adoptedPlan(slower).durationDays > C.adoptedPlan(d).durationDays);
+
+  // P6 에서 고쳐 올리면 그것이 확정
+  const up = s.addFile(d, 'p6', file('x', '311.xer'));
+  assert.equal(C.confirmedSource(up).kind, 'p6');
+  assert.equal(C.confirmedSource(up).label, 'P6 수정본 311.xer');
+});
