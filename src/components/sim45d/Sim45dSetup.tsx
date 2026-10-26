@@ -440,9 +440,15 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
               DB 설정 전이라 진행 상태를 이 브라우저에만 저장합니다. 관리자가 Supabase 에서 <code>0040_sim45d_setup.sql</code> 을 실행하면 팀과 공유됩니다.
             </div>
           )}
-          <AiConnectContext.Provider value={aiConnect}>
-            <div className="sim-setup__body">{body()}</div>
-          </AiConnectContext.Provider>
+          <div className="sim-setup__main">
+            {assistOpen && canEdit && (
+              <ClaudeAssistant mode="dock" projectId={projectId} target={name} step={ui.step} onSaved={refresh}
+                onOpenConnect={() => setMcpOpen(true)} onClose={() => setAssistOpen(false)} />
+            )}
+            <AiConnectContext.Provider value={aiConnect}>
+              <div className="sim-setup__body">{body()}</div>
+            </AiConnectContext.Provider>
+          </div>
           <footer className="sim-setup__foot">
             <button className="btn btn--sm" disabled={!prevStep} onClick={() => prevStep && go(prevStep.key)}>‹ 이전</button>
             <span className="muted sim-setup__status" aria-live="polite">{status}</span>
@@ -456,8 +462,8 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
         </section>
       )}
 
-      {assistOpen && canEdit && (
-        <ClaudeAssistant projectId={projectId} target={name} step={ui.step} onSaved={refresh}
+      {assistOpen && canEdit && !sheetOpen && (
+        <ClaudeAssistant mode="float" projectId={projectId} target={name} step={ui.step} onSaved={refresh}
           onOpenConnect={() => setMcpOpen(true)} onClose={() => setAssistOpen(false)} />
       )}
       {mcpOpen && <McpConnect projectId={projectId} onClose={() => setMcpOpen(false)} />}
