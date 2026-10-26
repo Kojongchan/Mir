@@ -43,7 +43,7 @@ function claudeAskBase(task: AiTaskName | 'cycle', target: string): string {
     case 'linkLeftovers': return `${t} BIM 연결을 마무리해 줘. 규칙이 못 정한 객체만 근거와 함께 작업을 고르고, ${confirm}`;
     case 'boqClassify': return `${t} 산출내역서 구간 항목을 A(형상 직접)/B(형상 파생)/C(모델 없음)/D(간접비)와 부위로 분류해 표로 보여 줘.`;
     case 'qa': return `${t} 공정·공사비에 대해 질문할게: `;
-    case 'cycle': return `${t} 를 한 바퀴 진행해 줘: 설계현황(교각 높이는 도면) → 단위공기 → 개략 IPS(과업시작일은 나에게 물어, 내가 고른 안을 채택 = 확정 공정표) → P6 검토 → BIM 연결. 단계마다 결과를 보여 주고, ${confirm}`;
+    case 'cycle': return `${t} 를 한 바퀴 진행해 줘: 설계현황(교각 높이는 도면) → 단위공기 → 개략 IPS(과업시작일은 나에게 물어, 내가 고른 안을 채택 = 확정 공정표) → P6 검토 → BIM 연결. 이미 짠 공정표가 올라가 있으면(list_targets 의 confirmedSchedule) 앞 단계는 건너뛸지 묻고 P6 검토부터. 단계마다 결과를 보여 주고, ${confirm}`;
   }
 }
 

@@ -15,6 +15,10 @@ export interface StepDef {
   built: boolean;
   /** 이 단계가 쓰는 자료 칸. */
   needs: SlotKey[];
+  /** 이 단계에서 하는 일과 끝나는 조건(화면 안내). */
+  guide: string;
+  /** 건너뛰어도 되는 경우(있으면 「건너뛰기」 버튼). */
+  skippable?: string;
 }
 
 export type SlotKey = 'overview' | 'plan' | 'bridgeDesign' | 'drawings' | 'qto' | 'qtoSummary' | 'boq' | 'model' | 'ipsStandard' | 'p6';
@@ -48,19 +52,32 @@ export const SLOTS: SlotDef[] = [
   { key: 'boq', step: 'files', label: '산출내역서', hint: '5D 공사비(엑셀)', need: 'recommended', accept: SHEETS, multiple: false },
   { key: 'model', step: 'files', label: 'BIM 모델', hint: 'ACC 에 올린 모델(상선·하선처럼 여러 개 가능)', need: 'required', accept: MODELS, multiple: true },
   { key: 'ipsStandard', step: 'files', label: 'IPS 구성 표준·WBS 정의서', hint: '공단 표준(개략 IPS 의 틀)', need: 'recommended', accept: [...DOCS, ...SHEETS, 'pptx'], multiple: true },
-  { key: 'p6', step: 'p6', label: 'P6 수정 공정표', hint: 'P6 에서 고쳤을 때만 — 올리지 않으면 4단계에서 채택한 개략 IPS 가 확정 공정표', need: 'optional', accept: ['xer', ...SHEETS], multiple: false },
+  { key: 'p6', step: 'p6', label: 'P6 공정표 올리기', hint: '사람이 이미 짠 공정표가 있거나 P6 에서 고쳤을 때 — 올리면 이것이 확정 공정표, 안 올리면 4단계 채택안', need: 'optional', accept: ['xer', ...SHEETS], multiple: false },
 ];
 
 export const STEPS: StepDef[] = [
-  { key: 'target', title: '대상 선택', short: '대상', desc: '공정·공사비를 만들 구조물을 고릅니다.', built: true, needs: [] },
-  { key: 'files', title: '자료 준비', short: '자료', desc: '필요한 자료를 자료관리에서 고르거나 지금 올립니다.', built: true, needs: ['overview', 'plan', 'bridgeDesign', 'drawings', 'qto', 'qtoSummary', 'boq', 'model', 'ipsStandard'] },
-  { key: 'design', title: '설계현황', short: '설계현황', desc: '구조물·개소(A1, P1…, 경간)·말뚝·교각 높이를 표로 만들고 확인합니다(수량산출서·도면에서 AI 로 채우기).', built: true, needs: ['qto', 'qtoSummary', 'drawings', 'bridgeDesign', 'overview'] },
-  { key: 'draft', title: 'AI 개략 IPS', short: '개략 IPS', desc: '과업시작일 기준 3안 또는 종료일 맞춤. 공기 = 수량 × 단위공기(출처), 크리티컬 포인트는 제약으로.', built: true, needs: ['qto', 'plan', 'ipsStandard'] },
-  { key: 'p6', title: 'P6 보완', short: 'P6 보완', desc: '확정 공정표(채택한 개략 IPS, 또는 P6 에서 고쳐 올린 것)를 선후행·구조 순서 역전과 표준 위반으로 검토합니다. P6 에서 고쳤을 때만 올립니다.', built: true, needs: ['p6'] },
-  { key: 'link', title: 'BIM 연결', short: 'BIM 연결', desc: '확정 IPS 의 Activity ID 를 객체에 붙입니다(규칙 → 남는 것 AI). 모델의 기존 코드와 비교합니다.', built: true, needs: ['model', 'p6'] },
-  { key: 'export', title: '모델 반영', short: '모델 반영', desc: '객체별 속성(IPS 코드·일자)을 모델에 넣을 파일로 내보냅니다.', built: false, needs: ['model', 'p6'] },
-  { key: 'sim', title: '4D/5D', short: '4D/5D', desc: '3D 에서 기준일의 시공 상태와 공사비를 봅니다.', built: true, needs: [] },
-  { key: 'report', title: '검증·질의', short: '검증', desc: '검토·연결 요약, 작업일보 실적 제안, 내역 분류, 공정·공사비 질의.', built: true, needs: ['p6', 'boq'] },
+  { key: 'target', title: '대상 선택', short: '대상', desc: '공정·공사비를 만들 구조물을 고르고, 진행 방식을 정합니다.', built: true, needs: [],
+    guide: '대상(예: 연제교 상선)을 고르거나 추가합니다. 공정표를 새로 만들지, 이미 짠 공정표를 올려 검토할지 고르면 필요 없는 단계는 건너뜁니다.' },
+  { key: 'files', title: '자료 준비', short: '자료', desc: '필요한 자료를 자료관리에서 고르거나 지금 올립니다.', built: true, needs: ['overview', 'plan', 'bridgeDesign', 'drawings', 'qto', 'qtoSummary', 'boq', 'model', 'ipsStandard'],
+    guide: '칸마다 자료관리(ACC) 파일을 고릅니다. 필수(시공계획·수량산출서·BIM 모델)를 고르면 완료 — 권장 자료(도면·내역서 등)는 AI 가 근거를 찾는 데 씁니다.' },
+  { key: 'design', title: '설계현황', short: '설계현황', desc: '구조물·개소(A1, P1…, 경간)·말뚝·교각 높이를 표로 만들고 확인합니다(수량산출서·도면에서 AI 로 채우기).', built: true, needs: ['qto', 'qtoSummary', 'drawings', 'bridgeDesign', 'overview'],
+    guide: '개소 표를 만들고(직접 또는 AI) 말뚝·기초·교각 기둥 높이를 근거와 함께 채운 뒤 저장하면 완료. 개략 IPS 의 수량이 됩니다.',
+    skippable: '이미 짠 공정표를 올려 검토만 할 때(개략 IPS 를 만들지 않음)' },
+  { key: 'draft', title: 'AI 개략 IPS', short: '개략 IPS', desc: '과업시작일 기준 3안 또는 종료일 맞춤. 공기 = 수량 × 단위공기(출처), 크리티컬 포인트는 제약으로.', built: true, needs: ['qto', 'plan', 'ipsStandard'],
+    guide: '과업시작일을 넣고 「공정표 만들기」 → 안을 비교해 「이 안으로 확정」하면 완료. 확정한 안이 확정 공정표입니다(P6 업로드 불필요).',
+    skippable: '이미 짠 공정표를 5단계에 올릴 때' },
+  { key: 'p6', title: 'P6 검토', short: 'P6 검토', desc: '확정 공정표(4단계 채택안, 또는 올린 P6 공정표)를 선후행·구조 순서 역전과 표준 위반으로 검토합니다.', built: true, needs: ['p6'],
+    guide: '사람이 이미 짠 공정표가 있거나 채택안을 P6 에서 고쳤으면 여기에 올립니다(올리면 그것이 확정). 안 올리면 채택안을 검토합니다. 「확정 공정표 열어서 검토」로 결과와 AI 설명을 봅니다.',
+    skippable: '채택안을 그대로 쓰고 검토를 나중에 할 때' },
+  { key: 'link', title: 'BIM 연결', short: 'BIM 연결', desc: '확정 IPS 의 Activity ID 를 객체에 붙입니다(규칙 → 남는 것 AI). 모델의 기존 코드와 비교합니다.', built: true, needs: ['model', 'p6'],
+    guide: '모델과 대상 WBS 를 고르면 규칙이 붙이고, 남은 객체는 AI·사람이 고릅니다. 저장하면 완료(4D 색칠·5D 배분에 씀).',
+    skippable: '4D/5D 없이 공정표만 필요할 때' },
+  { key: 'export', title: '모델 반영', short: '모델 반영', desc: '객체별 속성(IPS 코드·일자)을 모델에 넣을 파일로 내보냅니다.', built: false, needs: ['model', 'p6'],
+    guide: '준비 중 — 연결 결과를 모델 속성으로 넣을 파일을 만듭니다.', skippable: '준비 중인 단계' },
+  { key: 'sim', title: '4D/5D', short: '4D/5D', desc: '3D 에서 기준일의 시공 상태와 공사비를 봅니다.', built: true, needs: [],
+    guide: '시트를 접고 3D 와 하단 공정 막대로 기준일의 시공 상태를 봅니다.' },
+  { key: 'report', title: '검증·질의', short: '검증', desc: '검토·연결 요약, 작업일보 실적 제안, 내역 분류, 공정·공사비 질의.', built: true, needs: ['p6', 'boq'],
+    guide: '검토·연결 요약과 저장 기록을 보고, 작업일보 실적 제안·내역 분류·질의를 합니다.' },
 ];
 
 export const slotDef = (key: SlotKey): SlotDef => SLOTS.find(s => s.key === key)!;
@@ -133,6 +150,17 @@ export interface SetupData {
   links?: LinkSet[];
   /** 저장 기록(AI 연결로 저장한 것 포함), 최근 50개. */
   log?: SetupLogEntry[];
+  /** 사람이 건너뛴 단계(예: 이미 짠 공정표를 올려 3·4단계 생략). 끝낸 단계는 완료가 우선. */
+  skipped?: StepKey[];
+}
+
+/** 단계 건너뛰기(on) / 되돌리기. */
+export function setSkipped(data: SetupData, steps: StepKey[], on: boolean): SetupData {
+  const cur = new Set(data.skipped ?? []);
+  for (const st of steps) if (on) cur.add(st); else cur.delete(st);
+  const skipped = STEPS.map(x => x.key).filter(k => cur.has(k));
+  const { skipped: _drop, ...rest } = data;
+  return skipped.length ? { ...rest, skipped } : rest;
 }
 
 /** 저장 기록 한 줄을 더한다(최근 50개). */
@@ -190,6 +218,10 @@ export function normalizeSetup(raw: unknown): SetupData {
     };
   }
   if (Array.isArray(r.links)) out.links = (r.links as LinkSet[]).filter(l => l && typeof l.modelItemId === 'string' && Array.isArray(l.links));
+  if (Array.isArray(r.skipped)) {
+    const ok = (r.skipped as unknown[]).filter((k): k is StepKey => STEPS.some(x => x.key === k && !!x.skippable));
+    if (ok.length) out.skipped = ok;
+  }
   if (Array.isArray(r.log)) {
     out.log = (r.log as SetupLogEntry[]).filter(e => e && typeof e.at === 'string' && typeof e.who === 'string' && typeof e.what === 'string').slice(-50);
   }
@@ -216,7 +248,7 @@ export function removeFile(data: SetupData, slot: SlotKey, accItemId: string): S
   return { ...data, files };
 }
 
-export type StepState = 'done' | 'todo' | 'planned';
+export type StepState = 'done' | 'todo' | 'planned' | 'skipped';
 
 export interface StepStatus {
   state: StepState;
@@ -244,6 +276,11 @@ export const hasConfirmedSchedule = (data: SetupData): boolean =>
  * 다 고르면 'done'. 4D/5D 는 언제든 열 수 있어 'todo' 로 둔다.
  */
 export function stepStatus(data: SetupData, step: StepKey, name: string): StepStatus {
+  const st = rawStatus(data, step, name);
+  return st.state !== 'done' && data.skipped?.includes(step) ? { ...st, state: 'skipped' } : st;
+}
+
+function rawStatus(data: SetupData, step: StepKey, name: string): StepStatus {
   const def = stepDef(step);
   const slots = def.needs.map(slotDef);
   const missing = slots.filter(s => s.need === 'required' && !filled(data, s.key));

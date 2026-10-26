@@ -147,7 +147,7 @@ export function DraftStep({ projectId, canEdit, data, persist, sim, setStatus }:
           </fieldset>
           {plan.mode === 'fit' && <label>과업종료예정일 *<input type="date" value={plan.finish} disabled={!canEdit} onChange={e => save({ ...plan, finish: e.target.value })} /></label>}
         </div>
-        <p className="muted">방식 3(이미 있는 P6 검토)은 5단계 P6 보완에서 합니다.</p>
+        <p className="muted">방식 3(사람이 이미 짠 공정표 검토)은 이 단계를 건너뛰고 5단계 「P6 검토」에 올립니다 — 1단계 진행 방식 「이미 짠 공정표로」.</p>
       </section>
 
       <section className="sim-step__block">

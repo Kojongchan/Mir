@@ -8,7 +8,7 @@ import { AiBox, AiStatus, useAi, type StepProps } from './common';
 import { confirmedSource } from '../../../lib/sim45d/confirmed';
 
 /**
- * 5단계 P6 보완: 확정 공정표(XER)를 자료관리에서 골라 4D 로 열고, 방식 3 — 그 공정표를 규칙으로 검토(선후행·구조 순서 역전,
+ * 5단계 P6 검토: 확정 공정표(4단계 채택안, 또는 올린 P6 — 사람이 이미 짠 것·P6 에서 고친 것)를 4D 로 열고, 방식 3 — 규칙으로 검토(선후행·구조 순서 역전,
  * 실적 누락, 공단 표준 위반)하고 AI 가 우선 조치를 설명한다. 이전 버전과 비교해 바뀐 점을 AI 가 요약한다.
  */
 interface Explain { summary: string; priorities: { title: string; rule: string; why: string; action: string; codes: string[] }[] }
@@ -84,8 +84,9 @@ export function P6Step({ projectId, canEdit, data, sim, setStatus, renderSlot, o
       <section className="sim-step__block">
         <p className="muted">
           확정 공정표: <strong>{confirmed?.label ?? '없음'}</strong>
-          {confirmed?.kind === 'draft' && ' — 플랫폼 안을 그대로 쓰면 올릴 것이 없습니다. P6 에서 고쳤을 때만 아래에 수정본(XER)을 올립니다.'}
-          {!confirmed && ' — 4단계 개략 IPS 에서 안을 채택하거나, P6 에서 고친 공정표를 아래에 올리세요.'}
+          {confirmed?.kind === 'draft' && ' — 플랫폼 안을 그대로 쓰면 올릴 것이 없습니다. 사람이 짠 공정표가 따로 있거나 P6 에서 고쳤을 때만 아래에 올립니다(올리면 그것이 확정).'}
+          {confirmed?.kind === 'p6' && ' — 올린 공정표를 AI·규칙으로 검토합니다. 지우면 4단계 채택안으로 돌아갑니다.'}
+          {!confirmed && ' — 사람이 이미 짠 공정표(XER)가 있으면 아래에 올리고, 없으면 4단계에서 안을 채택하세요.'}
         </p>
         <div className="sim-setup__slots">{renderSlot('p6')}</div>
         <div className="sim-step__actions">

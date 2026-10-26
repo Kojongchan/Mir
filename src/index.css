@@ -8239,6 +8239,9 @@ textarea.input {
   .sim-setup__label { display: none; }
   .sim-setup__step.is-active .sim-setup__label { display: inline; }
   .sim-setup__head, .sim-setup__body, .sim-setup__foot { padding-left: 16px; padding-right: 16px; }
+  .sim-setup__head { flex-wrap: wrap; }
+  .sim-setup__head > div:first-child { flex: 1 1 100%; }
+  .sim-setup__head .spacer { display: none; }
   .sim-setup__slots { grid-template-columns: 1fr; }
 }
 
@@ -8679,3 +8682,18 @@ textarea.input {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 단계 안내·건너뛰기·진행 방식(D35) */
+.sim-setup__guide {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+.sim-setup__step.is-skipped { color: var(--color-text-tertiary); }
+.sim-setup__step.is-skipped .sim-setup__label { text-decoration: line-through; text-decoration-color: var(--color-border-strong); }
+.sim-setup__step.is-skipped .sim-setup__num { border-style: dotted; }
+.sim-setup__paths { margin-top: 18px; }
+.sim-setup__paths h4 { margin: 0 0 8px; font-size: 14px; }
+.sim-setup__paths .sim-cards { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); max-width: 820px; }
+.sim-setup__paths .sim-card { white-space: normal; }
+.sim-setup__paths .sim-card span { white-space: normal; overflow-wrap: anywhere; }

@@ -210,5 +210,23 @@ test('confirmed schedule: adopted draft IPS counts without a P6 upload; an uploa
   // P6 에서 고쳐 올리면 그것이 확정
   const up = s.addFile(d, 'p6', file('x', '311.xer'));
   assert.equal(C.confirmedSource(up).kind, 'p6');
-  assert.equal(C.confirmedSource(up).label, 'P6 수정본 311.xer');
+  assert.equal(C.confirmedSource(up).label, '올린 P6 공정표 311.xer');
+});
+
+test('skip: an already-made schedule skips design and draft; done wins over skipped; unknown keys dropped', () => {
+  let d = s.addFile(s.emptySetup(), 'model', file('m', 'BR01.ifc'));
+  d = s.setSkipped(d, ['design', 'draft'], true);
+  assert.deepEqual(d.skipped, ['design', 'draft']);
+  assert.equal(s.stepStatus(d, 'design', 'x').state, 'skipped');
+  assert.equal(s.stepStatus(d, 'draft', 'x').state, 'skipped');
+  assert.equal(s.stepStatus(d, 'p6', 'x').state, 'todo', '공정표를 올리기 전');
+  d = s.addFile(d, 'p6', file('x', '사람이 짠 공정표.xer'));
+  assert.equal(s.stepStatus(d, 'p6', 'x').state, 'done');
+  assert.deepEqual(s.stepStatus(d, 'link', 'x').missing, [], '올린 공정표로 BIM 연결 가능');
+  d = { ...d, site: { name: 'x', code: 'BR01', supports: [{ id: 'P1', kind: 'pier', pileType: 'cast', pileCount: 1 }], spans: [] } };
+  assert.equal(s.stepStatus(d, 'design', 'x').state, 'done', '나중에 해도 완료가 우선');
+  assert.deepEqual(s.normalizeSetup({ ...d, skipped: ['draft', 'sim', 'nope'] }).skipped, ['draft'], '건너뛸 수 없는 단계는 버림');
+  d = s.setSkipped(d, ['design', 'draft'], false);
+  assert.equal('skipped' in d, false);
+  for (const st of s.STEPS) assert.ok(st.guide.length > 10, `${st.key} 안내`);
 });

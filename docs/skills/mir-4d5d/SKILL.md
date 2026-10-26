@@ -17,6 +17,9 @@ description: MIR 공정·공사비(4D/5D) 플랫폼을 AI 연결(MCP 커넥터 "
 5. 배운 점은 `save_lesson` 으로 남긴다 — 다음 유사 구조물에서 `find_similar_cases` 로 찾는다.
 
 ## 표준 순서
+진행 방식이 두 가지다(플랫폼 1단계에서 고름, `list_targets` 의 `confirmedSchedule`·`skipped` 로 보임).
+- **새로 만들기**: 아래 표 순서대로. 확정 공정표 = 4단계에서 채택한 안.
+- **이미 짠 공정표로**: 사람이 짠 P6(XER)를 5단계에 올린 경우 — 설계현황·개략 IPS 는 건너뛸지 사람에게 묻고, P6 검토부터 한다.
 커넥터의 프롬프트로도 같은 순서를 고를 수 있다: `cycle`(한 바퀴), `design_status`, `unit_rates`, `draft_ips`, `p6_review`, `bim_link`.
 
 | 단계 | 도구 | 끝났다고 보는 기준 |

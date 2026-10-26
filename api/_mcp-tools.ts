@@ -46,6 +46,7 @@ export const MCP_INSTRUCTIONS = `MIR 공정·공사비(4D/5D) 플랫폼 연결 �
 drawing_index → view_drawing 의 교각 일반도 → save_design_status) → 단위공기(read_document slot=plan, search '공기|가동율|단위공정' → save_unit_rates)
 → save_plan_settings → plan_schedule → 안 채택(save_plan_settings adopt) = 확정 공정표(P6 업로드는 사람이 P6 에서 고쳤을 때만)
 → P6 검토(check_schedule, list_activities, actual_durations) → BIM 연결(model_link_status → save_object_links)
+사람이 이미 짠 공정표를 올린 대상(list_targets 의 confirmedSchedule 이 '올린 P6 공정표 …', 또는 설계현황·개략 IPS 가 skipped)은 설계현황·개략 IPS 를 건너뛰고 P6 검토부터.
 → 유사 사례(find_similar_cases)를 참고하고, 배운 점은 save_lesson 으로 남긴다.`;
 
 type Out = string | Record<string, unknown> | unknown[];
@@ -193,7 +194,8 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
           files: Object.fromEntries(Object.entries(r.data.files).map(([k, fs]) => [k, fs!.map(f => f.name)])),
           site: r.data.site ? { code: r.data.site.code, supports: r.data.site.supports.length, spans: r.data.site.spans.length } : null,
           plan: r.data.plan ? { start: r.data.plan.start, finish: r.data.plan.finish, mode: r.data.plan.mode, criticalPoints: r.data.plan.criticalPoints.length, ratesChanged: Object.keys(r.data.plan.rates).length, adopted: r.data.plan.adopted?.title ?? null } : null,
-          confirmedSchedule: scheduleLabel(r) ?? '없음(개략 IPS 안 채택 전)',
+          confirmedSchedule: scheduleLabel(r) ?? '없음(개략 IPS 안 채택 전, 또는 이미 짠 공정표를 5단계에 올리기 전)',
+          skipped: r.data.skipped ?? [],
           links: (r.data.links ?? []).map(l => ({ modelItemId: l.modelItemId, wbsRoot: l.wbsRoot, count: l.links.length })),
           recentLog: (r.data.log ?? []).slice(-5),
         })),
@@ -642,6 +644,7 @@ export function registerMcpPrompts(server: McpServer) {
   P('cycle', '한 바퀴: 설계현황 → 개략 IPS → P6 검토 → BIM 연결', '대상 하나를 처음부터 끝까지. 단계마다 결과를 보여 주고 확인받는다.', { target }, a =>
     `MIR 플랫폼의 '${a.target}' 을(를) 한 바퀴 진행해 줘.
 1) list_targets 로 단계 상태와 자료 칸 확인 — 빠진 필수 자료가 있으면 먼저 알려 줘.
+   confirmedSchedule 이 '올린 P6 공정표 …' 이면 사람이 이미 짠 공정표가 있는 것 — 2)~4)는 건너뛸지 나에게 묻고, 건너뛰면 5)부터.
 2) 설계현황: design_status 절차대로(개소·말뚝·교각 높이, 근거 포함) → 내 확인 → save_design_status.
 3) 단위공기: unit_rates 절차대로 → 내 확인 → save_unit_rates. find_similar_cases(kind=rates·actuals)도 참고.
 4) 개략 IPS: 과업시작일을 나에게 묻고 save_plan_settings → plan_schedule 로 A/B/C 를 표로 비교 → 내가 고른 안을 save_plan_settings(adopt) 로 채택.

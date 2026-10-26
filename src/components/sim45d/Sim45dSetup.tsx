@@ -4,7 +4,7 @@ import { UiIcon } from '../icons/UiIcon';
 import { accFileBlobUrl } from '../../lib/aps';
 import { errMessage } from '../../lib/errors';
 import {
-  NEED_LABEL, STEPS, STRUCTURE_KIND_LABEL, acceptsFile, addFile, emptySetup, removeFile, slotDef, stepDef, stepStatus,
+  NEED_LABEL, STEPS, STRUCTURE_KIND_LABEL, acceptsFile, addFile, emptySetup, removeFile, setSkipped, slotDef, stepDef, stepStatus,
   type SetupData, type SlotDef, type SlotKey, type StepKey, type StructureKind,
 } from '../../lib/sim45d/setup';
 import { createSetup, deleteSetup, listSetups, saveSetup, type SetupRecord, type SetupWhere } from '../../lib/sim45d/setupStore';
@@ -206,6 +206,20 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
   const statuses = useMemo(() => new Map(STEPS.map(s => [s.key, stepStatus(data, s.key, name)])), [data, name]);
   const idx = STEPS.findIndex(s => s.key === ui.step);
   const step = stepDef(ui.step);
+  const cur = statuses.get(ui.step);
+  // 이전·다음은 건너뛴 단계를 넘어간다(단계 바에서는 언제든 열 수 있음).
+  const nextStep = STEPS.slice(idx + 1).find(s => statuses.get(s.key)?.state !== 'skipped');
+  const prevStep = [...STEPS.slice(0, Math.max(0, idx))].reverse().find(s => statuses.get(s.key)?.state !== 'skipped');
+  const skip = (steps: StepKey[], on: boolean) => void persist(setSkipped(data, steps, on));
+  /** 진행 방식: 새로 만들기(3·4단계 진행) / 이미 짠 공정표로(3·4단계 건너뛰고 5단계에 올려 검토). */
+  const existingPath = !!data.skipped?.includes('design') && !!data.skipped?.includes('draft');
+  const choosePath = (existing: boolean) => {
+    void persist(setSkipped(data, ['design', 'draft'], existing));
+    setStatus(existing
+      ? '이미 짠 공정표로 진행 — 자료(모델 등)를 고른 뒤 5단계 「P6 검토」에서 공정표(XER)를 올리면 AI 가 검토합니다. 3·4단계는 언제든 다시 할 수 있습니다.'
+      : '새로 만들기 — 자료 → 설계현황 → 개략 IPS(안 채택 = 확정 공정표) 순서로 진행합니다.');
+    go('files');
+  };
   const needRecord = !rec && ui.step !== 'target' && ui.step !== 'sim';
   const editable = canEdit && !!rec;
 
@@ -323,6 +337,23 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
             ) : (
               records.length === 0 && <p className="muted">아직 대상이 없습니다. 실무자 이상이 추가할 수 있습니다.</p>
             )}
+            {rec && (
+              <section className="sim-setup__paths" aria-label="진행 방식">
+                <h4>진행 방식 — {rec.name}</h4>
+                <div className="sim-cards" role="radiogroup" aria-label="진행 방식">
+                  <button type="button" role="radio" aria-checked={!existingPath} className={`sim-card${!existingPath ? ' is-chosen' : ''}`} disabled={!canEdit} onClick={() => choosePath(false)}>
+                    <strong>공정표 새로 만들기</strong>
+                    <span className="muted">자료 → 설계현황 → 개략 IPS(안 채택 = 확정) → P6 검토 → BIM 연결</span>
+                    <span className="muted">아직 공정표가 없을 때. 채택안을 P6 에서 고쳤을 때만 5단계에 올립니다.</span>
+                  </button>
+                  <button type="button" role="radio" aria-checked={existingPath} className={`sim-card${existingPath ? ' is-chosen' : ''}`} disabled={!canEdit} onClick={() => choosePath(true)}>
+                    <strong>이미 짠 공정표로</strong>
+                    <span className="muted">자료 → P6 공정표 올리기·AI 검토 → BIM 연결 (설계현황·개략 IPS 건너뜀)</span>
+                    <span className="muted">사람이 짠 P6(XER)가 있을 때. 3·4단계는 나중에 언제든 할 수 있습니다.</span>
+                  </button>
+                </div>
+              </section>
+            )}
           </div>
         );
       case 'files':
@@ -373,8 +404,8 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
               <li key={s.key}>
                 <button type="button" className={`sim-setup__step is-${st.state}${s.key === ui.step ? ' is-active' : ''}`}
                   aria-current={s.key === ui.step ? 'step' : undefined} onClick={() => go(s.key)}
-                  title={`${i + 1}. ${s.title}${st.state === 'planned' ? ' (준비 중)' : st.state === 'done' ? ' (완료)' : ''}`}>
-                  <span className="sim-setup__num" aria-hidden>{st.state === 'done' ? '✓' : i + 1}</span>
+                  title={`${i + 1}. ${s.title}${st.state === 'planned' ? ' (준비 중)' : st.state === 'done' ? ' (완료)' : st.state === 'skipped' ? ' (건너뜀)' : ''}`}>
+                  <span className="sim-setup__num" aria-hidden>{st.state === 'done' ? '✓' : st.state === 'skipped' ? '–' : i + 1}</span>
                   <span className="sim-setup__label">{s.short}</span>
                 </button>
               </li>
@@ -387,8 +418,15 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
         <section className="sim-setup__sheet" aria-label={`${idx + 1}. ${step.title}`}>
           <header className="sim-setup__head">
             <div>
-              <h3>{idx + 1}. {step.title}{!step.built && <span className="sim-setup__badge">준비 중</span>}</h3>
+              <h3>
+                {idx + 1}. {step.title}{!step.built && <span className="sim-setup__badge">준비 중</span>}
+                {cur?.state === 'skipped' && <span className="sim-setup__badge">건너뜀</span>}
+              </h3>
               <p className="muted">{step.desc}</p>
+              <p className="sim-setup__guide">
+                {step.guide}
+                {step.skippable && <span className="muted"> · 건너뛰어도 되는 경우: {step.skippable}.</span>}
+              </p>
             </div>
             <span className="spacer" />
             {canEdit && (
@@ -406,10 +444,13 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
             <div className="sim-setup__body">{body()}</div>
           </AiConnectContext.Provider>
           <footer className="sim-setup__foot">
-            <button className="btn btn--sm" disabled={idx <= 0} onClick={() => go(STEPS[idx - 1].key)}>‹ 이전</button>
+            <button className="btn btn--sm" disabled={!prevStep} onClick={() => prevStep && go(prevStep.key)}>‹ 이전</button>
             <span className="muted sim-setup__status" aria-live="polite">{status}</span>
-            <button className="btn btn--sm btn--primary" disabled={idx >= STEPS.length - 1} onClick={() => go(STEPS[idx + 1].key)}>
-              {STEPS[idx + 1] ? `다음 · ${STEPS[idx + 1].short} ›` : '마지막 단계'}
+            {canEdit && rec && step.skippable && cur?.state !== 'done' && (cur?.state === 'skipped'
+              ? <button className="btn btn--sm" onClick={() => skip([ui.step], false)} title="이 단계를 다시 진행할 단계로">건너뛰기 취소</button>
+              : <button className="btn btn--sm" onClick={() => { skip([ui.step], true); if (nextStep) go(nextStep.key); }} title={`건너뛰어도 되는 경우: ${step.skippable}`}>건너뛰기 ›</button>)}
+            <button className="btn btn--sm btn--primary" disabled={!nextStep} onClick={() => nextStep && go(nextStep.key)}>
+              {nextStep ? `다음 · ${nextStep.short} ›` : '마지막 단계'}
             </button>
           </footer>
         </section>

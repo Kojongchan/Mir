@@ -1,5 +1,5 @@
-// 확정 공정표 = P6 에서 고쳐 올린 수정본(있으면) 또는 4단계에서 채택한 개략 IPS(D34).
-// 업무 순서상 처음에는 P6 공정표가 없다 — 플랫폼이 만든 안을 그대로 쓰면 올릴 필요가 없고, P6 에서 고쳤을 때만 올린다.
+// 확정 공정표 = 5단계에 올린 P6 공정표(사람이 이미 짠 것 또는 P6 에서 고친 것) 또는 4단계에서 채택한 개략 IPS(D34·D35).
+// 새로 만드는 경우 처음에는 P6 공정표가 없다 — 플랫폼이 만든 안을 그대로 쓰면 올릴 필요가 없고, 고쳤을 때만 올린다.
 // 채택안은 투입안(장비·작업조 수)만 저장하고, 공정표는 지금 저장된 설계현황·단위공기·크리티컬 포인트로 엔진이 다시 만든다
 // (화면·AI 연결이 같은 함수를 써서 같은 공정표가 나온다).
 import { buildBridgePlan, DEFAULT_RATES, type PlanResult, type Rate } from '../p6/bridgePlan.js';
@@ -27,13 +27,13 @@ export type ConfirmedSource =
 /** 지금 확정 공정표가 무엇인가 — P6 수정본이 우선. 둘 다 없으면 null. */
 export function confirmedSource(data: SetupData): ConfirmedSource | null {
   const f = data.files.p6?.[0];
-  if (f) return { kind: 'p6', file: f, label: `P6 수정본 ${f.name}` };
+  if (f) return { kind: 'p6', file: f, label: `올린 P6 공정표 ${f.name}` };
   const a = data.plan?.adopted;
   if (a && data.site && data.plan?.start) return { kind: 'draft', title: a.title, at: a.at, label: `채택한 개략 IPS(${a.title})` };
   return null;
 }
 
-export const NO_CONFIRMED = '확정 공정표가 아직 없습니다 — 4단계 개략 IPS 에서 안을 채택하세요(P6 에서 고쳤다면 5단계에 수정본을 올림).';
+export const NO_CONFIRMED = '확정 공정표가 아직 없습니다 — 4단계 개략 IPS 에서 안을 채택하거나, 이미 짠(또는 P6 에서 고친) 공정표를 5단계에 올리세요.';
 
 /** 채택안 공정표(P6 와 같은 형태 — 검토·BIM 연결·4D 가 그대로 쓴다). */
 export function adoptedSchedule(data: SetupData): P6Schedule | null {
