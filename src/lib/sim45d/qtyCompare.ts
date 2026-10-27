@@ -31,7 +31,6 @@ export interface QtyCompareRow extends QtyRow {
 
 const CONCRETE = /콘크리트/;
 const NOT_STRUCTURE = /무근|바닥|버림|채움|기초콘크리트|필터|무수축/;
-const PILE_HEAD = /두부보강|두부정리/;
 const PILE = /말뚝|파일|pile/i;
 /** 사서 박는 말뚝(강관·PHC) — 타설 콘크리트가 아니다. 현장타설말뚝은 콘크리트에 든다. */
 const BOUGHT_PILE = /강관|PHC|기성/i;
@@ -90,7 +89,7 @@ export function compareWithModel(r: SplitResult, objects: ModelQtyObject[], link
     // 속성 체적 검증: 형상 체적이 함께 있는 객체끼리 합을 비교(±3% 넘으면 알림)
     const both = objs.filter(o => o.volume != null && o.volumeGeometry != null);
     const prop = both.reduce((s, o) => s + o.volume!, 0), geom = both.reduce((s, o) => s + o.volumeGeometry!, 0);
-    const check = both.length && prop ? ` · 형상 체적 대비 ${pct((prop - geom) / geom)}${Math.abs(prop - geom) / geom > QTY_TOLERANCE ? '(속성 확인)' : ''}` : '';
+    const check = both.length && geom ? ` · 형상 체적 대비 ${pct((prop - geom) / geom)}(객체 ${both.length}/${objs.length})${Math.abs(prop - geom) / geom > QTY_TOLERANCE ? ' 속성 확인' : ''}` : '';
     rows.push({ key: `concrete|${g}`, group: GROUP_LABEL[g], item: '구조 콘크리트', unit: 'm3', sheetQty: round(d.qty),
       modelQty: objs.length && vols.length === objs.length ? round(total) : null, objects: [],
       note: !objs.length ? '연결된 객체 없음' : vols.length < objs.length ? `체적 없는 객체 ${objs.length - vols.length}/${objs.length} — 형상 체적 계산(model-volumes) 필요` : `객체 ${objs.length}${check}`,
@@ -107,16 +106,23 @@ export function compareWithModel(r: SplitResult, objects: ModelQtyObject[], link
       note: '모델: 보 객체(가로보 제외) 수', modelTypes: modelTypes(objs, () => 1) });
   }
 
-  // 말뚝 본수(부위별): 두부보강·두부정리 본수 ↔ 같은 작업들에 걸린 말뚝 객체 수. 종류(PHC·강관…)가 양쪽에서 다르면 근거에 적는다.
+  // 말뚝 본수(부위별): 기성말뚝은 두부보강 본수 ↔ 같은 작업들에 걸린 말뚝 객체, 현장타설말뚝은 두부정리 본수 ↔ 현장타설 말뚝 객체
+  // (없으면 기초 객체 — 연제교 IFC 는 교각마다 D3.0m 한 본을 '기초' 로 모델링). 종류(PHC·강관…)가 양쪽에서 다르면 근거에 적는다.
   const kinds = (s: string[]) => [...new Set(s.flatMap(x => x.match(/PHC|강관|현장타설|RCD|SIP/gi) ?? []).map(k => k.toUpperCase()))];
-  for (const [g, d] of designOf(l => PILE_HEAD.test(l.name) && l.unit === '본')) {
-    const objs = [...d.codes].flatMap(c => byCode.get(c) ?? []).filter(o => PILE.test(text(o)));
-    const dk = kinds([...d.lines.keys()].map(l => `${l.name} ${l.spec}`)), mk = kinds(objs.map(text));
-    const same = dk.length === mk.length && dk.every(k => mk.includes(k));
-    rows.push({ key: `pile|${g}`, group: GROUP_LABEL[g], item: '말뚝 본수', unit: '본', sheetQty: round(d.qty), modelQty: objs.length || null, objects: [],
-      note: !objs.length ? '같은 작업에 연결된 말뚝 객체 없음'
-        : `종류 설계 ${dk.join('·') || '?'} / 모델 ${mk.join('·') || '?'}${same ? '' : ' — 표기 다름(확인)'}`,
-      designLines: designLines(d.lines), modelTypes: modelTypes(objs, () => 1) });
+  for (const cast of [false, true]) {
+    for (const [g, d] of designOf(l => (cast ? /두부정리/ : /두부보강/).test(l.name) && l.unit === '본')) {
+      const near = [...d.codes].flatMap(c => byCode.get(c) ?? []);
+      let objs = near.filter(o => PILE.test(text(o)) && (cast ? !BOUGHT_PILE.test(text(o)) : true));
+      let basis = '';
+      if (cast && !objs.length) { objs = near.filter(o => /기초/.test(text(o)) && !/버림/.test(text(o))); basis = objs.length ? '모델: 기초 객체 수(말뚝을 기초로 모델링)' : ''; }
+      const dk = cast ? ['현장타설'] : kinds([...d.lines.keys()].map(l => `${l.name} ${l.spec}`)), mk = cast ? ['현장타설'] : kinds(objs.map(text));
+      const same = dk.length === mk.length && dk.every(k => mk.includes(k));
+      rows.push({ key: `pile|${g}|${cast ? 'cast' : 'driven'}`, group: GROUP_LABEL[g], item: cast ? '현장타설말뚝 본수' : '기성말뚝 본수', unit: '본',
+        sheetQty: round(d.qty), modelQty: objs.length || null, objects: [],
+        note: !objs.length ? '같은 작업에 연결된 말뚝 객체 없음'
+          : basis || `종류 설계 ${dk.join('·') || '?'} / 모델 ${mk.join('·') || '?'}${same ? '' : ' — 표기 다름(확인)'}`,
+        designLines: designLines(d.lines), modelTypes: modelTypes(objs, () => 1) });
+    }
   }
   return rows;
 }

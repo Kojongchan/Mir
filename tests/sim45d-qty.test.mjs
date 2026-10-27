@@ -152,9 +152,11 @@ test('existing vs BIM: structural concrete per part, WPC girders by length, pile
     { id: '4', name: '구체콘크리트타설', spec: '철근,fck=35MPa(표준시장)', unit: 'm3', qty: 900, amount: 90_000_000 },
     { id: '7', name: '버림콘크리트', spec: 'fck=18MPa', unit: 'm3', qty: 50, amount: 500_000 },
     { id: '5', name: 'WPC 제작 및 가설', spec: 'L=40.0m', unit: '본', qty: 30, amount: 300_000_000 },
+    { id: '8', name: '말뚝두부정리', spec: 'D3,000mm', unit: '본', qty: 4, amount: 400_000 },
   ];
   const rows = [
     { page: 5, path: ['2-1-1 토공및기초공'], name: '말뚝두부보강', spec: 'PHC말뚝,D600mm', unit: '본', cols: { '교각공(하선)': 20, '교각공(상선)': 12, 계: 32, 합계: 32 } },
+    { page: 6, path: ['2-1-1 토공및기초공', '2-1-1-3 현장타설말뚝'], name: '말뚝두부정리', spec: 'D3,000mm', unit: '본', cols: { '교각공(하선)': 2, '교각공(상선)': 2, 계: 4, 합계: 4 } },
     { page: 7, path: ['2-1-3 교각공'], name: '구체콘크리트타설', spec: '철근,fck=35MPa(표준시장)', unit: 'm3', cols: { '교각공(하선)': 450, '교각공(상선)': 450, 계: 900, 합계: 900 } },
     { page: 7, path: ['2-1-3 교각공'], name: '버림콘크리트', spec: 'fck=18MPa', unit: 'm3', cols: { '교각공(하선)': 25, '교각공(상선)': 25, 계: 50, 합계: 50 } },
     { page: 9, path: ['2-1-4 상부공'], name: '구체콘크리트타설', spec: '철근,fck=35MPa(표준시장)', unit: 'm3', cols: { 공동구: 1000, 계: 1000, 합계: 1000 } },
@@ -170,6 +172,7 @@ test('existing vs BIM: structural concrete per part, WPC girders by length, pile
     { id: 30, ext: 'x1', name: 'WPC 가로보', ifcClass: 'IfcBeam', code: 'G01', volume: 1 },
     ...Array.from({ length: 12 }, (_, i) => ({ id: 40 + i, ext: `p${i}`, name: 'PHC 말뚝 D600', code: 'P1F', volume: 2 })),
     { id: 60, ext: 'z', name: '교각', code: 'ZZZ', volume: 999 }, // 공정표에 없는 코드 — 안 셈
+    { id: 61, ext: 'f2', name: '기초_P2', code: 'P2F', volume: 150 }, { id: 62, ext: 'f3', name: '기초_P3', code: 'P3F', volume: 150 },
   ];
   const links = [{ ext: 'e1', ifcGuid: '', code: 'P1C' }, { ext: 'e2', ifcGuid: '', code: 'P1K' }];
   const out = C.compareWithModel(r, objects, links, new Set(acts.map(a => a.code)));
@@ -177,15 +180,18 @@ test('existing vs BIM: structural concrete per part, WPC girders by length, pile
   // 교각 구조 콘크리트: 설계 450(버림 제외) ↔ 모델 150+120+175.5
   assert.equal(row('concrete|pierBody').sheetQty, 450);
   assert.equal(row('concrete|pierBody').modelQty, 445.5);
-  assert.match(row('concrete|pierBody').note, /형상 체적 대비 \+10\.0%\(속성 확인\)/, '속성 체적이 형상과 다르면 알림');
+  assert.match(row('concrete|pierBody').note, /형상 체적 대비 \+10\.0%\(객체 3\/3\) 속성 확인/, '속성 체적이 형상과 다르면 알림');
   // 공동구: 객체는 있지만 체적이 없음 → 값 대신 이유
   assert.equal(row('concrete|deck').modelQty, null);
   assert.match(row('concrete|deck').note, /체적 없는 객체 1\/1/);
   // WPC 40m: 설계 15(상부공 30 × 교각공 상선 비율 0.5 가정) ↔ 보 10(가로보 제외)
   assert.deepEqual([row('wpc|40').sheetQty, row('wpc|40').modelQty], [15, 10]);
   // 말뚝 본수는 부위별(종류는 근거에): PHC 12 ↔ P1F 에 걸린 말뚝 객체 12 — 말뚝 체적은 콘크리트에 안 셈
-  assert.deepEqual([row('pile|pierFoundation').sheetQty, row('pile|pierFoundation').modelQty], [12, 12]);
-  assert.match(row('pile|pierFoundation').note, /설계 PHC \/ 모델 PHC$/);
+  assert.deepEqual([row('pile|pierFoundation|driven').sheetQty, row('pile|pierFoundation|driven').modelQty], [12, 12]);
+  assert.match(row('pile|pierFoundation|driven').note, /설계 PHC \/ 모델 PHC$/);
+  // 현장타설말뚝: 두부정리 2본(P2·P3) ↔ 말뚝 객체가 없으면 그 작업의 기초 객체 수
+  assert.deepEqual([row('pile|pierFoundation|cast').sheetQty, row('pile|pierFoundation|cast').modelQty], [2, 2]);
+  assert.match(row('pile|pierFoundation|cast').note, /기초 객체 수/);
   assert.equal(row('concrete|pierFoundation'), undefined);
   // 근거: 설계 항목·모델 객체 유형
   assert.deepEqual(row('concrete|pierBody').designLines.map(l => [l.id, l.qty]), [['4', 450]]);
