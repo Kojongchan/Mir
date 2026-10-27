@@ -325,7 +325,7 @@ export async function openSvfSource({ urn, getToken, region = 'US', dir, log = (
       return ids.length;
     },
     get downloadSeconds() { return Math.round((busyMs + (inFlight ? Date.now() - busySince : 0)) / 1000); },
-    /** Exact triangles of these fragments in the tiles' frame: Map fragment → { pos, idx } | null (lines, points). */
+    /** Exact triangles of these fragments in the tiles' frame: Map fragment → { pos, idx, mirrored } | null (lines, points). */
     async pieces(indices, origin) {
       const out = new Map();
       // Grouped by pack so each pack is parsed once per call.
@@ -342,8 +342,11 @@ export async function openSvfSource({ urn, getToken, region = 'US', dir, log = (
         const meshes = await packOf(pack);
         for (const f of wanted) {
           const mesh = meshes[geometries[list[f].geometryID].entityID];
+          const m = fragmentMatrix(list[f].transform);
+          // mirrored: a negative determinant turns the triangles' winding over (signed volumes, build-model-volumes.mjs)
+          const det = m[0] * (m[5] * m[10] - m[6] * m[9]) - m[4] * (m[1] * m[10] - m[2] * m[9]) + m[8] * (m[1] * m[6] - m[2] * m[5]);
           out.set(f, mesh && mesh.indices && mesh.vertices && !mesh.isLines && !mesh.isPoints
-            ? placeMesh(mesh.vertices, mesh.indices, fragmentMatrix(list[f].transform), origin) : null);
+            ? { ...placeMesh(mesh.vertices, mesh.indices, m, origin), mirrored: det < 0 } : null);
         }
       }
       return out;

@@ -71,33 +71,15 @@ const db = { ids: await read('PropertyIDs'), offs: await read('PropertyOffsets')
   attrs: await read('PropertyAttributes'), vals: await read('PropertyValues') };
 const { tree } = buildMetaIndex(db, { shardSize: 1 << 30 });
 
-// Own volume per dbId (model units³), each object's fragments placed at its first fragment's corner. Only closed
-// meshes have a volume (every edge shared by an even number of triangles, vertices welded by position): an open
-// surface's signed sum depends on where the origin is. An object with an open fragment gets no volume (null upstream).
+// Own volume per dbId (model units³): the object's fragments placed together at its first fragment's corner, signed
+// volumes summed (a mirrored fragment's triangles wind the other way: its sign is turned), then the absolute value.
+// Only a closed surface has a volume — every edge of the object's triangles (vertices welded by position, 0.1 mm)
+// shared by an even number of them. An object with open geometry gets no volume (null upstream): an open surface's sum
+// depends on where the origin is (10-27 연제교 IFC: girders 10× their 체적 when summed fragment by fragment).
 const own = new Float64Array(tree.n);
 const openObject = new Uint8Array(tree.n);
 const { byDb, boxes } = source.fragments;
-let fragments = 0, open = 0, empty = 0;
-const isClosed = (pos, idx) => {
-  const key = new Map(), weld = new Uint32Array(pos.length / 3);
-  for (let i = 0; i < weld.length; i++) {
-    const k = `${Math.round(pos[i * 3] * 1e4)},${Math.round(pos[i * 3 + 1] * 1e4)},${Math.round(pos[i * 3 + 2] * 1e4)}`;
-    let w = key.get(k);
-    if (w === undefined) key.set(k, (w = key.size));
-    weld[i] = w;
-  }
-  const edges = new Map();
-  for (let i = 0; i < idx.length; i += 3) {
-    for (const [a, b] of [[idx[i], idx[i + 1]], [idx[i + 1], idx[i + 2]], [idx[i + 2], idx[i]]]) {
-      const x = weld[a], y = weld[b];
-      if (x === y) continue;
-      const e = x < y ? x * 4294967296 + y : y * 4294967296 + x;
-      edges.set(e, (edges.get(e) ?? 0) + 1);
-    }
-  }
-  for (const n of edges.values()) if (n % 2) return false;
-  return edges.size > 0;
-};
+let closed = 0, opened = 0, fragments = 0;
 const objects = [...byDb.keys()];
 await source.prefetch([...byDb.values()].flat(), 16);
 for (let k = 0; k < objects.length; k++) {
@@ -105,24 +87,41 @@ for (let k = 0; k < objects.length; k++) {
   if (!list.length || dbId <= 0 || dbId >= tree.n) continue;
   const origin = [boxes[list[0] * 6], boxes[list[0] * 6 + 1], boxes[list[0] * 6 + 2]];
   const meshes = await source.pieces(list, origin);
+  const weld = new Map(), edges = new Map();
+  let v = 0;
   for (const f of list) {
     const m = meshes.get(f);
-    if (!m || !m.idx.length) { empty++; continue; }
+    if (!m || !m.idx.length) continue;
     const { pos, idx } = m;
-    if (!isClosed(pos, idx)) { open++; openObject[dbId] = 1; continue; }
-    let v = 0;
+    const w = new Uint32Array(pos.length / 3);
+    for (let i = 0; i < w.length; i++) {
+      const key = `${Math.round(pos[i * 3] * 1e4)},${Math.round(pos[i * 3 + 1] * 1e4)},${Math.round(pos[i * 3 + 2] * 1e4)}`;
+      let id = weld.get(key);
+      if (id === undefined) weld.set(key, (id = weld.size));
+      w[i] = id;
+    }
+    let s = 0;
     for (let i = 0; i < idx.length; i += 3) {
       const a = idx[i] * 3, b = idx[i + 1] * 3, c = idx[i + 2] * 3;
-      v += pos[a] * (pos[b + 1] * pos[c + 2] - pos[b + 2] * pos[c + 1])
+      s += pos[a] * (pos[b + 1] * pos[c + 2] - pos[b + 2] * pos[c + 1])
         - pos[a + 1] * (pos[b] * pos[c + 2] - pos[b + 2] * pos[c])
         + pos[a + 2] * (pos[b] * pos[c + 1] - pos[b + 1] * pos[c]);
+      for (const [p, q] of [[idx[i], idx[i + 1]], [idx[i + 1], idx[i + 2]], [idx[i + 2], idx[i]]]) {
+        const x = w[p], y = w[q];
+        if (x === y) continue;
+        const e = x < y ? x * 4294967296 + y : y * 4294967296 + x;
+        edges.set(e, (edges.get(e) ?? 0) + 1);
+      }
     }
-    own[dbId] += Math.abs(v) / 6;
+    v += m.mirrored ? -s : s;
     fragments++;
   }
+  let odd = edges.size === 0;
+  for (const n of edges.values()) if (n % 2) { odd = true; break; }
+  if (odd) { openObject[dbId] = 1; opened++; } else { own[dbId] = Math.abs(v) / 6; closed++; }
   if (k % 500 === 0) console.log(`${k}/${objects.length} objects`);
 }
-console.log(`Fragments: ${fragments} closed, ${open} open (their objects get no volume), ${empty} without triangles`);
+console.log(`Objects with geometry: ${closed} closed, ${opened} open (no volume) — ${fragments} fragments`);
 // Up the tree: an element's volume includes its children's geometry.
 const total = Float64Array.from(own);
 const openBelow = Uint8Array.from(openObject);
@@ -166,7 +165,7 @@ for (const o of collection) {
 }
 console.log(`Join: ${collection.length} property objects — by external ID ${how.ext}, by IfcGUID ${how.guid}, unmatched ${how.none}; ${named} with a volume`);
 const body = JSON.stringify({ v: 1, urn, unit, scale, builtAt: new Date().toISOString(), objects: named, fragments, volumes });
-console.log(`Volumes: ${named} objects, ${fragments} closed fragments, unit ${unit}, ${(body.length / 1024).toFixed(0)} KB, ${Math.round((Date.now() - t0) / 1000)} s`);
+console.log(`Volumes: ${named} objects, unit ${unit}, ${(body.length / 1024).toFixed(0)} KB, ${Math.round((Date.now() - t0) / 1000)} s`);
 const client = new S3Client({ region: 'auto', endpoint: `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
   credentials: { accessKeyId: env.R2_ACCESS_KEY_ID, secretAccessKey: env.R2_SECRET_ACCESS_KEY } });
 await client.send(new PutObjectCommand({ Bucket: env.R2_BUCKET, Key: `${prefix}/volumes/current.json`, Body: body, ContentType: 'application/json' }));
