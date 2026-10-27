@@ -119,3 +119,14 @@ const client = new S3Client({ region: 'auto', endpoint: `https://${env.R2_ACCOUN
   credentials: { accessKeyId: env.R2_ACCESS_KEY_ID, secretAccessKey: env.R2_SECRET_ACCESS_KEY } });
 await client.send(new PutObjectCommand({ Bucket: env.R2_BUCKET, Key: `${prefix}/volumes/current.json`, Body: body, ContentType: 'application/json' }));
 console.log(`Published ${prefix}/volumes/current.json`);
+
+// Check: the keys api/aps-props.ts joins on — external IDs of the first 3D view's properties (Model Derivative).
+try {
+  const meta = await (await fetch(`${APS}/modelderivative/v2/designdata/${urn}/metadata`, { headers: await apsHeaders() })).json();
+  const views = (meta.data?.metadata ?? []).filter(v => v.role === '3d');
+  const view = views.find(v => v.name === '{3D}') ?? views[0];
+  const props = await (await fetch(`${APS}/modelderivative/v2/designdata/${urn}/metadata/${view.guid}/properties?forceget=true`, { headers: await apsHeaders() })).json();
+  const ext = (props.data?.collection ?? []).map(o => o.externalId).filter(Boolean);
+  const hit = ext.filter(e => volumes[e] != null).length;
+  console.log(`Join check: ${hit}/${ext.length} property objects have a volume (sample property ${ext[0]}, sample volume key ${Object.keys(volumes)[0]})`);
+} catch (e) { console.log(`Join check skipped: ${e.message}`); }

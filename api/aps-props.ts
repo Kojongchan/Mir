@@ -91,7 +91,7 @@ export async function readModelObjects(urn: string, token: string):
   const p = (await pr.json()) as { data?: { collection?: { objectid: number; name?: string; externalId?: string; properties?: Props }[] } };
   const objects = elementsOnly((p.data?.collection ?? []).map(summarize).filter((o): o is ModelObject => o !== null));
   // 체적 속성이 없는 객체: 형상에서 계산한 체적(Actions model-volumes → R2)이 있으면 그것. 있으면 형상 값은 검증용으로 곁에.
-  const volumes = await readVolumes(urn).catch(() => null);
+  const volumes = await readVolumes(urn).catch(e => { console.warn(`volumes: ${(e as Error).message}`); return null; });
   if (volumes) {
     for (const o of objects) {
       const g = o.ext ? volumes[o.ext] : undefined;
@@ -110,11 +110,12 @@ async function cacheKey(urn: string): Promise<string> {
 
 /** 형상에서 계산한 객체 체적(m³, 외부 ID → 값) — scripts/build-model-volumes.mjs 가 쓴 것. R2 설정이 없거나 아직 없으면 null. */
 export async function readVolumes(urn: string): Promise<Record<string, number> | null> {
-  const env = process.env;
-  if (!env.R2_ACCOUNT_ID || !env.R2_ACCESS_KEY_ID || !env.R2_SECRET_ACCESS_KEY || !env.R2_BUCKET) return null;
-  const r2 = new AwsClient({ accessKeyId: env.R2_ACCESS_KEY_ID, secretAccessKey: env.R2_SECRET_ACCESS_KEY, service: 's3', region: 'auto' });
-  const r = await r2.fetch(`https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${env.R2_BUCKET}/${await cacheKey(urn)}/volumes/current.json`);
-  if (!r.ok) return null;
+  // process.env.<이름> 으로 직접 읽는다(edge 번들은 이 꼴만 채운다 — aps-convert 와 같게)
+  const account = process.env.R2_ACCOUNT_ID, keyId = process.env.R2_ACCESS_KEY_ID, secret = process.env.R2_SECRET_ACCESS_KEY, bucket = process.env.R2_BUCKET;
+  if (!account || !keyId || !secret || !bucket) return null;
+  const r2 = new AwsClient({ accessKeyId: keyId, secretAccessKey: secret, service: 's3', region: 'auto' });
+  const r = await r2.fetch(`https://${account}.r2.cloudflarestorage.com/${bucket}/${await cacheKey(urn)}/volumes/current.json`);
+  if (!r.ok) { if (r.status !== 404) console.warn(`volumes ${r.status}`); return null; }
   const j = (await r.json()) as { volumes?: Record<string, number> };
   return j.volumes ?? null;
 }
