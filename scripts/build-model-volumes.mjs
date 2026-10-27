@@ -107,13 +107,22 @@ for (let id = 1; id < tree.n; id++) {
 }
 // Keys: the external IDs api/aps-props.ts joins on — those of the Model Derivative properties of the first 3D view.
 // They are not always the property database's own: an IFC translation stores path IDs there ('0/0/0/3/7') while the
-// properties give the IfcGUID. Object → dbId: the same external ID in the database (Revit: the properties' objectid is
-// not the dbId), else the objectid when its name is the database name of that dbId (IFC).
+// properties give the element's IfcGUID. Object → dbId: the same external ID in the database (Revit — the properties'
+// objectid is not the dbId there), else the element whose IfcGUID property is that ID (IFC). Names are not used: many
+// objects share one (184 bearings named '받침').
 const byExt = new Map();
 for (let id = 1; id < tree.n; id++) if (db.ids[id]) byExt.set(String(db.ids[id]), id);
+const byGuid = new Map();
+const guidAttrs = new Set(db.attrs.map((a, i) => (Array.isArray(a) && /^(IfcGUID|GlobalId)$/i.test(String(a[5] || a[0])) ? i : -1)).filter(i => i >= 0));
+if (guidAttrs.size) {
+  for (let id = 1; id < tree.n; id++) {
+    const end = id === tree.n - 1 ? db.avs.length : 2 * db.offs[id + 1];
+    for (let i = 2 * db.offs[id]; i < end; i += 2) if (guidAttrs.has(db.avs[i])) { byGuid.set(String(db.vals[db.avs[i + 1]]), id); break; }
+  }
+}
 const volumes = {};
 let named = 0;
-const how = { ext: 0, objectid: 0, none: 0 };
+const how = { ext: 0, guid: 0, none: 0 };
 const meta = await (await fetch(`${APS}/modelderivative/v2/designdata/${urn}/metadata`, { headers: await apsHeaders() })).json();
 const views = (meta.data?.metadata ?? []).filter(v => v.role === '3d');
 const view = views.find(v => v.name === '{3D}') ?? views[0];
@@ -124,13 +133,13 @@ for (const o of collection) {
   if (!o.externalId) continue;
   let id = byExt.get(String(o.externalId));
   if (id) how.ext++;
-  else if (o.objectid > 0 && o.objectid < tree.n && tree.name[o.objectid] === o.name) { id = o.objectid; how.objectid++; }
+  else if ((id = byGuid.get(String(o.externalId)))) how.guid++;
   else { how.none++; continue; }
   if (!total[id]) continue;
   volumes[String(o.externalId)] = Math.round(total[id] * scale ** 3 * 1e4) / 1e4;
   named++;
 }
-console.log(`Join: ${collection.length} property objects — by external ID ${how.ext}, by object ID + name ${how.objectid}, unmatched ${how.none}; ${named} with a volume`);
+console.log(`Join: ${collection.length} property objects — by external ID ${how.ext}, by IfcGUID ${how.guid}, unmatched ${how.none}; ${named} with a volume`);
 const body = JSON.stringify({ v: 1, urn, unit, scale, builtAt: new Date().toISOString(), objects: named, fragments, volumes });
 console.log(`Volumes: ${named} objects, ${fragments} fragments (${open} without triangles), unit ${unit}, ${(body.length / 1024).toFixed(0)} KB, ${Math.round((Date.now() - t0) / 1000)} s`);
 const client = new S3Client({ region: 'auto', endpoint: `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
