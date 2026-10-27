@@ -126,7 +126,11 @@ try {
   const views = (meta.data?.metadata ?? []).filter(v => v.role === '3d');
   const view = views.find(v => v.name === '{3D}') ?? views[0];
   const props = await (await fetch(`${APS}/modelderivative/v2/designdata/${urn}/metadata/${view.guid}/properties?forceget=true`, { headers: await apsHeaders() })).json();
-  const ext = (props.data?.collection ?? []).map(o => o.externalId).filter(Boolean);
+  const coll = props.data?.collection ?? [];
+  const ext = coll.map(o => o.externalId).filter(Boolean);
   const hit = ext.filter(e => volumes[e] != null).length;
-  console.log(`Join check: ${hit}/${ext.length} property objects have a volume (sample property ${ext[0]}, sample volume key ${Object.keys(volumes)[0]})`);
+  console.log(`Join check: ${hit}/${ext.length} property objects have a volume`);
+  console.log(`  ids: ${db.ids.length} entries, offsets ${db.offs.length}; first ${JSON.stringify(db.ids.slice(0, 4))}`);
+  console.log(`  property sample ${JSON.stringify(coll.slice(0, 3).map(o => [o.objectid, o.externalId, db.ids[o.objectid]]))}`);
+  console.log(`  volume keys sample ${JSON.stringify(Object.keys(volumes).filter(k => !/^\d+$/.test(k)).slice(0, 3))}`);
 } catch (e) { console.log(`Join check skipped: ${e.message}`); }
