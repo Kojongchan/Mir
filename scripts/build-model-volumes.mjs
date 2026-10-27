@@ -105,14 +105,32 @@ for (let id = 1; id < tree.n; id++) {
   if (!own[id]) continue;
   for (let p = tree.parent[id], guard = 0; p > 0 && guard < 64; p = tree.parent[p], guard++) total[p] += own[id];
 }
+// Keys: the external IDs api/aps-props.ts joins on — those of the Model Derivative properties of the first 3D view.
+// They are not always the property database's own: an IFC translation stores path IDs there ('0/0/0/3/7') while the
+// properties give the IfcGUID. Object → dbId: the same external ID in the database (Revit: the properties' objectid is
+// not the dbId), else the objectid when its name is the database name of that dbId (IFC).
+const byExt = new Map();
+for (let id = 1; id < tree.n; id++) if (db.ids[id]) byExt.set(String(db.ids[id]), id);
 const volumes = {};
 let named = 0;
-for (let id = 1; id < tree.n; id++) {
-  const ext = db.ids[id];
-  if (!ext || !total[id]) continue;
-  volumes[String(ext)] = Math.round(total[id] * scale ** 3 * 1e4) / 1e4;
+const how = { ext: 0, objectid: 0, none: 0 };
+const meta = await (await fetch(`${APS}/modelderivative/v2/designdata/${urn}/metadata`, { headers: await apsHeaders() })).json();
+const views = (meta.data?.metadata ?? []).filter(v => v.role === '3d');
+const view = views.find(v => v.name === '{3D}') ?? views[0];
+const props = view && await (await fetch(`${APS}/modelderivative/v2/designdata/${urn}/metadata/${view.guid}/properties?forceget=true`, { headers: await apsHeaders() })).json();
+const collection = props?.data?.collection ?? [];
+if (!collection.length) throw new Error('Model Derivative properties not ready — run again in a few minutes');
+for (const o of collection) {
+  if (!o.externalId) continue;
+  let id = byExt.get(String(o.externalId));
+  if (id) how.ext++;
+  else if (o.objectid > 0 && o.objectid < tree.n && tree.name[o.objectid] === o.name) { id = o.objectid; how.objectid++; }
+  else { how.none++; continue; }
+  if (!total[id]) continue;
+  volumes[String(o.externalId)] = Math.round(total[id] * scale ** 3 * 1e4) / 1e4;
   named++;
 }
+console.log(`Join: ${collection.length} property objects — by external ID ${how.ext}, by object ID + name ${how.objectid}, unmatched ${how.none}; ${named} with a volume`);
 const body = JSON.stringify({ v: 1, urn, unit, scale, builtAt: new Date().toISOString(), objects: named, fragments, volumes });
 console.log(`Volumes: ${named} objects, ${fragments} fragments (${open} without triangles), unit ${unit}, ${(body.length / 1024).toFixed(0)} KB, ${Math.round((Date.now() - t0) / 1000)} s`);
 const client = new S3Client({ region: 'auto', endpoint: `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
@@ -120,17 +138,3 @@ const client = new S3Client({ region: 'auto', endpoint: `https://${env.R2_ACCOUN
 await client.send(new PutObjectCommand({ Bucket: env.R2_BUCKET, Key: `${prefix}/volumes/current.json`, Body: body, ContentType: 'application/json' }));
 console.log(`Published ${prefix}/volumes/current.json`);
 
-// Check: the keys api/aps-props.ts joins on — external IDs of the first 3D view's properties (Model Derivative).
-try {
-  const meta = await (await fetch(`${APS}/modelderivative/v2/designdata/${urn}/metadata`, { headers: await apsHeaders() })).json();
-  const views = (meta.data?.metadata ?? []).filter(v => v.role === '3d');
-  const view = views.find(v => v.name === '{3D}') ?? views[0];
-  const props = await (await fetch(`${APS}/modelderivative/v2/designdata/${urn}/metadata/${view.guid}/properties?forceget=true`, { headers: await apsHeaders() })).json();
-  const coll = props.data?.collection ?? [];
-  const ext = coll.map(o => o.externalId).filter(Boolean);
-  const hit = ext.filter(e => volumes[e] != null).length;
-  console.log(`Join check: ${hit}/${ext.length} property objects have a volume`);
-  console.log(`  ids: ${db.ids.length} entries, offsets ${db.offs.length}; first ${JSON.stringify(db.ids.slice(0, 4))}`);
-  console.log(`  property sample ${JSON.stringify(coll.slice(0, 3).map(o => [o.objectid, o.externalId, db.ids[o.objectid]]))}`);
-  console.log(`  volume keys sample ${JSON.stringify(Object.keys(volumes).filter(k => !/^\d+$/.test(k)).slice(0, 3))}`);
-} catch (e) { console.log(`Join check skipped: ${e.message}`); }
