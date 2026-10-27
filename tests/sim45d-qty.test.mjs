@@ -88,7 +88,7 @@ test('quantity split: matched rows, this line\'s share per column, allocation to
   ];
   // 같은 이름·규격이 두 절에 — 수량으로 가른다(1000 은 상부, 900 은 교각)
   const m = Q.matchSheet(boq, rows);
-  assert.deepEqual([...m].map(([id, r]) => [id, r.page]), [['1', 5], ['2', 5], ['3', 9], ['4', 7], ['5', 9]]);
+  assert.deepEqual([...m].map(([id, r]) => [id, r.row.page]).sort(), [['1', 5], ['2', 5], ['3', 9], ['4', 7], ['5', 9]]);
   const data = Q.buildSplitData('2-1. 시험교', '수량산출서 5~9쪽', boq, rows);
   assert.equal(data.lines.filter(l => l.cols).length, 5);
   // 교대공 몫은 근거와 함께 1/3, 상부공·공동구는 저장 안 함 → 교각공 상선 비율(m3 기준 0.5) 가정
@@ -116,4 +116,30 @@ test('quantity split: matched rows, this line\'s share per column, allocation to
   const fixed = Q.splitQuantities({ ...data, overrides: { 3: { share: 1, group: 'deck', source: '상선 전용 공동구' } } }, '시험교 상선', acts, site);
   assert.equal(fixed.lines.find(l => l.id === '3').targetQty, 1000);
   assert.equal(Q.lineOf('연제교(하선)'), '하선');
+});
+
+test('quantity split: different wording matched by unit, quantity and similar name (noted); totals-only rows use the section column', () => {
+  const boq = [
+    { id: 'w', name: 'WPC거더 제작 및 가설', spec: 'L=40.0m', unit: '본', qty: 12, amount: 1_200_000 },
+    { id: 's', name: '사토운반', spec: '토  사,덤프24톤,L=12.0km이내(표준시장)', unit: 'm3', qty: 61, amount: 61_000 },
+    { id: 'x', name: '강관말뚝', spec: 'D609mm×12T', unit: 'm', qty: 250, amount: 2_500_000 },
+    { id: 'n', name: '전혀 다른 항목', spec: '', unit: 'm', qty: 7, amount: 700 },
+  ];
+  const rows = [
+    { page: 3, path: ['2-1-1 토공및기초공'], name: '사토운반', spec: 'D/T=24ton,토사,L=12.0km(표준시장)', unit: 'm3', cols: { 교대공: 20.5, '교각공(상선)': 40.5, 계: 61, 합계: 61 } },
+    { page: 3, path: ['2-1-1 토공및기초공', '4) 말뚝'], name: 'PHC 말뚝', spec: 'D600mm×90T(C종)', unit: 'm', cols: { '교각공(하선)': 130, '교각공(상선)': 120.2, 계: 250.2, 합계: 250 } },
+    { page: 9, path: ['2-1-4 상부공', '2-1-4-15 WPC 제작 및 설치'], name: 'WPC 제작 및 가설', spec: 'L=40.0m', unit: '본', cols: { 합계: 12 } },
+  ];
+  const m = Q.matchSheet(boq, rows);
+  assert.equal(m.get('w').row.name, 'WPC 제작 및 가설');
+  assert.match(m.get('w').note, /WPC 제작 및 가설/);
+  assert.equal(m.get('s').row.page, 3);
+  assert.match(m.get('x').note, /PHC 말뚝/, '수량이 같은 다른 이름 — 내역서 품명 확인용으로 남김');
+  assert.equal(m.has('n'), false);
+  const data = Q.buildSplitData('s', 'q', boq, rows);
+  const r = Q.splitQuantities({ ...data, shares: { 상부공: { share: 0.5, source: '시험' } } }, '시험교 상선', acts, site);
+  const w = r.lines.find(l => l.id === 'w');
+  assert.equal(w.targetQty, 6, '합계만 있는 WPC 행은 상부공 열 × 0.5');
+  assert.deepEqual(w.alloc.map(a => a.code), ['G01', 'G02']);
+  assert.match(w.basis, /집계표 표기/);
 });

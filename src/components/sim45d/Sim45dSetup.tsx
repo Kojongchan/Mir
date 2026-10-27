@@ -26,6 +26,7 @@ import { decodeXer, parseXer } from '../../lib/p6/xer';
 import { fetchModelObjects } from '../../lib/sim45d/modelObjects';
 import { actualsFromModel } from '../../lib/sim45d/modelActuals';
 import { wbsScope } from '../../lib/sim45d/wbsScope';
+import { splitActivities, splitQuantities } from '../../lib/sim45d/qtySplit';
 
 /**
  * 「공정·공사비 (4D/5D)」 단계형 진행(D30): 위쪽 단계 바 + 3D 위에 펼치는 단계 시트.
@@ -178,9 +179,14 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
   };
 
   // 6단계 연결은 4D 색칠에 쓴다(3D 뷰어가 화면 모델 객체로 찾음).
-  const { setSavedLinks, setModelActuals } = sim;
+  const { setSavedLinks, setModelActuals, setSplit, schedule: openSchedule } = sim;
   const allLinks = useMemo(() => (data.links ?? []).flatMap(l => l.links), [data.links]);
   useEffect(() => { setSavedLinks(allLinks); }, [allLinks, setSavedLinks]);
+  // 저장된 수량분개 → 지금 연 공정표의 작업별 공사비·5D 내역(배분은 엔진이 다시 계산)
+  const qtySplit = data.qtySplit, site = data.site, wbsRoot = data.links?.[0]?.wbsRoot;
+  useEffect(() => {
+    setSplit(qtySplit && openSchedule ? splitQuantities(qtySplit, name, splitActivities(openSchedule, wbsRoot), site) : null);
+  }, [qtySplit, openSchedule, name, site, wbsRoot, setSplit]);
 
   /**
    * 모델의 현장 실적(A5 실시)을 연 공정표에 넣는다(3번 결정) — 모델 속성을 읽어(1~2초) 6단계 연결 → 모델 코드 → (개략 IPS 면) 규칙 연결로

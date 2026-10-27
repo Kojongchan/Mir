@@ -6,6 +6,7 @@ import type { BoqLine, QtyRow } from '../../lib/sim45d/types';
 import { applyActuals, type ModelActuals } from '../../lib/sim45d/modelActuals';
 import type { LinkSet } from '../../lib/sim45d/setup';
 import type { ResolvedLinks } from '../../lib/sim45d/viewerLinks';
+import type { SplitResult } from '../../lib/sim45d/qtySplit';
 
 /**
  * 공정·공사비(4D/5D) 화면 상태: 공정표(XER), 기준일·재생, 작업 선택, 작업 ↔ 객체 연결, 작업별 공사비, 내역·물량.
@@ -46,10 +47,13 @@ export interface Sim45d {
   /** 모델의 현장 실적(A5)을 공정표에 넣었으면 그 요약. */
   actualsInfo: { filled: number; dated: number; linked: number } | null;
   setModelActuals: (m: ModelActuals | null) => void;
-  /** 작업 → 공사비(계약 기준). */
+  /** 작업 → 공사비(계약 기준) — 수량분개(lib/sim45d/qtySplit.ts)가 채운다. */
   cost: ReadonlyMap<string, number>;
   boq: BoqLine[];
   qty: QtyRow[];
+  split: SplitResult | null;
+  setSplit: (r: SplitResult | null) => void;
+  setQty: (rows: QtyRow[]) => void;
   fourD: boolean;
   setFourD: (on: boolean) => void;
   hideFuture: boolean;
@@ -73,10 +77,15 @@ export function useSim45d(projectId: string, enabled: boolean): Sim45d {
   const [resolved, setResolved] = useState<ResolvedLinks | null>(null);
   const [savedLinks, setSavedLinks] = useState<LinkSet['links']>([]);
   const [modelActuals, setModelActuals] = useState<ModelActuals | null>(null);
-  // 공사비·내역·물량은 수량분개가 채운다.
-  const [cost] = useState<ReadonlyMap<string, number>>(new Map());
-  const [boq] = useState<BoqLine[]>([]);
-  const [qty] = useState<QtyRow[]>([]);
+  // 공사비·5D 내역은 수량분개(단계 시트가 계산해 넣음), 물량 대사는 모델 수량과 비교한 것.
+  const [split, setSplit] = useState<SplitResult | null>(null);
+  const [qty, setQty] = useState<QtyRow[]>([]);
+  const cost = useMemo<ReadonlyMap<string, number>>(() => split?.byCode ?? new Map(), [split]);
+  const boq = useMemo<BoqLine[]>(() => (split?.lines ?? []).filter(l => l.status !== 'not-target').map(l => ({
+    id: l.id, path: l.row?.path?.length ? l.row.path : ['(집계표에 없는 항목)'], name: l.name, spec: l.spec, unit: l.unit,
+    qty: l.targetQty, unitPrice: l.unitPrice, amount: l.targetAmount, boqQty: l.qty, basis: l.basis,
+    activity: l.alloc.length === 1 ? l.alloc[0].code : l.alloc.length ? `${l.alloc.length}개 작업` : l.status === 'unmatched' ? '못 맞춤' : '배분 안 됨',
+  })), [split]);
   const links = useMemo<ReadonlyMap<string, readonly number[]>>(() => resolved?.byCode ?? new Map(), [resolved]);
   const linkInfo = useMemo(() => (resolved ? { found: resolved.found, missing: resolved.missing, byModelCode: resolved.byModelCode } : null), [resolved]);
   const setLinks = useCallback((r: ResolvedLinks | null) => setResolved(r), []);
@@ -183,7 +192,7 @@ export function useSim45d(projectId: string, enabled: boolean): Sim45d {
   return {
     schedule, fileName, sourceEncoding, error, acts, actsByCode, range, time, setTime, playing, setPlaying, speed, setSpeed,
     selected, selectActivity, setSelected, links, setLinks, linkInfo, savedLinks, setSavedLinks, actualsInfo, setModelActuals,
-    cost, boq, qty, fourD, setFourD, hideFuture, setHideFuture, openXer, downloadXer, close,
+    cost, boq, qty, split, setSplit, setQty, fourD, setFourD, hideFuture, setHideFuture, openXer, downloadXer, close,
   };
 }
 

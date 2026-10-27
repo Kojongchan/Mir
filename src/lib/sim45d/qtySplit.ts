@@ -22,7 +22,8 @@ export interface QtySplitData {
   section: string;
   sheet: string;
   at: string;
-  lines: (BoqItem & { page?: number; path?: string[]; cols?: Record<string, number> })[];
+  /** note: 집계표 표기가 내역서와 다를 때 그 표기(맞춤 근거 · 품명 오기 확인용). */
+  lines: (BoqItem & { page?: number; path?: string[]; cols?: Record<string, number>; note?: string })[];
   shares: Record<string, ColumnShare>;
   /** 항목별 고침(사람·AI): 이 대상 몫 비율 또는 부위. */
   overrides?: Record<string, { share?: number; group?: Group; source: string }>;
@@ -36,27 +37,72 @@ export const GROUP_LABEL: Record<Group, string> = {
 const TOTAL = /^(계|합계)$/;
 const LINE = /\((상선|하선)\)/;
 
+const nameKey = (s: string) => s.replace(/\s+/g, '').replace(/\((자재비|풀림방지너트|표준시장|대피할증)\)/g, '').replace(/거더|이내/g, '').toLowerCase();
+/** 글자 두 개씩 묶은 것의 겹침(0~1). */
+function similarity(a: string, b: string): number {
+  if (!a || !b) return 0;
+  if (a.includes(b) || b.includes(a)) return 1;
+  const grams = (s: string) => { const m = new Map<string, number>(); for (let i = 0; i < s.length - 1; i++) { const g = s.slice(i, i + 2); m.set(g, (m.get(g) ?? 0) + 1); } return m; };
+  const x = grams(a), y = grams(b);
+  let common = 0;
+  for (const [g, n] of x) common += Math.min(n, y.get(g) ?? 0);
+  return (2 * common) / Math.max(1, a.length - 1 + b.length - 1);
+}
+
+export interface SheetMatch { row: SheetRow; note?: string }
+
 /**
- * 내역 항목 ↔ 집계표 행: 이름·규격·단위가 같고 수량이 맞는(반올림 차) 행. 같은 항목이 여러 절에 나오므로(예 합판거푸집) 내역서와 집계표의
- * 순서가 같다는 점을 쓴다 — 앞에서부터 차례로 찾고, 못 찾으면 전체에서 아직 안 쓴 행.
+ * 내역 항목 ↔ 집계표 행. 같은 항목이 여러 절에 나오므로(예 합판거푸집) 내역서와 집계표의 순서가 같다는 점을 쓴다.
+ * 1) 이름·규격·단위가 같고 수량이 맞는(반올림 차) 행 — 앞에서부터 차례로, 없으면 전체에서 아직 안 쓴 행
+ * 2) 표기가 다른 것(내역서 'WPC거더 제작 및 가설' ↔ 집계표 'WPC 제작 및 가설', 'L=12.0km이내' ↔ 'L=12.0km', '선단' ↔ '선단고정액'):
+ *    단위·수량이 맞고 이름이 비슷하면(글자 겹침 0.5 이상, 순서상 가까우면 0.25) — 다른 표기는 note 로 남긴다(내역서 품명 오기 확인용).
  */
-export function matchSheet(boq: BoqItem[], rows: SheetRow[]): Map<string, SheetRow> {
-  const out = new Map<string, SheetRow>();
+export function matchSheet(boq: BoqItem[], rows: SheetRow[]): Map<string, SheetMatch> {
+  const out = new Map<string, SheetMatch>();
   const used = new Set<number>();
   const keys = rows.map(r => rowKey(r.name, r.spec, r.unit));
   const total = (r: SheetRow) => r.cols['합계'] ?? r.cols['계'] ?? Object.entries(r.cols).filter(([k]) => !TOTAL.test(k)).reduce((s, [, v]) => s + v, 0);
   const fits = (r: SheetRow, q: number) => Math.abs(total(r) - q) <= Math.max(1, Math.abs(q) * 0.01);
+  const unitKey = (u: string) => rowKey('', '', u);
   let at = 0;
+  const take = (b: BoqItem, i: number, note?: string) => { used.add(i); at = i + 1; out.set(b.id, note ? { row: rows[i], note } : { row: rows[i] }); };
+  const later: BoqItem[] = [];
   for (const b of boq) {
     const key = rowKey(b.name, b.spec, b.unit);
     let hit = -1;
     for (let i = at; i < rows.length; i++) if (!used.has(i) && keys[i] === key && fits(rows[i], b.qty)) { hit = i; break; }
     if (hit < 0) for (let i = 0; i < rows.length; i++) if (!used.has(i) && keys[i] === key && fits(rows[i], b.qty)) { hit = i; break; }
-    if (hit < 0) continue;
-    used.add(hit); at = hit + 1;
-    out.set(b.id, rows[hit]);
+    if (hit < 0) { later.push(b); continue; }
+    take(b, hit);
+  }
+  // 2) 표기 다른 것: 정확히 맞춘 뒤 남은 행에서
+  for (const b of later) {
+    const pos = boq.indexOf(b);
+    let best = -1, bestScore = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (used.has(i) || unitKey(r.unit) !== unitKey(b.unit) || !fits(r, b.qty)) continue;
+      const s = Math.max(similarity(nameKey(b.name), nameKey(r.name)), similarity(nameKey(b.name + b.spec), nameKey(r.name + r.spec)) * 0.9);
+      // 순서상 위치(내역서 항목 순번 ↔ 집계표 행 순번 비율)가 가까우면 문턱을 낮춘다
+      const near = Math.abs(i - pos) <= 2 || Math.abs(i / Math.max(1, rows.length) - pos / Math.max(1, boq.length)) < 0.08;
+      if ((s >= 0.5 || (near && s >= 0.25)) && s > bestScore) { best = i; bestScore = s; }
+    }
+    if (best >= 0) {
+      const r = rows[best];
+      const diff = rowKey(b.name, b.spec, b.unit) !== rowKey(r.name, r.spec, r.unit);
+      take(b, best, diff ? `집계표 표기: ${r.name}${r.spec ? ` ${r.spec}` : ''}` : undefined);
+    }
   }
   return out;
+}
+
+/** 열 값이 합계뿐인 행(예 'WPC 제작 및 가설 … 138')의 열: 절 이름에서. */
+function columnOfSection(path: string[]): string {
+  const sec = path.join(' ');
+  if (/사재교|하로교/.test(sec)) return '사재교·하로교';
+  if (/교대공/.test(sec)) return '교대공';
+  if (/상부공|공동구/.test(sec)) return '상부공';
+  return '(합계만)';
 }
 
 /** 대상 이름의 노선(상선·하선). 없으면 null(한 덩어리 대상). */
@@ -184,8 +230,16 @@ export interface SplitResult {
 }
 
 /** 분개 원자료 + 공정표 작업 + 설계현황 → 항목별 이 대상 몫·작업 배분·작업별 공사비. */
+/** 행의 배분 열: 열 값 그대로, 합계만 있는 행(예 WPC 제작 및 가설)은 절 이름의 열로. */
+function partsOf(cols: Record<string, number>, path: string[]): [string, number][] {
+  const own = Object.entries(cols).filter(([k]) => !TOTAL.test(k));
+  const sum = cols['합계'] ?? cols['계'] ?? 0;
+  return own.length ? own : sum ? [[columnOfSection(path), sum]] : [];
+}
+
 export function splitQuantities(data: QtySplitData, target: string, acts: SplitActivity[], site?: BridgeSite): SplitResult {
-  const rows = data.lines.filter(l => l.cols).map(l => ({ page: l.page ?? 0, path: l.path ?? [], name: l.name, spec: l.spec, unit: l.unit, cols: l.cols! }));
+  const rows = data.lines.filter(l => l.cols).map(l => ({ page: l.page ?? 0, path: l.path ?? [], name: l.name, spec: l.spec, unit: l.unit,
+    cols: { ...l.cols!, ...Object.fromEntries(partsOf(l.cols!, l.path ?? [])) } }));
   const shares = columnShares(rows, target, data.shares);
   const byCode = new Map<string, number>();
   const totals = { boq: 0, target: 0, allocated: 0, unmatched: 0, noActivity: 0 };
@@ -195,7 +249,7 @@ export function splitQuantities(data: QtySplitData, target: string, acts: SplitA
     const base = { ...l, unitPrice, row: l.cols ? { page: l.page, path: l.path, cols: l.cols } : null };
     if (!l.cols) { totals.unmatched += l.amount; return { ...base, targetQty: 0, targetAmount: 0, basis: '집계표에서 같은 항목을 못 찾음', groups: [], alloc: [], status: 'unmatched' as const }; }
     const over = data.overrides?.[l.id];
-    const parts = Object.entries(l.cols).filter(([k]) => !TOTAL.test(k));
+    const parts = partsOf(l.cols, l.path ?? []);
     const sheetSum = parts.reduce((s, [, v]) => s + v, 0);
     const scale = sheetSum > 0 ? l.qty / sheetSum : 0; // 집계표 소수 → 내역 반올림 수량
     const alloc = new Map<string, number>();
@@ -222,17 +276,21 @@ export function splitQuantities(data: QtySplitData, target: string, acts: SplitA
     const list = [...alloc].map(([code, qty]) => ({ code, qty, amount: qty * unitPrice }));
     for (const a of list) { byCode.set(a.code, (byCode.get(a.code) ?? 0) + a.amount); totals.allocated += a.amount; }
     const status = targetQty <= 0 ? 'not-target' : list.length ? 'allocated' : 'no-activity';
-    return { ...base, targetQty, targetAmount, basis: `${l.path?.slice(-1)[0] ?? ''} ${l.page ? `${l.page}쪽` : ''}: ${basis.join(' + ') || '이 대상 열 없음'}`.trim(), groups: [...groups], alloc: list, status };
+    const where = `${l.path?.slice(-1)[0] ?? ''} ${l.page ? `${l.page}쪽` : ''}`.trim();
+    return { ...base, targetQty, targetAmount, basis: `${where}: ${basis.join(' + ') || '이 대상 열 없음'}${l.note ? ` · ${l.note}` : ''}`, groups: [...groups], alloc: list, status };
   });
   return { lines, byCode, totals, shares };
 }
 
-/** 분개 원자료 만들기: 내역 항목 + 집계표 행(맞춘 것만 값). */
+/** 분개 원자료 만들기: 내역 항목 + 집계표 행(맞춘 것만 값, 표기가 다르면 note). */
 export function buildSplitData(section: string, sheet: string, boq: BoqItem[], rows: SheetRow[], prev?: QtySplitData | null): QtySplitData {
   const m = matchSheet(boq, rows);
   return {
     section, sheet, at: new Date().toISOString(),
-    lines: boq.map(b => { const r = m.get(b.id); return r ? { ...b, page: r.page, path: r.path, cols: r.cols } : { ...b }; }),
+    lines: boq.map(b => {
+      const r = m.get(b.id);
+      return r ? { ...b, page: r.row.page, path: r.row.path, cols: r.row.cols, ...(r.note ? { note: r.note } : {}) } : { ...b };
+    }),
     shares: prev?.shares ?? {},
     ...(prev?.overrides ? { overrides: prev.overrides } : {}),
   };

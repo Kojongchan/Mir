@@ -20,6 +20,7 @@ const QUICK: { label: string; task: Parameters<typeof claudeAsk>[0]; steps: Step
   { label: 'P6 검토 정리', task: 'explainCheck', steps: ['p6', 'report'] },
   { label: 'BIM 연결 마무리', task: 'linkLeftovers', steps: ['link'] },
   { label: '모델 반영 전 점검', task: 'modelSync', steps: ['export'] },
+  { label: '수량분개(5D)', task: 'qtySplit', steps: ['link', 'sim', 'report'] },
   { label: '내역 분류', task: 'boqClassify', steps: ['report'] },
 ];
 

@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useContext, useMemo, useState } from 'react';
+import { AiConnectContext } from './aiConnect';
 import { listDailyLogs } from '../../../lib/dashboard';
 import { checkSchedule } from '../../../lib/p6/check';
 import { accBoqSheet, boqLines, boqSections, guessBoqSection, type BoqLine } from '../../../lib/sim45d/docText';
@@ -34,6 +35,7 @@ export function ReportStep({ projectId, canEdit, data, name, sim, openP6, openin
   const [note, setNote] = useState('');
   const check = useMemo(() => (s ? checkSchedule(s) : null), [s]);
   const linkCount = (data.links ?? []).reduce((n, l) => n + l.links.length, 0);
+  const aiConnect = useContext(AiConnectContext);
 
   /** 질의에 쓰는 사실: 모두 플랫폼이 계산한 값. */
   const facts = () => {
@@ -146,6 +148,30 @@ export function ReportStep({ projectId, canEdit, data, name, sim, openP6, openin
             <ul className="sim-list">{[...data.log!].reverse().slice(0, 20).map((l, i) => <li key={i}>{l.at.slice(0, 16).replace('T', ' ')} · {l.who} · {l.what}</li>)}</ul>
           </details>
         )}
+      </section>
+
+      <section className="sim-step__block">
+        <h4>수량분개(5D)</h4>
+        {data.qtySplit ? (
+          <>
+            <p className="muted">
+              {data.qtySplit.section} · {data.qtySplit.sheet} · 집계표와 맞춘 항목 {data.qtySplit.lines.filter(l => l.cols).length}/{data.qtySplit.lines.length}
+              {data.qtySplit.lines.some(l => l.note) && ` (표기 다른 것 ${data.qtySplit.lines.filter(l => l.note).length})`}
+            </p>
+            {sim.split ? (
+              <ul className="sim-list">
+                <li>내역 {fmtWon(sim.split.totals.boq)} 중 이 대상 <strong>{fmtWon(sim.split.totals.target)}</strong> · 작업 배분 {fmtWon(sim.split.totals.allocated)}
+                  {sim.split.totals.noActivity > 0 && ` · 맞는 작업 없음 ${fmtWon(sim.split.totals.noActivity)}`}{sim.split.totals.unmatched > 0 && ` · 집계표 못 맞춤 ${fmtWon(sim.split.totals.unmatched)}`}</li>
+                {Object.entries(sim.split.shares).filter(([, v]) => v.share > 0 && v.share < 1 || v.assumed).map(([col, v]) => (
+                  <li key={col}>{col} 몫 {(v.share * 100).toFixed(1)}% — <span className={v.assumed ? 'sim-error' : 'muted'}>{v.source}</span></li>
+                ))}
+              </ul>
+            ) : <p className="muted">공정표를 열면 작업별 공사비로 나눕니다(8단계 S-curve·5D 내역).</p>}
+          </>
+        ) : <p className="muted">산출내역서(구조물 묶음)를 수량산출서 개소별 집계표와 맞춰 이 대상 몫을 작업별로 나눕니다 — AI 도우미가 집계표를 읽고, 함께 쓰는 열(교대공·상부공 등)의 몫은 근거와 함께 정합니다.</p>}
+        <div className="sim-step__actions">
+          <button className="btn btn--sm" disabled={!canEdit || !aiConnect} onClick={() => aiConnect?.askClaude('qtySplit')}>AI 로 수량분개</button>
+        </div>
       </section>
 
       <section className="sim-step__block">

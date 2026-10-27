@@ -29,8 +29,11 @@ export interface BoqLine {
   qtyClass?: QtyClass;
   /** 연결된 객체(dbId)와 배분율 — 배분율 합 1. */
   objects?: { id: number; ratio: number }[];
-  /** 연결된 작업(Activity ID). */
+  /** 연결된 작업(Activity ID, 여러 개면 'n개 작업'). */
   activity?: string;
+  /** 수량분개: 내역서 수량(구조물 묶음 전체)과 이 대상 몫의 근거. */
+  boqQty?: number;
+  basis?: string;
 }
 
 /** 수량 대사 한 줄: 객체 묶음(연결 키) × 항목. */

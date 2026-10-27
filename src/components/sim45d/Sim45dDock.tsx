@@ -133,7 +133,9 @@ export function Sim45dDock({ sim, onOpenXer, objectCount, onSelectActivity }: {
           ) : tab === 'chart' ? (
             <ProgressChart acts={sim.acts} range={range} time={sim.time} onTime={sim.setTime} cost={sim.cost} />
           ) : tab === 'boq' ? (
-            <BoqTab rows={sim.boq} />
+            <BoqTab rows={sim.boq} note={sim.split
+              ? `수량분개: 내역 ${won(sim.split.totals.boq)} 중 이 대상 ${won(sim.split.totals.target)} · 작업 배분 ${won(sim.split.totals.allocated)}${sim.split.totals.unmatched ? ` · 집계표 못 맞춤 ${won(sim.split.totals.unmatched)}` : ''}. 금액 = 대상 수량 × 내역 단가(코드 계산).`
+              : '산출내역서 항목의 이 대상 몫과 작업별 배분(수량분개). 금액 = 수량 × 단가(코드 계산).'} />
           ) : tab === 'qty' ? (
             <QtyTab rows={sim.qty} />
           ) : (
@@ -151,21 +153,22 @@ const BOQ_COLUMNS: GridColumn<BoqLine>[] = [
   { key: 'name', label: '품명', width: 200, value: r => r.name },
   { key: 'spec', label: '규격', width: 160, value: r => r.spec },
   { key: 'unit', label: '단위', width: 52, value: r => r.unit },
-  { key: 'qty', label: '수량', width: 96, kind: 'num', value: r => r.qty },
+  { key: 'boqQty', label: '내역 수량', width: 96, kind: 'num', value: r => r.boqQty ?? null },
+  { key: 'qty', label: '대상 수량', width: 96, kind: 'num', value: r => r.qty },
   { key: 'unitPrice', label: '단가', width: 104, kind: 'won', value: r => r.unitPrice },
-  { key: 'amount', label: '금액', width: 128, kind: 'won', sum: true, value: r => r.amount },
+  { key: 'amount', label: '대상 금액', width: 128, kind: 'won', sum: true, value: r => r.amount },
+  { key: 'activity', label: '배분 작업', width: 110, value: r => r.activity ?? '' },
+  { key: 'basis', label: '근거(집계표 열 × 몫)', width: 320, value: r => r.basis ?? '' },
   { key: 'class', label: '수량 분류', width: 84, value: r => (r.qtyClass ? QTY_CLASS_LABEL[r.qtyClass] : '') },
-  { key: 'objects', label: '연결 객체', width: 76, kind: 'int', value: r => r.objects?.length ?? 0 },
-  { key: 'activity', label: '연결 작업', width: 120, value: r => r.activity ?? '' },
 ];
 
-function BoqTab({ rows }: { rows: BoqLine[] }) {
+function BoqTab({ rows, note }: { rows: BoqLine[]; note: string }) {
   return (
-    <TabFrame title="5D 내역" note="공사내역서 항목 ↔ 객체 연결과 객체별 공사비(계약 기준). 금액 = 수량 × 단가(코드 계산)."
+    <TabFrame title="5D 내역" note={note}
       actions={rows.length > 0 && <button type="button" className="btn btn--sm" onClick={() => void exportGridXlsx('5D_내역.xlsx', '5D 내역', BOQ_COLUMNS, rows)}><UiIcon name="download" size={14} /> 엑셀</button>}>
       <DataGrid columns={BOQ_COLUMNS} rows={rows} rowKey={r => r.id} groupBy={r => r.path.join(' › ')} frozen={1}
-        empty={<EmptyState compact icon={<UiIcon name="clipboard" size={28} />} title="공사내역서가 아직 연결되지 않았습니다"
-          desc="엑셀 공사내역서를 올리면 공종별로 묶여 표시되고, 항목마다 연결 객체·연결 작업·수량 분류(형상 직접·형상 계산·모델 없음·간접비)가 붙습니다." />} />
+        empty={<EmptyState compact icon={<UiIcon name="clipboard" size={28} />} title="수량분개가 아직 없습니다"
+          desc="9단계 「수량분개(5D)」(또는 AI 도우미 → 수량분개)로 산출내역서 항목을 수량산출서 개소별 집계표와 맞춰 이 대상 몫을 작업별로 나누면, 항목·작업별 공사비가 여기와 S-curve 에 나옵니다." />} />
     </TabFrame>
   );
 }

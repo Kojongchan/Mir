@@ -268,6 +268,7 @@ export function normalizeSetup(raw: unknown): SetupData {
         id: l.id, name: l.name, spec: str(l.spec), unit: str(l.unit), qty: num(l.qty), amount: num(l.amount),
         ...(l.cols && typeof l.cols === 'object' ? { cols: Object.fromEntries(Object.entries(l.cols).filter(([, v]) => typeof v === 'number' && Number.isFinite(v))) } : {}),
         ...(typeof l.page === 'number' ? { page: l.page } : {}), ...(Array.isArray(l.path) ? { path: l.path.filter(p => typeof p === 'string') } : {}),
+        ...(typeof l.note === 'string' && l.note ? { note: l.note } : {}),
       })),
       shares: qs.shares && typeof qs.shares === 'object' ? Object.fromEntries(Object.entries(qs.shares).filter(([, v]) => v && Number.isFinite(v.share) && v.share >= 0 && v.share <= 1)) : {},
       ...(qs.overrides && typeof qs.overrides === 'object' ? { overrides: qs.overrides } : {}),
