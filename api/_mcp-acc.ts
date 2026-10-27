@@ -143,6 +143,30 @@ export async function pdfText(project: string, item: string, opts: { pages?: str
   }
 }
 
+/**
+ * PDF 쪽 글을 위치와 함께(표 읽기): 쪽마다 글 조각 [x, y, 너비, 글](pt, 왼쪽 아래 원점). 빈 칸이 있는 집계표에서 숫자가 어느 열인지
+ * 정하려면 위치가 필요하다(lib/sim45d/qtyTable.ts).
+ */
+export async function pdfCells(project: string, item: string, pages: number[]) {
+  const doc = await openPdf(project, item);
+  try {
+    const out: { page: number; width: number; cells: [number, number, number, string][] }[] = [];
+    for (const n of pages) {
+      if (n < 1 || n > doc.numPages) continue;
+      const page = await doc.getPage(n);
+      const tc = await page.getTextContent();
+      const r1 = (v: number) => Math.round(v * 10) / 10;
+      const cells = (tc.items as { str: string; transform: number[]; width: number }[])
+        .filter(it => it.str.trim())
+        .map(it => [r1(it.transform[4]), r1(it.transform[5]), r1(it.width), it.str] as [number, number, number, string]);
+      out.push({ page: n, width: r1(page.view[2] - page.view[0]), cells });
+    }
+    return { totalPages: doc.numPages, pages: out };
+  } finally {
+    await doc.destroy();
+  }
+}
+
 /** PDF 책갈피(목차)와 쪽 번호 — 도면 묶음은 권·분야·도면 이름이 책갈피로 들어 있는 경우가 많다. */
 export async function pdfOutline(project: string, item: string) {
   const doc = await openPdf(project, item);

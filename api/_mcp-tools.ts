@@ -32,6 +32,8 @@ export interface McpCtx {
     fileBytes: (project: string, item: string) => Promise<Uint8Array>;
     pdfText: (project: string, item: string, opts: { pages?: string; search?: RegExp; maxPages: number; maxChars: number }) =>
       Promise<{ totalPages: number; pages: { page: number; text: string }[]; truncated: boolean; nextPage: number | null; noText: number }>;
+    /** 쪽마다 글 조각과 위치 [x, y, 너비, 글] — 표 읽기. */
+    pdfCells: (project: string, item: string, pages: number[]) => Promise<{ totalPages: number; pages: { page: number; width: number; cells: [number, number, number, string][] }[] }>;
     pdfOutline: (project: string, item: string) => Promise<{ totalPages: number; outline: { title: string; page: number | null; depth: number }[] }>;
     pdfImages: (project: string, item: string, opts: { pages: number[]; region?: [number, number, number, number]; width: number; maxBytes: number }) =>
       Promise<{ totalPages: number; images: { page: number; png: Uint8Array; width: number; height: number; text: string }[]; skipped: number[] }>;
@@ -259,11 +261,18 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
       pages: z.string().optional().describe('쪽 범위, 예 "1-20, 45"'),
       search: z.string().optional().describe('이 글이 든 쪽만(정규식)'),
       max_pages: z.number().int().min(1).max(40).optional().describe('기본 15'),
+      layout: z.enum(['text', 'cells']).optional().describe('cells = 글 조각과 위치 [x, y, 너비, 글](표의 빈 칸 때문에 숫자가 어느 열인지 볼 때, pages 필수·최대 8쪽)'),
     },
   }, async a => {
     const row = await target(a.target);
     const f = fileOf(row, a.slot, a.file);
     if (!/\.pdf$/i.test(f.name)) throw new Error(`PDF 만 읽습니다(${f.name}). 내역서는 read_boq.`);
+    if (a.layout === 'cells') {
+      const pages = parsePages(a.pages ?? '').slice(0, 8);
+      if (!pages.length) throw new Error('layout=cells 는 pages(예 "19-22")가 필요합니다.');
+      const r = await ctx.acc.pdfCells(f.accProjectId, f.accItemId, pages);
+      return { setupId: row.id, out: { file: f.name, ...r }, summary: `${f.name} ${r.pages.length}쪽(위치)` };
+    }
     const r = await ctx.acc.pdfText(f.accProjectId, f.accItemId, { pages: a.pages, search: toRegex(a.search), maxPages: a.max_pages ?? 15, maxChars: 90_000 });
     const note = r.noText && r.noText >= Math.max(1, r.pages.length) * 0.5
       ? `읽은 쪽 중 ${r.noText}쪽은 글이 없습니다(선으로 그린 도면·스캔) — view_drawing(slot=${a.slot}) 으로 그림을 보세요.` : undefined;

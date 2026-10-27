@@ -9,7 +9,7 @@
 // =====================================================================
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
-import { accFileBytes, modelObjects, pdfImages, pdfOutline, pdfText } from '../_mcp-acc.js';
+import { accFileBytes, modelObjects, pdfCells, pdfImages, pdfOutline, pdfText } from '../_mcp-acc.js';
 import { mcpStore } from '../_mcp-store.js';
 import { mcpSecret, verifyMcpToken } from '../_mcp-token.js';
 import { MCP_INSTRUCTIONS, registerMcpPrompts, registerMcpTools } from '../_mcp-tools.js';
@@ -42,7 +42,7 @@ async function handle(req: Request): Promise<Response> {
   const server = new McpServer({ name: 'mir-4d5d', title: 'MIR 공정·공사비(4D/5D)', version: '0.1.0' }, { instructions: MCP_INSTRUCTIONS });
   registerMcpTools(server, {
     projectId: claims.p, userId: claims.u, role, store,
-    acc: { fileBytes: accFileBytes, pdfText, pdfOutline, pdfImages, modelObjects },
+    acc: { fileBytes: accFileBytes, pdfText, pdfCells, pdfOutline, pdfImages, modelObjects },
     sheetRows,
   });
   registerMcpPrompts(server);
