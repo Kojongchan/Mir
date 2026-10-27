@@ -217,7 +217,7 @@ export interface SplitLine extends BoqItem {
   targetAmount: number;
   basis: string;
   groups: Group[];
-  alloc: { code: string; qty: number; amount: number }[];
+  alloc: { code: string; qty: number; amount: number; group: Group }[];
   status: 'allocated' | 'not-target' | 'no-activity' | 'unmatched';
 }
 
@@ -252,7 +252,7 @@ export function splitQuantities(data: QtySplitData, target: string, acts: SplitA
     const parts = partsOf(l.cols, l.path ?? []);
     const sheetSum = parts.reduce((s, [, v]) => s + v, 0);
     const scale = sheetSum > 0 ? l.qty / sheetSum : 0; // 집계표 소수 → 내역 반올림 수량
-    const alloc = new Map<string, number>();
+    const alloc = new Map<string, { code: string; group: Group; qty: number }>();
     const groups = new Set<Group>();
     const basis: string[] = [];
     let targetQty = 0, missing = 0;
@@ -268,12 +268,15 @@ export function splitQuantities(data: QtySplitData, target: string, acts: SplitA
       const t = targetsOf(g, l.path ?? [], `${l.name} ${l.spec}`, acts, site);
       const w = t.reduce((s, x) => s + x.w, 0);
       if (!w) { missing += q; continue; }
-      for (const x of t) alloc.set(x.code, (alloc.get(x.code) ?? 0) + q * x.w / w);
+      for (const x of t) {
+        const k = `${x.code}|${g}`, cur = alloc.get(k);
+        if (cur) cur.qty += q * x.w / w; else alloc.set(k, { code: x.code, group: g, qty: q * x.w / w });
+      }
     }
     const targetAmount = targetQty * unitPrice;
     totals.target += targetAmount;
     totals.noActivity += missing * unitPrice;
-    const list = [...alloc].map(([code, qty]) => ({ code, qty, amount: qty * unitPrice }));
+    const list = [...alloc.values()].map(a => ({ ...a, amount: a.qty * unitPrice }));
     for (const a of list) { byCode.set(a.code, (byCode.get(a.code) ?? 0) + a.amount); totals.allocated += a.amount; }
     const status = targetQty <= 0 ? 'not-target' : list.length ? 'allocated' : 'no-activity';
     const where = `${l.path?.slice(-1)[0] ?? ''} ${l.page ? `${l.page}쪽` : ''}`.trim();

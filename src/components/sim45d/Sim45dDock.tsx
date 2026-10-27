@@ -180,22 +180,21 @@ const QTY_COLUMNS: GridColumn<QtyRow>[] = [
   { key: 'item', label: '항목', width: 180, value: r => r.item },
   { key: 'unit', label: '단위', width: 52, value: r => r.unit },
   { key: 'model', label: '3D 수량', width: 100, kind: 'num', sum: true, value: r => r.modelQty },
-  { key: 'sheet', label: '산출서 수량', width: 100, kind: 'num', sum: true, value: r => r.sheetQty },
+  { key: 'sheet', label: '설계 수량', width: 100, kind: 'num', sum: true, value: r => r.sheetQty },
   { key: 'diff', label: '차이', width: 96, kind: 'num', value: r => (r.modelQty !== null && r.sheetQty !== null ? r.modelQty - r.sheetQty : null) },
   { key: 'ratio', label: '오차', width: 72, kind: 'pct', value: r => qtyVariance(r),
     render: r => { const v = qtyVariance(r); return v === null ? '' : <span className={Math.abs(v) > QTY_TOLERANCE ? 'sim-bad' : ''}>{(v * 100).toFixed(1)}%</span>; } },
-  { key: 'key', label: '연결 키', width: 140, value: r => r.key },
-  { key: 'objects', label: '객체', width: 60, kind: 'int', value: r => r.objects.length },
+  { key: 'note', label: '근거·주의', width: 280, value: r => r.note ?? '' },
 ];
 
 function QtyTab({ rows }: { rows: QtyRow[] }) {
   const over = rows.filter(r => { const v = qtyVariance(r); return v !== null && Math.abs(v) > QTY_TOLERANCE; }).length;
   return (
-    <TabFrame title="물량" note={`3D 수량을 기준으로 수량산출서와 대사합니다. 오차 ±${QTY_TOLERANCE * 100}% 초과 ${over}건은 오차 보고서 대상.`}
+    <TabFrame title="물량" note={`기존(수량분개한 이 대상의 설계 수량)과 BIM(연결된 객체의 체적·개수)을 부위별로 맞댑니다. 오차 ±${QTY_TOLERANCE * 100}% 초과 ${over}건은 오차 보고서 대상.`}
       actions={rows.length > 0 && <button type="button" className="btn btn--sm" onClick={() => void exportGridXlsx('물량_대사.xlsx', '물량 대사', QTY_COLUMNS, rows)}><UiIcon name="download" size={14} /> 엑셀</button>}>
       <DataGrid columns={QTY_COLUMNS} rows={rows} rowKey={r => `${r.key}|${r.item}`} groupBy={r => r.group.split(' ')[0]} frozen={2}
         empty={<EmptyState compact icon={<UiIcon name="ruler" size={28} />} title="수량 자료가 아직 없습니다"
-          desc="IFC 모델의 객체 수량(체적·면적·길이·개수)과 수량산출서를 연결 키(구조물·부위·STA)로 맞춰 차이와 오차율을 보여줍니다." />} />
+          desc="수량분개(9단계)를 저장하고 공정표를 열면, 작업에 연결된 모델 객체의 체적·개수와 설계 수량의 차이와 오차율을 보여줍니다." />} />
     </TabFrame>
   );
 }

@@ -19,7 +19,9 @@ import { LINK_PART_LABEL } from '../src/lib/sim45d/autolink.js';
 import { linkWithCodes } from '../src/lib/sim45d/codeMatch.js';
 import { actualsFromModel, applyActuals } from '../src/lib/sim45d/modelActuals.js';
 import { parseSheetPages } from '../src/lib/sim45d/qtyTable.js';
-import { buildSplitData, GROUP_LABEL, splitActivities, splitQuantities, type QtySplitData } from '../src/lib/sim45d/qtySplit.js';
+import { buildSplitData, GROUP_LABEL, splitActivities, splitQuantities, type QtySplitData, type SplitResult } from '../src/lib/sim45d/qtySplit.js';
+import { compareWithModel } from '../src/lib/sim45d/qtyCompare.js';
+import { QTY_TOLERANCE, qtyVariance } from '../src/lib/sim45d/types.js';
 import { wbsScope } from '../src/lib/sim45d/wbsScope.js';
 import { boqLines, boqSections, guessBoqSection } from '../src/lib/sim45d/boq.js';
 import { appendLog, codeMapOf, emptyPlan, SLOTS, STEPS, stepStatus, type LinkSet, type SetupData, type SlotKey } from '../src/lib/sim45d/setup.js';
@@ -345,6 +347,22 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
     };
   };
 
+  /** 기존(수량분개한 설계 수량) ↔ BIM(연결된 객체의 체적·개수). 모델을 못 읽으면 null. */
+  const modelCompare = async (row: SetupRow, r: SplitResult, s: P6Schedule) => {
+    try {
+      const objects = await allModelObjects(row);
+      if (!objects.length) return null;
+      const rows = compareWithModel(r, objects, (row.data.links ?? []).flatMap(l => l.links), new Set(s.activities.map(x => x.code)));
+      return rows.map(q => {
+        const v = qtyVariance(q);
+        return { group: q.group, item: q.item, unit: q.unit, design: q.sheetQty, model: q.modelQty, diffPct: v == null ? null : Math.round(v * 1000) / 10,
+          over: v != null && Math.abs(v) > QTY_TOLERANCE, note: q.note };
+      });
+    } catch {
+      return null;
+    }
+  };
+
   tool('quantity_split', {
     title: '수량분개 계산(5D) — 내역서 ↔ 개소별 집계표 → 이 대상 몫 → 작업별 공사비',
     description: '산출내역서 구간 항목마다 수량산출서 개소별 집계표의 같은 행(글 위치로 열을 정함)을 찾아, 이 대상(예 상선)의 몫(교각공(상선) 열 전부 + 함께 쓰는 열 × 몫)을 '
@@ -354,8 +372,10 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
   }, async a => {
     const row = await target(a.target);
     const { data, rows } = await splitData(row, { section: a.section, sheetPages: a.sheet_pages, file: a.file });
-    const { out } = splitSummary(row, data, await schedule(row));
-    return { setupId: row.id, out: { ...out, sheetRows: rows, saved: !!row.data.qtySplit, next: '열 몫 근거를 확인해 사용자에게 보여 준 뒤 save_quantity_split 로 저장(저장해야 4D/5D 공사비·S-curve 에 쓰임).' },
+    const s = await schedule(row);
+    const { out, result } = splitSummary(row, data, s);
+    return { setupId: row.id, out: { ...out, modelCompare: await modelCompare(row, result, s), sheetRows: rows, saved: !!row.data.qtySplit,
+      next: '열 몫 근거를 확인해 사용자에게 보여 준 뒤 save_quantity_split 로 저장(저장해야 4D/5D 공사비·S-curve 에 쓰임).' },
       summary: `${data.lines.filter(l => l.cols).length}/${data.lines.length} 맞춤` };
   });
 

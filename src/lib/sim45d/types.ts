@@ -49,6 +49,8 @@ export interface QtyRow {
   /** 수량산출서 수량. */
   sheetQty: number | null;
   objects: number[];
+  /** 대사 근거·주의(예 '체적 없는 객체 3/40'). */
+  note?: string;
 }
 
 /** 작업 ↔ 객체 연결과 그 근거. */

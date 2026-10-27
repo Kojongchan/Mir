@@ -167,14 +167,14 @@ test('auto link: superstructure by the span in the object label, split foundatio
 });
 
 test('model properties: an IFC model keeps its elements only (type nodes have no IfcClass); Revit models unchanged', () => {
-  const P = compile('api/aps-props.ts', { '@supabase/supabase-js': {} });
+  const P = compile('api/aps-props.ts', { '@supabase/supabase-js': {}, 'aws4fetch': { AwsClient: class {} } });
   const el = { id: 1, ifcClass: 'IfcBeam' }, typeNode = { id: 2, ifcClass: '' }, rvt = { id: 3, ifcClass: '' };
   assert.deepEqual(P.elementsOnly([el, typeNode]).map(o => o.id), [1]);
   assert.deepEqual(P.elementsOnly([rvt, typeNode]).map(o => o.id), [3, 2]);
 });
 
 test('model properties: Revit objects and IFC elements (Family:Type:Tag, no user properties) both summarize', () => {
-  const P = compile('api/aps-props.ts', { '@supabase/supabase-js': {} });
+  const P = compile('api/aps-props.ts', { '@supabase/supabase-js': {}, 'aws4fetch': { AwsClient: class {} } });
   const rvt = P.summarize({ objectid: 1, name: '기초_상선_P01,P03_P46 [123]', externalId: 'u1', properties: { 기타: { '유형 이름': 'P12', 'A1_객체명칭': '기초 P12', 'A3_WBS CODE (IPS)': 'X1', IfcGUID: 'g1' }, 치수: { 체적: '12.5 m^3' } } });
   assert.deepEqual([rvt.name, rvt.type, rvt.label, rvt.code, rvt.volume, rvt.ifcClass], ['기초_상선_P01,P03_P46', 'P12', '기초 P12', 'X1', 12.5, '']);
   const ifc = P.summarize({ objectid: 2, name: '교각_상선_P01,P03_P46:P12:1128979', externalId: 'g2', properties: {

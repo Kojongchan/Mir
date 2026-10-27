@@ -143,3 +143,44 @@ test('quantity split: different wording matched by unit, quantity and similar na
   assert.deepEqual(w.alloc.map(a => a.code), ['G01', 'G02']);
   assert.match(w.basis, /집계표 표기/);
 });
+
+test('existing vs BIM: structural concrete per part, WPC girders by length, piles by kind; missing volumes are reported, not guessed', () => {
+  const C = compile('src/lib/sim45d/qtyCompare.ts', { './qtySplit.js': Q });
+  const boq = [
+    { id: '2', name: '말뚝두부보강', spec: 'PHC말뚝,D600mm', unit: '본', qty: 32, amount: 3_200_000 },
+    { id: '3', name: '구체콘크리트타설', spec: '철근,fck=35MPa(표준시장)', unit: 'm3', qty: 1000, amount: 100_000_000 },
+    { id: '4', name: '구체콘크리트타설', spec: '철근,fck=35MPa(표준시장)', unit: 'm3', qty: 900, amount: 90_000_000 },
+    { id: '7', name: '버림콘크리트', spec: 'fck=18MPa', unit: 'm3', qty: 50, amount: 500_000 },
+    { id: '5', name: 'WPC 제작 및 가설', spec: 'L=40.0m', unit: '본', qty: 30, amount: 300_000_000 },
+  ];
+  const rows = [
+    { page: 5, path: ['2-1-1 토공및기초공'], name: '말뚝두부보강', spec: 'PHC말뚝,D600mm', unit: '본', cols: { '교각공(하선)': 20, '교각공(상선)': 12, 계: 32, 합계: 32 } },
+    { page: 7, path: ['2-1-3 교각공'], name: '구체콘크리트타설', spec: '철근,fck=35MPa(표준시장)', unit: 'm3', cols: { '교각공(하선)': 450, '교각공(상선)': 450, 계: 900, 합계: 900 } },
+    { page: 7, path: ['2-1-3 교각공'], name: '버림콘크리트', spec: 'fck=18MPa', unit: 'm3', cols: { '교각공(하선)': 25, '교각공(상선)': 25, 계: 50, 합계: 50 } },
+    { page: 9, path: ['2-1-4 상부공'], name: '구체콘크리트타설', spec: '철근,fck=35MPa(표준시장)', unit: 'm3', cols: { 공동구: 1000, 계: 1000, 합계: 1000 } },
+    { page: 9, path: ['2-1-4 상부공'], name: 'WPC 제작 및 가설', spec: 'L=40.0m', unit: '본', cols: { 상부공: 30, 합계: 30 } },
+  ];
+  const r = Q.splitQuantities(Q.buildSplitData('s', 'q', boq, rows), '시험교 상선', acts, site);
+  const objects = [
+    // 교각·코핑: 저장 연결(외부 ID) 2개 + 모델 코드(공정표에 있는 것) 1개
+    { id: 1, ext: 'e1', name: '교각', volume: 150 }, { id: 2, ext: 'e2', name: '코핑', volume: 120 }, { id: 3, ext: 'e3', name: '교각', code: 'P2C', volume: 175.5 },
+    { id: 4, ext: 'e4', name: '공동구', code: 'D01', volume: null },
+    ...Array.from({ length: 10 }, (_, i) => ({ id: 10 + i, ext: `g${i}`, name: 'WPC_40.0m_2.3m', ifcClass: 'IfcBeam', code: 'G01', volume: 30 })),
+    { id: 30, ext: 'x1', name: 'WPC 가로보', ifcClass: 'IfcBeam', code: 'G01', volume: 1 },
+    ...Array.from({ length: 12 }, (_, i) => ({ id: 40 + i, ext: `p${i}`, name: 'PHC 말뚝 D600', code: 'P1F', volume: 2 })),
+    { id: 60, ext: 'z', name: '교각', code: 'ZZZ', volume: 999 }, // 공정표에 없는 코드 — 안 셈
+  ];
+  const links = [{ ext: 'e1', ifcGuid: '', code: 'P1C' }, { ext: 'e2', ifcGuid: '', code: 'P1K' }];
+  const out = C.compareWithModel(r, objects, links, new Set(acts.map(a => a.code)));
+  const row = key => out.find(q => q.key === key);
+  // 교각 구조 콘크리트: 설계 450(버림 제외) ↔ 모델 150+120+175.5
+  assert.equal(row('concrete|pierBody').sheetQty, 450);
+  assert.equal(row('concrete|pierBody').modelQty, 445.5);
+  // 공동구: 객체는 있지만 체적이 없음 → 값 대신 이유
+  assert.equal(row('concrete|deck').modelQty, null);
+  assert.match(row('concrete|deck').note, /체적 없는 객체 1\/1/);
+  // WPC 40m: 설계 15(상부공 30 × 교각공 상선 비율 0.5 가정) ↔ 보 10(가로보 제외)
+  assert.deepEqual([row('wpc|40').sheetQty, row('wpc|40').modelQty], [15, 10]);
+  assert.deepEqual([row('pile|PHC 말뚝').sheetQty, row('pile|PHC 말뚝').modelQty], [12, 12]);
+  assert.equal(row('pile|강관 말뚝'), undefined);
+});

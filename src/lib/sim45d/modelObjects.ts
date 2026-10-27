@@ -7,6 +7,8 @@ export interface ModelObject {
   /** A5_계획/실시공정 시작·종료일(없으면 ''). */
   plannedStart?: string; plannedFinish?: string; actualStart?: string; actualFinish?: string;
   volume: number | null;
+  /** 체적의 출처: 모델 속성(체적) 또는 형상 계산(scripts/build-model-volumes.mjs). */
+  volumeFrom?: 'model' | 'geometry' | null;
 }
 
 /** ACC 변환본의 객체 속성(모델 파일은 받지 않음). 변환 중이면 5초 간격으로 기다린다. */

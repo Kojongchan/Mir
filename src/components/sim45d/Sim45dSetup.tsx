@@ -23,7 +23,8 @@ import { openClaude } from '../../lib/claudePopup';
 import { adoptedPlan, confirmedSource, NO_CONFIRMED, planXerBytes, planXerName } from '../../lib/sim45d/confirmed';
 import { buildXer, readSchedule, type P6Schedule } from '../../lib/p6/schedule';
 import { decodeXer, parseXer } from '../../lib/p6/xer';
-import { fetchModelObjects } from '../../lib/sim45d/modelObjects';
+import { fetchModelObjects, type ModelObject } from '../../lib/sim45d/modelObjects';
+import { compareWithModel } from '../../lib/sim45d/qtyCompare';
 import { actualsFromModel } from '../../lib/sim45d/modelActuals';
 import { wbsScope } from '../../lib/sim45d/wbsScope';
 import { splitActivities, splitQuantities } from '../../lib/sim45d/qtySplit';
@@ -179,7 +180,7 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
   };
 
   // 6단계 연결은 4D 색칠에 쓴다(3D 뷰어가 화면 모델 객체로 찾음).
-  const { setSavedLinks, setModelActuals, setSplit, schedule: openSchedule } = sim;
+  const { setSavedLinks, setModelActuals, setSplit, setQty, split, schedule: openSchedule } = sim;
   const allLinks = useMemo(() => (data.links ?? []).flatMap(l => l.links), [data.links]);
   useEffect(() => { setSavedLinks(allLinks); }, [allLinks, setSavedLinks]);
   // 저장된 수량분개 → 지금 연 공정표의 작업별 공사비·5D 내역(배분은 엔진이 다시 계산)
@@ -187,6 +188,11 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
   useEffect(() => {
     setSplit(qtySplit && openSchedule ? splitQuantities(qtySplit, name, splitActivities(openSchedule, wbsRoot), site) : null);
   }, [qtySplit, openSchedule, name, site, wbsRoot, setSplit]);
+  // 기존(수량분개한 설계 수량) ↔ BIM(연결 객체의 체적·개수) — 모델 객체는 공정표를 열 때 실적과 함께 읽은 것
+  const [modelObjects, setModelObjects] = useState<ModelObject[] | null>(null);
+  useEffect(() => {
+    setQty(split && modelObjects && openSchedule ? compareWithModel(split, modelObjects, allLinks, new Set(openSchedule.activities.map(a => a.code))) : []);
+  }, [split, modelObjects, openSchedule, allLinks, setQty]);
 
   /**
    * 모델의 현장 실적(A5 실시)을 연 공정표에 넣는다(3번 결정) — 모델 속성을 읽어(1~2초) 6단계 연결 → 모델 코드 → (개략 IPS 면) 규칙 연결로
@@ -197,6 +203,7 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
     if (!models.length) return;
     try {
       const objects = (await Promise.all(models.map(m => fetchModelObjects(m.urn!, () => {})))).flat();
+      setModelObjects(objects);
       const top = s.wbs.find(w => !w.parentId);
       const rule = confirmedSource(d)?.kind === 'draft' && top ? wbsScope(s).under(top.id) : undefined;
       const m = actualsFromModel(objects, new Set(s.activities.map(a => a.code)), { links: (d.links ?? []).flatMap(l => l.links), rule });

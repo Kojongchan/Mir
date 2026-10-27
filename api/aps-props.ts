@@ -13,6 +13,7 @@
 // Required env: APS_CLIENT_ID / APS_CLIENT_SECRET (+ Supabase 로그인 확인).
 // =====================================================================
 import { createClient } from '@supabase/supabase-js';
+import { AwsClient } from 'aws4fetch';
 
 export const config = { runtime: 'edge' };
 
@@ -63,7 +64,9 @@ export function summarize(o: { objectid: number; name?: string; externalId?: str
     // 공단 BIM 속성 A5(공정 날짜) — 모델 반영(7단계) 비교·개략 IPS 와 현장 일정 비교에 쓴다
     plannedStart: pick(flat, 'A5_계획공정시작일'), plannedFinish: pick(flat, 'A5_계획공정종료일'),
     actualStart: pick(flat, 'A5_실시공정시작일'), actualFinish: pick(flat, 'A5_실시공정종료일'),
-    volume: vol ? Number(vol[1].replace(/,/g, '')) : null,
+    volume: vol ? Number(vol[1].replace(/,/g, '')) as number | null : null,
+    /** 체적의 출처: 모델 속성(체적) 또는 형상 계산(build-model-volumes). */
+    volumeFrom: (vol ? 'model' : null) as 'model' | 'geometry' | null,
   };
 }
 
@@ -84,7 +87,28 @@ export async function readModelObjects(urn: string, token: string):
   if (pr.status === 202) return { pending: true };
   if (!pr.ok) return { error: `properties ${pr.status}`, status: 502 };
   const p = (await pr.json()) as { data?: { collection?: { objectid: number; name?: string; externalId?: string; properties?: Props }[] } };
-  return { view: view.name, objects: elementsOnly((p.data?.collection ?? []).map(summarize).filter((o): o is ModelObject => o !== null)) };
+  const objects = elementsOnly((p.data?.collection ?? []).map(summarize).filter((o): o is ModelObject => o !== null));
+  // 체적 속성이 없는 객체: 형상에서 계산한 체적(Actions model-volumes → R2)이 있으면 그것
+  const volumes = await readVolumes(urn).catch(() => null);
+  if (volumes) for (const o of objects) if (o.volume == null && o.ext && volumes[o.ext] != null) { o.volume = volumes[o.ext]; o.volumeFrom = 'geometry'; }
+  return { view: view.name, objects };
+}
+
+// scripts/cache-key.mjs·api/aps-convert.ts 와 같은 캐시 키: 전체 URN(버전 포함)의 SHA-256 앞 40자.
+async function cacheKey(urn: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(urn));
+  return Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('').slice(0, 40);
+}
+
+/** 형상에서 계산한 객체 체적(m³, 외부 ID → 값) — scripts/build-model-volumes.mjs 가 쓴 것. R2 설정이 없거나 아직 없으면 null. */
+export async function readVolumes(urn: string): Promise<Record<string, number> | null> {
+  const env = process.env;
+  if (!env.R2_ACCOUNT_ID || !env.R2_ACCESS_KEY_ID || !env.R2_SECRET_ACCESS_KEY || !env.R2_BUCKET) return null;
+  const r2 = new AwsClient({ accessKeyId: env.R2_ACCESS_KEY_ID, secretAccessKey: env.R2_SECRET_ACCESS_KEY, service: 's3', region: 'auto' });
+  const r = await r2.fetch(`https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${env.R2_BUCKET}/${await cacheKey(urn)}/volumes/current.json`);
+  if (!r.ok) return null;
+  const j = (await r.json()) as { volumes?: Record<string, number> };
+  return j.volumes ?? null;
 }
 
 /**
