@@ -18,6 +18,8 @@ import { compareOptions, concurrency, modelSpans, PART_NAME, partDays, startOrde
 import { LINK_PART_LABEL } from '../src/lib/sim45d/autolink.js';
 import { linkWithCodes } from '../src/lib/sim45d/codeMatch.js';
 import { actualsFromModel, applyActuals } from '../src/lib/sim45d/modelActuals.js';
+import { parseSheetPages } from '../src/lib/sim45d/qtyTable.js';
+import { buildSplitData, GROUP_LABEL, splitActivities, splitQuantities, type QtySplitData } from '../src/lib/sim45d/qtySplit.js';
 import { wbsScope } from '../src/lib/sim45d/wbsScope.js';
 import { boqLines, boqSections, guessBoqSection } from '../src/lib/sim45d/boq.js';
 import { appendLog, codeMapOf, emptyPlan, SLOTS, STEPS, stepStatus, type LinkSet, type SetupData, type SlotKey } from '../src/lib/sim45d/setup.js';
@@ -292,6 +294,90 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
     if (!section) return { setupId: row.id, out: { file: f.name, sections, note: '대상 이름이 든 구간을 찾지 못했습니다 — section 을 주세요.' } };
     const lines = boqLines(rows, section);
     return { setupId: row.id, out: { file: f.name, section, total: lines.length, lines: lines.slice(0, a.limit ?? 400), sections: a.section ? undefined : sections.map(s => `${s.title} (${s.lines})`) }, summary: `${section} ${lines.length}항목` };
+  });
+
+  /**
+   * 수량분개 원자료: 내역서 구간 항목 + 수량산출서 개소별 집계표(위치로 읽은 열 값)를 맞춘 것. 집계표 쪽은 주거나(sheet_pages) 앞 160쪽에서
+   * 제목('개 소 별 집 계 표')으로 찾는다(수량산출서 → 개소별 집계표 칸 순).
+   */
+  const splitData = async (row: SetupRow, opts: { section?: string; sheetPages?: string; file?: string }) => {
+    const bf = fileOf(row, 'boq');
+    const sheetRows = await ctx.sheetRows(await ctx.acc.fileBytes(bf.accProjectId, bf.accItemId));
+    const section = opts.section ?? row.data.qtySplit?.section ?? guessBoqSection(boqSections(sheetRows), row.name);
+    if (!section) throw new Error('내역서 구간을 정하지 못했습니다 — read_boq 로 구간 목록을 보고 section 을 주세요.');
+    const boq = boqLines(sheetRows, section);
+    const files = [...(row.data.files.qto ?? []), ...(row.data.files.qtoSummary ?? [])].filter(f => /\.pdf$/i.test(f.name) && (!opts.file || f.name.includes(opts.file)));
+    for (const f of files) {
+      let pages = opts.sheetPages ? parsePages(opts.sheetPages) : [];
+      if (!pages.length) {
+        const found = await ctx.acc.pdfText(f.accProjectId, f.accItemId, { pages: '1-160', search: /개\s*소\s*별\s*집\s*계\s*표/, maxPages: 40, maxChars: 600_000 });
+        pages = found.pages.map(p => p.page);
+      }
+      if (!pages.length) continue;
+      const cells: { page: number; cells: [number, number, number, string][] }[] = [];
+      for (let i = 0; i < pages.length; i += 8) cells.push(...(await ctx.acc.pdfCells(f.accProjectId, f.accItemId, pages.slice(i, i + 8))).pages);
+      const rows = parseSheetPages(cells);
+      if (!rows.length) continue;
+      const sheet = `${f.name} ${pages[0]}~${pages[pages.length - 1]}쪽`;
+      return { data: buildSplitData(section, sheet, boq, rows, row.data.qtySplit?.section === section ? row.data.qtySplit : null), rows: rows.length };
+    }
+    throw new Error('개소별 집계표 쪽을 찾지 못했습니다 — 수량산출서(또는 개소별·자재 집계표 칸)의 집계표 쪽을 sheet_pages 로 주세요(예 "19-34").');
+  };
+  const splitSummary = (row: SetupRow, data: QtySplitData, s: P6Schedule) => {
+    const r = splitQuantities(data, row.name, splitActivities(s, row.data.links?.[0]?.wbsRoot), row.data.site);
+    const won = (n: number) => Math.round(n);
+    const byGroup: Record<string, number> = {};
+    for (const l of r.lines) for (const g of l.groups) byGroup[GROUP_LABEL[g]] = won((byGroup[GROUP_LABEL[g]] ?? 0) + l.targetAmount / Math.max(1, l.groups.length));
+    const names = new Map(s.activities.map(x => [x.code, x.name]));
+    return {
+      result: r,
+      out: {
+        section: data.section, sheet: data.sheet, items: data.lines.length, matched: data.lines.filter(l => l.cols).length,
+        totals: { boqWon: won(r.totals.boq), targetWon: won(r.totals.target), allocatedWon: won(r.totals.allocated), unmatchedWon: won(r.totals.unmatched), noActivityWon: won(r.totals.noActivity) },
+        columns: Object.entries(r.shares).map(([column, v]) => ({ column, share: v.share, source: v.source, assumed: !!v.assumed })),
+        byGroup,
+        topActivities: [...r.byCode].sort((x, y) => y[1] - x[1]).slice(0, 15).map(([code, w]) => ({ code, name: names.get(code), won: won(w) })),
+        unmatched: r.lines.filter(l => l.status === 'unmatched').slice(0, 40).map(l => ({ id: l.id, name: l.name, spec: l.spec, unit: l.unit, qty: l.qty, won: won(l.amount) })),
+        noActivity: r.lines.filter(l => l.status === 'no-activity').slice(0, 20).map(l => ({ id: l.id, name: l.name, spec: l.spec, basis: l.basis })),
+        sample: r.lines.filter(l => l.status === 'allocated').slice(0, 12).map(l => ({ id: l.id, name: l.name, spec: l.spec, unit: l.unit, targetQty: Math.round(l.targetQty * 1000) / 1000, basis: l.basis, activities: l.alloc.length })),
+      },
+    };
+  };
+
+  tool('quantity_split', {
+    title: '수량분개 계산(5D) — 내역서 ↔ 개소별 집계표 → 이 대상 몫 → 작업별 공사비',
+    description: '산출내역서 구간 항목마다 수량산출서 개소별 집계표의 같은 행(글 위치로 열을 정함)을 찾아, 이 대상(예 상선)의 몫(교각공(상선) 열 전부 + 함께 쓰는 열 × 몫)을 '
+      + '구하고 작업(개소·부위)에 배분해 작업별 공사비를 낸다(금액 = 수량 × 내역 단가, 엔진 계산). 함께 쓰는 열(교대공·상부공·공동구 등)의 몫은 저장된 값, 없으면 교각공 비율로 가정 — '
+      + '근거(예: 집계표의 "토압분리형 접속부 상선 A1·하선 A1·A2" → 교대 상선 1/3)를 찾아 save_quantity_split(shares)로 정한다. 저장하지 않는다.',
+    input: { target: z.string(), section: z.string().optional().describe('내역서 구간(예 "2-1. 연제교")'), sheet_pages: z.string().optional().describe('집계표 쪽(예 "19-34") — 없으면 찾음'), file: z.string().optional() },
+  }, async a => {
+    const row = await target(a.target);
+    const { data, rows } = await splitData(row, { section: a.section, sheetPages: a.sheet_pages, file: a.file });
+    const { out } = splitSummary(row, data, await schedule(row));
+    return { setupId: row.id, out: { ...out, sheetRows: rows, saved: !!row.data.qtySplit, next: '열 몫 근거를 확인해 사용자에게 보여 준 뒤 save_quantity_split 로 저장(저장해야 4D/5D 공사비·S-curve 에 쓰임).' },
+      summary: `${data.lines.filter(l => l.cols).length}/${data.lines.length} 맞춤` };
+  });
+
+  tool('save_quantity_split', {
+    title: '수량분개 저장(5D)',
+    description: 'quantity_split 결과를 저장한다(내역 항목 ↔ 집계표 행 값 + 함께 쓰는 열의 이 대상 몫과 근거 + 항목별 고침). 저장하면 4D/5D 의 작업별 공사비·S-curve·5D 내역이 이것으로 계산된다. 저장 전 사용자 확인.',
+    input: {
+      target: z.string(), section: z.string().optional(), sheet_pages: z.string().optional(), file: z.string().optional(),
+      shares: z.array(z.object({ column: z.string(), share: z.number().min(0).max(1), source: z.string().min(2) })).max(20).optional(),
+      overrides: z.array(z.object({ line: z.string().describe('내역 항목 id'), share: z.number().min(0).max(1).optional(), group: z.enum(['abut', 'pierFoundation', 'pierBody', 'girder', 'deck', 'special']).optional(), source: z.string().min(2) })).max(400).optional(),
+    },
+    write: true,
+  }, async a => {
+    const row = await target(a.target);
+    const { data } = await splitData(row, { section: a.section, sheetPages: a.sheet_pages, file: a.file });
+    const shares = { ...data.shares };
+    for (const x of a.shares ?? []) shares[x.column.replace(/\s+/g, '')] = { share: x.share, source: x.source };
+    const overrides = { ...(data.overrides ?? {}) };
+    for (const x of a.overrides ?? []) overrides[x.line] = { ...(x.share != null ? { share: x.share } : {}), ...(x.group ? { group: x.group } : {}), source: x.source };
+    const next: QtySplitData = { ...data, shares, ...(Object.keys(overrides).length ? { overrides } : {}) };
+    const { out } = splitSummary(row, next, await schedule(row));
+    await save(row, { ...row.data, qtySplit: next }, `수량분개 ${out.matched}/${out.items}항목 · 대상 ${Math.round(out.totals.targetWon / 1e8)}억`);
+    return { setupId: row.id, out: { saved: true, ...out }, summary: `${out.matched}/${out.items}` };
   });
 
   tool('check_schedule', {

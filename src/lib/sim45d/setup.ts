@@ -2,6 +2,7 @@
 // 순서는 실제 업무 순서: 설계현황 → AI 개략 IPS → P6 보완 → 확정 IPS 로 BIM 속성 부여 → 4D/5D.
 // 자료는 자료관리(ACC) 파일을 가리킨다(파일 자체는 ACC 에, 여기에는 어느 파일인지만).
 import type { BridgeSite, CriticalPoint, Levers, RateKey, Support } from '../p6/bridgePlan';
+import type { QtySplitData } from './qtySplit';
 
 export type StepKey = 'target' | 'files' | 'design' | 'draft' | 'p6' | 'link' | 'export' | 'sim' | 'report';
 
@@ -168,6 +169,8 @@ export interface SetupData {
   links?: LinkSet[];
   /** 엔진 코드 → 모델의 실제 IPS 코드(6단계 연결과 함께 저장). */
   codeMaps?: CodeMapSet[];
+  /** 수량분개 원자료(내역 항목 ↔ 집계표 행 값, 함께 쓰는 열의 몫) — 배분·공사비는 lib/sim45d/qtySplit.ts 가 다시 계산. */
+  qtySplit?: QtySplitData;
   /** 저장 기록(AI 연결로 저장한 것 포함), 최근 50개. */
   log?: SetupLogEntry[];
   /** 사람이 건너뛴 단계(예: 이미 짠 공정표를 올려 3·4단계 생략). 끝낸 단계는 완료가 우선. */
@@ -255,6 +258,20 @@ export function normalizeSetup(raw: unknown): SetupData {
     const ok = (r.codeMaps as CodeMapSet[]).filter(c => c && typeof c.modelItemId === 'string' && c.map && typeof c.map === 'object')
       .map(c => ({ modelItemId: c.modelItemId, at: str(c.at), map: Object.fromEntries(Object.entries(c.map).filter(([k, v]) => typeof v === 'string' && k && v)) }));
     if (ok.length) out.codeMaps = ok;
+  }
+  const qs = r.qtySplit as QtySplitData | undefined;
+  if (qs && typeof qs.section === 'string' && Array.isArray(qs.lines)) {
+    const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+    out.qtySplit = {
+      section: qs.section, sheet: str(qs.sheet), at: str(qs.at),
+      lines: qs.lines.filter(l => l && typeof l.id === 'string' && typeof l.name === 'string').map(l => ({
+        id: l.id, name: l.name, spec: str(l.spec), unit: str(l.unit), qty: num(l.qty), amount: num(l.amount),
+        ...(l.cols && typeof l.cols === 'object' ? { cols: Object.fromEntries(Object.entries(l.cols).filter(([, v]) => typeof v === 'number' && Number.isFinite(v))) } : {}),
+        ...(typeof l.page === 'number' ? { page: l.page } : {}), ...(Array.isArray(l.path) ? { path: l.path.filter(p => typeof p === 'string') } : {}),
+      })),
+      shares: qs.shares && typeof qs.shares === 'object' ? Object.fromEntries(Object.entries(qs.shares).filter(([, v]) => v && Number.isFinite(v.share) && v.share >= 0 && v.share <= 1)) : {},
+      ...(qs.overrides && typeof qs.overrides === 'object' ? { overrides: qs.overrides } : {}),
+    };
   }
   const ms = r.modelSync as ModelSyncCheck | undefined;
   if (ms && typeof ms.at === 'string' && typeof ms.modelItemId === 'string' && [ms.rows, ms.same, ms.missing].every(Number.isFinite)) out.modelSync = ms;
