@@ -1,6 +1,6 @@
 // Per-object volumes of one converted model, from its SVF geometry (4D/5D 물량 대사 — 산출서 수량 ↔ BIM). The model's own
-// '체적' property is missing where it matters (연제교 RVT: 기초·교각·코핑 144 objects; the IFC export: every object), so the
-// volume comes from the triangles: the divergence theorem per fragment (|Σ a·(b×c)| / 6, fragments are closed solids),
+// '체적' property is missing where it matters (연제교 RVT: 기초·교각·코핑 144 objects) and is checked against this where it is
+// there. The volume comes from the triangles: the divergence theorem per closed fragment (|Σ a·(b×c)| / 6),
 // placed at the object's own origin for precision, summed up the object tree (an element's geometry may sit on child
 // nodes), scaled by the model's distance unit. Tested 10-23 on the 연제교 RVT: median 0.008 % from Revit's 체적, 92 %
 // within ±1 % (docs/IPS_4D5D.md section 9). Read-only on APS; writes <prefix>/volumes/current.json (prefix = cacheKey(URN),
@@ -71,10 +71,33 @@ const db = { ids: await read('PropertyIDs'), offs: await read('PropertyOffsets')
   attrs: await read('PropertyAttributes'), vals: await read('PropertyValues') };
 const { tree } = buildMetaIndex(db, { shardSize: 1 << 30 });
 
-// Own volume per dbId (model units³), each object's fragments placed at its first fragment's corner.
+// Own volume per dbId (model units³), each object's fragments placed at its first fragment's corner. Only closed
+// meshes have a volume (every edge shared by an even number of triangles, vertices welded by position): an open
+// surface's signed sum depends on where the origin is. An object with an open fragment gets no volume (null upstream).
 const own = new Float64Array(tree.n);
+const openObject = new Uint8Array(tree.n);
 const { byDb, boxes } = source.fragments;
-let fragments = 0, open = 0;
+let fragments = 0, open = 0, empty = 0;
+const isClosed = (pos, idx) => {
+  const key = new Map(), weld = new Uint32Array(pos.length / 3);
+  for (let i = 0; i < weld.length; i++) {
+    const k = `${Math.round(pos[i * 3] * 1e4)},${Math.round(pos[i * 3 + 1] * 1e4)},${Math.round(pos[i * 3 + 2] * 1e4)}`;
+    let w = key.get(k);
+    if (w === undefined) key.set(k, (w = key.size));
+    weld[i] = w;
+  }
+  const edges = new Map();
+  for (let i = 0; i < idx.length; i += 3) {
+    for (const [a, b] of [[idx[i], idx[i + 1]], [idx[i + 1], idx[i + 2]], [idx[i + 2], idx[i]]]) {
+      const x = weld[a], y = weld[b];
+      if (x === y) continue;
+      const e = x < y ? x * 4294967296 + y : y * 4294967296 + x;
+      edges.set(e, (edges.get(e) ?? 0) + 1);
+    }
+  }
+  for (const n of edges.values()) if (n % 2) return false;
+  return edges.size > 0;
+};
 const objects = [...byDb.keys()];
 await source.prefetch([...byDb.values()].flat(), 16);
 for (let k = 0; k < objects.length; k++) {
@@ -84,8 +107,9 @@ for (let k = 0; k < objects.length; k++) {
   const meshes = await source.pieces(list, origin);
   for (const f of list) {
     const m = meshes.get(f);
-    if (!m) continue;
+    if (!m || !m.idx.length) { empty++; continue; }
     const { pos, idx } = m;
+    if (!isClosed(pos, idx)) { open++; openObject[dbId] = 1; continue; }
     let v = 0;
     for (let i = 0; i < idx.length; i += 3) {
       const a = idx[i] * 3, b = idx[i + 1] * 3, c = idx[i + 2] * 3;
@@ -93,17 +117,18 @@ for (let k = 0; k < objects.length; k++) {
         - pos[a + 1] * (pos[b] * pos[c + 2] - pos[b + 2] * pos[c])
         + pos[a + 2] * (pos[b] * pos[c + 1] - pos[b + 1] * pos[c]);
     }
-    if (!idx.length) open++;
     own[dbId] += Math.abs(v) / 6;
     fragments++;
   }
   if (k % 500 === 0) console.log(`${k}/${objects.length} objects`);
 }
+console.log(`Fragments: ${fragments} closed, ${open} open (their objects get no volume), ${empty} without triangles`);
 // Up the tree: an element's volume includes its children's geometry.
 const total = Float64Array.from(own);
+const openBelow = Uint8Array.from(openObject);
 for (let id = 1; id < tree.n; id++) {
-  if (!own[id]) continue;
-  for (let p = tree.parent[id], guard = 0; p > 0 && guard < 64; p = tree.parent[p], guard++) total[p] += own[id];
+  if (!own[id] && !openObject[id]) continue;
+  for (let p = tree.parent[id], guard = 0; p > 0 && guard < 64; p = tree.parent[p], guard++) { total[p] += own[id]; if (openObject[id]) openBelow[p] = 1; }
 }
 // Keys: the external IDs api/aps-props.ts joins on — those of the Model Derivative properties of the first 3D view.
 // They are not always the property database's own: an IFC translation stores path IDs there ('0/0/0/3/7') while the
@@ -135,13 +160,13 @@ for (const o of collection) {
   if (id) how.ext++;
   else if ((id = byGuid.get(String(o.externalId)))) how.guid++;
   else { how.none++; continue; }
-  if (!total[id]) continue;
+  if (!total[id] || openBelow[id]) continue;
   volumes[String(o.externalId)] = Math.round(total[id] * scale ** 3 * 1e4) / 1e4;
   named++;
 }
 console.log(`Join: ${collection.length} property objects — by external ID ${how.ext}, by IfcGUID ${how.guid}, unmatched ${how.none}; ${named} with a volume`);
 const body = JSON.stringify({ v: 1, urn, unit, scale, builtAt: new Date().toISOString(), objects: named, fragments, volumes });
-console.log(`Volumes: ${named} objects, ${fragments} fragments (${open} without triangles), unit ${unit}, ${(body.length / 1024).toFixed(0)} KB, ${Math.round((Date.now() - t0) / 1000)} s`);
+console.log(`Volumes: ${named} objects, ${fragments} closed fragments, unit ${unit}, ${(body.length / 1024).toFixed(0)} KB, ${Math.round((Date.now() - t0) / 1000)} s`);
 const client = new S3Client({ region: 'auto', endpoint: `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
   credentials: { accessKeyId: env.R2_ACCESS_KEY_ID, secretAccessKey: env.R2_SECRET_ACCESS_KEY } });
 await client.send(new PutObjectCommand({ Bucket: env.R2_BUCKET, Key: `${prefix}/volumes/current.json`, Body: body, ContentType: 'application/json' }));
