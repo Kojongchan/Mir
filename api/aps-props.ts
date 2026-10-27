@@ -4,7 +4,7 @@
 //
 //   GET /api/aps-props?urn=<base64url 버전 URN>
 //   → { pending: true } (속성 준비 중, 잠시 뒤 다시) | { view, objects: [{ id, ext, name, label, type, comment, ifcGuid,
-//        ifcClass, code, level7, level8, plannedStart, plannedFinish, actualStart, actualFinish, volume }] }
+//        ifcClass, code, level7, level8, plannedStart, plannedFinish, actualStart, actualFinish, volume, volumeFrom, volumeGeometry }] }
 //        — 객체 = 속성이 있는 끝 객체(이름·유형 그룹 노드 제외)
 //
 // 속성 이름은 Revit 한국어판 기준(유형 이름·해설·체적)과 공단 BIM 속성(A1_객체명칭·A3_*). 영문판 이름도 함께 본다.
@@ -67,6 +67,8 @@ export function summarize(o: { objectid: number; name?: string; externalId?: str
     volume: vol ? Number(vol[1].replace(/,/g, '')) as number | null : null,
     /** 체적의 출처: 모델 속성(체적) 또는 형상 계산(build-model-volumes). */
     volumeFrom: (vol ? 'model' : null) as 'model' | 'geometry' | null,
+    /** 속성 체적이 있을 때 형상에서 계산한 체적(검증용 — 크게 다르면 대사에서 알림). */
+    volumeGeometry: undefined as number | undefined,
   };
 }
 
@@ -88,9 +90,15 @@ export async function readModelObjects(urn: string, token: string):
   if (!pr.ok) return { error: `properties ${pr.status}`, status: 502 };
   const p = (await pr.json()) as { data?: { collection?: { objectid: number; name?: string; externalId?: string; properties?: Props }[] } };
   const objects = elementsOnly((p.data?.collection ?? []).map(summarize).filter((o): o is ModelObject => o !== null));
-  // 체적 속성이 없는 객체: 형상에서 계산한 체적(Actions model-volumes → R2)이 있으면 그것
+  // 체적 속성이 없는 객체: 형상에서 계산한 체적(Actions model-volumes → R2)이 있으면 그것. 있으면 형상 값은 검증용으로 곁에.
   const volumes = await readVolumes(urn).catch(() => null);
-  if (volumes) for (const o of objects) if (o.volume == null && o.ext && volumes[o.ext] != null) { o.volume = volumes[o.ext]; o.volumeFrom = 'geometry'; }
+  if (volumes) {
+    for (const o of objects) {
+      const g = o.ext ? volumes[o.ext] : undefined;
+      if (g == null) continue;
+      if (o.volume == null) { o.volume = g; o.volumeFrom = 'geometry'; } else o.volumeGeometry = g;
+    }
+  }
   return { view: view.name, objects };
 }
 

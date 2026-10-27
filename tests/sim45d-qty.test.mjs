@@ -145,7 +145,7 @@ test('quantity split: different wording matched by unit, quantity and similar na
 });
 
 test('existing vs BIM: structural concrete per part, WPC girders by length, piles by kind; missing volumes are reported, not guessed', () => {
-  const C = compile('src/lib/sim45d/qtyCompare.ts', { './qtySplit.js': Q });
+  const C = compile('src/lib/sim45d/qtyCompare.ts', { './qtySplit.js': Q, './types.js': compile('src/lib/sim45d/types.ts') });
   const boq = [
     { id: '2', name: '말뚝두부보강', spec: 'PHC말뚝,D600mm', unit: '본', qty: 32, amount: 3_200_000 },
     { id: '3', name: '구체콘크리트타설', spec: '철근,fck=35MPa(표준시장)', unit: 'm3', qty: 1000, amount: 100_000_000 },
@@ -163,7 +163,8 @@ test('existing vs BIM: structural concrete per part, WPC girders by length, pile
   const r = Q.splitQuantities(Q.buildSplitData('s', 'q', boq, rows), '시험교 상선', acts, site);
   const objects = [
     // 교각·코핑: 저장 연결(외부 ID) 2개 + 모델 코드(공정표에 있는 것) 1개
-    { id: 1, ext: 'e1', name: '교각', volume: 150 }, { id: 2, ext: 'e2', name: '코핑', volume: 120 }, { id: 3, ext: 'e3', name: '교각', code: 'P2C', volume: 175.5 },
+    { id: 1, ext: 'e1', name: '교각', volume: 150, volumeGeometry: 150 }, { id: 2, ext: 'e2', name: '코핑', volume: 120, volumeGeometry: 120 },
+    { id: 3, ext: 'e3', name: '교각', code: 'P2C', volume: 175.5, volumeGeometry: 135 },
     { id: 4, ext: 'e4', name: '공동구', code: 'D01', volume: null },
     ...Array.from({ length: 10 }, (_, i) => ({ id: 10 + i, ext: `g${i}`, name: 'WPC_40.0m_2.3m', ifcClass: 'IfcBeam', code: 'G01', volume: 30 })),
     { id: 30, ext: 'x1', name: 'WPC 가로보', ifcClass: 'IfcBeam', code: 'G01', volume: 1 },
@@ -176,6 +177,7 @@ test('existing vs BIM: structural concrete per part, WPC girders by length, pile
   // 교각 구조 콘크리트: 설계 450(버림 제외) ↔ 모델 150+120+175.5
   assert.equal(row('concrete|pierBody').sheetQty, 450);
   assert.equal(row('concrete|pierBody').modelQty, 445.5);
+  assert.match(row('concrete|pierBody').note, /형상 체적 대비 \+10\.0%\(속성 확인\)/, '속성 체적이 형상과 다르면 알림');
   // 공동구: 객체는 있지만 체적이 없음 → 값 대신 이유
   assert.equal(row('concrete|deck').modelQty, null);
   assert.match(row('concrete|deck').note, /체적 없는 객체 1\/1/);

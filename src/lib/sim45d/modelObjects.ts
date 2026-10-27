@@ -9,6 +9,8 @@ export interface ModelObject {
   volume: number | null;
   /** 체적의 출처: 모델 속성(체적) 또는 형상 계산(scripts/build-model-volumes.mjs). */
   volumeFrom?: 'model' | 'geometry' | null;
+  /** 속성 체적이 있을 때 형상에서 계산한 체적(검증용). */
+  volumeGeometry?: number;
 }
 
 /** ACC 변환본의 객체 속성(모델 파일은 받지 않음). 변환 중이면 5초 간격으로 기다린다. */

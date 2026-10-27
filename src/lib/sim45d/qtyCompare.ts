@@ -5,7 +5,7 @@
 // 객체 → 작업: 6단계 저장 연결(외부 ID·IfcGUID) → 모델의 IPS 코드(A3)가 공정표에 있으면 그것. 차이 ±3% 초과는 오차 보고서 대상(types.QTY_TOLERANCE).
 import { GROUP_LABEL, type Group, type SplitLine, type SplitResult } from './qtySplit.js';
 import type { LinkSet } from './setup';
-import type { QtyRow } from './types';
+import { QTY_TOLERANCE, type QtyRow } from './types.js';
 
 export interface ModelQtyObject {
   id: string | number;
@@ -17,6 +17,8 @@ export interface ModelQtyObject {
   label?: string;
   ifcClass?: string;
   volume?: number | null;
+  /** 속성 체적이 있을 때 형상에서 계산한 체적(검증용). */
+  volumeGeometry?: number;
 }
 
 /** 대사 한 줄 + 양쪽 근거(차이를 설명할 때 본다 — 화면 표에는 note 만). */
@@ -84,9 +86,14 @@ export function compareWithModel(r: SplitResult, objects: ModelQtyObject[], link
   for (const [g, d] of designOf(l => l.unit.toLowerCase() === 'm3' && CONCRETE.test(l.name) && !NOT_STRUCTURE.test(`${l.name} ${l.spec}`))) {
     const objs = [...d.codes].flatMap(c => byCode.get(c) ?? []).filter(o => !(PILE.test(text(o)) && BOUGHT_PILE.test(text(o))) && !/버림/.test(text(o)));
     const vols = objs.map(o => o.volume).filter((v): v is number => v != null);
+    const total = vols.reduce((s, v) => s + v, 0);
+    // 속성 체적 검증: 형상 체적이 함께 있는 객체끼리 합을 비교(±3% 넘으면 알림)
+    const both = objs.filter(o => o.volume != null && o.volumeGeometry != null);
+    const prop = both.reduce((s, o) => s + o.volume!, 0), geom = both.reduce((s, o) => s + o.volumeGeometry!, 0);
+    const check = both.length && prop ? ` · 형상 체적 대비 ${pct((prop - geom) / geom)}${Math.abs(prop - geom) / geom > QTY_TOLERANCE ? '(속성 확인)' : ''}` : '';
     rows.push({ key: `concrete|${g}`, group: GROUP_LABEL[g], item: '구조 콘크리트', unit: 'm3', sheetQty: round(d.qty),
-      modelQty: objs.length && vols.length === objs.length ? round(vols.reduce((s, v) => s + v, 0)) : null, objects: [],
-      note: !objs.length ? '연결된 객체 없음' : vols.length < objs.length ? `체적 없는 객체 ${objs.length - vols.length}/${objs.length} — 형상 체적 계산(model-volumes) 필요` : `객체 ${objs.length}`,
+      modelQty: objs.length && vols.length === objs.length ? round(total) : null, objects: [],
+      note: !objs.length ? '연결된 객체 없음' : vols.length < objs.length ? `체적 없는 객체 ${objs.length - vols.length}/${objs.length} — 형상 체적 계산(model-volumes) 필요` : `객체 ${objs.length}${check}`,
       designLines: designLines(d.lines), modelTypes: modelTypes(objs, o => o.volume ?? 0) });
   }
 
@@ -115,3 +122,4 @@ export function compareWithModel(r: SplitResult, objects: ModelQtyObject[], link
 }
 
 const round = (v: number) => Math.round(v * 1000) / 1000;
+const pct = (v: number) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
