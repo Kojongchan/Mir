@@ -356,7 +356,7 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
       return rows.map(q => {
         const v = qtyVariance(q);
         return { group: q.group, item: q.item, unit: q.unit, design: q.sheetQty, model: q.modelQty, diffPct: v == null ? null : Math.round(v * 1000) / 10,
-          over: v != null && Math.abs(v) > QTY_TOLERANCE, note: q.note };
+          over: v != null && Math.abs(v) > QTY_TOLERANCE, note: q.note, designLines: q.designLines, modelTypes: q.modelTypes };
       });
     } catch {
       return null;

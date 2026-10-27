@@ -181,6 +181,11 @@ test('existing vs BIM: structural concrete per part, WPC girders by length, pile
   assert.match(row('concrete|deck').note, /체적 없는 객체 1\/1/);
   // WPC 40m: 설계 15(상부공 30 × 교각공 상선 비율 0.5 가정) ↔ 보 10(가로보 제외)
   assert.deepEqual([row('wpc|40').sheetQty, row('wpc|40').modelQty], [15, 10]);
-  assert.deepEqual([row('pile|PHC 말뚝').sheetQty, row('pile|PHC 말뚝').modelQty], [12, 12]);
-  assert.equal(row('pile|강관 말뚝'), undefined);
+  // 말뚝 본수는 부위별(종류는 근거에): PHC 12 ↔ P1F 에 걸린 말뚝 객체 12 — 말뚝 체적은 콘크리트에 안 셈
+  assert.deepEqual([row('pile|pierFoundation').sheetQty, row('pile|pierFoundation').modelQty], [12, 12]);
+  assert.match(row('pile|pierFoundation').note, /설계 PHC \/ 모델 PHC$/);
+  assert.equal(row('concrete|pierFoundation'), undefined);
+  // 근거: 설계 항목·모델 객체 유형
+  assert.deepEqual(row('concrete|pierBody').designLines.map(l => [l.id, l.qty]), [['4', 450]]);
+  assert.deepEqual(row('concrete|pierBody').modelTypes.map(t => [t.name, t.count]), [['교각', 2], ['코핑', 1]]);
 });
