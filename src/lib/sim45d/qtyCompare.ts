@@ -81,9 +81,9 @@ export function compareWithModel(r: SplitResult, objects: ModelQtyObject[], link
     return [...m.values()].sort((x, y) => y.qty - x.qty).slice(0, 8).map(t => ({ ...t, qty: round(t.qty) }));
   };
 
-  // 콘크리트: 부위별 설계(배분된 구조 콘크리트) ↔ 같은 작업들에 걸린 객체 체적(강관·PHC 말뚝과 버림은 뺌 — 설계 쪽도 안 셈)
+  // 콘크리트: 부위별 설계(배분된 구조 콘크리트) ↔ 같은 작업들에 걸린 객체 체적(강관·PHC 말뚝·버림·궤도 도상은 뺌 — 교량 산출서에 없음)
   for (const [g, d] of designOf(l => l.unit.toLowerCase() === 'm3' && CONCRETE.test(l.name) && !NOT_STRUCTURE.test(`${l.name} ${l.spec}`))) {
-    const objs = [...d.codes].flatMap(c => byCode.get(c) ?? []).filter(o => !(PILE.test(text(o)) && BOUGHT_PILE.test(text(o))) && !/버림/.test(text(o)));
+    const objs = [...d.codes].flatMap(c => byCode.get(c) ?? []).filter(o => !(PILE.test(text(o)) && BOUGHT_PILE.test(text(o))) && !/버림|도상/.test(text(o)));
     const vols = objs.map(o => o.volume).filter((v): v is number => v != null);
     const total = vols.reduce((s, v) => s + v, 0);
     // 속성 체적 검증: 형상 체적이 함께 있는 객체끼리 합을 비교(±3% 넘으면 알림)
