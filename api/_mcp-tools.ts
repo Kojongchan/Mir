@@ -368,13 +368,18 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
     description: '산출내역서 구간 항목마다 수량산출서 개소별 집계표의 같은 행(글 위치로 열을 정함)을 찾아, 이 대상(예 상선)의 몫(교각공(상선) 열 전부 + 함께 쓰는 열 × 몫)을 '
       + '구하고 작업(개소·부위)에 배분해 작업별 공사비를 낸다(금액 = 수량 × 내역 단가, 엔진 계산). 함께 쓰는 열(교대공·상부공·공동구 등)의 몫은 저장된 값, 없으면 교각공 비율로 가정 — '
       + '근거(예: 집계표의 "토압분리형 접속부 상선 A1·하선 A1·A2" → 교대 상선 1/3)를 찾아 save_quantity_split(shares)로 정한다. 저장하지 않는다.',
-    input: { target: z.string(), section: z.string().optional().describe('내역서 구간(예 "2-1. 연제교")'), sheet_pages: z.string().optional().describe('집계표 쪽(예 "19-34") — 없으면 찾음'), file: z.string().optional() },
+    input: { target: z.string(), section: z.string().optional().describe('내역서 구간(예 "2-1. 연제교")'), sheet_pages: z.string().optional().describe('집계표 쪽(예 "19-34") — 없으면 찾음'), file: z.string().optional(),
+      lines: z.boolean().optional().describe('true 면 함께 쓰는 열이 있는 항목마다 열 값·이 대상 수량·고침을 함께(세부 산출서로 항목별 몫을 정할 때)') },
   }, async a => {
     const row = await target(a.target);
     const { data, rows } = await splitData(row, { section: a.section, sheetPages: a.sheet_pages, file: a.file });
     const s = await schedule(row);
     const { out, result } = splitSummary(row, data, s);
-    return { setupId: row.id, out: { ...out, modelCompare: await modelCompare(row, result, s), sheetRows: rows, saved: !!row.data.qtySplit,
+    const shared = (cols: Record<string, number>) => Object.keys(cols).some(k => !/\((상선|하선)\)|^(계|합계|소계)$/.test(k));
+    const lines = a.lines ? result.lines.filter(l => l.row?.cols && shared(l.row.cols)).map(l => ({ id: l.id, name: l.name, spec: l.spec, unit: l.unit, qty: l.qty,
+      won: Math.round(l.amount), page: l.row?.page, path: l.row?.path?.slice(-1)[0], cols: l.row?.cols, targetQty: Math.round(l.targetQty * 1000) / 1000, status: l.status,
+      override: data.overrides?.[l.id] })) : undefined;
+    return { setupId: row.id, out: { ...out, ...(lines ? { lines } : {}), modelCompare: await modelCompare(row, result, s), sheetRows: rows, saved: !!row.data.qtySplit,
       next: '열 몫 근거를 확인해 사용자에게 보여 준 뒤 save_quantity_split 로 저장(저장해야 4D/5D 공사비·S-curve 에 쓰임).' },
       summary: `${data.lines.filter(l => l.cols).length}/${data.lines.length} 맞춤` };
   });
@@ -385,7 +390,9 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
     input: {
       target: z.string(), section: z.string().optional(), sheet_pages: z.string().optional(), file: z.string().optional(),
       shares: z.array(z.object({ column: z.string(), share: z.number().min(0).max(1), source: z.string().min(2) })).max(20).optional(),
-      overrides: z.array(z.object({ line: z.string().describe('내역 항목 id'), share: z.number().min(0).max(1).optional(), group: z.enum(['abut', 'pierFoundation', 'pierBody', 'girder', 'deck', 'special']).optional(), source: z.string().min(2) })).max(400).optional(),
+      overrides: z.array(z.object({ line: z.string().describe('내역 항목 id'), share: z.number().min(0).max(1).optional().describe('모든 열에 같은 몫'),
+        columns: z.array(z.object({ column: z.string(), share: z.number().min(0).max(1) })).max(10).optional().describe('열별 몫(예 교대공 0.315) — (상선)·(하선) 열이 섞인 항목은 이것으로'),
+        group: z.enum(['abut', 'pierFoundation', 'pierBody', 'girder', 'deck', 'special']).optional(), source: z.string().min(2) })).max(400).optional(),
     },
     write: true,
   }, async a => {
@@ -394,7 +401,10 @@ export function registerMcpTools(server: McpServer, ctx: McpCtx) {
     const shares = { ...data.shares };
     for (const x of a.shares ?? []) shares[x.column.replace(/\s+/g, '')] = { share: x.share, source: x.source };
     const overrides = { ...(data.overrides ?? {}) };
-    for (const x of a.overrides ?? []) overrides[x.line] = { ...(x.share != null ? { share: x.share } : {}), ...(x.group ? { group: x.group } : {}), source: x.source };
+    for (const x of a.overrides ?? []) {
+      overrides[x.line] = { ...(x.share != null ? { share: x.share } : {}), ...(x.columns?.length ? { cols: Object.fromEntries(x.columns.map(c => [c.column.replace(/\s+/g, ''), c.share])) } : {}),
+        ...(x.group ? { group: x.group } : {}), source: x.source };
+    }
     const next: QtySplitData = { ...data, shares, ...(Object.keys(overrides).length ? { overrides } : {}) };
     const { out } = splitSummary(row, next, await schedule(row));
     await save(row, { ...row.data, qtySplit: next }, `수량분개 ${out.matched}/${out.items}항목 · 대상 ${Math.round(out.totals.targetWon / 1e8)}억`);

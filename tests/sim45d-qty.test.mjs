@@ -142,6 +142,12 @@ test('quantity split: different wording matched by unit, quantity and similar na
   assert.equal(w.targetQty, 6, '합계만 있는 WPC 행은 상부공 열 × 0.5');
   assert.deepEqual(w.alloc.map(a => a.code), ['G01', 'G02']);
   assert.match(w.basis, /집계표 표기/);
+  // 항목별·열별 고침: 세부 산출서의 몫(사토운반 교대 상선 A1 0.25)이 열 몫보다 우선, (상선) 열은 그대로
+  const fixed = Q.splitQuantities({ ...data, shares: { 교대공: { share: 1 / 3, source: '시험' } },
+    overrides: { s: { cols: { 교대공: 0.25 }, source: '교대 총괄 452쪽' } } }, '시험교 상선', acts, site);
+  const sl = fixed.lines.find(l => l.id === 's');
+  assert.ok(Math.abs(sl.targetQty - (20.5 * 0.25 + 40.5)) < 1e-9);
+  assert.match(sl.basis, /교대공 20\.5 × 0\.250\(고침\).*고침 근거: 교대 총괄 452쪽/);
 });
 
 test('existing vs BIM: structural concrete per part, WPC girders by length, piles by kind; missing volumes are reported, not guessed', () => {
@@ -168,7 +174,8 @@ test('existing vs BIM: structural concrete per part, WPC girders by length, pile
     { id: 1, ext: 'e1', name: '교각', volume: 150, volumeGeometry: 150 }, { id: 2, ext: 'e2', name: '코핑', volume: 120, volumeGeometry: 120 },
     { id: 3, ext: 'e3', name: '교각', code: 'P2C', volume: 175.5, volumeGeometry: 135 },
     { id: 4, ext: 'e4', name: '공동구', code: 'D01', volume: null },
-    ...Array.from({ length: 10 }, (_, i) => ({ id: 10 + i, ext: `g${i}`, name: 'WPC_40.0m_2.3m', ifcClass: 'IfcBeam', code: 'G01', volume: 30 })),
+    ...Array.from({ length: 9 }, (_, i) => ({ id: 10 + i, ext: `g${i}`, name: 'WPC_40.0m_2.3m', ifcClass: 'IfcBeam', code: 'G01', volume: 30 })),
+    { id: 19, ext: 'g9', name: 'WPC_B6.0L39.6_1', ifcClass: 'IfcBeam', code: 'G01', volume: 30 }, // 폭 6.0m 거더 — 'L' 길이, 가까운 내역 길이(40)로
     { id: 30, ext: 'x1', name: 'WPC 가로보', ifcClass: 'IfcBeam', code: 'G01', volume: 1 },
     ...Array.from({ length: 12 }, (_, i) => ({ id: 40 + i, ext: `p${i}`, name: 'PHC 말뚝 D600', code: 'P1F', volume: 2 })),
     { id: 60, ext: 'z', name: '교각', code: 'ZZZ', volume: 999 }, // 공정표에 없는 코드 — 안 셈

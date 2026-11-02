@@ -100,8 +100,16 @@ export function compareWithModel(r: SplitResult, objects: ModelQtyObject[], link
   const girders = [...linked.keys()].filter(o => /WPC/i.test(`${o.name} ${o.type}`) && !/가로보/.test(`${o.name} ${o.type}`) && (!o.ifcClass || /Beam/i.test(o.ifcClass)));
   const wpc = new Map<string, number>();
   for (const l of r.lines) if (/WPC/i.test(l.name) && l.unit === '본') { const len = lengthOf(l.spec); if (len) wpc.set(String(Number(len)), (wpc.get(String(Number(len))) ?? 0) + l.targetQty); }
+  // 객체 길이: 'WPC_40m_우_1' → 40, 'WPC_B6.0L27.7' → 27.7(폭 6.0m 거더) — 내역 길이 중 1m 안에서 가장 가까운 것으로(산출서도 L=27.7 을 27.5m 로 셈)
+  const lens = [...wpc.keys()].map(Number);
+  const bucket = (o: ModelQtyObject) => {
+    const t = `${o.name} ${o.type}`.replace(/_/g, ' ');
+    const v = Number(lengthOf(t) ?? /L(\d+(?:\.\d+)?)/.exec(t)?.[1] ?? NaN);
+    const near = lens.filter(x => Math.abs(x - v) <= 1).sort((x, y) => Math.abs(x - v) - Math.abs(y - v))[0];
+    return near == null ? null : String(near);
+  };
   for (const [len, qty] of wpc) {
-    const objs = girders.filter(o => { const m = lengthOf(`${o.type} ${o.name}`.replace(/_/g, ' ')); return m && String(Number(m)) === len; });
+    const objs = girders.filter(o => bucket(o) === len);
     rows.push({ key: `wpc|${len}`, group: GROUP_LABEL.girder, item: `WPC 거더 L=${len}m`, unit: '본', sheetQty: round(qty), modelQty: objs.length, objects: [],
       note: '모델: 보 객체(가로보 제외) 수', modelTypes: modelTypes(objs, () => 1) });
   }

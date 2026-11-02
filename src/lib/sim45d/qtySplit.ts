@@ -25,8 +25,11 @@ export interface QtySplitData {
   /** note: 집계표 표기가 내역서와 다를 때 그 표기(맞춤 근거 · 품명 오기 확인용). */
   lines: (BoqItem & { page?: number; path?: string[]; cols?: Record<string, number>; note?: string })[];
   shares: Record<string, ColumnShare>;
-  /** 항목별 고침(사람·AI): 이 대상 몫 비율 또는 부위. */
-  overrides?: Record<string, { share?: number; group?: Group; source: string }>;
+  /**
+   * 항목별 고침(사람·AI): 이 대상 몫 — 열별(cols, 예 { 교대공: 0.315 }) 또는 모든 열(share) — 또는 부위. 세부 산출서(교대 개소별·상하선별
+   * 총괄표)처럼 항목마다 몫이 다를 때 쓴다. 열별 값이 우선.
+   */
+  overrides?: Record<string, { share?: number; cols?: Record<string, number>; group?: Group; source: string }>;
 }
 
 export type Group = 'abut' | 'pierFoundation' | 'pierBody' | 'girder' | 'deck' | 'special';
@@ -257,11 +260,12 @@ export function splitQuantities(data: QtySplitData, target: string, acts: SplitA
     const basis: string[] = [];
     let targetQty = 0, missing = 0;
     for (const [col, v] of parts) {
-      const share = over?.share ?? shares[col]?.share ?? 0;
+      const fixed = over?.cols?.[col] ?? over?.share;
+      const share = fixed ?? shares[col]?.share ?? 0;
       const q = v * scale * share;
       if (q <= 0) continue;
       targetQty += q;
-      basis.push(`${col} ${v.toLocaleString('ko-KR')} × ${share === 1 ? '1' : share.toFixed(3)}${over?.share != null ? '(고침)' : shares[col]?.assumed ? '(가정)' : ''}`);
+      basis.push(`${col} ${v.toLocaleString('ko-KR')} × ${share === 1 ? '1' : share.toFixed(3)}${fixed != null ? '(고침)' : shares[col]?.assumed ? '(가정)' : ''}`);
       const g = over?.group ?? groupOf(col, l.path ?? [], l.name, l.spec);
       if (!g) { missing += q; continue; }
       groups.add(g);
@@ -280,7 +284,8 @@ export function splitQuantities(data: QtySplitData, target: string, acts: SplitA
     for (const a of list) { byCode.set(a.code, (byCode.get(a.code) ?? 0) + a.amount); totals.allocated += a.amount; }
     const status = targetQty <= 0 ? 'not-target' : list.length ? 'allocated' : 'no-activity';
     const where = `${l.path?.slice(-1)[0] ?? ''} ${l.page ? `${l.page}쪽` : ''}`.trim();
-    return { ...base, targetQty, targetAmount, basis: `${where}: ${basis.join(' + ') || '이 대상 열 없음'}${l.note ? ` · ${l.note}` : ''}`, groups: [...groups], alloc: list, status };
+    const why = over && (over.share != null || over.cols) ? ` · 고침 근거: ${over.source}` : '';
+    return { ...base, targetQty, targetAmount, basis: `${where}: ${basis.join(' + ') || '이 대상 열 없음'}${l.note ? ` · ${l.note}` : ''}${why}`, groups: [...groups], alloc: list, status };
   });
   return { lines, byCode, totals, shares };
 }
