@@ -611,8 +611,10 @@ export function ThreeDTest2({ variant, sim }: { variant?: 'svf'; sim?: boolean }
                 </>
               ) : (
                 <>
-                  <p><strong>{missing.file.name}</strong> 은(는) 아직 변환되지 않은 모델입니다.</p>
-                  <p className="threed-test__empty-sub">먼저 「3D뷰 (신규 테스트)」에서 이 모델을 열어 변환한 뒤, 여기서 2차 타일을 만들 수 있습니다.</p>
+                  <p><strong>{missing.file.name}</strong> 은(는) 아직 3D 화면용으로 준비되지 않은 모델입니다.</p>
+                  {sim
+                    ? <p className="threed-test__empty-sub">준비(변환 → 속성 색인 → 화면용 타일)는 프로젝트 관리자가 요청합니다. 그 전에는 2단계 「자료」의 BIM 모델 칸에 3D 화면이 준비된 모델(예: 현장 통합 모델)을 함께 고르면 여기서 그 모델로 볼 수 있습니다.</p>
+                    : <p className="threed-test__empty-sub">먼저 「3D뷰 (신규 테스트)」에서 이 모델을 열어 변환한 뒤, 여기서 2차 타일을 만들 수 있습니다.</p>}
                 </>
               )}
             </div>
