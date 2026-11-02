@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { P6Schedule } from '../../lib/p6/schedule';
 import { DAY, phaseAt, type TimedActivity } from '../../lib/sim45d/timeline';
 import { formatCell } from './DataGrid';
+import { won } from './ProgressChart';
 
 /**
  * 공정표 탭: 왼쪽 작업 표(WBS 묶음) + 오른쪽 간트. 한 스크롤 안에서 표는 왼쪽에 고정되고 간트만 가로로 움직여
@@ -121,7 +122,7 @@ export function ScheduleGantt({ schedule, acts, range, time, onTime, selected, o
                       <div className="sgantt__td tabular" style={{ width: COLS[3].width }}>{fmtDay(r.start)}</div>
                       <div className="sgantt__td tabular" style={{ width: COLS[4].width }}>{fmtDay(r.end)}</div>
                       <div className="sgantt__td" style={{ width: COLS[5].width }} />
-                      <div className="sgantt__td is-num tabular" style={{ width: COLS[6].width }}>{r.cost ? formatCell(r.cost, 'won') : ''}</div>
+                      <div className="sgantt__td is-num tabular" style={{ width: COLS[6].width }} title={r.cost ? formatCell(r.cost, 'won') : undefined}>{r.cost ? won(r.cost) : ''}</div>
                     </div>
                     {Number.isFinite(r.start) && <i className="sgantt__wbsbar" style={{ left: GRID_W + xOf(r.start), width: Math.max(2, xOf(r.end) - xOf(r.start)) }} />}
                   </div>
@@ -140,7 +141,7 @@ export function ScheduleGantt({ schedule, acts, range, time, onTime, selected, o
                     <div className="sgantt__td tabular" style={{ width: COLS[3].width }}>{r.start}</div>
                     <div className="sgantt__td tabular" style={{ width: COLS[4].width }}>{r.finish}</div>
                     <div className="sgantt__td is-num tabular" style={{ width: COLS[5].width }}>{linkCount?.get(r.code) ?? ''}</div>
-                    <div className="sgantt__td is-num tabular" style={{ width: COLS[6].width }}>{cost?.has(r.code) ? formatCell(cost.get(r.code)!, 'won') : ''}</div>
+                    <div className="sgantt__td is-num tabular" style={{ width: COLS[6].width }} title={cost?.has(r.code) ? formatCell(cost.get(r.code)!, 'won') : undefined}>{cost?.has(r.code) ? won(cost.get(r.code)!) : ''}</div>
                   </div>
                   {a && (a.milestone
                     ? <i className={`sgantt__ms is-${phase}`} style={{ left: GRID_W + xOf(a.start) - 6 }} title={`${r.name} ${r.start}`} />
