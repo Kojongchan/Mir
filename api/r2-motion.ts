@@ -61,7 +61,7 @@ export default async function handler(req: Request): Promise<Response> {
     if (!repoResponse.ok || (await repoResponse.json()).private !== false) {
       return reply({ error: '무료 실행 조건을 확인하지 못해 작업을 시작하지 않았습니다.' }, 409);
     }
-    let body: { urn?: string };
+    let body: { urn?: string; variant?: string };
     try { body = await req.json(); } catch { return reply({ error: '선택한 모델 정보가 필요합니다.' }, 400); }
     if (!body.urn || typeof body.urn !== 'string' || body.urn.length > 4096) return reply({ error: '모델을 먼저 열어 주세요.' }, 400);
     // Same key as api/aps-convert.ts cacheKey(); the job follows alias.json to a claimed legacy directory.
@@ -69,8 +69,11 @@ export default async function handler(req: Request): Promise<Response> {
     const prefix = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('').slice(0, 40);
     if (!prefix) return reply({ error: '모델 식별자를 확인하지 못했습니다.' }, 400);
     const requestedAt = new Date().toISOString();
+    // variant=svf: 3차 화면(4D/5D) 타일 — 같은 작업이 모델의 SVF 를 읽어 만든다(URN 필요).
+    if (body.variant !== undefined && !(jobName === 'tiles3d' && body.variant === 'svf')) return reply({ error: 'variant 오류' }, 400);
+    const svf = body.variant === 'svf';
     const dispatch = await fetch(`${base}/actions/workflows/convert-4d.yml/dispatches`, {
-      method: 'POST', headers, body: JSON.stringify({ ref, inputs: { diag_only: jobName, item: prefix } }),
+      method: 'POST', headers, body: JSON.stringify({ ref, inputs: { diag_only: jobName, item: prefix, ...(svf ? { urn: body.urn, diag_options: 'svf=1' } : {}) } }),
     });
     if (!dispatch.ok) return reply({ error: `${job.label} 시작 실패 (${dispatch.status}). 기존 파일은 변경하지 않았습니다.` }, 502);
     return reply({ state: 'pending', requestedAt }, 202);

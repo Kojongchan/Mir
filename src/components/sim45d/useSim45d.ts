@@ -4,7 +4,7 @@ import { readSchedule, type P6Schedule } from '../../lib/p6/schedule';
 import { DAY, scheduleRange, startOfDay, timedActivities, type TimedActivity } from '../../lib/sim45d/timeline';
 import type { BoqLine, QtyRow } from '../../lib/sim45d/types';
 import { applyActuals, type ModelActuals } from '../../lib/sim45d/modelActuals';
-import type { LinkSet } from '../../lib/sim45d/setup';
+import type { LinkSet, SetupFile } from '../../lib/sim45d/setup';
 import type { ResolvedLinks } from '../../lib/sim45d/viewerLinks';
 import type { SplitResult } from '../../lib/sim45d/qtySplit';
 
@@ -44,6 +44,12 @@ export interface Sim45d {
   /** 대상에 저장된 6단계 연결(단계 시트가 넣음). */
   savedLinks: LinkSet['links'];
   setSavedLinks: (links: LinkSet['links']) => void;
+  /** 대상의 BIM 모델(2단계 자료에서 고른 것) — 8단계 3D 는 이것을 연다(따로 고르지 않음). */
+  targetModels: SetupFile[];
+  setTargetModels: (files: SetupFile[]) => void;
+  /** 단계 시트가 닫혀 3D 를 보고 있는지(8단계 4D/5D). */
+  viewing: boolean;
+  setViewing: (on: boolean) => void;
   /** 모델의 현장 실적(A5)을 공정표에 넣었으면 그 요약. */
   actualsInfo: { filled: number; dated: number; linked: number } | null;
   setModelActuals: (m: ModelActuals | null) => void;
@@ -76,6 +82,11 @@ export function useSim45d(projectId: string, enabled: boolean): Sim45d {
   const [hideFuture, setHideFuture] = useState(true);
   const [resolved, setResolved] = useState<ResolvedLinks | null>(null);
   const [savedLinks, setSavedLinks] = useState<LinkSet['links']>([]);
+  const [targetModels, setTargetModelsRaw] = useState<SetupFile[]>([]);
+  // 같은 파일 목록이면 그대로(다시 그리기·다시 열기 없음)
+  const setTargetModels = useCallback((next: SetupFile[]) => setTargetModelsRaw(prev =>
+    prev.length === next.length && prev.every((f, i) => f.accItemId === next[i].accItemId && f.urn === next[i].urn) ? prev : next), []);
+  const [viewing, setViewing] = useState(false);
   const [modelActuals, setModelActuals] = useState<ModelActuals | null>(null);
   // 공사비·5D 내역은 수량분개(단계 시트가 계산해 넣음), 물량 대사는 모델 수량과 비교한 것.
   const [split, setSplit] = useState<SplitResult | null>(null);
@@ -191,7 +202,8 @@ export function useSim45d(projectId: string, enabled: boolean): Sim45d {
 
   return {
     schedule, fileName, sourceEncoding, error, acts, actsByCode, range, time, setTime, playing, setPlaying, speed, setSpeed,
-    selected, selectActivity, setSelected, links, setLinks, linkInfo, savedLinks, setSavedLinks, actualsInfo, setModelActuals,
+    selected, selectActivity, setSelected, links, setLinks, linkInfo, savedLinks, setSavedLinks, targetModels, setTargetModels, viewing, setViewing,
+    actualsInfo, setModelActuals,
     cost, boq, qty, split, setSplit, setQty, fourD, setFourD, hideFuture, setHideFuture, openXer, downloadXer, close,
   };
 }

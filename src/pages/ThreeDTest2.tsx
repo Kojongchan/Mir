@@ -73,6 +73,7 @@ export function ThreeDTest2({ variant, sim }: { variant?: 'svf'; sim?: boolean }
   const sim45 = useSim45d(projectId, !!sim);
   const xerInputRef = useRef<HTMLInputElement>(null);
   const [initError, setInitError] = useState('');
+  const [viewerReady, setViewerReady] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
@@ -126,7 +127,8 @@ export function ThreeDTest2({ variant, sim }: { variant?: 'svf'; sim?: boolean }
     viewer.onStats = next => setStats(prev => prev && JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
     viewer.onWalk = info => { setWalk(info.on ? info : null); if (info.on) setPlacing(false); };
     viewerRef.current = viewer;
-    return () => { viewer.dispose(); viewerRef.current = null; };
+    setViewerReady(true);
+    return () => { viewer.dispose(); viewerRef.current = null; setViewerReady(false); };
   }, []);
 
   // Narrow screens: the open panel is a bottom sheet; keep the model centred above it.
@@ -373,19 +375,32 @@ export function ThreeDTest2({ variant, sim }: { variant?: 'svf'; sim?: boolean }
     return () => clearInterval(timer);
   }, [tilesQuery]);
 
+  // 공정·공사비 8단계: 2단계 자료에서 고른 BIM 모델을 연다(여기서 다른 파일을 고르면 공정·연결과 어긋남 — 사용자 11-02).
+  // 여러 개면 첫 모델, 도구줄에서 그 대상의 모델 중에서만 바꾼다. 단계 시트가 닫혀 3D 를 볼 때 연다.
+  const { targetModels, viewing } = sim45;
+  const [simModelId, setSimModelId] = useState<string | null>(null);
+  const simModel = sim ? targetModels.find(m => m.accItemId === simModelId) ?? targetModels[0] ?? null : null;
+  const openedUrn = useRef<string | null>(null);
+  useEffect(() => {
+    if (!sim || !viewing || !viewerReady || !simModel?.urn || openedUrn.current === simModel.urn) return;
+    openedUrn.current = simModel.urn;
+    void openModel({ accProjectId: simModel.accProjectId, accItemId: simModel.accItemId, accUrn: simModel.urn, name: simModel.name,
+      size: simModel.size, folderId: null, folderIds: [], folderNames: simModel.folderNames });
+  }, [sim, viewing, viewerReady, simModel, openModel]);
+
   /** Project admins: build this model's tiles (Actions job, ≈10–20 min), then open it when the job succeeds. */
   const buildTiles = useCallback(async () => {
     if (!missing?.converted || job) return;
-    setJob({ since: new Date().toISOString(), note: '2차 화면 타일 생성 요청 중…' });
+    setJob({ since: new Date().toISOString(), note: `${tilesName} 생성 요청 중…` });
     try {
       const r = await fetch(`/api/r2-motion?job=tiles3d&projectId=${encodeURIComponent(projectId)}`, {
-        method: 'POST', headers: { 'content-type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ urn: missing.file.accUrn }),
+        method: 'POST', headers: { 'content-type': 'application/json', ...(await authHeaders()) }, body: JSON.stringify({ urn: missing.file.accUrn, ...(variant ? { variant } : {}) }),
       });
       const result = await readApiJson<{ requestedAt?: string; error?: string }>(r);
       if (!r.ok) throw new Error(result.error ?? '요청 실패');
-      setJob({ since: result.requestedAt ?? new Date().toISOString(), note: '2차 화면 타일 생성 중 · 보통 10~20분 걸리며, 끝나면 자동으로 엽니다.' });
+      setJob({ since: result.requestedAt ?? new Date().toISOString(), note: `${tilesName} 생성 중 · 모델 크기에 따라 수 분~수십 분 걸리며, 끝나면 자동으로 엽니다.` });
     } catch (e) { setJob(null); setStatus(`타일 생성 요청 실패: ${errMessage(e)}`); }
-  }, [job, missing, projectId]);
+  }, [job, missing, projectId, variant, tilesName]);
   useEffect(() => {
     if (!job || !missing) return;
     const timer = setInterval(async () => {
@@ -505,9 +520,18 @@ export function ThreeDTest2({ variant, sim }: { variant?: 'svf'; sim?: boolean }
               }} />
             </span>
           )}
-          <button className="btn btn--sm btn--primary" onClick={() => setPickerOpen(true)} disabled={busy || !!initError} aria-label="ACC에서 열기">
-            <UiIcon name="folder" size={14} /> <span className="threed-test__wide">ACC에서 </span>열기
-          </button>
+          {sim ? (targetModels.length > 1 && (
+            <label className="threed-test2__tier" title="2단계 자료에서 고른 BIM 모델 중에서 바꾸기">
+              모델
+              <select value={simModel?.accItemId ?? ''} disabled={busy || !!initError} onChange={e => setSimModelId(e.target.value)}>
+                {targetModels.map(m => <option key={m.accItemId} value={m.accItemId}>{m.name}</option>)}
+              </select>
+            </label>
+          )) : (
+            <button className="btn btn--sm btn--primary" onClick={() => setPickerOpen(true)} disabled={busy || !!initError} aria-label="ACC에서 열기">
+              <UiIcon name="folder" size={14} /> <span className="threed-test__wide">ACC에서 </span>열기
+            </button>
+          )}
           <button className="btn btn--sm" onClick={() => viewerRef.current?.frameAll()} disabled={!modelName}>전체 맞춤</button>
           <button className="btn btn--sm" onClick={() => selection.length && void zoomTo([...selection])} disabled={!selection.length}
             title="선택한 객체로 확대 (Ctrl+클릭으로 여러 개 선택 · 해제: 빈 곳 클릭 또는 Esc)">선택 확대</button>
@@ -573,7 +597,12 @@ export function ThreeDTest2({ variant, sim }: { variant?: 'svf'; sim?: boolean }
               {missing.converted ? (
                 <>
                   <p><strong>{missing.file.name}</strong> 은(는) {tilesName}이 아직 없습니다.</p>
-                  {variant ? <p className="threed-test__empty-sub">3차 화면은 시험판이라 시험 타일을 만든 모델만 열립니다(GitHub Actions에서 생성).</p> : <>
+                  {variant && sim ? <>
+                  <p className="threed-test__empty-sub">2단계에서 고른 모델로 화면용 타일을 한 번 만들면 이후에는 바로 열립니다(모델 크기에 따라 수 분~수십 분).</p>
+                  {job ? <p className="threed-test__empty-sub">{job.note}</p>
+                    : canManage ? <button className="btn btn--primary btn--sm" onClick={() => void buildTiles()}>3D 타일 만들기</button>
+                      : <p className="threed-test__empty-sub">프로젝트 관리자가 이 화면에서 만들 수 있습니다.</p>}
+                  </> : variant ? <p className="threed-test__empty-sub">3차 화면은 시험판이라 시험 타일을 만든 모델만 열립니다(GitHub Actions에서 생성).</p> : <>
                   <p className="threed-test__empty-sub">2차 화면은 시제품이라 타일을 만든 모델만 열립니다. 변환된 모델로부터 만들며 보통 10~20분 걸립니다.</p>
                   {job ? <p className="threed-test__empty-sub">{job.note}</p>
                     : canManage ? <button className="btn btn--primary btn--sm" onClick={() => void buildTiles()}>2차 타일 만들기</button>
@@ -597,8 +626,14 @@ export function ThreeDTest2({ variant, sim }: { variant?: 'svf'; sim?: boolean }
           {!modelName && !initError && (
             <div className="threed-test__empty">
               <UiIcon name="cube" size={40} />
-              <p>상단 <em>ACC에서 열기</em>로 모델을 여세요. ({variant ? '3차 화면 타일을 만든 모델만 열립니다' : '2차 엔진용 타일이 생성된 모델만 열립니다'})</p>
-              {sim && <p className="threed-test__empty-sub">4D 는 현장 통합 모델(예: 5공구_통합모델.nwd)을 열면 확정 공정표의 작업 상태로 칠해집니다 — 6단계 연결과 모델의 IPS 코드로 객체를 찾습니다.</p>}
+              {sim ? (
+                <>
+                  <p>{targetModels.length ? '대상 모델을 여는 중…' : '2단계 「자료」의 BIM 모델 칸에서 모델을 고르면 여기서 그 모델이 열립니다.'}</p>
+                  <p className="threed-test__empty-sub">4D 는 그 모델을 확정 공정표의 작업 상태로 칠합니다 — 6단계 연결과 모델의 IPS 코드로 객체를 찾습니다.</p>
+                </>
+              ) : (
+                <p>상단 <em>ACC에서 열기</em>로 모델을 여세요. ({variant ? '3차 화면 타일을 만든 모델만 열립니다' : '2차 엔진용 타일이 생성된 모델만 열립니다'})</p>
+              )}
             </div>
           )}
           {tree && treeOpen && (

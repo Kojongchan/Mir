@@ -180,9 +180,13 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
   };
 
   // 6단계 연결은 4D 색칠에 쓴다(3D 뷰어가 화면 모델 객체로 찾음).
-  const { setSavedLinks, setModelActuals, setSplit, setQty, split, schedule: openSchedule } = sim;
+  const { setSavedLinks, setModelActuals, setSplit, setQty, split, schedule: openSchedule, setTargetModels, setViewing } = sim;
   const allLinks = useMemo(() => (data.links ?? []).flatMap(l => l.links), [data.links]);
   useEffect(() => { setSavedLinks(allLinks); }, [allLinks, setSavedLinks]);
+  // 8단계 3D 는 2단계 자료에서 고른 BIM 모델을 연다(그 화면에서 다른 파일을 고르지 않음 — 사용자 11-02).
+  const modelFiles = data.files.model;
+  useEffect(() => { setTargetModels((modelFiles ?? []).filter(f => f.urn)); }, [modelFiles, setTargetModels]);
+  useEffect(() => { setViewing(!sheetOpen); }, [sheetOpen, setViewing]);
   // 저장된 수량분개 → 지금 연 공정표의 작업별 공사비·5D 내역(배분은 엔진이 다시 계산)
   const qtySplit = data.qtySplit, site = data.site, wbsRoot = data.links?.[0]?.wbsRoot;
   useEffect(() => {
