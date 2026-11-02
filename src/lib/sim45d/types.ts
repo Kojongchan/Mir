@@ -34,6 +34,8 @@ export interface BoqLine {
   /** 수량분개: 내역서 수량(구조물 묶음 전체)과 이 대상 몫의 근거. */
   boqQty?: number;
   basis?: string;
+  /** 검토 필요(집계표와 표기 다름 · 못 맞춤)와 그 내용. */
+  review?: string;
 }
 
 /** 수량 대사 한 줄: 객체 묶음(연결 키) × 항목. */

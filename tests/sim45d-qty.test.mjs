@@ -148,6 +148,10 @@ test('quantity split: different wording matched by unit, quantity and similar na
   const sl = fixed.lines.find(l => l.id === 's');
   assert.ok(Math.abs(sl.targetQty - (20.5 * 0.25 + 40.5)) < 1e-9);
   assert.match(sl.basis, /교대공 20\.5 × 0\.250\(고침\).*고침 근거: 교대 총괄 452쪽/);
+  // 검토 필요: 표기가 다른데 수량으로 맞춘 것(금액 큰 순) + 못 맞춘 것
+  const review = Q.reviewItems(data);
+  assert.deepEqual(review.map(r => [r.id, r.reason]), [['x', 'renamed'], ['w', 'renamed'], ['s', 'renamed'], ['n', 'unmatched']]);
+  assert.match(review[0].detail, /PHC 말뚝/);
 });
 
 test('existing vs BIM: structural concrete per part, WPC girders by length, piles by kind; missing volumes are reported, not guessed', () => {

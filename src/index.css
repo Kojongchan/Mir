@@ -8335,6 +8335,18 @@ textarea.input {
 .sim-dock__body > .empty-state { margin: auto; }
 .sim-error { color: var(--color-error); }
 .sim-bad { color: var(--color-error); font-weight: 700; }
+/* 수량분개 검토 필요(집계표와 표기 다름·못 맞춤) */
+.sim-review {
+  margin: 6px 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--color-warning-soft, #fff7ed);
+  color: var(--color-warning-strong, #9a3412);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.sim-review .sim-list { margin: 4px 0 0; }
+.sim-review-cell { color: var(--color-warning-strong, #9a3412); }
 
 .sim-seg { display: inline-flex; border: 1px solid var(--color-border-default); border-radius: var(--radius-sm); overflow: hidden; }
 .sim-seg button {

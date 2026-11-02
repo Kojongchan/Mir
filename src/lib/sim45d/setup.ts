@@ -22,7 +22,7 @@ export interface StepDef {
   skippable?: string;
 }
 
-export type SlotKey = 'overview' | 'plan' | 'bridgeDesign' | 'drawings' | 'qto' | 'qtoSummary' | 'boq' | 'model' | 'ipsStandard' | 'p6';
+export type SlotKey = 'overview' | 'plan' | 'bridgeDesign' | 'drawings' | 'qto' | 'qtoSummary' | 'boq' | 'model' | 'viewModel' | 'ipsStandard' | 'p6';
 export type SlotNeed = 'required' | 'recommended' | 'optional';
 
 export interface SlotDef {
@@ -51,7 +51,8 @@ export const SLOTS: SlotDef[] = [
   { key: 'qto', step: 'files', label: '수량산출서', hint: '해당 구조물 장(예: 2편 1장 연제교)', need: 'required', accept: [...DOCS, ...SHEETS], multiple: true },
   { key: 'qtoSummary', step: 'files', label: '개소별·자재 집계표', hint: '수량산출서 안에 있으면 생략', need: 'optional', accept: [...DOCS, ...SHEETS], multiple: true },
   { key: 'boq', step: 'files', label: '산출내역서', hint: '5D 공사비(엑셀)', need: 'recommended', accept: SHEETS, multiple: false },
-  { key: 'model', step: 'files', label: 'BIM 모델', hint: 'ACC 에 올린 모델(상선·하선처럼 여러 개 가능)', need: 'required', accept: MODELS, multiple: true },
+  { key: 'model', step: 'files', label: 'BIM 모델', hint: 'ACC 에 올린 모델(상선·하선처럼 여러 개 가능) — 6단계 연결·물량 대사', need: 'required', accept: MODELS, multiple: true },
+  { key: 'viewModel', step: 'files', label: '4D 화면 모델', hint: '3D 화면이 준비된 현장 통합 모델(예: 5공구_통합모델.nwd) — 8단계 4D 를 이 모델로 봄. 비우면 BIM 모델을 엶', need: 'optional', accept: MODELS, multiple: false },
   { key: 'ipsStandard', step: 'files', label: 'IPS 구성 표준·WBS 정의서', hint: '공단 표준(개략 IPS 의 틀)', need: 'recommended', accept: [...DOCS, ...SHEETS, 'pptx'], multiple: true },
   { key: 'p6', step: 'p6', label: 'P6 공정표 올리기', hint: '사람이 이미 짠 공정표가 있거나 P6 에서 고쳤을 때 — 올리면 이것이 확정 공정표, 안 올리면 4단계 채택안', need: 'optional', accept: ['xer', ...SHEETS], multiple: false },
 ];
@@ -59,7 +60,7 @@ export const SLOTS: SlotDef[] = [
 export const STEPS: StepDef[] = [
   { key: 'target', title: '대상 선택', short: '대상', desc: '공정·공사비를 만들 구조물을 고르고, 진행 방식을 정합니다.', built: true, needs: [],
     guide: '대상(예: 연제교 상선)을 고르거나 추가합니다. 공정표를 새로 만들지, 이미 짠 공정표를 올려 검토할지 고르면 필요 없는 단계는 건너뜁니다.' },
-  { key: 'files', title: '자료 준비', short: '자료', desc: '필요한 자료를 자료관리에서 고르거나 지금 올립니다.', built: true, needs: ['overview', 'plan', 'bridgeDesign', 'drawings', 'qto', 'qtoSummary', 'boq', 'model', 'ipsStandard'],
+  { key: 'files', title: '자료 준비', short: '자료', desc: '필요한 자료를 자료관리에서 고르거나 지금 올립니다.', built: true, needs: ['overview', 'plan', 'bridgeDesign', 'drawings', 'qto', 'qtoSummary', 'boq', 'model', 'viewModel', 'ipsStandard'],
     guide: '칸마다 자료관리(ACC) 파일을 고릅니다. 필수(시공계획·수량산출서·BIM 모델)를 고르면 완료 — 권장 자료(도면·내역서 등)는 AI 가 근거를 찾는 데 씁니다.' },
   { key: 'design', title: '설계현황', short: '설계현황', desc: '구조물·개소(A1, P1…, 경간)·말뚝·교각 높이를 표로 만들고 확인합니다(수량산출서·도면에서 AI 로 채우기).', built: true, needs: ['qto', 'qtoSummary', 'drawings', 'bridgeDesign', 'overview'],
     guide: '개소 표를 만들고(직접 또는 AI) 말뚝·기초·교각 기둥 높이를 근거와 함께 채운 뒤 저장하면 완료. 개략 IPS 의 수량이 됩니다.',

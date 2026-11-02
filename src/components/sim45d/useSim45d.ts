@@ -96,6 +96,7 @@ export function useSim45d(projectId: string, enabled: boolean): Sim45d {
     id: l.id, path: l.row?.path?.length ? l.row.path : ['(집계표에 없는 항목)'], name: l.name, spec: l.spec, unit: l.unit,
     qty: l.targetQty, unitPrice: l.unitPrice, amount: l.targetAmount, boqQty: l.qty, basis: l.basis,
     activity: l.alloc.length === 1 ? l.alloc[0].code : l.alloc.length ? `${l.alloc.length}개 작업` : l.status === 'unmatched' ? '못 맞춤' : '배분 안 됨',
+    review: l.status === 'unmatched' ? '못 맞춤 — 집계표에 없음(이 대상 몫 0)' : l.note ? `표기 다름 — ${l.note}` : undefined,
   })), [split]);
   const links = useMemo<ReadonlyMap<string, readonly number[]>>(() => resolved?.byCode ?? new Map(), [resolved]);
   const linkInfo = useMemo(() => (resolved ? { found: resolved.found, missing: resolved.missing, byModelCode: resolved.byModelCode } : null), [resolved]);

@@ -71,7 +71,6 @@ export function ThreeDTest2({ variant, sim }: { variant?: 'svf'; sim?: boolean }
   const tree = index.tree;
   // 공정·공사비(4D/5D) 메뉴: 같은 3차 뷰어 + 하단 도크(공정표·차트·5D 내역·물량·연결). docs/IPS_4D5D.md
   const sim45 = useSim45d(projectId, !!sim);
-  const xerInputRef = useRef<HTMLInputElement>(null);
   const [initError, setInitError] = useState('');
   const [viewerReady, setViewerReady] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -498,30 +497,18 @@ export function ThreeDTest2({ variant, sim }: { variant?: 'svf'; sim?: boolean }
         <div className="viewer-bar threed-test__bar">
           {/* The tools: in line on wide screens, one scrolling row on phones (status on its own line below). */}
           <div className="threed-test__tools">
-          {sim && (
+          {/* 공정표는 단계 시트가 확정 공정표를 자동으로 연다(다른 XER 열기·닫기 없음 — 사용자 11-02). */}
+          {sim && sim45.schedule && (
             <span className="sim-toolbar" role="group" aria-label="공정표">
-              <button className="btn btn--sm" onClick={() => xerInputRef.current?.click()} title="P6 에서 내보낸 공정표(XER) 열기">
-                <UiIcon name="file-text" size={14} /> 공정표 열기
+              <button className="btn btn--sm" onClick={() => sim45.downloadXer(sim45.sourceEncoding ?? 'cp949')}
+                title={`P6 에서 고칠 수 있게 XER 로 내려받기 (${sim45.sourceEncoding === 'utf-8' ? 'UTF-8' : 'CP949'} — 연 파일과 같은 인코딩)`}>
+                <UiIcon name="download" size={14} /> XER
               </button>
-              {sim45.schedule && (
-                <>
-                  <button className="btn btn--sm" onClick={() => sim45.downloadXer(sim45.sourceEncoding ?? 'cp949')}
-                    title={`P6 에서 고칠 수 있게 XER 로 내려받기 (${sim45.sourceEncoding === 'utf-8' ? 'UTF-8' : 'CP949'} — 연 파일과 같은 인코딩)`}>
-                    <UiIcon name="download" size={14} /> XER
-                  </button>
-                  <span className="sim-toolbar__name" title={sim45.fileName}>{sim45.schedule.projectName}</span>
-                  <button type="button" className="ic-only" onClick={sim45.close} aria-label="공정표 닫기" title="공정표 닫기">✕</button>
-                </>
-              )}
-              <input ref={xerInputRef} type="file" accept=".xer" hidden onChange={e => {
-                const f = e.target.files?.[0];
-                e.target.value = '';
-                if (f) void sim45.openXer(f);
-              }} />
+              <span className="sim-toolbar__name" title={sim45.fileName}>{sim45.schedule.projectName}</span>
             </span>
           )}
           {sim ? (targetModels.length > 1 && (
-            <label className="threed-test2__tier" title="2단계 자료에서 고른 BIM 모델 중에서 바꾸기">
+            <label className="threed-test2__tier" title="2단계 자료에서 고른 모델(4D 화면 모델·BIM 모델) 중에서 바꾸기">
               모델
               <select value={simModel?.accItemId ?? ''} disabled={busy || !!initError} onChange={e => setSimModelId(e.target.value)}>
                 {targetModels.map(m => <option key={m.accItemId} value={m.accItemId}>{m.name}</option>)}
@@ -761,7 +748,7 @@ export function ThreeDTest2({ variant, sim }: { variant?: 'svf'; sim?: boolean }
           )}
         </div>
         {/* 공정·공사비: 3D 아래 도크(3D 영역이 줄어듦 — 패널·성능 표시는 3D 영역 안에 남음). */}
-        {sim && <Sim45dDock sim={sim45} onOpenXer={() => xerInputRef.current?.click()} objectCount={selection.length} onSelectActivity={selectActivity} />}
+        {sim && <Sim45dDock sim={sim45} objectCount={selection.length} onSelectActivity={selectActivity} />}
       </div>
       {pickerOpen && (
         <AccFilePicker projectId={projectId} canEdit={canEdit} title="3D 모델 열기" actionLabel="열기" accept={isAccModel}

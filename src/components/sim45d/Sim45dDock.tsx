@@ -31,7 +31,8 @@ const remember = (key: string, v: string) => { try { localStorage.setItem(key, v
 
 export function Sim45dDock({ sim, onOpenXer, objectCount, onSelectActivity }: {
   sim: Sim45d;
-  onOpenXer: () => void;
+  /** 다른 XER 을 잠깐 여는 버튼(없으면 안 보임 — 공정·공사비 8단계는 확정 공정표만). */
+  onOpenXer?: () => void;
   /** 3D 에서 선택한 객체 수(연결 현황 안내용). */
   objectCount: number;
   /** 작업 선택(페이지가 3D 선택까지 맞춤). 없으면 도크 안에서만 선택. */
@@ -123,10 +124,10 @@ export function Sim45dDock({ sim, onOpenXer, objectCount, onSelectActivity }: {
         <div className="sim-dock__body" role="tabpanel">
           {!s || !range ? (
             <EmptyState icon={<UiIcon name="file-text" size={32} />} title="공정표가 없습니다"
-              desc={<>단계 시트(5·6단계)의 「확정 공정표 열기」로 4단계에서 채택한 개략 IPS(또는 올린 P6 공정표)를 열면 공정표·간트·S-curve 가 나타나고,
-                연결된 객체가 기준일에 맞춰 3D 에서 칠해집니다. 다른 XER 을 잠깐 볼 때는 아래 버튼으로 엽니다.
+              desc={<>이 단계에 들어오면 확정 공정표(4단계에서 채택한 개략 IPS, 또는 5단계에 올린 P6 공정표)를 자동으로 엽니다 — 공정표·간트·S-curve 가 나타나고
+                연결된 객체가 기준일에 맞춰 3D 에서 칠해집니다. 확정 공정표가 없으면 4단계에서 안을 채택하거나 5단계에 P6 를 올리세요.
                 {sim.error && <><br /><span className="sim-error">{sim.error}</span></>}</>}
-              cta={<button type="button" className="btn btn--sm" onClick={onOpenXer}>XER 파일 열기</button>} />
+              cta={onOpenXer && <button type="button" className="btn btn--sm" onClick={onOpenXer}>XER 파일 열기</button>} />
           ) : tab === 'schedule' ? (
             <ScheduleGantt schedule={s} acts={sim.actsByCode} range={range} time={sim.time} onTime={sim.setTime}
               selected={sim.selected} onSelect={onSelectActivity ?? sim.selectActivity} linkCount={linkCount} cost={sim.cost} />
@@ -158,15 +159,33 @@ const BOQ_COLUMNS: GridColumn<BoqLine>[] = [
   { key: 'unitPrice', label: '단가', width: 104, kind: 'won', value: r => r.unitPrice },
   { key: 'amount', label: '대상 금액', width: 128, kind: 'won', sum: true, value: r => r.amount },
   { key: 'activity', label: '배분 작업', width: 110, value: r => r.activity ?? '' },
+  { key: 'review', label: '검토', width: 240, value: r => r.review ?? '', render: r => (r.review ? <span className="sim-review-cell">{r.review}</span> : '') },
   { key: 'basis', label: '근거(집계표 열 × 몫)', width: 320, value: r => r.basis ?? '' },
   { key: 'class', label: '수량 분류', width: 84, value: r => (r.qtyClass ? QTY_CLASS_LABEL[r.qtyClass] : '') },
 ];
 
 function BoqTab({ rows, note }: { rows: BoqLine[]; note: string }) {
+  // 검토 필요(사용자 11-02): 집계표와 품명·규격이 다른데 수량으로 맞춘 것, 집계표에서 못 찾은 것
+  const [onlyReview, setOnlyReview] = useState(false);
+  const review = rows.filter(r => r.review);
+  const renamed = review.filter(r => r.review!.startsWith('표기')).length;
+  const missed = review.length - renamed;
+  const missedWon = review.filter(r => !r.review!.startsWith('표기')).reduce((s, r) => s + (r.boqQty ?? 0) * r.unitPrice, 0);
+  const shown = onlyReview ? review : rows;
   return (
     <TabFrame title="5D 내역" note={note}
-      actions={rows.length > 0 && <button type="button" className="btn btn--sm" onClick={() => void exportGridXlsx('5D_내역.xlsx', '5D 내역', BOQ_COLUMNS, rows)}><UiIcon name="download" size={14} /> 엑셀</button>}>
-      <DataGrid columns={BOQ_COLUMNS} rows={rows} rowKey={r => r.id} groupBy={r => r.path.join(' › ')} frozen={1}
+      actions={<>
+        {review.length > 0 && <button type="button" className={`btn btn--sm${onlyReview ? ' btn--primary' : ''}`} onClick={() => setOnlyReview(v => !v)}
+          title="집계표와 표기가 다르거나 못 맞춘 항목만 보기">검토 필요 {review.length}</button>}
+        {rows.length > 0 && <button type="button" className="btn btn--sm" onClick={() => void exportGridXlsx('5D_내역.xlsx', '5D 내역', BOQ_COLUMNS, shown)}><UiIcon name="download" size={14} /> 엑셀</button>}
+      </>}>
+      {review.length > 0 && (
+        <p className="sim-review">
+          검토 필요 {review.length}건 — 집계표와 품명·규격이 다른데 단위·수량으로 맞춘 항목 {renamed}건, 집계표에서 못 찾은 항목 {missed}건(내역 {won(missedWon)}).
+          「검토」 열의 집계표 표기를 설계사·내역 담당과 확인하세요(예: 강관↔PHC 말뚝 품명, 거푸집 종류, 콘크리트 강도).
+        </p>
+      )}
+      <DataGrid columns={BOQ_COLUMNS} rows={shown} rowKey={r => r.id} groupBy={r => r.path.join(' › ')} frozen={1}
         empty={<EmptyState compact icon={<UiIcon name="clipboard" size={28} />} title="수량분개가 아직 없습니다"
           desc="9단계 「수량분개(5D)」(또는 AI 도우미 → 수량분개)로 산출내역서 항목을 수량산출서 개소별 집계표와 맞춰 이 대상 몫을 작업별로 나누면, 항목·작업별 공사비가 여기와 S-curve 에 나옵니다." />} />
     </TabFrame>

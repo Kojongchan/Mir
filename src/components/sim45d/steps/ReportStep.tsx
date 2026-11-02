@@ -7,6 +7,7 @@ import { phaseAt, progressAt } from '../../../lib/sim45d/timeline';
 import { AiBox, AiStatus, fmtWon, useAi, type StepProps } from './common';
 import { confirmedSource } from '../../../lib/sim45d/confirmed';
 import { codeMapOf } from '../../../lib/sim45d/setup';
+import { reviewItems } from '../../../lib/sim45d/qtySplit';
 
 /**
  * 9단계 검증·질의: 공정표 검토·연결 결과 요약, 그리고 AI 활용 6·7·8 —
@@ -34,6 +35,8 @@ export function ReportStep({ projectId, canEdit, data, name, sim, openP6, openin
   const [classes, setClasses] = useState<Classified | null>(null);
   const [note, setNote] = useState('');
   const check = useMemo(() => (s ? checkSchedule(s) : null), [s]);
+  const qtySplit = data.qtySplit;
+  const review = useMemo(() => (qtySplit ? reviewItems(qtySplit) : []), [qtySplit]);
   const linkCount = (data.links ?? []).reduce((n, l) => n + l.links.length, 0);
   const aiConnect = useContext(AiConnectContext);
 
@@ -158,6 +161,18 @@ export function ReportStep({ projectId, canEdit, data, name, sim, openP6, openin
               {data.qtySplit.section} · {data.qtySplit.sheet} · 집계표와 맞춘 항목 {data.qtySplit.lines.filter(l => l.cols).length}/{data.qtySplit.lines.length}
               {data.qtySplit.lines.some(l => l.note) && ` (표기 다른 것 ${data.qtySplit.lines.filter(l => l.note).length})`}
             </p>
+            {review.length > 0 && (
+              <div className="sim-review">
+                <strong>검토 필요 {review.length}건</strong> — 집계표와 품명·규격이 다른데 단위·수량으로 맞춘 항목 {review.filter(r => r.reason === 'renamed').length}건,
+                집계표에서 못 찾은 항목 {review.filter(r => r.reason === 'unmatched').length}건. 설계사·내역 담당과 확인할 것(금액 큰 순):
+                <ul className="sim-list">
+                  {review.slice(0, 8).map(r => (
+                    <li key={r.id}>{r.name} {r.spec} ({r.qty.toLocaleString()} {r.unit}, {fmtWon(r.amount)}) — {r.detail}</li>
+                  ))}
+                  {review.length > 8 && <li className="muted">나머지 {review.length - 8}건은 8단계 「5D 내역」의 「검토 필요」로 봅니다.</li>}
+                </ul>
+              </div>
+            )}
             {sim.split ? (
               <ul className="sim-list">
                 <li>내역 {fmtWon(sim.split.totals.boq)} 중 이 대상 <strong>{fmtWon(sim.split.totals.target)}</strong> · 작업 배분 {fmtWon(sim.split.totals.allocated)}

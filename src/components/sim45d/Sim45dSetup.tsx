@@ -50,7 +50,7 @@ function writeUi(projectId: string, ui: UiState) {
 const FILE_GROUPS: { title: string; slots: SlotKey[] }[] = [
   { title: '설계 보고서·도면', slots: ['overview', 'plan', 'bridgeDesign', 'drawings'] },
   { title: '수량·내역', slots: ['qto', 'qtoSummary', 'boq'] },
-  { title: 'BIM 모델', slots: ['model'] },
+  { title: 'BIM 모델', slots: ['model', 'viewModel'] },
   { title: '기준 자료', slots: ['ipsStandard'] },
 ];
 
@@ -112,6 +112,8 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
   const data = rec?.data ?? emptySetup();
   const name = rec?.name ?? '';
   const sheetOpen = ui.step !== 'sim';
+  /** 확정 공정표를 연 대상(8단계 자동 열기가 한 번만). */
+  const openedFor = useRef<string | null>(null);
   const go = (step: StepKey) => setUi(u => ({ ...u, step }));
 
   // 단계 화면의 AI 버튼 → 내 Claude 창(팝업) + AI 도우미 패널(D32). 보기 권한만 있으면 넘기지 않는다(저장 못 함).
@@ -183,9 +185,9 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
   const { setSavedLinks, setModelActuals, setSplit, setQty, split, schedule: openSchedule, setTargetModels, setViewing } = sim;
   const allLinks = useMemo(() => (data.links ?? []).flatMap(l => l.links), [data.links]);
   useEffect(() => { setSavedLinks(allLinks); }, [allLinks, setSavedLinks]);
-  // 8단계 3D 는 2단계 자료에서 고른 BIM 모델을 연다(그 화면에서 다른 파일을 고르지 않음 — 사용자 11-02).
-  const modelFiles = data.files.model;
-  useEffect(() => { setTargetModels((modelFiles ?? []).filter(f => f.urn)); }, [modelFiles, setTargetModels]);
+  // 8단계 3D 는 2단계 자료에서 고른 모델을 연다(그 화면에서 다른 파일을 고르지 않음 — 사용자 11-02): 4D 화면 모델(통합 모델)이 있으면 그것, 없으면 BIM 모델.
+  const viewFiles = data.files.viewModel, modelFiles = data.files.model;
+  useEffect(() => { setTargetModels([...(viewFiles ?? []), ...(modelFiles ?? [])].filter(f => f.urn)); }, [viewFiles, modelFiles, setTargetModels]);
   useEffect(() => { setViewing(!sheetOpen); }, [sheetOpen, setViewing]);
   // 저장된 수량분개 → 지금 연 공정표의 작업별 공사비·5D 내역(배분은 엔진이 다시 계산)
   const qtySplit = data.qtySplit, site = data.site, wbsRoot = data.links?.[0]?.wbsRoot;
@@ -221,11 +223,12 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
   // 확정 공정표 열기: P6 수정본을 올렸으면 그것, 아니면 채택한 개략 IPS 를 지금 입력으로 다시 만들어 연다(D34). `next`: 방금 저장한 상태.
   const openP6 = async (next?: SetupData) => {
     const d = next ?? data;
+    openedFor.current = rec?.id ?? null;
     const f = d.files.p6?.[0];
     if (!f) {
       try {
         const r = adoptedPlan(d);
-        if (!r || !d.plan?.adopted) { setStatus(NO_CONFIRMED); return; }
+        if (!r || !d.plan?.adopted) { sim.close(); setStatus(NO_CONFIRMED); return; }
         const xer = planXerBytes(r);
         await sim.openXer(new File([xer as BlobPart], planXerName(d.site?.code, d.plan.adopted.title)));
         setStatus(`열었습니다: 채택한 개략 IPS(${d.plan.adopted.title}) — 아래 결과를 확인하세요. 3D 는 8 '4D/5D'.`);
@@ -340,6 +343,14 @@ export function Sim45dSetup({ projectId, canEdit, sim }: { projectId: string; ca
       </ul>
     );
   };
+
+  // 8단계: 확정 공정표(4단계 채택안 또는 5단계에 올린 P6)를 자동으로 연다 — 그 화면에서 다른 XER 을 열지 않음(사용자 11-02). 대상이 바뀌면 다시.
+  const openP6Ref = useRef(openP6);
+  useEffect(() => { openP6Ref.current = openP6; });
+  useEffect(() => {
+    if (sheetOpen || !rec || busy || openedFor.current === rec.id) return;
+    void openP6Ref.current();
+  }, [sheetOpen, rec, busy]);
 
   const stepProps: StepProps = {
     projectId, canEdit: editable, data, name, persist, sim, setStatus,

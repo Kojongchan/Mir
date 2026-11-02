@@ -213,6 +213,8 @@ function targetsOf(group: Group, path: string[], item: string, acts: SplitActivi
 }
 
 export interface SplitLine extends BoqItem {
+  /** 집계표 표기가 내역서와 다를 때 그 표기(단위·수량으로 맞춤 — 검토 대상). */
+  note?: string;
   unitPrice: number;
   row: { page?: number; path?: string[]; cols?: Record<string, number> } | null;
   /** 이 대상 몫 수량·금액과 그 근거. */
@@ -303,3 +305,13 @@ export function buildSplitData(section: string, sheet: string, boq: BoqItem[], r
     ...(prev?.overrides ? { overrides: prev.overrides } : {}),
   };
 }
+
+/** 검토가 필요한 항목(사용자 11-02): 집계표와 품명·규격이 다른데 단위·수량으로 맞춘 것, 집계표에서 못 찾은 것(이 대상 몫 0). 금액 큰 것부터. */
+export interface ReviewItem { id: string; name: string; spec: string; unit: string; qty: number; amount: number; reason: 'renamed' | 'unmatched'; detail: string }
+export function reviewItems(data: Pick<QtySplitData, 'lines'>): ReviewItem[] {
+  return data.lines.filter(l => l.note || !l.cols).map(l => ({
+    id: l.id, name: l.name, spec: l.spec, unit: l.unit, qty: l.qty, amount: l.amount, reason: l.cols ? 'renamed' as const : 'unmatched' as const,
+    detail: l.cols ? l.note! : '집계표에서 못 찾음 — 이 대상 몫 0(집계표 밖 항목인지, 품명이 크게 다른지 확인)',
+  })).sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount));
+}
+
