@@ -89,10 +89,17 @@ export default async function handler(req: Request): Promise<Response> {
       return json({ projects: (d.data ?? []).map((p: any) => ({ id: p.id, name: p.attributes?.name })) });
     }
     if (action === 'topFolders') {
-      const d = await dm(
-        `/project/v1/hubs/${encodeURIComponent(hub)}/projects/${encodeURIComponent(project)}/topFolders`,
-        token,
-      );
+      const base = `/project/v1/hubs/${encodeURIComponent(hub)}/projects/${encodeURIComponent(project)}/topFolders`;
+      // ACC 화면처럼 'Project Files' 만. 앱(2-legged) 권한으로 보면 사진·제출물·내부 ID 폴더까지 모두
+      // 나오므로, 시작 폴더를 고정하지 않은 현장도 자료관리·폴더 탐색에 내부 폴더가 보이지 않게 한다.
+      // 이 옵션을 지원하지 않거나 결과가 비는 프로젝트 유형이면 전체 목록으로 되돌린다.
+      let d: any = null;
+      try {
+        d = await dm(`${base}?projectFilesOnly=true&excludeDeleted=true`, token);
+      } catch {
+        d = null;
+      }
+      if (!d?.data?.length) d = await dm(base, token);
       const folders = (d.data ?? [])
         .map((f: any) => ({ id: f.id, name: f.attributes?.displayName ?? f.attributes?.name }))
         .sort(byName);
