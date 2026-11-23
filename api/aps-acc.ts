@@ -95,12 +95,13 @@ export default async function handler(req: Request): Promise<Response> {
       );
       // ACC 화면처럼 사람이 쓰는 폴더만. 앱(2-legged) 권한으로 보면 사진·제출물·이슈·내부 ID 폴더까지
       // 모두 나와(ACC 에선 숨김), 시작 폴더를 고정하지 않은 현장의 자료관리에 그대로 보였다.
-      // ① ACC 가 숨김(hidden)으로 표시한 폴더 제외 → ② 그 표시가 없으면 'Project Files'·'Plans' 만
-      // → ③ 둘 다 없으면 전체(예전과 같음).
+      // ① 'Project Files'·'Plans'(ACC 문서 화면에 보이는 폴더)가 있으면 그것만 → ② 없으면 ACC 가
+      // 숨김(hidden)으로 표시한 폴더만 제외 → ③ 그래도 비면 전체(예전과 같음).
+      // 사진·이슈·제출물 등 내부 폴더는 hidden 표시가 없어(11-23 남양주왕숙 확인) ①이 기본이다.
       const all = (d.data ?? []) as any[];
-      const visible = all.filter((f) => f.attributes?.hidden !== true);
       const standard = all.filter((f) => /^(Project Files|Plans)$/i.test(f.attributes?.name ?? ''));
-      const picked = visible.length && visible.length < all.length ? visible : standard.length ? standard : all;
+      const visible = all.filter((f) => f.attributes?.hidden !== true);
+      const picked = standard.length ? standard : visible.length ? visible : all;
       const folders = picked
         .map((f: any) => ({ id: f.id, name: f.attributes?.displayName ?? f.attributes?.name }))
         .sort(byName);
