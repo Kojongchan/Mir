@@ -177,7 +177,7 @@ function ProjectsTab({
   return (
     <section className="admin-card">
       <div className="admin-form-row">
-        <input placeholder="프로젝트 이름 (예: 평택-오송 5공구)" value={name} onChange={(e) => setName(e.target.value)} />
+        <input placeholder="프로젝트 이름 (예: 평택~오송 5공구)" value={name} onChange={(e) => setName(e.target.value)} />
         <input className="narrow" placeholder="코드 (예: 5공구)" value={code} onChange={(e) => setCode(e.target.value)} />
         <button onClick={add} disabled={busy || !name.trim()}>추가</button>
       </div>
