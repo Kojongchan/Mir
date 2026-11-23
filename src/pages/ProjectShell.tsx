@@ -72,7 +72,7 @@ export function ProjectShell() {
           type="button"
           className="btn btn--ghost project-switcher"
           onClick={() => navigate('/', { state: { pick: true } })}
-          title="프로젝트 변경"
+          title={project?.name ? `${project.name} — 프로젝트 변경` : '프로젝트 변경'}
         >
           <UiIcon name="folder" size={16} />
           <span className="project-switcher__name">{project?.name ?? '…'}</span>
