@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
 import { listProjects, type Project } from '../lib/api';
 import { useAuth } from '../auth/AuthProvider';
@@ -8,10 +8,13 @@ import { BrandLogo } from '../components/BrandLogo';
 
 export function ProjectSelect() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { profile, signOut } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 상단바 '프로젝트 변경'으로 온 경우엔 목록을 그대로 보여 준다.
+  const picking = Boolean((location.state as { pick?: boolean } | null)?.pick);
 
   useEffect(() => {
     listProjects()
@@ -19,6 +22,12 @@ export function ProjectSelect() {
       .catch((e) => setError((e as Error).message))
       .finally(() => setLoading(false));
   }, []);
+
+  // 배정된 현장이 하나뿐이면 고르는 화면 없이 바로 들어간다(시스템 관리자는 콘솔 때문에 목록 유지).
+  useEffect(() => {
+    if (loading || picking || !profile || profile.is_admin || projects.length !== 1) return;
+    navigate(`/project/${projects[0].id}`, { replace: true });
+  }, [loading, picking, profile, projects, navigate]);
 
   return (
     <div className="auth-screen">

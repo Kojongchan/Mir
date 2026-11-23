@@ -624,10 +624,10 @@ body {
 .brand-mir {
   color: var(--brand-gray);
 }
-.brand-smart {
+.brand-bim {
   color: var(--brand-red);
 }
-/* 로고(SS 마크) 높이에 맞춰 MIR SMART 글자 크기 조절 — 대문자 높이 ≈ 마크 높이 */
+/* 로고(SS 마크) 높이에 맞춰 MIR BIM 글자 크기 조절 — 대문자 높이 ≈ 마크 높이 */
 .brand-logo-lg {
   gap: 8px;
 }
@@ -1044,6 +1044,28 @@ button:disabled {
 
 .admin-table-wrap {
   overflow-x: auto;
+}
+
+/* 현장별 메뉴 고르기(관리자 콘솔 · 0042 enabled_menus) */
+.admin-menu-editor {
+  padding: 8px 4px;
+}
+.admin-menu-editor > p {
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+.admin-menu-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px 14px;
+  margin-bottom: 12px;
+}
+.admin-menu-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
 }
 
 .admin-table {

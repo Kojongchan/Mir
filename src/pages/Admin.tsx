@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
 import { listProjects, type Project } from '../lib/api';
+import { PROJECT_MENUS, getProjectMenus, setProjectMenus } from '../lib/projectMenus';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { BrandLogo } from '../components/BrandLogo';
 import { ROLE_LABEL } from '../auth/useProjectRole';
@@ -130,6 +131,7 @@ function ProjectsTab({
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
 
   const add = async () => {
     if (!name.trim()) return;
@@ -187,14 +189,30 @@ function ProjectsTab({
           </thead>
           <tbody>
             {projects.map((p) => (
-              <tr key={p.id}>
-                <td>{p.name}</td>
-                <td className="muted">{p.code ?? '—'}</td>
-                <td className="right nowrap">
-                  <button onClick={() => rename(p)}>수정</button>
-                  <button className="danger" onClick={() => remove(p)}>삭제</button>
-                </td>
-              </tr>
+              <Fragment key={p.id}>
+                <tr>
+                  <td>{p.name}</td>
+                  <td className="muted">{p.code ?? '—'}</td>
+                  <td className="right nowrap">
+                    <button
+                      onClick={() => setMenuFor(menuFor === p.id ? null : p.id)}
+                      aria-expanded={menuFor === p.id}
+                      title="이 현장에서 보일 메뉴 고르기"
+                    >
+                      메뉴
+                    </button>
+                    <button onClick={() => rename(p)}>수정</button>
+                    <button className="danger" onClick={() => remove(p)}>삭제</button>
+                  </td>
+                </tr>
+                {menuFor === p.id && (
+                  <tr>
+                    <td colSpan={3}>
+                      <ProjectMenuEditor project={p} onClose={() => setMenuFor(null)} flash={flash} fail={fail} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
             {projects.length === 0 && (
               <tr><td colSpan={3} className="muted">프로젝트가 없습니다.</td></tr>
@@ -203,6 +221,75 @@ function ProjectsTab({
         </table>
       </div>
     </section>
+  );
+}
+
+// ---------------------------------------------------------------------
+
+/** 현장별 메뉴(0042): 이 현장 사용자에게 보일 메뉴를 고른다. 전부 켜면 '전체 메뉴'로 저장. */
+function ProjectMenuEditor({
+  project,
+  onClose,
+  flash,
+  fail,
+}: TabProps & { project: Project; onClose: () => void }) {
+  const [on, setOn] = useState<Set<string> | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void getProjectMenus(project.id).then((enabled) => {
+      if (alive) setOn(new Set(enabled ?? PROJECT_MENUS.map((m) => m.key)));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [project.id]);
+
+  const toggle = (key: string) =>
+    setOn((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const save = async () => {
+    if (!on || on.size === 0) return;
+    setBusy(true);
+    try {
+      await setProjectMenus(project.id, [...on]);
+      flash(`"${project.name}" 메뉴를 저장했습니다.`);
+      onClose();
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!on) return <p className="muted">메뉴 설정을 불러오는 중…</p>;
+  return (
+    <div className="admin-menu-editor">
+      <p className="muted">
+        이 현장 사용자에게 보일 메뉴입니다. 꺼진 메뉴로 들어오면 켜진 첫 메뉴로 이동합니다.
+        구성원·권한은 켜 두어도 관리 권한이 있는 사람에게만 보입니다.
+      </p>
+      <div className="admin-menu-grid">
+        {PROJECT_MENUS.map((m) => (
+          <label key={m.key} className="admin-menu-check">
+            <input type="checkbox" checked={on.has(m.key)} onChange={() => toggle(m.key)} />
+            {m.label}
+          </label>
+        ))}
+      </div>
+      <div className="admin-form-row">
+        <button onClick={() => setOn(new Set(PROJECT_MENUS.map((m) => m.key)))} disabled={busy}>전체 켜기</button>
+        <div className="spacer" />
+        <button onClick={onClose} disabled={busy}>취소</button>
+        <button className="btn--primary" onClick={save} disabled={busy || on.size === 0}>저장</button>
+      </div>
+    </div>
   );
 }
 

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Outlet, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useProjectRole } from '../auth/useProjectRole';
+import { firstMenuPath, isMenuOn, menuForPath, useProjectMenus } from '../lib/projectMenus';
 import { BrandLogo } from '../components/BrandLogo';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { ProjectNav } from '../components/ProjectNav';
@@ -26,6 +28,19 @@ export function ProjectShell() {
   const [collapsed, setCollapsed] = useState<boolean>(
     () => localStorage.getItem(RAIL_KEY) === '1',
   );
+  const location = useLocation();
+  const { canManage } = useProjectRole(projectId);
+  const { enabled, ready } = useProjectMenus(projectId);
+
+  // 현장별 메뉴(0042): 꺼진 메뉴 주소(첫 화면 포함)로 들어오면 켜진 첫 메뉴로 보낸다.
+  // 예: 사업개요를 끈 현장은 현장을 고르면 바로 통합모델(3D)이 열린다.
+  const base = `/project/${projectId}`;
+  const current = menuForPath(location.pathname.slice(base.length));
+  let redirectTo: string | null = null;
+  if (ready && current && !isMenuOn(enabled, current.key)) {
+    const first = firstMenuPath(enabled, canManage);
+    if (first !== null && first !== current.path) redirectTo = first ? `${base}/${first}` : base;
+  }
 
   useEffect(() => {
     getProject(projectId).then(setProject);
@@ -56,7 +71,7 @@ export function ProjectShell() {
         <button
           type="button"
           className="btn btn--ghost project-switcher"
-          onClick={() => navigate('/')}
+          onClick={() => navigate('/', { state: { pick: true } })}
           title="프로젝트 변경"
         >
           <UiIcon name="folder" size={16} />
@@ -75,7 +90,11 @@ export function ProjectShell() {
       <div className="portal-body" data-sidebar={collapsed ? 'collapsed' : 'expanded'}>
         <ProjectNav />
         <main className="portal-main">
-          <Outlet context={{ project }} />
+          {redirectTo ? (
+            <Navigate to={redirectTo} replace />
+          ) : ready || !current ? (
+            <Outlet context={{ project }} />
+          ) : null}
         </main>
       </div>
 
