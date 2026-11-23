@@ -7,7 +7,8 @@ import { supabase } from '../lib/supabase';
 // Initializer 는 페이지 단위로 1회만 로드(모듈 싱글턴).
 // =====================================================================
 
-const VIEWER_VER = '7.*';
+// 버전 고정(2026-11 기준 7.* = 7.131). 와일드카드 주소는 일부 브라우저 요청에서 404 가 나서 정확한 버전을 쓴다.
+const VIEWER_VER = '7.131';
 const VIEWER_CSS = `https://developer.api.autodesk.com/modelderivative/v2/viewers/${VIEWER_VER}/style.min.css`;
 const VIEWER_JS = `https://developer.api.autodesk.com/modelderivative/v2/viewers/${VIEWER_VER}/viewer3D.min.js`;
 

@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../auth/AuthProvider';
 import { useProjectRole } from '../auth/useProjectRole';
 import { getProjectAcc, setProjectAcc, getOrCreateApsModelRow } from '../lib/api';
+import { openOrder, openedLabel, type OpenCandidate } from '../lib/accVersions';
 import { buildApsMapping, type ApsMapping } from '../lib/apsMapping';
 import { isolateAndFit, showApsClash } from '../lib/apsClashView';
 import { listIssues, createIssue, logIssueEvent, STATUS_LABEL, type Issue } from '../lib/issues';
@@ -54,18 +55,19 @@ const fakeFile = (name: string) => ({ name, size_bytes: null, mime_type: null })
  *
  * 사전조건: Vercel 환경변수 APS_CLIENT_ID / APS_CLIENT_SECRET + ACC 앱 통합 승인.
  */
-const VIEWER_VER = '7.*';
+// 버전 고정(2026-11 기준 7.* = 7.131). 와일드카드 주소는 일부 브라우저 요청에서 404 가 나서 정확한 버전을 쓴다.
+const VIEWER_VER = '7.131';
 const VIEWER_CSS = `https://developer.api.autodesk.com/modelderivative/v2/viewers/${VIEWER_VER}/style.min.css`;
 const VIEWER_JS = `https://developer.api.autodesk.com/modelderivative/v2/viewers/${VIEWER_VER}/viewer3D.min.js`;
 
-// ACC 와 동일 계열의 표준 도구 묶음. 번들에 없는 id 는 뷰어가 조용히 무시한다.
+// ACC 와 동일 계열의 표준 도구 묶음. id 는 뷰어 등록명과 철자까지 같아야 한다(다르면 페이지 오류를 내고 그 도구만 빠짐).
 const VIEWER_EXTENSIONS = [
   'Autodesk.Measure', // 거리/면적/각도 측정
   'Autodesk.Section', // 단면(섹션) 자르기
   'Autodesk.Explode', // 분해
   'Autodesk.Viewing.MarkupsCore', // 마크업(주석) 코어
   'Autodesk.Viewing.MarkupsGui', // 마크업 UI
-  'Autodesk.BIMWalk', // 1인칭 워크
+  'Autodesk.BimWalk', // 1인칭 워크 (뷰어 등록 id 는 'BimWalk' — 'BIMWalk' 이면 "Has it been registered?" 오류로 빠짐)
   'Autodesk.Viewing.ZoomWindow', // 영역 줌
   'Autodesk.FullScreen', // 전체화면
   'Autodesk.DocumentBrowser', // 시트/뷰 탐색
@@ -127,6 +129,9 @@ async function accFetch(params: Record<string, string>): Promise<any> {
 
 type Named = { id: string; name: string };
 type Item = { id: string; name: string; urn: string | null };
+
+/** 고정 직후 안내 — 새 버전은 자동, 이름이 다른 새 파일은 다시 고정(0042). */
+const PIN_HINT = ' · 같은 파일에 새 버전을 올리면 자동으로 최신 버전이 열립니다. 이름이 다른 새 파일은 다시 지정하세요.';
 
 /** Timeline 의 IFC 경로(modelIdMap)는 4D(APS) 모드에서 쓰지 않음 — 매 렌더 새 Map
  *  생성을 피하기 위한 안정된 빈 맵(불필요한 effect 재실행 방지). */
@@ -590,9 +595,13 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
     }
     const name = openName || '기본 모델';
     try {
-      await setProjectAcc(projectId, { acc_default_urn: urn, acc_default_name: name });
+      await setProjectAcc(projectId, {
+        acc_default_urn: urn,
+        acc_default_name: name,
+        ...(openId ? { acc_default_item_id: openId } : {}),
+      });
       setDefaultName(name);
-      setStatus(`기본 모델로 지정: ${name}`);
+      setStatus(`기본 모델로 지정: ${name}${PIN_HINT}`);
     } catch (e) {
       setStatus(`지정 실패: ${(e as Error).message}`);
     }
@@ -606,11 +615,15 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
     }
     const name = openName || '4D 모델';
     try {
-      await setProjectAcc(projectId, { acc_4d_urn: urn, acc_4d_name: name });
+      await setProjectAcc(projectId, {
+        acc_4d_urn: urn,
+        acc_4d_name: name,
+        ...(openId ? { acc_4d_item_id: openId } : {}),
+      });
       setDefaultName(name);
       setPickFor4dOpen(false);
       setShowBrowser(false);
-      setStatus(`4D 모델로 지정: ${name}`);
+      setStatus(`4D 모델로 지정: ${name}${PIN_HINT}`);
     } catch (e) {
       setStatus(`지정 실패: ${(e as Error).message}`);
     }
@@ -624,11 +637,15 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
     }
     const name = openName || '간섭 모델';
     try {
-      await setProjectAcc(projectId, { acc_clash_urn: urn, acc_clash_name: name });
+      await setProjectAcc(projectId, {
+        acc_clash_urn: urn,
+        acc_clash_name: name,
+        ...(openId ? { acc_clash_item_id: openId } : {}),
+      });
       setDefaultName(name);
       setPickForClashOpen(false);
       setShowBrowser(false);
-      setStatus(`간섭 모델로 지정: ${name}`);
+      setStatus(`간섭 모델로 지정: ${name}${PIN_HINT}`);
     } catch (e) {
       setStatus(`지정 실패: ${(e as Error).message}`);
     }
@@ -766,10 +783,12 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
     </li>
   );
 
-  const openModel = async (rawUrn: string) => {
+  /** 모델을 연다. 열렸으면 true, 3D 뷰가 없거나(변환 중 등) 실패하면 false. */
+  const openModel = (rawUrn: string): Promise<boolean> =>
+    new Promise<boolean>((resolve) => {
     const Autodesk = (window as unknown as { Autodesk?: any }).Autodesk;
     const viewer = viewerRef.current as any;
-    if (!Autodesk || !viewer || !rawUrn) return;
+    if (!Autodesk || !viewer || !rawUrn) return resolve(false);
     // 교체 로드 — 기존 매핑/이슈핀 앵커를 초기화(트리 생성 시 재구성).
     modelRef.current = null;
     setMapping(null);
@@ -779,7 +798,17 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
       docId,
       (doc: any) => {
         const node = doc.getRoot().getDefaultGeometry();
-        viewer.loadDocumentNode(doc, node);
+        if (!node) {
+          setStatus('이 파일에는 아직 3D 뷰가 없습니다(ACC에서 변환 중일 수 있음).');
+          return resolve(false);
+        }
+        Promise.resolve(viewer.loadDocumentNode(doc, node)).then(
+          () => resolve(true),
+          (e: unknown) => {
+            setStatus(`모델 로드 실패: ${(e as Error)?.message ?? e}`);
+            resolve(false);
+          },
+        );
         // 여러 페이지/시트(예: PDF 74p)면 '시트 및 뷰' 패널을 자동으로 띄운다.
         try {
           const all = doc.getRoot().search({ type: 'geometry' }) ?? [];
@@ -796,8 +825,37 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
           setStatus('완료');
         }
       },
-      (code: unknown, msg: unknown) => setStatus(`문서 로드 실패: ${msg ?? code} (URN/권한 확인)`),
+      (code: unknown, msg: unknown) => {
+        setStatus(`문서 로드 실패: ${msg ?? code} (URN/권한 확인)`);
+        resolve(false);
+      },
     );
+    });
+
+  /**
+   * 고정 모델 열기(0042): 고정한 ACC 아이템이 있으면 그 파일의 최신 버전부터 연다.
+   * 최신 버전이 아직 3D 변환 중이면 그 앞 버전 → 고정한 버전 순서로 넘어간다.
+   * 아이템이 없으면(0042 이전 고정) 고정한 버전 그대로.
+   */
+  const openPinned = async (accProject: string, itemId: string | null, pinnedUrn: string) => {
+    let order: OpenCandidate[] = [{ urn: pinnedUrn, versionNumber: null }];
+    if (itemId) {
+      try {
+        const r = await accFetch({ action: 'versions', project: accProject, item: itemId });
+        order = openOrder(pinnedUrn, r.versions ?? []);
+      } catch {
+        /* 버전 목록을 못 읽으면 고정한 버전으로 */
+      }
+    }
+    const latest = order[0];
+    for (const c of order) {
+      setUrn(c.urn);
+      if (await openModel(c.urn)) {
+        const note = openedLabel(c, latest);
+        if (note) setStatus((s) => `${s} · ${note}`);
+        return;
+      }
+    }
   };
 
   useEffect(() => {
@@ -984,11 +1042,13 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
             const pinnedName = mode4d ? acc.acc_4d_name : autoClash ? acc.acc_clash_name : acc.acc_default_name;
             // 고정 모델 지정은 자료관리(ACC 모델)에서 한다 — 세 뷰 모두 폴더 트리는
             // 기본적으로 숨기고 고정된 모델만 연다.
+            const pinnedItem = mode4d ? acc.acc_4d_item_id : autoClash ? acc.acc_clash_item_id : acc.acc_default_item_id;
             if (pinnedUrn) {
               setUrn(pinnedUrn);
               setOpenName(pinnedName ?? '');
               setDefaultName(pinnedName ?? '');
-              void openModel(pinnedUrn);
+              if (pinnedItem) setOpenId(pinnedItem);
+              void openPinned(acc.acc_project_id, pinnedItem, pinnedUrn);
             } else {
               const label = mode4d ? '공정관리(4D)' : autoClash ? '간섭검토' : '통합모델(3D)';
               const how = isAdmin
