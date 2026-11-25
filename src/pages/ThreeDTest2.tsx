@@ -152,8 +152,9 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
     return () => window.removeEventListener('pointerdown', close);
   }, []);
   // Phones and narrow tablets: panels start closed and one at a time (side by side they cover the view).
-  const [treeOpen, setTreeOpen] = useState(() => !narrowScreen());
-  const [propsOpen, setPropsOpen] = useState(() => !narrowScreen());
+  // 간섭검토 starts with its own window only (the tree and properties stay one click away).
+  const [treeOpen, setTreeOpen] = useState(() => !narrowScreen() && purpose !== 'clash');
+  const [propsOpen, setPropsOpen] = useState(() => !narrowScreen() && purpose !== 'clash');
 
   useEffect(() => {
     if (!canvasRef.current) return;
