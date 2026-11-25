@@ -96,8 +96,15 @@ export async function setProjectAcc(projectId: string, fields: Partial<ProjectAc
  */
 export type ViewerEngine = 'mir' | 'aps';
 
+/** 0043 미적용으로 확인되면 이 탭에서는 다시 묻지 않는다(매 화면 400 응답 방지). */
+const NO_VIEWER_COL = 'mir.noViewerEngineColumn';
+
 export async function getProjectViewer(projectId: string): Promise<ViewerEngine> {
+  try { if (sessionStorage.getItem(NO_VIEWER_COL)) return 'mir'; } catch { /* storage off */ }
   const { data, error } = await supabase.from('projects').select('viewer_engine').eq('id', projectId).maybeSingle();
+  if (error && /viewer_engine/.test(error.message)) {
+    try { sessionStorage.setItem(NO_VIEWER_COL, '1'); } catch { /* storage off */ }
+  }
   if (error || !data) return 'mir';
   return (data as { viewer_engine?: string | null }).viewer_engine === 'aps' ? 'aps' : 'mir';
 }
@@ -108,7 +115,10 @@ export async function setProjectViewer(projectId: string, engine: ViewerEngine):
     .from('projects')
     .update({ viewer_engine: engine === 'aps' ? 'aps' : null })
     .eq('id', projectId);
-  if (!error) return;
+  if (!error) {
+    try { sessionStorage.removeItem(NO_VIEWER_COL); } catch { /* storage off */ }
+    return;
+  }
   if (error.message.includes('viewer_engine')) {
     throw new Error('3D 뷰어 설정 열이 아직 없습니다. Supabase 에 0043_project_viewer_engine.sql 을 먼저 적용하세요.');
   }
