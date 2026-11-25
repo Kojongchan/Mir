@@ -10,7 +10,7 @@ import { DataTexture, FloatType, MeshLambertMaterial, RGBAFormat, ShaderMaterial
 const WIDTH = 1024;
 export const SELECT_RGB = [38, 128, 255];
 export const HIGHLIGHT_RGB = [255, 158, 20];
-/** Ghosted objects (간섭 보기 반투명): light grey, drawn every third pixel (screen-door: no sorting, any order). */
+/** Ghosted objects (간섭 보기 반투명): light grey, one pixel in four drawn (screen-door: no sorting, any order). */
 const GHOST_RGB = [214, 219, 226];
 
 export class ObjectStateTexture {
@@ -156,8 +156,11 @@ float mirDepthRank(int id, float state) {
   return float(1 + id % 31);
 }
 `;
-/** Ghosted (a = 252): two pixels in three are left out, so what is behind shows through (screen-door transparency). */
-const GHOST_DISCARD = 'if (abs(vObjectState.a - 252.0 / 255.0) < 0.5 / 255.0 && mod(floor(gl_FragCoord.x) + floor(gl_FragCoord.y), 3.0) > 0.5) discard;';
+/**
+ * Ghosted (a = 252): only one pixel in each 2×2 block is drawn, so what is behind shows through (screen-door
+ * transparency, a fine even dot grid — a diagonal pattern read as hatching).
+ */
+const GHOST_DISCARD = 'if (abs(vObjectState.a - 252.0 / 255.0) < 0.5 / 255.0 && mod(floor(gl_FragCoord.x), 2.0) + mod(floor(gl_FragCoord.y), 2.0) > 0.5) discard;';
 /** `view`: the fragment's view-space offset to the eye (vViewPosition), for the skin push (no branch: derivatives). */
 const APPLY_DEPTH_ORDER = (id: string, view: string) => /* glsl */`
 #include <logdepthbuf_fragment>
