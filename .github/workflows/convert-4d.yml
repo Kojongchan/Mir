@@ -1,4 +1,5 @@
 name: 4D 모델 변환(SVF→GLB)
+run-name: ${{ github.event.inputs.diag_only == 'compact-xkt' && 'R2 XKT storage compaction' || github.event.inputs.diag_only == 'motion-cache' && 'R2 model motion cache' || github.event.inputs.diag_only == 'lod-cache' && 'R2 model LOD cache' || github.event.inputs.diag_only == 'meta-index' && 'R2 model tree and property index' || github.event.inputs.diag_only == 'ui-check' && '3D page check with real data' || github.event.inputs.diag_only == 'entity-alias' && 'R2 renamed-fragment table' || github.event.inputs.diag_only == 'tiles3d' && 'R2 3D Tiles for the second viewer' || github.event.inputs.diag_only == 'r2-cleanup' && 'R2 approved storage cleanup' || '4D model conversion' }}
 
 # 4D 공정관리 자체 뷰어용: ACC 모델(SVF)을 glTF/GLB 로 변환해 Supabase Storage 에
 # 올린다. 대형 모델 변환은 Vercel 서버리스 한도를 넘으므로 여기(러너: 7GB/14GB/6h)서
@@ -21,9 +22,481 @@ on:
         description: 'APS 리전 (US / EMEA / AUS)'
         required: false
         default: 'US'
+      include_lines:
+        description: "선/점 포함 여부('1'=포함(DWG 등), '0'=엣지선 제외(IFC/RVT/NWD))"
+        required: false
+        default: ''
+      render_test:
+        description: "'1'이면 변환 후 헤드리스 xeokit 렌더 진단(ASCII 로그) 실행"
+        required: false
+        default: ''
+      uv_flip:
+        description: "지형 텍스처 V 뒤집기('0'=끔, 그 외=켬/기본). 항공사진 정합 테스트용"
+        required: false
+        default: ''
+      uv_mode:
+        description: "지형 텍스처 UV 방향 0~7 (bit0=U뒤집기,bit1=V뒤집기,bit2=스왑). 기본2. 회전 정합용"
+        required: false
+        default: ''
+      tiles:
+        description: "'1'이면 공간 타일 스트리밍(원본 형상, 뷰 종속). 트래픽·구조물 근본해결"
+        required: false
+        default: ''
+      motion_lod:
+        description: "'1'=experimental paired motion LOD (representative validation required)"
+        required: false
+        default: '0'
+      tile_m:
+        description: "공간 타일 셀 크기(m). 기본 500"
+        required: false
+        default: ''
+      diag_only:
+        description: "'1'이면 인스턴싱 측정만(변환/업로드 없음). tiles=1 과 함께 사용. 빠른 진단"
+        required: false
+        default: ''
+      lod_profile:
+        description: "diag_only=lod-cache 일 때 'light'(경량 재생성), 'far'(원경, 전 타일), 'inspect'(읽기 전용 텍스처 점검)"
+        required: false
+        default: 'light'
+      lod_add_mb:
+        description: "diag_only=lod-cache 1회 최대 추가 용량(MB, 기본 1024)"
+        required: false
+        default: '1024'
+      instance:
+        description: "'1'이면 반복 부재를 인스턴싱(항상로드 구조물 뼈대 1벌+행렬). 원본 형상·타일 경량화"
+        required: false
+        default: ''
+      inst_min:
+        description: "인스턴싱 최소 반복수(refs). 기본 16(≈43MB로 반복부재 92% 포섭). 높일수록 항상로드↓"
+        required: false
+        default: ''
+      tile_cap:
+        description: "타일당 삼각형 상한. 기본 120만(큰 타일). 낮추면 타일 잘게(빠른 점진 로드)"
+        required: false
+        default: ''
+      inst_bytes:
+        description: "인스턴스 청크당 고유 지오메트리 바이트 상한. 낮추면 여러 조각(파싱 멈춤 완화)"
+        required: false
+        default: ''
+      lod_cell:
+        description: "개요(lod1) 격자 셀(m). 기본 4. 낮추면 개요 화질↑·용량↑(예 2~3)"
+        required: false
+        default: ''
+      dxf_test:
+        description: "'1'이면 SVF 대신 원본 DWG→DXF 변환 검증(project/item 필요)"
+        required: false
+        default: ''
+      project:
+        description: 'DXF검증용 ACC 프로젝트 ID (b.xxxx)'
+        required: false
+        default: ''
+      item:
+        description: 'DXF검증용 ACC 아이템 ID (urn:adsk.wipprod:dm.lineage:…)'
+        required: false
+        default: ''
+      landxml_project:
+        description: '(선택) 지표면 LandXML ACC 프로젝트 ID (b.xxxx) — 진짜 Civil3D TIN 병합용'
+        required: false
+        default: ''
+      landxml_item:
+        description: '(선택) 지표면 LandXML ACC 아이템 ID (urn:adsk.wipprod:dm.lineage:…)'
+        required: false
+        default: ''
+      diag_options:
+        description: "진단 옵션 — tiles3d: 'svf=1', 'parts=<병렬 작업 수, 기본 8>', 'region=<타일 번호>:<개수>', 'compare=1|strict'(공개본과 파일 비교) · ui-check: 'page=2,cpu=4,mobile=1,tiles=all'"
+        required: false
+        default: ''
+
+# All R2-writing jobs in this workflow share one budget.
+concurrency:
+  group: mir-r2-writer
+  cancel-in-progress: false
 
 jobs:
+  compact-storage:
+    if: github.event.inputs.diag_only == 'compact-xkt'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare storage maintenance runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/r2-maintenance"
+          cp scripts/compact-r2-xkt.mjs scripts/xkt-transfer.mjs "$RUNNER_TEMP/r2-maintenance/"
+          npm install --prefix "$RUNNER_TEMP/r2-maintenance" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 @aws-sdk/s3-request-presigner@3
+      - name: Compress and verify active XKT objects in place
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: node "$RUNNER_TEMP/r2-maintenance/compact-r2-xkt.mjs" --apply
+  motion-cache:
+    if: github.event.inputs.diag_only == 'motion-cache'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare cache-only runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/motion-cache"
+          cp scripts/build-motion-cache.mjs scripts/cached-motion.mjs scripts/tile-lod.mjs scripts/xkt-transfer.mjs scripts/storage-budget.mjs "$RUNNER_TEMP/motion-cache/"
+          npm install --prefix "$RUNNER_TEMP/motion-cache" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 meshoptimizer@0.18.1
+      - name: Generate optional motion pairs from existing cache
+        env:
+          MODEL_CACHE_PREFIX: ${{ github.event.inputs.item }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: node "$RUNNER_TEMP/motion-cache/build-motion-cache.mjs"
+  lod-cache:
+    if: github.event.inputs.diag_only == 'lod-cache'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare cache-only runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/lod-cache"
+          cp scripts/build-lod-cache.mjs scripts/tile-lod-merge.mjs scripts/xkt-transfer.mjs scripts/storage-budget.mjs "$RUNNER_TEMP/lod-cache/"
+          npm install --prefix "$RUNNER_TEMP/lod-cache" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 meshoptimizer@1.3.0
+      - name: Generate merged LOD files from existing cache
+        env:
+          MODEL_CACHE_PREFIX: ${{ github.event.inputs.item }}
+          LOD_PROFILE: ${{ github.event.inputs.lod_profile }}
+          LOD_ADD_MB: ${{ github.event.inputs.lod_add_mb }}
+          LOD_MINUTES: '100'
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: node "$RUNNER_TEMP/lod-cache/build-lod-cache.mjs"
+  # Model tree + property shards for the viewer's tree/property panels (reads the SVF property DB, no new APS job).
+  meta-index:
+    if: github.event.inputs.diag_only == 'meta-index'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare index runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/meta-index"
+          cp scripts/build-meta-index.mjs scripts/meta-index.mjs scripts/storage-budget.mjs scripts/cache-key.mjs "$RUNNER_TEMP/meta-index/"
+          npm install --prefix "$RUNNER_TEMP/meta-index" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 adm-zip@0.5
+      - name: Build object tree and property index
+        env:
+          MODEL_CACHE_PREFIX: ${{ github.event.inputs.item }}
+          URN: ${{ github.event.inputs.urn }}
+          APS_REGION: ${{ github.event.inputs.region }}
+          APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
+          APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: node --max-old-space-size=6144 "$RUNNER_TEMP/meta-index/build-meta-index.mjs"
+  # Owners of fragments convert2xkt renamed `entity-N` (several fragments of one object in a tile), from the
+  # SVF fragment list and the original tiles (scripts/build-entity-alias.mjs). Tiles are not changed.
+  entity-alias:
+    if: github.event.inputs.diag_only == 'entity-alias'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare alias runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/entity-alias"
+          cp scripts/build-entity-alias.mjs scripts/entity-alias.mjs scripts/tile-lod-merge.mjs scripts/storage-budget.mjs scripts/cache-key.mjs "$RUNNER_TEMP/entity-alias/"
+          npm install --prefix "$RUNNER_TEMP/entity-alias" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 adm-zip@0.5 svf-utils@8 meshoptimizer@1.3.0
+      - name: Build the renamed-fragment table
+        env:
+          MODEL_CACHE_PREFIX: ${{ github.event.inputs.item }}
+          URN: ${{ github.event.inputs.urn }}
+          APS_REGION: ${{ github.event.inputs.region }}
+          APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
+          APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: node --max-old-space-size=6144 "$RUNNER_TEMP/entity-alias/build-entity-alias.mjs"
+  # 3D Tiles 1.1 tileset for the second viewer engine (decision D23, scripts/build-tiles3d.mjs). Reads the
+  # existing tiles; writes only under <prefix>/tiles3d/ (diag_options svf=1: <prefix>/tiles3d-svf/, the third viewer's trial).
+  # Staged (decision D27): plan → leaves, its parts in parallel jobs (diag_options parts=<n>, default 8) → finalize;
+  # the jobs hand over plan.json, part-<k>.json and new/<tile fingerprint>.rec as artifacts. A tile whose inputs and
+  # code did not change keeps its record from the last build (Actions cache tiles3d-records-<model>-<variant>-…; the
+  # versions installed below are pinned: they are part of every tile's fingerprint). Nothing to build: no leaves jobs.
+  tiles3d-plan:
+    if: github.event.inputs.diag_only == 'tiles3d'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    outputs:
+      parts: ${{ steps.plan.outputs.parts }}
+      records: ${{ steps.records.outputs.cache-matched-key }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare tiles3d runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/tiles3d"
+          cp scripts/build-tiles3d.mjs scripts/tiles3d-parts.mjs scripts/code-fingerprint.mjs scripts/tiles3d.mjs scripts/tile-lod-merge.mjs scripts/storage-budget.mjs scripts/cache-key.mjs scripts/svf-precise.mjs scripts/entity-alias.mjs scripts/clearance.mjs scripts/clearance-worker.mjs scripts/skins.mjs scripts/skins-worker.mjs "$RUNNER_TEMP/tiles3d/"
+          npm install --prefix "$RUNNER_TEMP/tiles3d" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 meshoptimizer@1.3.0 svf-utils@8.0.0 adm-zip@0.5.18 three@0.171.0 three-mesh-bvh@0.7.8 acorn@8.19.0
+      - name: Tile records kept from the last build
+        id: records
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/tiles3d-records
+          key: tiles3d-records-${{ github.event.inputs.item || github.event.inputs.urn }}-${{ contains(github.event.inputs.diag_options, 'svf=1') && 'svf' || 'plain' }}-${{ github.run_id }}
+          restore-keys: tiles3d-records-${{ github.event.inputs.item || github.event.inputs.urn }}-${{ contains(github.event.inputs.diag_options, 'svf=1') && 'svf' || 'plain' }}-
+      - name: Plan the build
+        id: plan
+        env:
+          MODEL_CACHE_PREFIX: ${{ github.event.inputs.item }}
+          DIAG_OPTIONS: ${{ github.event.inputs.diag_options }}
+          # svf=1 (third viewer's trial): the original level from the model's SVF (read-only, no new APS job).
+          URN: ${{ github.event.inputs.urn }}
+          APS_REGION: ${{ github.event.inputs.region }}
+          APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
+          APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          TILES3D_WORK: ${{ runner.temp }}/tiles3d-work
+          TILES3D_RECORDS: ${{ runner.temp }}/tiles3d-records
+          TILES3D_STAGE: plan
+          TILES3D_PARTS: 8
+        run: node --max-old-space-size=12288 "$RUNNER_TEMP/tiles3d/build-tiles3d.mjs"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tiles3d-plan
+          path: ${{ runner.temp }}/tiles3d-work/plan.json
+          retention-days: 1
+  tiles3d-leaves:
+    needs: tiles3d-plan
+    if: needs.tiles3d-plan.outputs.parts != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        part: ${{ fromJSON(needs.tiles3d-plan.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare tiles3d runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/tiles3d"
+          cp scripts/build-tiles3d.mjs scripts/tiles3d-parts.mjs scripts/code-fingerprint.mjs scripts/tiles3d.mjs scripts/tile-lod-merge.mjs scripts/storage-budget.mjs scripts/cache-key.mjs scripts/svf-precise.mjs scripts/entity-alias.mjs scripts/clearance.mjs scripts/clearance-worker.mjs scripts/skins.mjs scripts/skins-worker.mjs "$RUNNER_TEMP/tiles3d/"
+          npm install --prefix "$RUNNER_TEMP/tiles3d" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 meshoptimizer@1.3.0 svf-utils@8.0.0 adm-zip@0.5.18 three@0.171.0 three-mesh-bvh@0.7.8 acorn@8.19.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: tiles3d-plan
+          path: ${{ runner.temp }}/tiles3d-work
+      - name: Build part ${{ matrix.part }}
+        env:
+          MODEL_CACHE_PREFIX: ${{ github.event.inputs.item }}
+          DIAG_OPTIONS: ${{ github.event.inputs.diag_options }}
+          # svf=1 (third viewer's trial): the original level from the model's SVF (read-only, no new APS job).
+          URN: ${{ github.event.inputs.urn }}
+          APS_REGION: ${{ github.event.inputs.region }}
+          APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
+          APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          TILES3D_WORK: ${{ runner.temp }}/tiles3d-work
+          TILES3D_STAGE: leaves
+          TILES3D_PART: ${{ matrix.part }}
+        run: node --max-old-space-size=12288 "$RUNNER_TEMP/tiles3d/build-tiles3d.mjs"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tiles3d-part-${{ matrix.part }}
+          path: |
+            ${{ runner.temp }}/tiles3d-work/part-*.json
+            ${{ runner.temp }}/tiles3d-work/new/
+          retention-days: 1
+  tiles3d-finalize:
+    needs: [tiles3d-plan, tiles3d-leaves]
+    # Also when every tile was kept (no leaves jobs).
+    if: always() && needs.tiles3d-plan.result == 'success' && (needs.tiles3d-leaves.result == 'success' || needs.tiles3d-leaves.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: write # drop the superseded records cache and this run's artifacts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare tiles3d runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/tiles3d"
+          cp scripts/build-tiles3d.mjs scripts/tiles3d-parts.mjs scripts/code-fingerprint.mjs scripts/tiles3d.mjs scripts/tile-lod-merge.mjs scripts/storage-budget.mjs scripts/cache-key.mjs scripts/svf-precise.mjs scripts/entity-alias.mjs scripts/clearance.mjs scripts/clearance-worker.mjs scripts/skins.mjs scripts/skins-worker.mjs "$RUNNER_TEMP/tiles3d/"
+          npm install --prefix "$RUNNER_TEMP/tiles3d" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3 meshoptimizer@1.3.0 svf-utils@8.0.0 adm-zip@0.5.18 three@0.171.0 three-mesh-bvh@0.7.8 acorn@8.19.0
+      - name: Tile records kept from the last build
+        if: needs.tiles3d-plan.outputs.records != ''
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/tiles3d-records
+          key: ${{ needs.tiles3d-plan.outputs.records }}
+          fail-on-cache-miss: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tiles3d-*
+          path: ${{ runner.temp }}/tiles3d-work
+          merge-multiple: true
+      - name: Audit, parents, terrain, publish
+        id: finalize
+        env:
+          MODEL_CACHE_PREFIX: ${{ github.event.inputs.item }}
+          DIAG_OPTIONS: ${{ github.event.inputs.diag_options }}
+          # svf=1 (third viewer's trial): the original level from the model's SVF (read-only, no new APS job).
+          URN: ${{ github.event.inputs.urn }}
+          APS_REGION: ${{ github.event.inputs.region }}
+          APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
+          APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          TILES3D_WORK: ${{ runner.temp }}/tiles3d-work
+          TILES3D_RECORDS: ${{ runner.temp }}/tiles3d-records
+          TILES3D_STAGE: finalize
+        run: node --max-old-space-size=12288 "$RUNNER_TEMP/tiles3d/build-tiles3d.mjs"
+      # The records the next build starts from (also after a failed publish: the tiles built are stored and kept), then
+      # the ones this build started from are dropped once the new ones are listed (≈1.4 GB each; the cache holds 10 GB).
+      - name: Keep the tile records
+        id: save
+        if: always() && steps.finalize.outcome != 'skipped'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/tiles3d-records
+          key: tiles3d-records-${{ github.event.inputs.item || github.event.inputs.urn }}-${{ contains(github.event.inputs.diag_options, 'svf=1') && 'svf' || 'plain' }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Drop the records this build started from
+        if: always() && steps.save.outcome == 'success' && needs.tiles3d-plan.outputs.records != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OLD: ${{ needs.tiles3d-plan.outputs.records }}
+          NEW: tiles3d-records-${{ github.event.inputs.item || github.event.inputs.urn }}-${{ contains(github.event.inputs.diag_options, 'svf=1') && 'svf' || 'plain' }}-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          if gh cache list --repo "$GITHUB_REPOSITORY" --key "$NEW" --json key --jq '.[].key' | grep -qxF "$NEW"; then
+            gh cache delete "$OLD" --repo "$GITHUB_REPOSITORY"
+          else
+            echo "The new records are not listed; keeping $OLD"
+          fi
+      # The run's artifacts (plan, parts and their sealed records) once it has published: this repository is public.
+      - name: Delete this run's artifacts
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" --jq '.artifacts[] | select(.name | startswith("tiles3d-")) | .id' |
+            while read -r id; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/artifacts/$id"; done
+  # Approved one-off storage cleanup (scripts/r2-cleanup.mjs): dry run unless diag_options has apply=1.
+  r2-cleanup:
+    if: github.event.inputs.diag_only == 'r2-cleanup'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prepare cleanup runtime
+        run: |
+          mkdir -p "$RUNNER_TEMP/cleanup"
+          cp scripts/r2-cleanup.mjs "$RUNNER_TEMP/cleanup/"
+          npm install --prefix "$RUNNER_TEMP/cleanup" --ignore-scripts --no-audit --no-fund @aws-sdk/client-s3@3
+      - name: Plan or apply the cleanup
+        env:
+          DIAG_OPTIONS: ${{ github.event.inputs.diag_options }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: node "$RUNNER_TEMP/cleanup/r2-cleanup.mjs"
+  # Read-only check of the 3D page with a cached model's real tiles and index (scripts/ui-check.mjs).
+  # Screenshots + results.json are published to refs/diag/ui-check and refs/diag/ui-check-<run number>
+  # (not branches; nothing deploys from them).
+  ui-check:
+    if: github.event.inputs.diag_only == 'ui-check'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: |
+          npm ci --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund @aws-sdk/client-s3@3 playwright-core
+          npx playwright-core install --with-deps chromium
+      - name: Check the 3D page with this model's data
+        env:
+          MODEL_CACHE_PREFIX: ${{ github.event.inputs.item }}
+          UI_OUT: ${{ runner.temp }}/ui-check
+          # SwiftShader draws nothing for xeokit data-texture (DTX) layers (picking still works): use VBO layers.
+          UI_NO_DTX: '1'
+          UI_OPTIONS: ${{ github.event.inputs.diag_options }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: node --expose-gc --max-old-space-size=6144 scripts/ui-check.mjs
+      - name: Publish results
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd "$RUNNER_TEMP/ui-check" || exit 0
+          git init -q
+          git add -A
+          git -c user.name=ui-check -c user.email=ui-check@users.noreply.github.com commit -qm "UI check run ${{ github.run_number }}"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:refs/diag/ui-check HEAD:refs/diag/ui-check-${{ github.run_number }}
   convert:
+    if: github.event.inputs.diag_only != 'compact-xkt' && github.event.inputs.diag_only != 'motion-cache' && github.event.inputs.diag_only != 'lod-cache' && github.event.inputs.diag_only != 'meta-index' && github.event.inputs.diag_only != 'ui-check' && github.event.inputs.diag_only != 'entity-alias' && github.event.inputs.diag_only != 'tiles3d' && github.event.inputs.diag_only != 'r2-cleanup'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -35,26 +508,189 @@ jobs:
         with:
           node-version: 22
 
-      - name: Install converter deps
-        run: npm install --no-save svf-utils@8 @supabase/supabase-js@2 @aps_sdk/authentication @aps_sdk/model-derivative adm-zip meshoptimizer
+      # ===== 자체 DWG 파이프라인 검증(SVF 미경유): DWG→DXF→진단 =====
+      - name: (DXF) 원본 DWG 다운로드
+        if: github.event.inputs.dxf_test == '1'
+        env:
+          APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
+          APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
+          PROJECT: ${{ github.event.inputs.project }}
+          ITEM: ${{ github.event.inputs.item }}
+        run: node scripts/fetchDwg.mjs
 
-      - name: Convert SVF → GLB → upload
+      - name: (DXF) LibreDWG 설치 + DWG→DXF
+        if: github.event.inputs.dxf_test == '1'
+        continue-on-error: true
+        run: |
+          set -x
+          sudo apt-get update -qq
+          if sudo apt-get install -y libredwg-tools 2>/dev/null && command -v dwg2dxf; then
+            echo "apt libredwg-tools OK"
+          else
+            echo "apt 실패 → 소스 빌드"
+            sudo apt-get install -y git build-essential libtool automake autoconf pkg-config texinfo || true
+            git clone --depth 1 https://github.com/LibreDWG/libredwg.git /tmp/libredwg
+            cd /tmp/libredwg && sh autogen.sh && ./configure --disable-bindings --disable-docs && make -j"$(nproc)"
+            cd "$GITHUB_WORKSPACE"
+          fi
+          # dwg2dxf 는 libtool 래퍼 → 빌드 폴더 내(.libs 옆)에서 실행해야 동작.
+          DWG2DXF=$(command -v dwg2dxf || echo /tmp/libredwg/programs/dwg2dxf)
+          echo "using $DWG2DXF"
+          "$DWG2DXF" --version 2>&1 | head -3 || true
+          # 174MB AutoCAD2018 파일 — 변환 로그를 남긴다(마지막 40줄).
+          "$DWG2DXF" -y -o out/original.dxf out/original.dwg 2>dxf_err.log || "$DWG2DXF" out/original.dwg out/original.dxf 2>dxf_err.log || echo "변환 실패"
+          echo "--- dwg2dxf stderr(마지막 40줄) ---"; tail -40 dxf_err.log || true
+          ls -la out/ || true
+
+      - name: (DXF) 내용 진단
+        if: github.event.inputs.dxf_test == '1'
+        continue-on-error: true
+        run: |
+          npm install --no-save dxf-parser
+          node scripts/dxfInspect.mjs out/original.dxf || echo "진단 실패"
+
+      # (선택) 진짜 Civil3D 지표면 — LandXML 을 ACC 에서 받아 dxfToGlb 가 병합(DXF_LANDXML).
+      - name: (DXF) 지표면 LandXML 다운로드(선택)
+        if: github.event.inputs.dxf_test == '1' && github.event.inputs.landxml_item != ''
+        continue-on-error: true
+        env:
+          APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
+          APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
+          LANDXML_PROJECT: ${{ github.event.inputs.landxml_project }}
+          LANDXML_ITEM: ${{ github.event.inputs.landxml_item }}
+        run: node scripts/fetchLandxml.mjs
+
+      - name: (DXF) DXF → GLB
+        if: github.event.inputs.dxf_test == '1'
+        continue-on-error: true
         env:
           NODE_OPTIONS: '--max-old-space-size=6144'
+          # 있으면 진짜 Civil3D 지표면(TIN)을 병합. 없으면 조용히 선형만.
+          DXF_LANDXML: out/surface.xml
+        run: |
+          # 문자(TEXT/MTEXT) 한글 렌더용 아웃라인 폰트 + opentype.js.
+          sudo apt-get install -y fonts-nanum fonts-noto-cjk >/dev/null 2>&1 || true
+          npm install --no-save opentype.js >/dev/null 2>&1 || true
+          node scripts/dxfToGlb.mjs out/original.dxf out/model.glb
+
+      - name: (DXF) 헤드리스 렌더 확인(render_test 일 때만)
+        if: github.event.inputs.dxf_test == '1' && github.event.inputs.render_test == '1'
+        continue-on-error: true
+        run: |
+          npm install --no-save @xeokit/xeokit-sdk@2 playwright-core pngjs
+          npx playwright install --with-deps chromium
+          node scripts/renderDiag.mjs out/model.glb
+
+      - name: (DXF) GLB → R2 업로드(앱이 로드) · 실패 시 마커
+        if: always() && github.event.inputs.dxf_test == '1'
+        env:
+          URN: ${{ github.event.inputs.urn }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          npm install --no-save @aws-sdk/client-s3@3
+          node scripts/uploadDxfGlb.mjs
+
+      # 변환 결과(DXF·GLB)는 아티팩트로 올리지 않음: 공개 저장소라 GitHub 로그인한 누구나 받을 수 있음(2026-10-26 사용자 결정, 기존 것 삭제).
+
+      # ===== 기존 SVF→GLB 경로(dxf_test 아닐 때만) =====
+      - name: Install converter deps
+        if: github.event.inputs.dxf_test != '1'
+        run: npm install --no-save svf-utils@8 @supabase/supabase-js@2 @aps_sdk/authentication @aps_sdk/model-derivative adm-zip meshoptimizer gltf-pipeline@4 @aws-sdk/client-s3@3 @xeokit/xeokit-convert@1 @loaders.gl/polyfills@4.3.4 sharp@0.35.4
+
+      - name: Convert SVF → GLB → upload
+        if: github.event.inputs.dxf_test != '1'
+        env:
+          # 통합 NWD(2억+ 삼각형)까지 견디게 힙 상향(러너 RAM 16GB). 전역 삼각형 예산
+          # (mergeGlb MERGE_TRI_BUDGET, 기본 1천만)이 실제 메모리를 눌러주는 주 장치.
+          NODE_OPTIONS: '--max-old-space-size=12288'
           APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
           APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
           PROJECT_ID: ${{ github.event.inputs.project_id }}
           URN: ${{ github.event.inputs.urn }}
           APS_REGION: ${{ github.event.inputs.region }}
+          INCLUDE_LINES: ${{ github.event.inputs.include_lines }}
+          RENDER_TEST: ${{ github.event.inputs.render_test }}
+          XKT_UV_FLIP: ${{ github.event.inputs.uv_flip }}
+          XKT_UV_MODE: ${{ github.event.inputs.uv_mode }}
+          XKT_MOTION_LOD: ${{ github.event.inputs.motion_lod }}
+          XKT_TILES: ${{ github.event.inputs.tiles }}
+          XKT_TILE_M: ${{ github.event.inputs.tile_m }}
+          XKT_DIAG_ONLY: ${{ github.event.inputs.diag_only }}
+          XKT_INSTANCE: ${{ github.event.inputs.instance }}
+          XKT_INST_MIN: ${{ github.event.inputs.inst_min }}
+          XKT_TILE_CAP: ${{ github.event.inputs.tile_cap }}
+          XKT_INST_BYTES: ${{ github.event.inputs.inst_bytes }}
+          XKT_LOD_CELL: ${{ github.event.inputs.lod_cell }}
         run: node scripts/convert4d.mjs
 
-      - name: Upload glb as workflow artifact (백업)
-        if: always()
+      # Viewer model tree / properties / search for the model just converted. Not fatal: the model opens without it.
+      - name: Model tree and property index
+        if: success() && github.event.inputs.dxf_test != '1' && github.event.inputs.tiles == '1' && github.event.inputs.urn != ''
         continue-on-error: true
-        uses: actions/upload-artifact@v4
-        with:
-          name: model-glb
-          path: out/model.glb
-          if-no-files-found: ignore
+        env:
+          URN: ${{ github.event.inputs.urn }}
+          APS_REGION: ${{ github.event.inputs.region }}
+          APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
+          APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: node --max-old-space-size=6144 scripts/build-meta-index.mjs
+      - name: Renamed-fragment table (selection of multi-fragment objects)
+        if: success() && github.event.inputs.dxf_test != '1' && github.event.inputs.tiles == '1' && github.event.inputs.urn != ''
+        continue-on-error: true
+        env:
+          URN: ${{ github.event.inputs.urn }}
+          APS_REGION: ${{ github.event.inputs.region }}
+          APS_CLIENT_ID: ${{ secrets.APS_CLIENT_ID }}
+          APS_CLIENT_SECRET: ${{ secrets.APS_CLIENT_SECRET }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: node --max-old-space-size=6144 scripts/build-entity-alias.mjs
+
+      - name: Headless xeokit 렌더 진단 (LOD1 오블리크 · base64 PNG 로그)
+        if: github.event.inputs.render_test == 'lod'
+        continue-on-error: true
+        env:
+          PW_OBLIQUE: '1'
+        run: |
+          npm install --no-save @xeokit/xeokit-sdk@2 playwright-core pngjs
+          npx playwright install --with-deps chromium
+          # XKT 경로는 out/xkt/lod1.glb(개요)를 렌더(RENDER_TEST 시 삭제 안 함). 없으면 model.glb.
+          if [ -f out/xkt/lod1.glb ]; then node scripts/renderDiag.mjs out/xkt/lod1.glb; else node scripts/renderDiag.mjs out/model.glb; fi
+
+      - name: Headless xeokit 텍스처 렌더 검증 (c0 청크 · 지형 항공사진 · top-down)
+        if: github.event.inputs.render_test == '1'
+        continue-on-error: true
+        env:
+          PW_NO_FOCUS: '1'
+          # 대용량 텍스처 청크는 소프트웨어 GL 에서 Basis 트랜스코딩·렌더가 느리다 → 넉넉히 대기.
+          PW_SETTLE_MS: '9000'
+          PW_WAIT_MS: '150000'
+          PW_SHOT_MS: '180000'
+          PW_OW: '820'
+        run: |
+          # 렌더 의존성(LOD 스텝을 건너뛰므로 여기서 설치).
+          npm install --no-save @xeokit/xeokit-sdk@2 playwright-core pngjs
+          npx playwright install --with-deps chromium
+          # 첫 청크 c0.xkt(지형 텍스처 프래그)를 앱과 동일한 KTX2 트랜스코더(self-host /basis/)로
+          # 렌더 → 항공사진이 실제로 디코드/맵핑되면 회색이 아닌 갈색·녹색 등 다채색이 나온다.
+          # 사용자가 본 것과 같은 '비스듬(oblique)' 시점으로 타일 경계선(seam)을 재현/확인한다.
+          if [ -f out/xkt/c0.xkt ]; then \
+            echo '=== c0 oblique 전체(사용자 시점) ==='; PW_OBLIQUE=1 PW_ZOOM=1 node scripts/renderDiag.mjs out/xkt/c0.xkt; \
+            echo '=== c0 oblique 확대(타일 경계) ==='; PW_OBLIQUE=1 PW_ZOOM=0.35 node scripts/renderDiag.mjs out/xkt/c0.xkt; \
+            echo '=== c0 top-down 확대 ==='; PW_ZOOM=0.16 node scripts/renderDiag.mjs out/xkt/c0.xkt; \
+          else echo "c0.xkt 없음 — 텍스처 렌더 검증 건너뜀"; fi
+

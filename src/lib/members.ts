@@ -20,7 +20,7 @@ export function memberLabel(m: ProjectMember): string {
 export async function listProjectMembers(projectId: string): Promise<ProjectMember[]> {
   // 0034(company/duty) 미적용 환경에서도 동작하도록 폴백.
   type MemberOrgRow = { user_id: string; company?: string | null; duty?: string | null };
-  let rows: MemberOrgRow[] = [];
+  let rows: MemberOrgRow[];
   const withOrg = await supabase
     .from('project_members')
     .select('user_id, company, duty')

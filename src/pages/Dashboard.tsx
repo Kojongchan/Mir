@@ -14,6 +14,7 @@ import {
 import { errMessage } from '../lib/errors';
 import { useProjectRole } from '../auth/useProjectRole';
 import { EmptyState } from '../components/EmptyState';
+import { TOOLTIP_ITEM, TOOLTIP_LABEL, TOOLTIP_STYLE } from '../components/TrendChart';
 import { Icon } from '../components/icons/Icon';
 import { countOpenIssues } from '../lib/issues';
 import {
@@ -38,16 +39,6 @@ import {
   type ProjectInfo,
 } from '../lib/dashboard';
 
-// Recharts 툴팁 — 토큰 기반(라이트/다크 자동). 텍스트는 ink 토큰, 마크만 계열색.
-const TOOLTIP_STYLE = {
-  background: 'var(--color-bg-elevated)',
-  border: '1px solid var(--color-border-default)',
-  borderRadius: '8px',
-  fontSize: '12px',
-  boxShadow: 'var(--shadow-md)',
-};
-const TOOLTIP_LABEL = { color: 'var(--color-text-secondary)' };
-const TOOLTIP_ITEM = { color: 'var(--color-text-primary)' };
 
 /** D-day 임박도 → KPI 컬러 시맨틱 클래스(DESIGN_SYSTEM §6.3):
  *  D-30 이하 위험 · D-31~180 주의 · 그 외 안전 · 경과(D+)는 기본. */
@@ -178,7 +169,7 @@ export function Dashboard() {
 
   // chronological series for charts (lists come newest-first)
   const logsAsc = [...logs].reverse();
-  const progress = info ? Number(info.progress_pct) : 0;
+  const progress = (info && Number(info.progress_pct)) || 0;
   const sinceStart = daysSince(info?.start_date ?? null);
   const latest = logs[0];
   const manpowerData = logsAsc.map((l) => ({ d: l.log_date.slice(5), 인력: l.manpower }));

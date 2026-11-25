@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
-import { listProjects, type Project } from '../lib/api';
+import { getProjectViewer, listProjects, setProjectViewer, type Project, type ViewerEngine } from '../lib/api';
 import { PROJECT_MENUS, getProjectMenus, setProjectMenus } from '../lib/projectMenus';
 import { ThemeToggle } from '../components/ThemeToggle';
 import { BrandLogo } from '../components/BrandLogo';
@@ -234,12 +234,17 @@ function ProjectMenuEditor({
   fail,
 }: TabProps & { project: Project; onClose: () => void }) {
   const [on, setOn] = useState<Set<string> | null>(null);
+  // 통합모델(3D) 뷰어(0043): 저장된 값과 고른 값.
+  const [viewer, setViewer] = useState<{ saved: ViewerEngine; picked: ViewerEngine } | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let alive = true;
     void getProjectMenus(project.id).then((enabled) => {
       if (alive) setOn(new Set(enabled ?? PROJECT_MENUS.map((m) => m.key)));
+    });
+    void getProjectViewer(project.id).then((engine) => {
+      if (alive) setViewer({ saved: engine, picked: engine });
     });
     return () => {
       alive = false;
@@ -259,7 +264,8 @@ function ProjectMenuEditor({
     setBusy(true);
     try {
       await setProjectMenus(project.id, [...on]);
-      flash(`"${project.name}" 메뉴를 저장했습니다.`);
+      if (viewer && viewer.picked !== viewer.saved) await setProjectViewer(project.id, viewer.picked);
+      flash(`"${project.name}" 메뉴·3D 뷰어를 저장했습니다.`);
       onClose();
     } catch (e) {
       fail(e);
@@ -282,6 +288,19 @@ function ProjectMenuEditor({
             {m.label}
           </label>
         ))}
+      </div>
+      <div className="admin-viewer-pick" role="radiogroup" aria-label="통합모델(3D) 뷰어">
+        <strong>통합모델(3D) 뷰어</strong>
+        <label className="admin-menu-check">
+          <input type="radio" name={`viewer-${project.id}`} checked={viewer?.picked !== 'aps'} disabled={!viewer}
+            onChange={() => setViewer((v) => (v ? { ...v, picked: 'mir' } : v))} />
+          자체 엔진 (기본 · 자체 엔진 타일이 없는 모델은 기존 뷰어로 대신 엶)
+        </label>
+        <label className="admin-menu-check">
+          <input type="radio" name={`viewer-${project.id}`} checked={viewer?.picked === 'aps'} disabled={!viewer}
+            onChange={() => setViewer((v) => (v ? { ...v, picked: 'aps' } : v))} />
+          기존 Autodesk(APS) 뷰어
+        </label>
       </div>
       <div className="admin-form-row">
         <button onClick={() => setOn(new Set(PROJECT_MENUS.map((m) => m.key)))} disabled={busy}>전체 켜기</button>

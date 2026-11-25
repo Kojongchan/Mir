@@ -1,0 +1,77 @@
+/**
+ * Device tiers of the second viewer (docs/3D뷰_2차_엔진.md): every device draws within its own budget.
+ *  errorTarget  screen-space error (px) before a finer level loads — larger = coarser, lighter
+ *  maxBytes     loaded tile content kept in memory (LRU; unused tiles go first above minBytes)
+ *  pixelRatio   cap on the device pixel ratio (fill cost grows with its square)
+ *  parseJobs / downloadJobs  concurrent tile parses / downloads (parsing runs on the main thread; tiles come from two
+ *               host names, 6 HTTP/1.1 connections each, and loading is bound by request latency)
+ *  prefetchMB   tiles around a resting view fetched ahead into the browser's tile cache per opened model (prefetch.ts);
+ *               0 on phones and tablets (mobile data)
+ */
+export type DeviceTier = 'high' | 'pc' | 'mobile';
+export type DeviceProfile = { tier: DeviceTier; label: string; errorTarget: number; maxBytes: number; minBytes: number;
+  pixelRatio: number; parseJobs: number; downloadJobs: number; prefetchMB: number };
+
+const MB = 1048576;
+// Screen errors from the quality sweeps (ui-check runs 189 → 197; tiles with copies of the original at 1 / 0.3 / 0.1 m,
+// borders locked so seams do not crack): at 3 px a 120 m view looks like the original (3.1 M triangles; 15 M before
+// the copies) and no measured view drew more than 6.1 M triangles or needed more than 190 MB; at 6 px at most 3.1 M,
+// but from about 1 km the 3–9 m levels look blocky. Phones and tablets (runs 198 / 199, 390 × 844 and 820 × 1180): a
+// phone's view is shorter, so from 20 down to 6 px a 400 m view stays on the 3 m level (patchy slopes, decks missing);
+// at 4 px the 1 m copies load and the objects are whole — at most 2.7 M triangles and 131 MB in view on both, about
+// what 현장 PC draws at 6 px (3.1 M). Finer than 4 px adds nothing on a tablet (the near views are already the original).
+export const PROFILES: Record<DeviceTier, DeviceProfile> = {
+  high: { tier: 'high', label: '고성능 PC', errorTarget: 3, maxBytes: 1024 * MB, minBytes: 768 * MB, pixelRatio: 2, parseJobs: 4, downloadJobs: 12, prefetchMB: 400 },
+  pc: { tier: 'pc', label: '현장 PC', errorTarget: 6, maxBytes: 384 * MB, minBytes: 256 * MB, pixelRatio: 1.25, parseJobs: 2, downloadJobs: 12, prefetchMB: 250 },
+  mobile: { tier: 'mobile', label: '모바일·태블릿', errorTarget: 4, maxBytes: 256 * MB, minBytes: 160 * MB, pixelRatio: 1.5, parseJobs: 1, downloadJobs: 8, prefetchMB: 0 },
+};
+
+/**
+ * Picture quality over the device tier: a smaller screen error (finer levels load from farther away) with a larger
+ * memory budget so they stay loaded. 「표준」 is the tier's own values.
+ */
+export type Quality = 'standard' | 'fine' | 'best';
+export const QUALITIES: Record<Quality, { label: string; error: number; memory: number }> = {
+  standard: { label: '표준', error: 1, memory: 1 },
+  fine: { label: '선명', error: 0.5, memory: 1.5 },
+  best: { label: '최고', error: 0.25, memory: 2 },
+};
+/** Cache ceiling per tier (MB) at any quality: a browser tab is stopped long before the device runs out of memory. */
+const CEILING_MB: Record<DeviceTier, number> = { high: 2048, pc: 768, mobile: 384 };
+
+/** Screen error (px) and cache budget (MB) of a tier at a quality. */
+export function detailOf(profile: DeviceProfile, quality: Quality): { errorTarget: number; cacheMB: number } {
+  const q = QUALITIES[quality];
+  return { errorTarget: profile.errorTarget * q.error, cacheMB: Math.min(Math.round((profile.maxBytes / MB) * q.memory), CEILING_MB[profile.tier]) };
+}
+
+const rendererName =(gl: WebGLRenderingContext | WebGL2RenderingContext | null) => {
+  try {
+    const info = gl?.getExtension('WEBGL_debug_renderer_info');
+    return String(gl?.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER) ?? '');
+  } catch { return ''; }
+};
+const isSoftware = (name: string) => /swiftshader|llvmpipe|basic render|software/i.test(name);
+
+/** Best guess from the browser: touch devices are mobile; a discrete GPU with ≥ 8 GB is high; the rest pc. */
+export function detectTier(gl: WebGLRenderingContext | WebGL2RenderingContext | null, nav: Navigator = navigator): DeviceTier {
+  const ua = nav.userAgent;
+  const touchMac = /Macintosh/.test(ua) && (nav.maxTouchPoints ?? 0) > 1; // iPadOS reports a desktop Safari
+  if (/Android|iPhone|iPad|iPod|Mobile/i.test(ua) || touchMac) return 'mobile';
+  const renderer = rendererName(gl);
+  const memory = (nav as Navigator & { deviceMemory?: number }).deviceMemory ?? 8;
+  const discrete = /nvidia|geforce|rtx|gtx|quadro|radeon rx|radeon pro|apple m\d/i.test(renderer);
+  return !isSoftware(renderer) && discrete && memory >= 8 ? 'high' : 'pc';
+}
+
+/**
+ * Before the viewer's own context exists: the tier, and whether edge smoothing (MSAA) is worth it — on PCs with a
+ * real GPU; not on phones (fill rate) or software rendering (every sample costs CPU).
+ */
+export function probeDevice(): { tier: DeviceTier; antialias: boolean } {
+  const probe = document.createElement('canvas').getContext('webgl2');
+  const tier = detectTier(probe);
+  const software = isSoftware(rendererName(probe));
+  probe?.getExtension('WEBGL_lose_context')?.loseContext();
+  return { tier, antialias: tier !== 'mobile' && !software };
+}

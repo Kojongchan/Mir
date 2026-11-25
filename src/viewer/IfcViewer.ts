@@ -1238,7 +1238,7 @@ export class IfcViewer {
    */
   getLengthUnitToMeters(modelID: number): number | null {
     if (this.lengthScaleCache.has(modelID)) return this.lengthScaleCache.get(modelID) ?? null;
-    let scale: number | null = null;
+    let scale: number | null;
     try {
       scale = this.readSiLengthScale(modelID) ?? this.readConversionLengthScale(modelID);
     } catch {

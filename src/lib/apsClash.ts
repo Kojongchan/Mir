@@ -78,7 +78,7 @@ function enumGeomTriangles(
   onTri: (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3) => void,
 ): void {
   let getV: (i: number, out: THREE.Vector3) => void;
-  let vcount = 0;
+  let vcount: number;
 
   if (geom.vb && geom.vbstride) {
     const vb = geom.vb as Float32Array;

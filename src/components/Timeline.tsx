@@ -605,7 +605,7 @@ export function Timeline({ viewer, projectId, modelIdMap, apsMode = null, onOpen
             <span className="spacer" />
             <span className="tl-date">{formatDate(currentTime)}</span>
             <span className="muted">
-              D{curDay}/{totalDays} · {source}
+              {Number.isFinite(curDay) && Number.isFinite(totalDays) ? `D${curDay}/${totalDays}` : 'D—'} · {source}
             </span>
           </>
         )}

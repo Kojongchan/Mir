@@ -1,0 +1,1961 @@
+import { motionPairMatches, canUseOverview, needsDetail } from '../viewer/MotionTile';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useParams } from 'react-router-dom';
+import { Viewer, GLTFLoaderPlugin, XKTLoaderPlugin, NavCubePlugin } from '@xeokit/xeokit-sdk';
+import * as XeokitSDK from '@xeokit/xeokit-sdk';
+// KTX2TextureTranscoder 는 런타임엔 export 되지만 .d.ts 에 누락 → 네임스페이스에서 가져온다.
+// 생성자는 단일 옵션객체 { viewer, transcoderPath, workerLimit } 를 받는다(위치인자 아님).
+const KTX2TextureTranscoder = (XeokitSDK as unknown as { KTX2TextureTranscoder: new (cfg: { viewer: unknown; transcoderPath?: string; workerLimit?: number }) => unknown }).KTX2TextureTranscoder;
+import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
+import { useProjectRole } from '../auth/useProjectRole';
+import { supabase } from '../lib/supabase';
+import { isAccModel } from '../lib/aps';
+import { UiIcon } from '../components/icons/UiIcon';
+import { errMessage, readApiJson } from '../lib/errors';
+import { TileStream } from '../viewer/TileStream';
+import { readBounded } from '../viewer/readBounded';
+import { NavigationLoadGate } from '../viewer/NavigationLoadGate';
+import { ModelLoadQueue } from '../viewer/ModelLoadQueue';
+import { NavigationResolution } from '../viewer/NavigationResolution';
+import { NavigationQuality } from '../viewer/NavigationQuality';
+import { keepViewerPresent } from '../viewer/ViewerPresence';
+import { rankTileRegion, regionNeedsRefresh, safeDollyFactor } from '../viewer/TileRegion';
+import { inTileView, prioritizeTileView, prioritizeCameraView, viewPlanes } from '../viewer/TileView';
+import { ByteCache } from '../viewer/ByteCache';
+import { useEscapeKey } from '../lib/useEscapeKey';
+import { ObjectIndex, SELECT_COLOR, applyStates, updateFlag, type AliasTable } from '../viewer/ObjectIndex';
+import { ModelTree, type TreeData } from '../viewer/ModelTree';
+import { ModelTreePanel } from '../components/model/ModelTreePanel';
+import { PropertyPanel, type ObjectProps } from '../components/model/PropertyPanel';
+
+/** 변환기가 구운 카메라 초점 박스(회전 전 실좌표). 이상치 제외한 중심/반경. */
+type Focus = { center: [number, number, number]; half: [number, number, number] };
+
+/**
+ * 클릭한 '표면 지점'(worldPos)으로 카메라를 당긴다 — 병합 메시라 엔티티 AABB 로 flyTo 하면
+ * 전체(20km)를 맞춰(=전체맞춤처럼) 확대가 안 되던 문제 해결. 시선 방향은 유지하고 그 지점을
+ * 새 look 으로, eye 는 현재 거리의 factor 배(기본 35%=매번 65% 접근)로 당긴다. 반복 클릭 시
+ * 점점 가까워짐. minDist 로 과접근(면 뚫기) 방지.
+ */
+function flyToWorldPoint(
+  viewer: Viewer,
+  worldPos: number[],
+  factor = 0.35,
+  minDist = 2,
+): void {
+  const cam = viewer.camera;
+  const eye = cam.eye as number[];
+  const look = cam.look as number[];
+  let dx = look[0] - eye[0], dy = look[1] - eye[1], dz = look[2] - eye[2];
+  const len = Math.hypot(dx, dy, dz) || 1;
+  dx /= len; dy /= len; dz /= len;
+  const cur = Math.hypot(worldPos[0] - eye[0], worldPos[1] - eye[1], worldPos[2] - eye[2]);
+  const dist = Math.max(cur * factor, minDist);
+  const newEye = [worldPos[0] - dx * dist, worldPos[1] - dy * dist, worldPos[2] - dz * dist];
+  viewer.cameraFlight.flyTo({ eye: newEye, look: worldPos, up: cam.up, duration: 0.4 });
+}
+
+/**
+ * 카메라를 target 방향으로 '비율'만큼 당긴다(축척 무관). xeokit 기본 휠 줌은 절대속도(초당
+ * ~10 units)라 측량좌표(225km)에선 사실상 안 움직인다 → 현재 거리의 비율로 dolly. factor<1
+ * 이면 확대(target 쪽으로), >1 이면 축소. eye·look 을 함께 옮겨 target 이 화면 중앙으로.
+ */
+function dollyToward(viewer: Viewer, target: number[], factor: number): void {
+  const cam = viewer.camera;
+  const eye = [...(cam.eye as number[])];
+  const look = [...(cam.look as number[])];
+  const distance = Math.hypot(...eye.map((n, i) => n - look[i]));
+  const t = 1 - safeDollyFactor(distance, factor, cam.perspective.near); // 과접근 방지
+  cam.eye = [eye[0] + (target[0] - eye[0]) * t, eye[1] + (target[1] - eye[1]) * t, eye[2] + (target[2] - eye[2]) * t];
+  cam.look = [look[0] + (target[0] - look[0]) * t, look[1] + (target[1] - look[1]) * t, look[2] + (target[2] - look[2]) * t];
+}
+
+/**
+ * world AABB [xmin,ymin,zmin,xmax,ymax,zmax] 를 카메라로 맞춘다. 높이(dy)가 수평폭보다
+ * 훨씬 작은 '평평한 도면'(토목 DWG 지형·평면도)은 xeokit 기본 flyTo 가 비스듬히 잡아
+ * edge-on(옆에서) 으로 얇은 선만 보인다 → 위에서 내려다보는 평면도(top-down) 시점으로.
+ * 높이 있는 3D 모델은 기존대로 aabb fit(비스듬).
+ */
+/** Encoded-byte cap for resident structure tiles (not GPU memory). Measured on the 5공구 model:
+ * heap ≈ 560MB + 1.2 × encoded (559MB → 1.3GB, 1,655MB → 2.5GB), so 640MB keeps heap near 1.5GB.
+ * Downloads, not parsing, were the bottleneck (240s download vs 7.7s parse for 172 tiles at 2 slots);
+ * model construction stays serialized by ModelLoadQueue. */
+const LIGHT_TINT = [1, 0.55, 0.15];
+const LIGHT_BACKGROUND = [0.78, 0.84, 0.9];
+const FAR_TINT = [0.6, 0.4, 1];
+/** Far level simplification error (scripts/tile-lod-merge.mjs far profile errorMeters). */
+const FAR_ERROR_METERS = 0.25;
+/** Whole-site (far) level budget, separate from the near-camera structure cap. */
+const FAR_BUDGET = 512 * 1048576; // far v4: 318MB decoded for 717 tiles → ≈475MB for all 1,073
+/** Downloaded-file LRU (encoded bytes, JS heap) for revisits; on top of the structure cap. */
+const TILE_BYTE_CACHE = 128 * 1048576;
+// maxTiles was 120 while light files kept ~40 draw layers each; merged light files have 2–6, so the
+// byte cap (not the count) bounds the near-camera set again.
+const STRUCTURE_LIMITS = { maxTiles: 300, maxEncodedBytes: 640 * 1048576, concurrency: 4 };
+
+function flyToFramed(viewer: Viewer, box: number[]): void {
+  const dx = box[3] - box[0], dy = box[4] - box[1], dz = box[5] - box[2];
+  const horiz = Math.max(dx, dz);
+  const cx = (box[0] + box[3]) / 2, cy = (box[1] + box[4]) / 2, cz = (box[2] + box[5]) / 2;
+  if (dy < 0.25 * horiz) {
+    // 평면 도면 → 카메라를 '직접' top-down 으로 설정(flyTo 애니메이션보다 확실). 헤드리스
+    // xeokit 테스트로 이 방식이 지형 삼각망을 화면 가득 렌더함을 확인.
+    const d = horiz * 0.62;
+    viewer.camera.eye = [cx, cy + d, cz];
+    viewer.camera.look = [cx, cy, cz];
+    viewer.camera.up = [0, 0, -1];
+  } else {
+    viewer.cameraFlight.flyTo({ aabb: box });
+  }
+}
+
+/**
+ * focus(회전 전 실좌표)를 로드 회전 [-90,0,0]과 같은 축변환((x,y,z)→(x,z,-y))으로 돌려
+ * xeokit world AABB [xmin,ymin,zmin,xmax,ymax,zmax] 로 변환. 없으면 null.
+ */
+function focusToAabb(focus?: Focus): number[] | null {
+  if (!focus || !focus.center || !focus.half) return null;
+  const [cx, cy, cz] = focus.center;
+  const [hx, hy, hz] = focus.half;
+  // (x,y,z) → (x, z, -y):  center'=(cx, cz, -cy),  half'=(hx, hz, hy)
+  const wcx = cx, wcy = cz, wcz = -cy;
+  const whx = hx, why = hz, whz = hy;
+  return [wcx - whx, wcy - why, wcz - whz, wcx + whx, wcy + why, wcz + whz];
+}
+
+/**
+ * 3D뷰 (신규 테스트) — 엔진 xeokit(더블프리시전) + 서버 사전변환 GLB.
+ *
+ * 주 시나리오: **ACC(자료관리) 모델(rvt·nwd·dwg·ifc) 선택 → 서버 변환 → xeokit 로드**.
+ * 변환은 **이미 있는 검증된 파이프라인**(GitHub Actions: convert-4d.yml → SVF→GLB,
+ * 거대 모델 데시메이션·CI 다운로드 안정화 완료)을 재사용한다. 결과 GLB 는 Supabase
+ * `models4d` 공용 캐시에 저장 → 모델당 1회 변환, 이후 모든 사용자가 즉시 로드.
+ *
+ * 부가로 로컬 `.glb` 드롭도 지원(이미 변환된 산출물 눈확인용). 확정 전까지 main 미머지.
+ */
+export function ThreeDTest() {
+  const { projectId = '' } = useParams();
+  const { canEdit, canManage } = useProjectRole(projectId);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const navCubeRef = useRef<HTMLCanvasElement>(null);
+  const viewerRef = useRef<Viewer | null>(null);
+  const loaderRef = useRef<GLTFLoaderPlugin | null>(null);
+  const xktLoaderRef = useRef<XKTLoaderPlugin | null>(null);
+  const lodSubRef = useRef<string | null>(null); // 카메라 LOD 전환 리스너 핸들
+  const lodTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // 카메라 정지 감지 디바운스
+  const pickedRef = useRef<{ id?: string | number; worldPos?: number[] } | null>(null);
+  const streamCleanupRef = useRef<(() => void) | null>(null);
+  // Selection works on original objects (SVF dbId) across far/light/detail tiles; terrain or GLB
+  // entities (no dbId) are selected individually through rawSelectedRef.
+  const objectIndexRef = useRef(new ObjectIndex());
+  const objectStatesRef = useRef({ selected: new Set<string>(), highlighted: new Set<string>(), hidden: new Set<string>() });
+  const rawSelectedRef = useRef<string | null>(null);
+  // Model tree / property index (scripts/build-meta-index.mjs), when built for the open model.
+  type MetaInfo = { tree: string; shardSize: number; shardCount: number; objects?: number; alias?: string };
+  const metaRef = useRef<{ urn: string; shardSize: number; shardCount: number; shards: Map<number, Promise<Record<string, ObjectProps>>> } | null>(null);
+  const [modelTree, setModelTree] = useState<ModelTree | null>(null);
+  const [treeNote, setTreeNote] = useState('');
+  const [selectedDb, setSelectedDb] = useState<number | null>(null);
+  const [revealDb, setRevealDb] = useState<number | null>(null);
+  const [hiddenNodes, setHiddenNodes] = useState<ReadonlySet<number>>(new Set());
+  const [treeOpen, setTreeOpen] = useState(true);
+  const [propsOpen, setPropsOpen] = useState(true);
+  const refreshRegionRef = useRef<(() => void) | null>(null);
+  const reportRef = useRef<(() => unknown) | null>(null);
+  const coverageReportRef = useRef<(() => unknown) | null>(null);
+  const sampleExportRef = useRef<(() => Promise<void>) | null>(null);
+  const [sampleBusy, setSampleBusy] = useState(false);
+  const [inventoryBusy, setInventoryBusy] = useState(false);
+  const [storageBusy, setStorageBusy] = useState(false);
+  const [storageNotice, setStorageNotice] = useState('');
+  const [storagePoll, setStoragePoll] = useState(0);
+  const storageSince = useRef<string | null>(null);
+  const structureFitRef = useRef<(() => void) | null>(null);
+  // Debug: tint light (motion) tiles orange so they can be compared with original detail tiles.
+  const lightTintRef = useRef<((on: boolean) => void) | null>(null);
+  const lightTintOnRef = useRef(false);
+  const [lightTint, setLightTint] = useState(false);
+  const [terrainHidden, setTerrainHidden] = useState(false);
+  const [regionMode, setRegionMode] = useState(false);
+  const [coverageMode, setCoverageMode] = useState<'bounded' | 'complete' | 'paused'>('bounded');
+  const coverageActionRef = useRef<((mode: 'bounded' | 'complete' | 'paused') => void) | null>(null);
+  const [performanceText, setPerformanceText] = useState('');
+  const [status, setStatus] = useState('');
+  const [dbg, setDbg] = useState('');
+  const [texWarn, setTexWarn] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [modelName, setModelName] = useState<string | null>(null);
+  const [pick, setPick] = useState<{ id: string; dbId: string | null; name?: string; type?: string } | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [bgDark, setBgDark] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const glbInputRef = useRef<HTMLInputElement>(null);
+  const [lastFile, setLastFile] = useState<PickedAccFile | null>(null);
+  const [initializationError, setInitializationError] = useState(false);
+
+  const [motionJob, setMotionJob] = useState<string>('');
+  const [motionJobBusy, setMotionJobBusy] = useState(false);
+  const [motionSince, setMotionSince] = useState<string | null>(null);
+  const startMotionCache = async () => {
+    if (!lastFile?.accUrn || motionJobBusy) return;
+    setMotionJobBusy(true); setMotionJob('경량 파일 생성 요청 중…');
+    try {
+      const { data } = await supabase.auth.getSession();
+      const response = await fetch(`/api/r2-motion?projectId=${encodeURIComponent(projectId ?? '')}`, {
+        method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${data.session?.access_token ?? ''}` },
+        body: JSON.stringify({ urn: lastFile.accUrn }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '요청 실패');
+      setMotionSince(result.requestedAt || new Date().toISOString());
+      setMotionJob('경량 파일 생성 중 · 상태를 자동 확인합니다.');
+    } catch (error) { setMotionJob(errMessage(error)); }
+    finally { setMotionJobBusy(false); }
+  };
+  const checkMotionCache = async () => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const response = await fetch(`/api/r2-motion?projectId=${encodeURIComponent(projectId ?? '')}${motionSince ? '&since=' + encodeURIComponent(motionSince) : ''}`, {
+        headers: { authorization: `Bearer ${data.session?.access_token ?? ''}` },
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '상태 조회 실패');
+      if (['success', 'failed', 'idle'].includes(result.state)) setMotionSince(null);
+      setMotionJob(result.state === 'success' ? '경량 파일 생성 완료 · ACC에서 같은 모델을 다시 열어 적용하세요.' : result.state === 'failed' ? '경량 파일 생성 실패 · 기존 상세 모델은 유지됩니다.' : result.state === 'idle' ? '경량 생성 작업이 없습니다.' : '경량 파일 생성 진행 중');
+    } catch (error) { setMotionJob(errMessage(error)); }
+  };
+  useEffect(() => {
+    if (!motionSince) return;
+    const timer = setInterval(() => void checkMotionCache(), 5000);
+    return () => clearInterval(timer);
+    // The interval restarts whenever motionSince or projectId change, the only values checkMotionCache reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [motionSince, projectId]);
+  const startStorageCompaction = async () => {
+    setStorageBusy(true);
+    setStorageNotice('저장소 압축 작업을 연결하고 있습니다.');
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) throw new Error('로그인이 필요합니다.');
+      const r = await fetch(`/api/r2-compact?projectId=${encodeURIComponent(projectId)}`, {
+        method: 'POST', headers: { Authorization: `Bearer ${data.session.access_token}` },
+      });
+      const result = await readApiJson<{ error?: string; requestedAt?: string; startedAt?: string }>(r);
+      if (!r.ok) throw new Error(result.error ?? '압축 시작 실패');
+      storageSince.current = result.requestedAt ?? result.startedAt ?? null;
+      setStorageNotice('저장소 압축 작업이 접수되었습니다. 창을 닫아도 서버에서 계속 진행됩니다.');
+      setStoragePoll(n => n + 1);
+    } catch (e) { setStorageNotice(errMessage(e)); setStorageBusy(false); }
+  };
+
+  useEffect(() => {
+    if (!canManage) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!active || !data.session) return;
+        const headers = { Authorization: `Bearer ${data.session.access_token}` };
+        const since = storageSince.current ? `&since=${encodeURIComponent(storageSince.current)}` : '';
+        const r = await fetch(`/api/r2-compact?projectId=${encodeURIComponent(projectId)}${since}`, { headers });
+        const result = await r.json();
+        if (!active) return;
+        if (!r.ok) throw new Error(result.error ?? '상태 조회 실패');
+        const running = result.state === 'pending' || result.state === 'running';
+        setStorageBusy(running);
+        if (running) {
+          setStorageNotice('저장소 압축 진행 중 · 파일별 원본 일치를 검증하고 있습니다. 창을 닫아도 계속됩니다.');
+          timer = setTimeout(() => void poll(), 15000);
+        } else if (result.state === 'success') {
+          const audit = await fetch(`/api/r2-inventory?projectId=${encodeURIComponent(projectId)}`, { headers });
+          const report = await audit.json();
+          if (!active) return;
+          setStorageNotice(audit.ok
+            ? `압축 완료 · 현재 저장소 ${(report.totalBytes / 1e9).toFixed(3)}GB · 모델을 다시 열면 압축된 파일로 불러옵니다.`
+            : '압축 완료 · 현재 용량은 저장소 용량 점검으로 확인해 주세요.');
+        } else if (result.state === 'failed') {
+          setStorageNotice('압축 작업이 중단되었습니다. 저장소 용량 점검 결과로 진행 상태를 확인해 주세요.');
+        } else if (storageSince.current) setStorageNotice('작업 시작을 확인하지 못했습니다. 다시 실행하거나 연결 상태를 확인해 주세요.');
+      } catch (e) {
+        if (!active) return;
+        if (storageSince.current) {
+          setStorageNotice(`작업 상태 확인 재시도 중 · ${errMessage(e)}`);
+          timer = setTimeout(() => void poll(), 15000);
+        }
+      }
+    };
+    void poll();
+    return () => { active = false; clearTimeout(timer); };
+  }, [canManage, projectId, storagePoll]);
+
+  const downloadStorageInventory = async () => {
+    setInventoryBusy(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) throw new Error('로그인이 필요합니다.');
+      const response = await fetch(`/api/r2-inventory?projectId=${encodeURIComponent(projectId)}`, {
+        headers: { Authorization: `Bearer ${data.session.access_token}` },
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? '용량 조회 실패');
+      const url = URL.createObjectURL(new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' }));
+      const a = document.createElement('a'); a.href = url; a.download = 'r2-storage-audit.json'; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setStatus(`저장소 ${ (result.totalBytes / 1e9).toFixed(2) }GB · 무료 한도 목표 9.8GB · 점검 파일 저장 완료`);
+    } catch (error) { setStatus(`저장소 점검 실패: ${errMessage(error)}`); }
+    finally { setInventoryBusy(false); }
+  };
+
+
+  /** Select original objects (blue); `raw` selects one non-tile entity instead (terrain, GLB). */
+  const selectObjects = useCallback((dbIds: string[], raw: string | null = null) => {
+    const viewer = viewerRef.current;
+    const states = objectStatesRef.current;
+    const objects = (viewer?.scene.objects ?? {}) as unknown as Record<string, { colorize: number[] | null; visible: boolean }>;
+    const previous = states.selected;
+    states.selected = new Set(dbIds);
+    updateFlag(objectIndexRef.current, objects, 'selected', previous, states);
+    if (rawSelectedRef.current && objects[rawSelectedRef.current]) objects[rawSelectedRef.current].colorize = null;
+    rawSelectedRef.current = raw;
+    if (raw && objects[raw]) objects[raw].colorize = SELECT_COLOR;
+  }, []);
+  const selectObjectsRef = useRef(selectObjects);
+  /** Forget every object state (a new model is being opened). */
+  const resetObjects = useCallback(() => {
+    objectIndexRef.current.clear();
+    objectStatesRef.current = { selected: new Set(), highlighted: new Set(), hidden: new Set() };
+    rawSelectedRef.current = null;
+    metaRef.current = null;
+    setModelTree(null); setTreeNote(''); setSelectedDb(null); setRevealDb(null); setHiddenNodes(new Set());
+  }, []);
+
+  /** Load the open model's tree (properties are fetched per shard on demand). */
+  const loadModelIndex = useCallback(async (urn: string, meta: MetaInfo | undefined) => {
+    if (!meta) { setTreeNote('이 모델은 아직 모델 트리·속성 색인이 없습니다.'); return; }
+    metaRef.current = { urn, shardSize: meta.shardSize, shardCount: meta.shardCount, shards: new Map() };
+    setTreeNote('모델 트리 불러오는 중…');
+    // Fragments the converter renamed `entity-N` join their object once the table arrives (optional).
+    if (meta.alias) void fetch(meta.alias).then(r => (r.ok ? r.json() as Promise<AliasTable> : null)).then(table => {
+      if (!table || metaRef.current?.urn !== urn) return;
+      const changed = objectIndexRef.current.setAliases(table);
+      const objects = (viewerRef.current?.scene.objects ?? {}) as unknown as Record<string, { colorize: number[] | null; visible: boolean }>;
+      applyStates(objectIndexRef.current, objects, objectStatesRef.current, changed);
+    }).catch(() => { /* selection still works per fragment */ });
+    try {
+      const r = await fetch(meta.tree);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const tree = new ModelTree(await r.json() as TreeData);
+      if (metaRef.current?.urn !== urn) return;
+      setModelTree(tree); setTreeNote('');
+    } catch (e) { if (metaRef.current?.urn === urn) setTreeNote(`모델 트리를 불러오지 못했습니다: ${errMessage(e)}`); }
+  }, []);
+
+  const loadProps = useCallback(async (dbId: number): Promise<ObjectProps | null> => {
+    const meta = metaRef.current;
+    if (!meta) return null;
+    const k = Math.floor(dbId / meta.shardSize);
+    if (k < 0 || k >= meta.shardCount) return null;
+    let shard = meta.shards.get(k);
+    if (!shard) {
+      shard = (async () => {
+        const { data } = await supabase.auth.getSession();
+        const r = await fetch(`/api/aps-convert?urn=${encodeURIComponent(meta.urn)}&metaShard=${k}`,
+          { headers: { authorization: `Bearer ${data.session?.access_token ?? ''}` } });
+        const j = await readApiJson<{ url?: string; error?: string }>(r);
+        if (!r.ok || !j.url) throw new Error(j.error ?? '속성 조회 실패');
+        const res = await fetch(j.url);
+        if (res.status === 404) return {}; // no object in this range carries properties
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json() as Promise<Record<string, ObjectProps>>;
+      })();
+      meta.shards.set(k, shard);
+      shard.catch(() => meta.shards.delete(k));
+    }
+    return (await shard)[dbId] ?? null;
+  }, []);
+
+  /** Property-value search in a worker; the first search loads every shard (≈8 MB), later ones are instant. */
+  const searchWorkerRef = useRef<{ worker: Worker; seq: number; urls?: { key: string; at: number; list: Promise<string[]> };
+    pending: Map<number, {
+      query: string; key: string; onProgress: (done: number, total: number) => void;
+      resolve: (ids: number[]) => void; reject: (e: Error) => void;
+    }>; } | null>(null);
+  useEffect(() => () => { searchWorkerRef.current?.worker.terminate(); searchWorkerRef.current = null; }, []);
+  const searchValues = useCallback((query: string, onProgress: (done: number, total: number) => void) => {
+    const meta = metaRef.current;
+    if (!meta) return Promise.resolve([]);
+    let w = searchWorkerRef.current;
+    if (!w) {
+      const worker = new Worker(new URL('../viewer/propSearch.worker.ts', import.meta.url), { type: 'module' });
+      const state = { worker, seq: 0, pending: new Map() } as NonNullable<typeof searchWorkerRef.current>;
+      worker.onmessage = async (e: MessageEvent<{ type: string; seq?: number; ids?: number[]; done?: number; total?: number; message?: string }>) => {
+        const msg = e.data;
+        if (msg.type === 'progress') { for (const p of state.pending.values()) p.onProgress(msg.done ?? 0, msg.total ?? 0); return; }
+        const p = msg.seq === undefined ? undefined : state.pending.get(msg.seq);
+        if (!p) return;
+        if (msg.type === 'need-urls') {
+          try {
+            // Signed for 15 minutes; queries typed while the index loads share one request.
+            if (state.urls?.key !== p.key || Date.now() - state.urls.at > 10 * 60_000) {
+              const urls = (async () => {
+                const { data } = await supabase.auth.getSession();
+                const r = await fetch(`/api/aps-convert?urn=${encodeURIComponent(p.key)}&metaShards=all`,
+                  { headers: { authorization: `Bearer ${data.session?.access_token ?? ''}` } });
+                const j = await readApiJson<{ urls?: string[]; error?: string }>(r);
+                if (!r.ok || !j.urls) throw new Error(j.error ?? '속성 색인 조회 실패');
+                return j.urls;
+              })();
+              state.urls = { key: p.key, at: Date.now(), list: urls };
+              urls.catch(() => { if (state.urls?.list === urls) state.urls = undefined; });
+            }
+            worker.postMessage({ type: 'search', key: p.key, urls: await state.urls.list, query: p.query, seq: msg.seq });
+          } catch (err) { state.pending.delete(msg.seq!); p.reject(err as Error); }
+          return;
+        }
+        state.pending.delete(msg.seq!);
+        if (msg.type === 'result') p.resolve(msg.ids ?? []);
+        else p.reject(new Error(msg.message ?? '검색 실패'));
+      };
+      worker.onerror = e => {
+        for (const p of state.pending.values()) p.reject(new Error(e.message || '검색 작업자 오류'));
+        state.pending.clear();
+      };
+      searchWorkerRef.current = w = state;
+    }
+    const seq = ++w.seq;
+    return new Promise<number[]>((resolve, reject) => {
+      w!.pending.set(seq, { query, key: meta.urn, onProgress, resolve, reject });
+      w!.worker.postMessage({ type: 'search', key: meta.urn, query, seq });
+    });
+  }, []);
+
+  /** Frame loaded geometry of objects (real shapes before the far stand-in). False if none is loaded. */
+  const zoomToObjects = useCallback((dbIds: Iterable<string>) => {
+    const viewer = viewerRef.current;
+    if (!viewer) return false;
+    const objects = viewer.scene.objects as unknown as Record<string, { aabb: ArrayLike<number> } | undefined>;
+    const ids: string[] = [];
+    for (const db of dbIds) for (const id of objectIndexRef.current.entities(db)) ids.push(id);
+    const near = ids.filter(id => !id.includes('-far#'));
+    const boxes = (near.length ? near : ids).map(id => objects[id]?.aabb)
+      .filter((b): b is ArrayLike<number> => !!b && Array.from(b).every(Number.isFinite));
+    if (!boxes.length) return false;
+    const box = [0, 1, 2].map(i => Math.min(...boxes.map(b => b[i]))).concat([3, 4, 5].map(i => Math.max(...boxes.map(b => b[i]))));
+    viewer.cameraFlight.flyTo({ aabb: box, duration: 0.6 });
+    return true;
+  }, []);
+
+  /** Tree or search selection: the node and everything under it (a file selects all its objects). */
+  const selectNode = useCallback((id: number, zoom: boolean) => {
+    if (!modelTree) return;
+    const ids = modelTree.subtree(id).map(String);
+    selectObjects(ids);
+    setSelectedDb(id);
+    if (zoom && !zoomToObjects(ids)) setStatus('선택한 객체가 아직 화면에 로드되지 않았습니다. 원경이 다 로드되면 다시 시도해 주세요.');
+  }, [modelTree, selectObjects, zoomToObjects]);
+
+  const highlightObjects = useCallback((ids: number[] | null) => {
+    const viewer = viewerRef.current;
+    const states = objectStatesRef.current;
+    const next = new Set((ids ?? []).flatMap(id => modelTree ? modelTree.subtree(id) : [id]).map(String));
+    const previous = states.highlighted;
+    states.highlighted = next;
+    updateFlag(objectIndexRef.current, (viewer?.scene.objects ?? {}) as unknown as Record<string, { colorize: number[] | null; visible: boolean }>, 'highlighted', previous, states);
+  }, [modelTree]);
+
+  const zoomToNodes = useCallback((ids: number[]) => {
+    const all = modelTree ? ids.flatMap(id => modelTree.subtree(id)) : ids;
+    if (!zoomToObjects(all.map(String))) setStatus('검색된 객체가 아직 화면에 로드되지 않았습니다.');
+  }, [modelTree, zoomToObjects]);
+
+  /** Tree checkbox: hide/show a branch (applied to tiles loaded later too). */
+  const toggleNode = useCallback((id: number, visible: boolean) => {
+    if (!modelTree) return;
+    const next = new Set(hiddenNodes);
+    if (visible) for (const d of modelTree.subtree(id)) next.delete(d); else next.add(id);
+    const hiddenDb = new Set<string>();
+    for (const h of next) for (const d of modelTree.subtree(h)) hiddenDb.add(String(d));
+    const states = objectStatesRef.current;
+    const previous = states.hidden;
+    states.hidden = hiddenDb;
+    updateFlag(objectIndexRef.current, (viewerRef.current?.scene.objects ?? {}) as unknown as Record<string, { colorize: number[] | null; visible: boolean }>, 'hidden', previous, states);
+    setHiddenNodes(next);
+  }, [modelTree, hiddenNodes]);
+  /** Index a loaded tile model and give it the current selection/highlight/visibility. */
+  const trackModel = useCallback((model: { objects: Record<string, unknown>; on: (event: string, cb: () => void) => unknown }) => {
+    const ids = Object.keys(model.objects), index = objectIndexRef.current;
+    const changed = index.add(ids);
+    applyStates(index, model.objects as Record<string, { colorize: number[] | null; visible: boolean }>, objectStatesRef.current);
+    if (changed.length) applyStates(index, (viewerRef.current?.scene.objects ?? {}) as unknown as Record<string, { colorize: number[] | null; visible: boolean }>, objectStatesRef.current, changed);
+    model.on('destroyed', () => index.remove(ids));
+  }, []);
+
+  // xeokit Viewer 1회 생성/파기.
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    let viewer: Viewer;
+    try {
+      viewer = new Viewer({
+      canvasElement: canvasRef.current,
+      transparent: false,
+      antialias: false, // Avoid multisample framebuffer cost for dense integrated scenes.
+      // Sky tone, not white: where the terrain surface is cut (e.g. tunnel portals) the background shows
+      // through, and pure white read as a "white blob" of missing model.
+      backgroundColor: LIGHT_BACKGROUND,
+      // DTX(데이터텍스처) 모드 — 대용량 메시를 지오메트리 텍스처로 압축 저장해 GPU 메모리를
+      // 급감시킨다. 통합모델 XKT 는 2억+ 정점이라 VBO 로는 GPU 초과 → dtx 필수. (dtx 는 선/점
+      // 프리미티브는 안 그리지만, XKT(비-DWG)는 순수 메시라 무관. DWG 선형은 GLB+VBO 경로라
+      // 이 설정과 별개 — 필요 시 DWG 전용 뷰어 옵션은 후속.)
+      dtxEnabled: true,
+      // SAO(스크린스페이스 앰비언트 오클루전)는 매 프레임 전체화면 연산이라 3.6억 삼각형에선
+      // 정지 상태 렉의 주범 → 끈다(뷰잉 우선). 입체감은 노멀 음영으로도 충분. 필요 시 후속 토글.
+      saoEnabled: false,
+      // 로그 깊이버퍼 — 토목 DWG 는 측량좌표(예: X≈230km, 폭 20km)라 near/far 범위가
+      // 극단적이다. 이게 없으면 전체를 담으면 near 가 커져 가까이 못 가고(콩알), 가까이
+      // 맞추면 far 가 작아 잘린다. 로그버퍼로 km~m 스케일을 한 화면에서 오가게 한다.
+      logarithmicDepthBufferEnabled: true,
+      });
+    } catch (error) {
+      // A missing WebGL context must not unmount the entire project shell.
+      // Do not retry automatically or start a model conversion on this failure.
+      console.error('3D viewer initialization failed', error);
+      setInitializationError(true);
+      setStatus('3D 화면 초기화 실패 · 모델은 아직 불러오지 않았습니다.');
+      return;
+    }
+    // 감마 출력(sRGB) — 지형 항공사진 등 텍스처는 sRGB 인코딩인데, 이 값이 꺼져 있으면 xeokit 가
+    // 선형공간 그대로 표시해 중간톤이 검게 뭉갠다(지형이 검게 보이던 원인). 켜면 사진이 제 밝기로
+    // 보인다. 텍스처 없는 구조물/지오메트리도 sRGB 로 일관 표시(물리적으로 올바른 설정).
+    viewer.scene.gammaOutput = true;
+    // 밝기: 지형 항공사진(정사영상)은 조명·그림자가 이미 이미지에 구워져 있다. 뷰어 기본 조명은
+    // 방향광 위주라 그 위에 또 음영이 져서 Navisworks 대비 어둡게 보인다(사용자 지적). → 기본 조명을
+    // 교체: 전방위 균일광(ambient)을 크게 해 사진이 제 밝기로 나오게 하고, 방향광은 약하게(구조물
+    // 입체 음영만). 실패해도 렌더는 유지. 너무 밝/어두우면 intensity 만 조절.
+    try {
+      const Sdk = XeokitSDK as unknown as {
+        AmbientLight: new (scene: unknown, cfg: Record<string, unknown>) => unknown;
+        DirLight: new (scene: unknown, cfg: Record<string, unknown>) => unknown;
+      };
+      viewer.scene.clearLights();
+      new Sdk.AmbientLight(viewer.scene, { color: [1, 1, 1], intensity: 0.85 });
+      new Sdk.DirLight(viewer.scene, { dir: [0.3, -0.9, -0.4], color: [1, 1, 1], intensity: 0.5, space: 'world' });
+      new Sdk.DirLight(viewer.scene, { dir: [-0.5, -0.7, 0.5], color: [1, 1, 1], intensity: 0.3, space: 'world' });
+    } catch { /* 조명 조정 실패 무시 */ }
+    // 줌이 '커서 아래 지오메트리'로 다가가게(followPointer) — 거대 좌표 모델에서 화면
+    // 중앙 빈 공간으로 줌돼 대상에 못 닿던 문제 해결. smartPivot 으로 회전 피벗도 안정화.
+    // ACC(Autodesk) 뷰어처럼: 더블클릭한 표면으로 카메라가 날아가고(doublePickFlyTo),
+    // 우클릭 드래그로 팬. 이 조합으로 넓은 측량좌표 모델에서도 원하는 곳에 바로 접근.
+    viewer.cameraControl.navMode = 'orbit';
+    // followPointer=true 는 orbit 회전의 '피벗 시작' 조건(CameraControl 내부: 이게 false 면
+    // 좌드래그 회전이 아예 동작 안 함). smartPivot=false 로 두면 빈 곳 드래그 시 피벗이
+    // 20km 가상 구가 아니라 camera.look(=지오메트리) 이 되어 정상 회전한다.
+    viewer.cameraControl.followPointer = true;
+    viewer.cameraControl.smartPivot = false;
+    viewer.cameraControl.panRightClick = true;
+    // 내장 휠 줌은 절대속도라 측량좌표(225km)에선 안 움직인다 → 끄고(rate=0) 아래 커스텀
+    // 비율 휠로 대체. doublePickFlyTo(엔티티=전체 20km)도 끔.
+    viewer.cameraControl.doublePickFlyTo = false;
+    viewer.cameraControl.mouseWheelDollyRate = 0;
+    // 원거리 클리핑(far) 평면을 크게 — 이게 없으면(기본 far 작음) 17km 로 뻗은 지형 삼각망
+    // 등 카메라에서 먼 지오메트리가 far 너머로 잘려 통째로 안 보인다(헤드리스 xeokit 테스트로
+    // 확진: far 키우니 전부 렌더). 로그 깊이버퍼가 켜져 있어 near 작아도 z-파이팅 없다.
+    viewer.camera.perspective.near = 0.5;
+    viewer.camera.perspective.far = 1e7;
+    viewer.camera.ortho.near = 0.5;
+    viewer.camera.ortho.far = 1e7;
+    viewer.camera.eye = [15, 15, 15];
+    viewer.camera.look = [0, 0, 0];
+    viewer.camera.up = [0, 1, 0];
+    // Selection and search highlights recolour objects (src/viewer/ObjectIndex.ts) rather than using the
+    // emphasis materials, whose extra pass z-fights under the logarithmic depth buffer.
+    viewerRef.current = viewer;
+
+    // Keep geometry/material visibility unchanged. Restore resolution only after real inactivity;
+    // SDK FastNav subtracts the preceding frame's delta, which can expire in a slow moving frame.
+    const sceneCanvas = viewer.scene.canvas as unknown as { resolutionScale: number; canvas: HTMLCanvasElement; gl?: WebGLRenderingContext };
+    // A CPU (software) WebGL renderer makes every frame slow regardless of tiling; tell the user.
+    let glRenderer: string | null = null;
+    try {
+      const gl = sceneCanvas.gl, info = gl?.getExtension('WEBGL_debug_renderer_info');
+      glRenderer = gl ? String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER)) : null;
+    } catch { glRenderer = null; }
+    if (glRenderer && /basic render driver|swiftshader|llvmpipe|software/i.test(glRenderer)) {
+      setTexWarn(`그래픽카드 가속이 꺼져 있습니다(${glRenderer}). 크롬 설정 › 시스템 › "가능한 경우 그래픽 가속 사용"을 켜고 재시작하세요. chrome://gpu 에서 확인할 수 있습니다.`);
+    }
+    let lastMotion = -Infinity, lastFrame = 0, renderStart = 0;
+    const navigationResolution = new NavigationResolution(scale => { sceneCanvas.resolutionScale = scale; });
+    const quality = new NavigationQuality({
+      delayMs: 900,
+      enter: () => navigationResolution.begin(),
+      leave: () => { navigationResolution.end(); lastFrame = 0; },
+    });
+    const qualitySub = viewer.camera.on('matrix', () => quality.moved());
+    const pointerDown = () => quality.hold(true);
+    const pointerUp = () => quality.hold(false);
+    canvasRef.current.addEventListener('pointerdown', pointerDown);
+    // A drag that starts on empty sky orbits around the SDK's last clicked surface point (MousePickHandler
+    // _lastClickedWorldPos), which after navigating can be kilometres away or behind the camera: a 60 px drag
+    // then swung the eye ~650 m. Forget it before each press so a miss pivots about the view centre (look);
+    // a press on geometry still pivots about the picked point. Runs before the SDK's own mousedown listener.
+    const pickHandler = (viewer.cameraControl as unknown as { _handlers?: ({ _lastClickedWorldPos?: number[] | null } | undefined)[] })
+      ._handlers?.find(h => !!h && '_lastClickedWorldPos' in h);
+    const forgetPivot = (ev: MouseEvent) => { if (ev.button === 0 && pickHandler) pickHandler._lastClickedWorldPos = null; };
+    canvasRef.current.addEventListener('mousedown', forgetPivot, { capture: true });
+    window.addEventListener('pointerup', pointerUp);
+    window.addEventListener('pointercancel', pointerUp);
+    window.addEventListener('blur', pointerUp);
+    const stopPresence = keepViewerPresent(document, window,
+      'wakeLock' in navigator ? () => navigator.wakeLock.request('screen') : undefined,
+      () => viewer.scene.render(true));
+
+    // Bounded, local diagnostics. No URLs, credentials, object names or remote telemetry.
+    let navigationFrame = false;
+    const intervals: number[] = [], cpuTimes: number[] = [];
+    let longTasks = 0, longTaskMs = 0;
+    // Settled frames are re-renders without camera motion (e.g. after each tile load): their CPU
+    // submission time shows whether reload stalls come from drawing the resident scene itself.
+    const settledRender = { frames: 0, totalMs: 0, maxMs: 0, over50: 0 };
+    const motionSub = viewer.camera.on('matrix', () => { lastMotion = performance.now(); });
+    const renderingSub = viewer.scene.on('rendering', () => {
+      renderStart = performance.now();
+      navigationFrame = renderStart - lastMotion < 600;
+    });
+    const renderedSub = viewer.scene.on('rendered', () => {
+      const now = performance.now();
+      if (navigationFrame) {
+        if (lastFrame) { intervals.push(now - lastFrame); navigationResolution.sample(now - lastFrame); }
+        cpuTimes.push(now - renderStart);
+        if (intervals.length > 120) intervals.shift();
+        if (cpuTimes.length > 120) cpuTimes.shift();
+        lastFrame = now;
+      } else {
+        lastFrame = 0;
+        const ms = now - renderStart;
+        settledRender.frames++; settledRender.totalMs += ms; settledRender.maxMs = Math.max(settledRender.maxMs, ms);
+        if (ms > 50) settledRender.over50++;
+      }
+    });
+    const observer = typeof PerformanceObserver !== 'undefined' && PerformanceObserver.supportedEntryTypes?.includes('longtask')
+      ? new PerformanceObserver(list => { for (const e of list.getEntries()) { longTasks++; longTaskMs += e.duration; } }) : null;
+    observer?.observe({ type: 'longtask', buffered: false });
+    // Long Animation Frames (Chrome 123+) attribute blocking time to scripts vs rendering,
+    // so field reports show what stalls a reload burst (SDK parse, GC-heavy code, our own loops).
+    type LoafScript = { invoker?: string; invokerType?: string; sourceURL?: string; sourceFunctionName?: string; duration: number };
+    type Loaf = PerformanceEntry & { renderStart?: number; blockingDuration?: number; scripts?: LoafScript[] };
+    const loaf = { frames: 0, totalMs: 0, blockingMs: 0, scriptMs: 0, renderMs: 0, scripts: new Map<string, { count: number; ms: number }>() };
+    const loafObserver = typeof PerformanceObserver !== 'undefined' && PerformanceObserver.supportedEntryTypes?.includes('long-animation-frame')
+      ? new PerformanceObserver(list => {
+        for (const entry of list.getEntries() as Loaf[]) {
+          loaf.frames++; loaf.totalMs += entry.duration; loaf.blockingMs += entry.blockingDuration ?? 0;
+          if (entry.renderStart) loaf.renderMs += Math.max(0, entry.startTime + entry.duration - entry.renderStart);
+          for (const script of entry.scripts ?? []) {
+            loaf.scriptMs += script.duration;
+            const file = (script.sourceURL ?? '').split('?')[0].split('/').pop() ?? '';
+            const key = `${script.invokerType ?? ''}:${script.invoker ?? ''} ${script.sourceFunctionName ?? ''}@${file}`.slice(0, 160);
+            const slot = loaf.scripts.get(key);
+            if (slot) { slot.count++; slot.ms += script.duration; } else if (loaf.scripts.size < 300) loaf.scripts.set(key, { count: 1, ms: script.duration });
+          }
+        }
+      }) : null;
+    loafObserver?.observe({ type: 'long-animation-frame', buffered: false });
+    const avg = (a: number[]) => a.length ? a.reduce((sum, n) => sum + n, 0) / a.length : null;
+    reportRef.current = () => ({
+      version: 'navigation-diagnostics-2', capturedAt: new Date().toISOString(),
+      glRenderer,
+      frameIntervalMs: avg(intervals), cpuRenderSubmissionMs: avg(cpuTimes),
+      longTasks, longTaskMs, longTasksSupported: !!observer,
+      settledRender: { frames: settledRender.frames, totalMs: Math.round(settledRender.totalMs), maxMs: Math.round(settledRender.maxMs),
+        avgMs: settledRender.frames ? Math.round(settledRender.totalMs / settledRender.frames) : null, over50: settledRender.over50 },
+      longAnimationFrames: loafObserver ? { frames: loaf.frames, totalMs: Math.round(loaf.totalMs), blockingMs: Math.round(loaf.blockingMs),
+        scriptMs: Math.round(loaf.scriptMs), renderMs: Math.round(loaf.renderMs),
+        topScripts: [...loaf.scripts].sort((a, b) => b[1].ms - a[1].ms).slice(0, 15).map(([key, v]) => ({ key, count: v.count, ms: Math.round(v.ms) })) } : null,
+      resolutionScale: sceneCanvas.resolutionScale,
+      canvas: [sceneCanvas.canvas.width, sceneCanvas.canvas.height],
+      coverage: coverageReportRef.current?.() ?? null,
+      camera: { eye: Array.from(viewer.camera.eye), look: Array.from(viewer.camera.look), up: Array.from(viewer.camera.up),
+        projection: viewer.camera.projection, near: viewer.camera.perspective.near, far: viewer.camera.perspective.far },
+      models: Object.values(viewer.scene.models).map(m => {
+        const model = m as unknown as { id: string; numTriangles?: number; numEntities?: number; aabb: ArrayLike<number>; layerList?: unknown[]; culled?: boolean };
+        return { id: model.id, approximateTriangles: model.numTriangles && model.numTriangles > 0 ? model.numTriangles : null, entities: model.numEntities ?? null,
+          layers: model.layerList?.length ?? null, culled: !!model.culled, aabb: Array.from(model.aabb) };
+      }),
+      // Each layer is at least one draw call per render pass; settled re-render cost scales with drawn layers.
+      layerSummary: (() => {
+        const list = Object.values(viewer.scene.models) as unknown as { layerList?: unknown[]; culled?: boolean }[];
+        const drawn = list.filter(m => !m.culled);
+        return { models: list.length, layers: list.reduce((n, m) => n + (m.layerList?.length ?? 0), 0),
+          drawnModels: drawn.length, drawnLayers: drawn.reduce((n, m) => n + (m.layerList?.length ?? 0), 0) };
+      })(),
+      note: 'Frame intervals are recent navigation samples; CPU submission is not GPU time. Triangle counts are SDK estimates, not visible triangles.',
+    });
+    const diagnosticTimer = setInterval(() => {
+      const ms = avg(intervals);
+      const triangles = Object.values(viewer.scene.models).reduce((sum, m) => sum + ((m as unknown as { numTriangles?: number }).numTriangles ?? 0), 0);
+      setPerformanceText(`최근 이동 프레임 ${ms ? ms.toFixed(0) + 'ms' : '측정 대기'} · 삼각형 ${triangles > 0 ? '약 ' + (triangles / 1000000).toFixed(1) + '백만' : '집계 미지원'}`);
+    }, 1500);
+
+    // 방향 큐브(ACC 뷰큐브 유사) — 코너 캔버스에 렌더. 면/모서리 클릭으로 정면·평면뷰 스냅.
+    let navCube: NavCubePlugin | null = null;
+    if (navCubeRef.current) {
+      navCube = new NavCubePlugin(viewer, {
+        canvasElement: navCubeRef.current,
+        visible: true,
+        cameraFly: true,
+        cameraFlyDuration: 0.5,
+        fitVisible: true,
+      } as unknown as ConstructorParameters<typeof NavCubePlugin>[1]);
+    }
+    // 커스텀 데이터소스: xeokit 기본 XHR 은 URL 에 캐시버스터(&_=timestamp)를 붙이는데,
+    // 이게 R2 presigned URL 의 서명을 깨서 403 을 낸다. fetch 로 URL 을 '그대로' 가져온다.
+    const fetchBuf = (url: string, ok: (b: ArrayBuffer) => void, err: (e: string) => void) =>
+      fetch(url)
+        .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(`HTTP ${r.status}`))))
+        .then(ok)
+        .catch((e) => err(String(e)));
+    const dataSource = {
+      getMetaModel: (src: string, ok: (j: unknown) => void, err: (e: string) => void) =>
+        fetch(src)
+          .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+          .then(ok)
+          .catch((e) => err(String(e))),
+      getGLTF: (src: string, ok: (b: ArrayBuffer) => void, err: (e: string) => void) =>
+        fetchBuf(src, ok, err),
+      // XKTLoaderPlugin 은 getXKT 로 .xkt 바이너리를 받는다(R2 presigned URL → fetch 그대로).
+      getXKT: (src: string, ok: (b: ArrayBuffer) => void, err: (e: string) => void) =>
+        fetchBuf(src, ok, err),
+      getArrayBuffer: (src: string, binSrc: string, ok: (b: ArrayBuffer) => void, err: (e: string) => void) => {
+        const u = /^(https?:|blob:|data:)/.test(binSrc) ? binSrc : new URL(binSrc, src).href;
+        fetchBuf(u, ok, err);
+      },
+    };
+    loaderRef.current = new GLTFLoaderPlugin(viewer, {
+      dataSource,
+    } as unknown as ConstructorParameters<typeof GLTFLoaderPlugin>[1]);
+    // XKT 의 지형 텍스처(KTX2/Basis 압축)를 브라우저에서 디코드하려면 Basis 트랜스코더 필요.
+    // xeokit 기본 transcoderPath 는 jsdelivr CDN(@xeokit/xeokit-sdk/dist/basis/)인데 해당 버전
+    // npm 패키지에 basis/ 가 없어 CDN 조차 404 + 사내망은 CDN 자체를 막는다. 그래서 basis_transcoder
+    // (js+wasm 쌍)를 public/basis/ 에 직접 호스팅하고 그 경로를 준다(오프라인·사내망에서도 동작).
+    xktLoaderRef.current = new XKTLoaderPlugin(viewer, {
+      dataSource,
+      textureTranscoder: new KTX2TextureTranscoder({ viewer, transcoderPath: '/basis/' }),
+    } as unknown as ConstructorParameters<typeof XKTLoaderPlugin>[1]);
+    // 자가진단: Basis 트랜스코더 파일(/basis/)이 실제로 서빙되는지 확인. 배포에 public/basis 가
+    // 빠졌거나 캐시로 구버전이 뜨면 지형 항공사진이 디코드 안 돼 흰색으로 보인다 → 콘솔+화면에
+    // 명확히 표기해 '왜 흰색인지' 즉시 알 수 있게 한다.
+    void fetch('/basis/basis_transcoder.wasm', { method: 'HEAD' })
+      .then((r) => {
+        if (r.ok) console.log('[3Dtest] Basis 트랜스코더 OK — 지형 텍스처 디코드 가능');
+        else { console.warn('[3Dtest] /basis/ 응답', r.status, '— 지형 텍스처 디코드 불가(흰색)'); setTexWarn(`지형 텍스처 트랜스코더 로드 실패(/basis/ ${r.status}) — 재배포 필요`); }
+      })
+      .catch((e) => { console.warn('[3Dtest] /basis/ 로드 실패', e); setTexWarn('지형 텍스처 트랜스코더(/basis/) 로드 실패 — 재배포 필요'); });
+
+    // 클릭 픽 → 엔티티 ID(+메타) → MIR_SMART DB 조인 지점. 표면 지점(worldPos)도 보관해
+    // '선택 확대'·더블클릭 줌이 그 지점으로 당기게 한다(pickSurface:true).
+    const onClick = viewer.scene.input.on('mouseclicked', (canvasPos: number[]) => {
+      const hit = viewer.scene.pick({ canvasPos, pickSurface: true }) as
+        | { entity?: { id?: string | number; isObject?: boolean }; worldPos?: number[] }
+        | undefined;
+      const entity = hit?.entity;
+      if (entity?.isObject && entity.id != null) {
+        const id = String(entity.id);
+        const dbId = objectIndexRef.current.keyOf(id);
+        pickedRef.current = { id: entity.id, worldPos: hit?.worldPos };
+        selectObjectsRef.current(dbId !== null ? [dbId] : [], dbId === null ? id : null);
+        const numeric = dbId !== null && /^\d+$/.test(dbId) ? Number(dbId) : null;
+        setSelectedDb(numeric); setRevealDb(numeric);
+        const meta = viewer.metaScene?.metaObjects?.[id];
+        // 메타 이름 없으면 glTF 노드 id(=지표면(TIN) 등)를 이름으로 표시. 숫자 id 는 숨김.
+        const fallback = /^\d+$/.test(id) ? undefined : id;
+        setPick({ id, dbId, name: meta?.name ?? fallback, type: meta?.type });
+      } else {
+        selectObjectsRef.current([], null);
+        pickedRef.current = hit?.worldPos ? { worldPos: hit.worldPos } : null;
+        setPick(null); setSelectedDb(null);
+      }
+    });
+
+    const canvasEl = canvasRef.current;
+    // 비율 기반 커스텀 휠 줌 — 커서 아래 표면 지점(worldPos)을 향해, 없으면 현재 look 을
+    // 향해 당긴다. 측량좌표(225km)에서도 축척 무관하게 즉시 확대/축소.
+    let wheelAt = -Infinity;
+    let wheelTarget: number[] | null = null;
+    const onWheel = (ev: WheelEvent) => {
+      ev.preventDefault();
+      const rect = canvasEl.getBoundingClientRect();
+      const canvasPos = [ev.clientX - rect.left, ev.clientY - rect.top];
+      const now = performance.now();
+      if (!wheelTarget || now - wheelAt > 200) {
+        const hit = viewer.scene.pick({ canvasPos, pickSurface: true }) as { worldPos?: number[] } | undefined;
+        wheelTarget = hit?.worldPos ? Array.from(hit.worldPos) : Array.from(viewer.camera.look);
+      }
+      wheelAt = now;
+      dollyToward(viewer, wheelTarget, ev.deltaY > 0 ? 1.18 : 0.82); // 축소 : 확대(약 18%/노치)
+    };
+    canvasEl.addEventListener('wheel', onWheel, { passive: false });
+    // 더블클릭 → 클릭한 표면 지점으로 부드럽게 당긴다(반복 시 점점 접근).
+    const onDblClick = (ev: MouseEvent) => {
+      const rect = canvasEl.getBoundingClientRect();
+      const canvasPos = [ev.clientX - rect.left, ev.clientY - rect.top];
+      const hit = viewer.scene.pick({ canvasPos, pickSurface: true }) as { worldPos?: number[] } | undefined;
+      // A double-click is navigation: undo the selection its first click made.
+      selectObjectsRef.current([], null);
+      pickedRef.current = null;
+      setPick(null); setSelectedDb(null);
+      if (hit?.worldPos) flyToWorldPoint(viewer, hit.worldPos);
+    };
+    canvasEl.addEventListener('dblclick', onDblClick);
+
+    return () => {
+      stopPresence();
+      quality.dispose();
+      viewer.camera.off(qualitySub);
+      viewer.camera.off(motionSub);
+      viewer.scene.off(renderingSub);
+      viewer.scene.off(renderedSub);
+      clearInterval(diagnosticTimer);
+      observer?.disconnect();
+      loafObserver?.disconnect();
+      reportRef.current = null;
+      canvasEl.removeEventListener('pointerdown', pointerDown);
+      canvasEl.removeEventListener('mousedown', forgetPivot, { capture: true });
+      window.removeEventListener('pointerup', pointerUp);
+      window.removeEventListener('pointercancel', pointerUp);
+      window.removeEventListener('blur', pointerUp);
+      canvasEl.removeEventListener('wheel', onWheel);
+      canvasEl.removeEventListener('dblclick', onDblClick);
+      viewer.scene.input.off(onClick);
+      streamCleanupRef.current?.();
+      streamCleanupRef.current = null;
+      if (lodTimerRef.current) { clearTimeout(lodTimerRef.current); lodTimerRef.current = null; }
+      navCube?.destroy();
+      viewerRef.current = null;
+      loaderRef.current = null;
+      viewer.destroy();
+    };
+  }, []);
+
+  // 배경색 토글 — CAD 선형 상당수가 '색상 7(흰색/자동)'이라 흰 배경에선 흰 선이 안 보인다.
+  // 어두운 배경(Civil3D 모델공간처럼)으로 두면 흰 선형이 드러난다.
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (viewer) {
+      (viewer.scene.canvas as unknown as { backgroundColor: number[] }).backgroundColor = bgDark
+        ? [0.13, 0.14, 0.16]
+        : LIGHT_BACKGROUND;
+    }
+  }, [bgDark]);
+
+  /** 클릭한 '지점'으로 확대(ACC '선택 확대' 유사). 병합 메시라 엔티티 AABB(=전체)가 아니라
+   *  클릭 표면 지점으로 당긴다. 클릭한 지점이 없으면 전체 맞춤. */
+  const zoomToSelection = useCallback(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    // A selected design object: frame its loaded geometry (real shapes before the far stand-in).
+    const objects = viewer.scene.objects as unknown as Record<string, { aabb: ArrayLike<number> } | undefined>;
+    const ids = [...objectStatesRef.current.selected].flatMap(db => [...objectIndexRef.current.entities(db)]);
+    const boxes = (ids.some(id => !id.includes('-far#')) ? ids.filter(id => !id.includes('-far#')) : ids)
+      .map(id => objects[id]?.aabb).filter((b): b is ArrayLike<number> => !!b && Array.from(b).every(Number.isFinite));
+    if (boxes.length) {
+      const box = [0, 1, 2].map(i => Math.min(...boxes.map(b => b[i]))).concat([3, 4, 5].map(i => Math.max(...boxes.map(b => b[i]))));
+      viewer.cameraFlight.flyTo({ aabb: box, duration: 0.5 });
+      return;
+    }
+    const wp = pickedRef.current?.worldPos;
+    if (wp) flyToWorldPoint(viewer, wp);
+    else {
+      const model = viewer.scene.models['test'];
+      if (model) viewer.cameraFlight.flyTo(model);
+    }
+  }, []);
+
+  /** 확대(+)/축소(−) — 항상 동작하는 비율 줌(현재 look 기준). 픽 실패와 무관. */
+  const zoomStep = useCallback((factor: number) => {
+    const viewer = viewerRef.current;
+    if (viewer) dollyToward(viewer, [...(viewer.camera.look as number[])], factor);
+  }, []);
+
+  /** GLB(원격 URL 또는 로컬 objectURL)를 뷰어에 올린다. focus 있으면 그 박스로 flyTo. */
+  const mountGlb = useCallback((src: string, label: string, focus?: Focus) => {
+    const viewer = viewerRef.current;
+    const loader = loaderRef.current;
+    if (!viewer || !loader) return;
+    setPick(null);
+    resetObjects();
+    const prev = viewer.scene.models['test'];
+    if (prev) prev.destroy();
+
+    // BIM/APS(SVF)는 Z-up, xeokit/glTF는 Y-up → -90°(X축) 회전으로 세운다.
+    // dtxEnabled:false — DTX(데이터텍스처)는 line/point 프리미티브를 렌더 안 함(DWG 선형이
+    // 안 보이던 원인). GLTFLoaderPlugin 은 Viewer 기본이 아니라 load() 의 dtxEnabled 를 쓴다.
+    // edges:false — xeokit 이 솔리드에 '계산해' 그리는 합성 엣지선(원본 데이터 아님).
+    // IFC 등에서 불필요한 잡음 선으로 보였다. DWG 의 진짜 선형은 line 프리미티브로 별도
+    // 로드되므로, 모든 포맷에서 합성 엣지는 끈다.
+    const model = loader.load({
+      id: 'test',
+      src,
+      edges: false,
+      rotation: [-90, 0, 0],
+      dtxEnabled: false,
+    } as unknown as Parameters<typeof loader.load>[0]);
+    model.on('loaded', () => {
+      // focus(변환기가 이상치 제외해 구운 초점 박스)가 있으면 전체 AABB 대신 그걸 맞춘다.
+      // DWG 등 멀리 떨어진 이상치로 모델이 콩알처럼 보이던 문제 해결. focus 좌표는 회전 전
+      // (실좌표)이라 로드 회전 [-90,0,0]과 동일한 축변환((x,y,z)→(x,z,-y))을 적용한다.
+      const box = focusToAabb(focus) ?? (model.aabb as number[] | undefined);
+      if (box) flyToFramed(viewer, box);
+      else viewer.cameraFlight.flyTo(model);
+      setModelName(label);
+      // DWG(CAD 선형)는 ACI 색상 체계 — 노랑·하늘색·연두 등 '밝은' 색은 흰 배경에선
+      // 대비가 0에 가까워 사실상 안 보인다(그래서 CAD 모델공간은 검은 배경). Civil3D 원본도
+      // 어두운 배경이라 그 색들이 보이는 것 → DWG 는 어두운 배경을 기본값으로 켠다.
+      if (/\.dwg$/i.test(label)) setBgDark(true);
+      setStatus('');
+      setBusy(false);
+      // === 화면 진단(당신 브라우저에서 실제로 로드/렌더된 상태를 스크린샷으로 확인) ===
+      // 이 오버레이가 보이면 = 새 코드가 배포된 것. 안 보이면 = 옛 코드(하드 새로고침 필요).
+      try {
+        const ids = Object.keys(viewer.scene.objects || {});
+        const a = (model.aabb as number[]) || [0, 0, 0, 0, 0, 0];
+        const span = [a[3] - a[0], a[4] - a[1], a[5] - a[2]].map((x) => Math.round(x));
+        const fx = focusToAabb(focus);
+        const cam = viewer.camera;
+        const r1 = (v: number[]) => v.map((x) => Math.round(x)).join(',');
+        setDbg(
+          `엔티티 ${ids.length}개 · 모델AABB span(${span.join(',')}) · ` +
+            `focus=${fx ? '있음' : '없음(전체AABB사용)'} · ` +
+            `cam eye(${r1(cam.eye as number[])}) look(${r1(cam.look as number[])}) up(${(cam.up as number[]).map((x) => x.toFixed(1)).join(',')})`,
+        );
+      } catch {
+        setDbg('진단 수집 실패');
+      }
+    });
+    model.on('error', (e: unknown) => {
+      setStatus(`불러오기 실패: ${errMessage(e)}`);
+      setBusy(false);
+    });
+  }, [resetObjects]);
+
+  /**
+   * 분할 XKT + LOD 스트리밍(우리 xeokit 확장). 개요(LOD1)를 먼저 띄워 즉시 보이게 하고,
+   * 상세 청크(73개)는 백그라운드로 숨긴 채 순차 로드. 이후 **카메라 거리로 LOD 전환** —
+   * 줌아웃(멀면) 개요만(수백만 삼각형=가벼움), 줌인(가까우면) 상세(프러스텀 컬링으로 보이는
+   * 부분만) → 양 극단 모두 부드럽게. 3.6억 삼각형 렉의 근본 완화.
+   */
+  const mountXkt = useCallback((urls: string[], _lod1Url: string | undefined, label: string, focus?: Focus, _navUrls?: string[]) => {
+    const viewer = viewerRef.current;
+    const loader = xktLoaderRef.current;
+    if (!viewer || !loader || urls.length === 0) return;
+    setPick(null);
+    resetObjects();
+    streamCleanupRef.current?.();
+    streamCleanupRef.current = null;
+    for (const id of Object.keys(viewer.scene.models)) viewer.scene.models[id].destroy();
+    if (lodSubRef.current) { try { viewer.camera.off(lodSubRef.current); } catch { /* noop */ } lodSubRef.current = null; }
+    if (lodTimerRef.current) { clearTimeout(lodTimerRef.current); lodTimerRef.current = null; }
+
+    const total = urls.length;
+    let done = 0, failed = 0, framed = false;
+    const frameOnce = () => {
+      if (framed) return; framed = true;
+      const box = focusToAabb(focus) ?? (viewer.scene.aabb as number[] | undefined);
+      if (box) flyToFramed(viewer, box);
+    };
+    // Keep loaded detail visible during motion and inactivity. Unverified nav/LOD
+    // replacements must not hide the only complete representation.
+    const finishDetail = () => {
+      setModelName(label);
+      setStatus('');
+      setBusy(false);
+      try {
+        const ids = Object.keys(viewer.scene.objects || {});
+        const a = (viewer.scene.aabb as number[]) || [0, 0, 0, 0, 0, 0];
+        const span = [a[3] - a[0], a[4] - a[1], a[5] - a[2]].map((x) => Math.round(x));
+        setDbg(`XKT ${done}/${total} · 엔티티 ${ids.length}개 · AABB span(${span.join(',')})`);
+      } catch { setDbg('진단 수집 실패'); }
+    };
+    // 상세 청크 순차 로드(숨긴 채) — 병렬이면 메모리 스파이크.
+    const loadDetail = (i: number) => {
+      if (i >= total) { finishDetail(); return; }
+      setStatus(`상세 로딩 중… ${done + failed}/${total} 청크`);
+      const model = loader.load({
+        id: `xkt${i}`, src: urls[i], edges: false, rotation: [-90, 0, 0],
+      } as unknown as Parameters<typeof loader.load>[0]);
+      // 상세를 '보이게' 로드 → 실제 형상이 점진적으로 채워진다(거친 개요 안 보임). 첫 청크에서 프레이밍.
+      model.on('loaded', () => { done++; frameOnce(); loadDetail(i + 1); });
+      model.on('error', () => { failed++; loadDetail(i + 1); });
+    };
+    setBusy(false);
+    loadDetail(0);
+  }, [resetObjects]);
+
+  /** Original tiles remain visible during navigation. Loading has explicit count/encoded-byte budgets.
+   * This is a bounded working view, not a full-scene LOD solution. */
+  const mountTiles = useCallback((tiles: { url: string; aabb: number[]; byteLength?: number; motion?: { url: string; byteLength: number; policy: string; members?: number }; far?: { url: string; byteLength: number; policy: string; members?: number } }[], baseUrls: string[] | undefined, instUrls: string[] | undefined, _lod1Url: string | undefined, label: string, focus?: Focus) => {
+    const viewer = viewerRef.current;
+    const loader = xktLoaderRef.current;
+    if (!viewer || !loader || !tiles.length) return;
+    // Legacy instance layers contain geometry removed from detail tiles. Never silently omit them,
+    // and never auto-load hundreds of thousands of entities on a weak client.
+    if (instUrls?.length) {
+      setBusy(false);
+      setStatus('이 모델은 별도 반복 부재 파일이 필요합니다. 현재 보기에서는 완전하게 열 수 없습니다.');
+      return;
+    }
+    streamCleanupRef.current?.();
+    streamCleanupRef.current = null;
+    if (lodSubRef.current) { viewer.camera.off(lodSubRef.current); lodSubRef.current = null; }
+    if (lodTimerRef.current) { clearTimeout(lodTimerRef.current); lodTimerRef.current = null; }
+    for (const id of Object.keys(viewer.scene.models)) viewer.scene.models[id].destroy();
+    setPick(null);
+    resetObjects();
+    pickedRef.current = null;
+    let active = true;
+    let framed = false;
+    let initialBox: number[] | undefined;
+    let selectedRegion: { center: number[]; distance: number } | undefined;
+    let completeRegion = false;
+    let loadingStopped = false;
+    let pointerHeld = false;
+    let parseCount = 0, parseTotalMs = 0, parseMaxMs = 0;
+    let downloadCount = 0, downloadTotalMs = 0, downloadMaxMs = 0;
+    let sampleController: AbortController | undefined;
+    let settle: ReturnType<typeof setTimeout> | undefined;
+    const models = viewer.scene.models;
+    const frameOnce = () => {
+      if (!active || framed) return;
+      // An empty xeokit scene reports a placeholder ±100 box; use structure tile bounds instead.
+      const candidate = focusToAabb(focus) ?? (Object.keys(models).length ? viewer.scene.aabb : undefined);
+      const validBox = candidate && Array.from(candidate).every(Number.isFinite) &&
+        candidate[0] <= candidate[3] && candidate[1] <= candidate[4] && candidate[2] <= candidate[5];
+      const box = validBox ? Array.from(candidate) : T.length ? [
+        Math.min(...T.map(t => t.cx - t.r)), Math.min(...T.map(t => t.cy - t.r)), Math.min(...T.map(t => t.cz - t.r)),
+        Math.max(...T.map(t => t.cx + t.r)), Math.max(...T.map(t => t.cy + t.r)), Math.max(...T.map(t => t.cz + t.r)),
+      ] : undefined;
+      if (box && Array.from(box).every(Number.isFinite)) {
+        framed = true;
+        initialBox = Array.from(box);
+        flyToFramed(viewer, box as number[]);
+      }
+      setBusy(false); setModelName(label);
+    };
+    const T = tiles.map((t, i) => ({ ...t, manifestIndex: i })).filter(t => t.aabb.length === 6 && t.aabb.every(Number.isFinite) &&
+      [0, 1, 2].every(i => t.aabb[i] <= t.aabb[i + 3])).map(t => {
+      const [ax, ay, az, bx, by, bz] = t.aabb;
+      // The structure stream loads the light pair first when one exists, so budget it at that size;
+      // detail refinement has its own stream sized by detailByteLength.
+      return { id: `tile${t.manifestIndex}`, url: t.url, byteLength: canUseOverview(t.motion, t.byteLength) ? t.motion!.byteLength : t.byteLength,
+        detailByteLength: t.byteLength, motion: t.motion, far: t.far,
+        sourceAabb: [...t.aabb],
+        worldAabb: [ax, az, -by, bx, bz, -ay],
+        cx: (ax + bx) / 2, cy: (az + bz) / 2, cz: -(ay + by) / 2,
+        r: Math.hypot(bx - ax, by - ay, bz - az) / 2 };
+    });
+    // With a resident whole-site level the near-camera cap shrinks so total heap stays near ~2GB.
+    const structureLimits = T.some(t => t.far) ? { ...STRUCTURE_LIMITS, maxEncodedBytes: 512 * 1048576 } : STRUCTURE_LIMITS;
+    let regionCandidates: typeof T = [];
+    let viewDirty = true;
+    let inViewCount = 0, culledCount = 0;
+    let motionActive = false;
+    const overviewReady = new Set<string>();
+    // Tiles whose light or detail representation is loaded: their whole-site (far) model is hidden.
+    const mainReady = new Set<string>();
+    const farReady = new Set<string>();
+    let farStats = { loaded: 0, total: 0, bytes: 0 };
+    const detailReady = new Set<string>();
+    let detailWanted = new Set<string>();
+    const motionQuality = new NavigationQuality({ delayMs: 900,
+      enter: () => { motionActive = true; viewDirty = true; },
+      leave: () => { motionActive = false; viewDirty = true; viewer.scene.render(true); },
+    });
+    const currentPlanes = () => viewPlanes(viewer.camera.viewMatrix, viewer.camera.projMatrix);
+    // Loaded tiles (detail or light pair) resist being swapped out by marginal ranking changes.
+    const residentIds = () => new Set(T.filter(t => models[t.id]).map(t => t.id));
+    const prioritizeCurrentView = () => {
+      stream.prioritize(prioritizeCameraView(regionCandidates, viewer.camera.viewMatrix, viewer.camera.projMatrix, viewer.camera.eye, residentIds()).map(t => t.id));
+    };
+    // SceneModel.culled walks every entity even when unchanged; only write real transitions.
+    const setCulled = (model: { culled: boolean }, value: boolean) => { if (model.culled !== value) model.culled = value; };
+    const renderSubscription = viewer.scene.on('rendering', () => {
+      if (!active || !viewDirty) return;
+      const planes = currentPlanes();
+      viewDirty = false;
+      inViewCount = 0; culledCount = 0;
+      // The far level stands in for a tile only until its real shape (light/detail) has loaded. It used to be
+      // hidden near the camera as well, which left holes wherever the near tile had not loaded yet; near
+      // tiles now load first instead (mainPriority), so the stand-in is brief.
+      for (const tile of T) {
+        const far = models[`${tile.id}-far`];
+        if (far && farReady.has(tile.id))
+          setCulled(far, mainReady.has(tile.id) || !inTileView(far.aabb, planes));
+        const model = models[tile.id];
+        if (!model) continue;
+        const detail = models[`${tile.id}-detail`];
+        if (overviewReady.has(tile.id)) {
+          const inView = inTileView(model.aabb, planes);
+          const showDetail = !motionActive && detailReady.has(tile.id) && detailWanted.has(tile.id) && !!detail;
+          setCulled(model, !inView || showDetail);
+          if (detail) setCulled(detail, !inView || !showDetail);
+          if (inView) inViewCount++; else culledCount++;
+          continue;
+        }
+        // Decoded bounds are authoritative for rendering; manifest bounds only prioritize downloads.
+        const culled = !inTileView(model.aabb, planes);
+        setCulled(model, culled);
+        if (culled) culledCount++; else inViewCount++;
+      }
+    });
+    coverageReportRef.current = () => ({
+      mode: completeRegion ? 'fixed-complete-region' : 'bounded', stopped: loadingStopped,
+      motionLod: { readyTiles: overviewReady.size, active: motionActive, overviewTiles: overviewReady.size, detailedTiles: detailReady.size, policy: 'component-border-v1' },
+      modelLoadTiming: { count: parseCount, totalMs: parseTotalMs, maxMs: parseMaxMs },
+      byteCache: { hits: cacheHits, bytes: byteCache.size, maxBytes: TILE_BYTE_CACHE },
+      farLevel: { available: farTiles.length, loaded: farStats.loaded, encodedBytes: farStats.bytes, budget: FAR_BUDGET, shown: [...farReady].filter(id => !mainReady.has(id)).length },
+      downloadTiming: { count: downloadCount, totalMs: downloadTotalMs, maxMs: downloadMaxMs, maxConcurrentLoads: STRUCTURE_LIMITS.concurrency + 1 },
+      renderCoverage: { inViewCount, culledCount, policy: 'padded-side-planes-decoded-bounds' },
+      focus: selectedRegion,
+      candidateIds: regionCandidates.map(t => t.id),
+      loadedBounds: T.filter(t => models[t.id]).map(t => ({
+        id: t.id, expectedWorldAabb: t.worldAabb, actualWorldAabb: Array.from(models[t.id].aabb),
+      })),
+      note: 'Bounds compare manifest axis conversion with decoded geometry; file loading does not prove original-model completeness.',
+    });
+    const loadGate = new NavigationLoadGate();
+    const modelQueue = new ModelLoadQueue();
+    // Recently downloaded files stay in memory (bounded) so revisiting a view skips the network.
+    const byteCache = new ByteCache(TILE_BYTE_CACHE);
+    let cacheHits = 0;
+    // Parse order (lower first). Near tiles, where the far approximation's error would be visible, and
+    // tiles with nothing drawn yet come before the whole-site far level; other light tiles after it.
+    // (Far used to enter first unconditionally: while its 1,073 files loaded, no near tile could parse.)
+    const eyeGap = (box: ArrayLike<number>) => {
+      const eye = viewer.camera.eye;
+      return Math.hypot(...[0, 1, 2].map(i => Math.max(box[i] - eye[i], 0, eye[i] - box[i + 3])));
+    };
+    const farErrorDistance = () => {
+      const fov = (viewer.camera.perspective.fov || 60) * Math.PI / 180;
+      const height = (viewer.scene.canvas as unknown as { canvas: HTMLCanvasElement }).canvas.clientHeight || 900;
+      return FAR_ERROR_METERS * height / (2 * Math.tan(fov / 2));
+    };
+    const mainPriority = (tile: typeof T[number]) => {
+      const box = models[`${tile.id}-far`]?.aabb ?? tile.worldAabb;
+      return !farReady.has(tile.id) || eyeGap(box) < farErrorDistance() ? 0 : 1.5;
+    };
+    const loadRepresentation = async (signal: AbortSignal, id: string, url: string, expectedMembers?: number, account?: (bytes: number) => boolean, priority = 1) => {
+        const downloadStarted = performance.now();
+        let xkt = byteCache.get(url);
+        if (xkt) cacheHits++;
+        else {
+          const response = await fetch(url, { signal });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const declaredBytes = Number(response.headers.get('content-length'));
+          if (id.endsWith('-detail') && declaredBytes > 128 * 1048576) {
+            await response.body?.cancel();
+            throw new Error('타일 크기 예산 초과');
+          }
+          xkt = await response.arrayBuffer();
+          if (signal.aborted || !active) throw new Error('cancelled');
+          byteCache.set(url, xkt);
+        }
+        if (id.endsWith('-detail') && xkt.byteLength > 128 * 1048576) throw new Error('타일 크기 예산 초과');
+        if (account && !account(xkt.byteLength)) throw new Error('타일 크기 예산 초과');
+        const downloadMs = performance.now() - downloadStarted;
+        downloadCount++; downloadTotalMs += downloadMs; downloadMaxMs = Math.max(downloadMaxMs, downloadMs);
+        // The far level is tiny per tile and fills the whole site, so it parses ahead of light/detail.
+        const releaseModel = await modelQueue.acquire(signal, priority);
+        try {
+          await loadGate.wait(signal);
+          // Draw a frame and let pending input run before each non-preemptible SDK parse, so a burst
+          // of reloads after a view change interleaves with rendering instead of blocking back to back.
+          // Wrapped (not a bare native resolve) so Long Animation Frame attribution names this file.
+          await new Promise<void>(resolve => requestAnimationFrame(() => setTimeout(function beforeModelParse() { resolve(); }, 0)));
+          await loadGate.wait(signal);
+          if (signal.aborted || !active) throw new Error('cancelled');
+          await new Promise<void>((resolve, reject) => {
+            let finished = false;
+            const timeout = window.setTimeout(() => finish(new Error('타일 로딩 시간 초과')), 60_000);
+            const abort = () => finish(new Error('cancelled'));
+            const finish = (error?: Error) => {
+              if (finished) return;
+              finished = true;
+              clearTimeout(timeout);
+              signal.removeEventListener('abort', abort);
+              if (error) { models[id]?.destroy(); reject(error); } else resolve();
+            };
+            signal.addEventListener('abort', abort, { once: true });
+            try {
+              const parseStarted = performance.now();
+              const model = loader.load({ id, xkt, edges: false, rotation: [-90, 0, 0], globalizeObjectIds: true,
+                culled: id.endsWith('-detail') || (id.endsWith('-far') && mainReady.has(id.slice(0, -4))) } as unknown as Parameters<typeof loader.load>[0]);
+              model.on('loaded', () => {
+                if (expectedMembers !== undefined && Object.keys(model.objects).length !== expectedMembers) { model.destroy(); finish(new Error('경량 객체 수 불일치')); return; }
+                trackModel(model as unknown as Parameters<typeof trackModel>[0]);
+                if (active && !signal.aborted) {
+                  const ms = performance.now() - parseStarted;
+                  parseCount++; parseTotalMs += ms; parseMaxMs = Math.max(parseMaxMs, ms);
+                  viewDirty = true;
+                  frameOnce();
+                }
+                finish();
+              });
+              model.on('error', () => finish(new Error('타일을 읽지 못했습니다')));
+            } catch (e) { finish(e instanceof Error ? e : new Error(String(e))); }
+          });
+        } finally { releaseModel(); }
+    };
+    const stream = new TileStream<typeof T[number]>({
+      // Overlap downloads with the current model load, but serialize GPU construction.
+      // A few end-to-end slots bound prefetched buffers even during a long held drag.
+      // Resident set is capped in every mode: lowest-priority tiles (camera ranking) are unloaded first.
+      ...structureLimits,
+      // Swap, not pre-evict: tiles leaving the view stay drawn until replacements have loaded.
+      replaceAfterLoad: true,
+      load: async (tile, signal) => {
+        const motion = tile.motion;
+        if (motion && canUseOverview(motion, tile.detailByteLength)) {
+          try {
+            await loadRepresentation(signal, tile.id, motion.url, motion.members, bytes => bytes === motion.byteLength && stream.accountBytes(tile.id, bytes), mainPriority(tile));
+            if (signal.aborted || !active) throw new Error('cancelled');
+            overviewReady.add(tile.id); mainReady.add(tile.id); viewDirty = true;
+            if (lightTintOnRef.current) (models[tile.id] as unknown as { colorize: number[] | null }).colorize = LIGHT_TINT;
+            return;
+          } catch (error) {
+            models[tile.id]?.destroy();
+            if (signal.aborted || !active) throw error;
+          }
+        }
+        await loadRepresentation(signal, tile.id, tile.url, undefined, bytes => stream.accountBytes(tile.id, bytes), mainPriority(tile));
+        if (signal.aborted || !active) throw new Error('cancelled');
+        mainReady.add(tile.id); viewDirty = true;
+      },
+      unload: tile => {
+        overviewReady.delete(tile.id); detailReady.delete(tile.id); mainReady.delete(tile.id); viewDirty = true;
+        models[`${tile.id}-detail`]?.destroy(); models[tile.id]?.destroy();
+      },
+      onChange: stats => {
+        if (!active) return;
+        const limited = stats.total > stats.selected;
+        // Completion must not fly the camera to the union of hundreds of loaded chunks.
+        // Keep the user's current work location; structure fit remains an explicit action.
+        if (completeRegion) {
+          setStatus(`${loadingStopped ? '구간 로딩 중지' : stats.loaded < stats.selected ? '화면 우선 로딩' : stats.selected < stats.total ? '메모리 상한 내 표시 완료 · 화면 밖부터 해제' : '고정 구간 표시 완료 · 경량/상세 혼합'}: ${stats.loaded}/${stats.selected} · 후보 ${stats.total} · 실패 ${stats.failed}${stats.deferred ? ` · 메모리 상한 대기 ${stats.deferred}` : ''}`);
+        } else setStatus(!stats.total ? '현재 위치에 구조물 후보가 없습니다. 위치를 이동한 뒤 현재 위치 불러오기를 눌러 주세요.' : stats.failed ? `일부 구간 로드 실패 ${stats.failed}개 — 모델을 다시 열어 주세요.` :
+          stats.loaded < stats.selected ? (stats.loading ? `구조물 로딩… ${stats.loaded}/${stats.selected}` : '표시 용량 제한으로 일부 구간이 미표시 상태입니다.') :
+          limited ? `일부 표시: 후보 ${stats.total}개 중 ${stats.loaded}개 로드 · 전체 구간 아님` : '주변 구조물 표시 완료 · 가까운 구간 상세화');
+        setDbg(`원경 ${farStats.loaded}/${farTiles.length}(${Math.round(farStats.bytes / 1048576)}MB) · 타일 ${stats.loaded}/${stats.selected} · 표시 ${stats.resident} · 후보 ${stats.total} · 다운로드 중 ${stats.loading} · 실패 ${stats.failed}${stats.deferred ? ` · 메모리 상한 대기 ${stats.deferred}` : ''} · 경량 ${overviewReady.size} · 상세화 ${detailReady.size} · 파일 크기 예산 사용 ≈${Math.round(stats.encodedBytes / 1048576)}MB (GPU 메모리 아님)`);
+      },
+    });
+    const detailStream = new TileStream<typeof T[number]>({
+      concurrency: 1, maxTiles: 8, maxEncodedBytes: 128 * 1048576,
+      load: async (tile, signal) => {
+        await loadRepresentation(signal, `${tile.id}-detail`, tile.url, undefined, bytes => detailStream.accountBytes(tile.id, bytes), 2);
+        const overview = models[tile.id], detail = models[`${tile.id}-detail`];
+        if (signal.aborted || !active || !overview || !detail || !motionPairMatches(detail as unknown as Parameters<typeof motionPairMatches>[0], overview as unknown as Parameters<typeof motionPairMatches>[1])) {
+          detail?.destroy(); throw new Error('상세 형상 검증 실패');
+        }
+        detailReady.add(tile.id); viewDirty = true; viewer.scene.render(true);
+      },
+      unload: tile => {
+        detailReady.delete(tile.id); models[`${tile.id}-detail`]?.destroy();
+        if (models[tile.id]) models[tile.id].culled = false;
+        viewDirty = true;
+      },
+      onChange: () => {},
+    });
+    // Whole-site level: every tile's merged far file, kept resident (own byte budget) so the full site is
+    // always drawn; light/detail replace it tile by tile near the camera. Loads nearest-visible first.
+    const farTiles = T.filter(t => t.far && Number.isFinite(t.far.byteLength) && t.far.byteLength > 0)
+      .map(t => ({ ...t, byteLength: t.far!.byteLength }));
+    const farStream = new TileStream<typeof farTiles[number]>({
+      concurrency: 6, maxTiles: Number.POSITIVE_INFINITY, maxEncodedBytes: FAR_BUDGET, replaceAfterLoad: true,
+      load: async (tile, signal) => {
+        await loadRepresentation(signal, `${tile.id}-far`, tile.far!.url, undefined, bytes => farStream.accountBytes(tile.id, bytes), 1);
+        if (signal.aborted || !active) throw new Error('cancelled');
+        farReady.add(tile.id); viewDirty = true;
+        if (lightTintOnRef.current) (models[`${tile.id}-far`] as unknown as { colorize: number[] | null }).colorize = FAR_TINT;
+      },
+      unload: tile => { farReady.delete(tile.id); models[`${tile.id}-far`]?.destroy(); viewDirty = true; },
+      onChange: stats => { farStats = { loaded: stats.loaded, total: stats.total, bytes: stats.encodedBytes }; },
+    });
+    const prioritizeFar = () => farStream.prioritize(prioritizeCameraView(farTiles, viewer.camera.viewMatrix, viewer.camera.projMatrix, viewer.camera.eye).map(t => t.id));
+    const refineView = () => {
+      const eye = Array.from(viewer.camera.eye);
+      const planes = currentPlanes();
+      const pickedPoint = pickedRef.current?.worldPos;
+      const candidates = regionCandidates.filter(t => overviewReady.has(t.id) && inTileView(t.worldAabb, planes) &&
+        (needsDetail(eye, models[t.id]?.aabb ?? t.worldAabb) || !!pickedPoint && needsDetail(pickedPoint, models[t.id]?.aabb ?? t.worldAabb, 1)));
+      const ordered = pickedPoint ? prioritizeTileView(candidates, planes, pickedPoint) : prioritizeCameraView(candidates, viewer.camera.viewMatrix, viewer.camera.projMatrix, viewer.camera.eye);
+      detailWanted = new Set(ordered.slice(0, 8).map(t => t.id));
+      detailStream.select(ordered.map(t => ({ ...t, byteLength: t.detailByteLength })));
+      viewDirty = true;
+    };
+    const refinementTimer = window.setInterval(() => {
+      if (active && !motionActive && !pointerHeld && !loadingStopped) refineView();
+    }, 1500);
+    const recompute = (initial = false) => {
+      if (!active || completeRegion) return;
+      const eye = Array.from(viewer.camera.eye);
+      const look = initial && initialBox
+        ? [0, 1, 2].map(i => (initialBox![i] + initialBox![i + 3]) / 2)
+        : Array.from(viewer.camera.look);
+      const distance = initial && initialBox
+        ? Math.hypot(...[0, 1, 2].map(i => initialBox![i + 3] - initialBox![i]))
+        : Math.hypot(...eye.map((n, i) => n - look[i]));
+      // Every valid tile is a candidate: the encoded-byte cap plus camera priority decide what loads,
+      // so moving anywhere on the site finds its structures. (A 2.6km region left ~170 of 1,073 tiles
+      // permanently unloadable once the region was fixed after the first view.)
+      const radius = Number.MAX_SAFE_INTEGER;
+      const candidates = rankTileRegion(T, look, radius, initial);
+      selectedRegion = { center: [...look], distance };
+      regionCandidates = candidates;
+      stream.select(prioritizeCameraView(candidates, viewer.camera.viewMatrix, viewer.camera.projMatrix, viewer.camera.eye, residentIds()));
+    };
+    sampleExportRef.current = async () => {
+      if (sampleController || !active) return;
+      const point = pickedRef.current?.worldPos ?? Array.from(viewer.camera.look);
+      const distance = (box: ArrayLike<number>) => Math.hypot(...point.map((v, i) => Math.max(box[i] - v, 0, v - box[i + 3])));
+      const tile = T.filter(t => models[t.id]).sort((a, b) => distance(models[a.id].aabb) - distance(models[b.id].aabb))[0];
+      if (!tile) { setStatus('먼저 구조물 로딩을 기다려 주세요.'); return; }
+      const controller = new AbortController();
+      sampleController = controller;
+      setSampleBusy(true);
+      const timeout = setTimeout(() => controller.abort(), 60000);
+      try {
+        const snapshot = { diagnostics: reportRef.current?.(), tileId: tile.id,
+          sourceAabb: tile.sourceAabb, worldAabb: Array.from(models[tile.id].aabb),
+          rotation: [-90, 0, 0], byteLength: tile.byteLength ?? null,
+          scope: 'One detail chunk only. Missing neighbouring chunks and terrain are not included.' };
+        const bytes = await readBounded(await fetch(tile.url, { signal: controller.signal }), 32 * 1024 * 1024, controller.signal);
+        const { default: PizZip } = await import('pizzip');
+        if (!active || controller.signal.aborted) return;
+        const zip = new PizZip();
+        zip.file('sample.xkt', bytes);
+        zip.file('sample.json', JSON.stringify(snapshot, null, 2));
+        const blob = zip.generate({ type: 'blob', compression: 'STORE' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = 'viewer-sample.zip'; a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        setStatus('검증 파일 저장 완료 · 구조물 조각 1개가 포함되어 있습니다.');
+      } catch (error) {
+        if (active) setStatus(`검증 저장 실패: ${errMessage(error)}`);
+      } finally {
+        clearTimeout(timeout);
+        sampleController = undefined;
+        if (active) setSampleBusy(false);
+      }
+    };
+    lightTintRef.current = on => {
+      for (const id of overviewReady) {
+        const model = models[id] as unknown as { colorize: number[] | null } | undefined;
+        if (model) model.colorize = on ? LIGHT_TINT : null;
+      }
+      for (const id of farReady) {
+        const model = models[`${id}-far`] as unknown as { colorize: number[] | null } | undefined;
+        if (model) model.colorize = on ? FAR_TINT : null;
+      }
+      viewer.scene.render(true);
+    };
+    structureFitRef.current = () => {
+      const boxes = T.map(t => models[t.id]?.aabb).filter((b): b is number[] => !!b && Array.from(b).every(Number.isFinite));
+      if (!boxes.length) return;
+      const box = [0, 1, 2].map(i => Math.min(...boxes.map(b => b[i])))
+        .concat([3, 4, 5].map(i => Math.max(...boxes.map(b => b[i]))));
+      flyToFramed(viewer, box);
+    };
+    coverageActionRef.current = mode => {
+      if (!active) return;
+      if (mode === 'paused') {
+        loadingStopped = true;
+        setCoverageMode('paused');
+        stream.stopLoading();
+        detailStream.stopLoading();
+        farStream.stopLoading();
+        return;
+      }
+      if (mode === 'complete') {
+        // Reuse the existing candidate list on resume; no camera-dependent replacement.
+        if (!completeRegion) recompute();
+        completeRegion = true;
+        loadingStopped = false;
+        setCoverageMode('complete');
+        stream.setLimits(structureLimits);
+        stream.setPaused(false);
+        detailStream.setPaused(false);
+        farStream.setPaused(false);
+        return;
+      }
+      completeRegion = false;
+      loadingStopped = false;
+      setCoverageMode('bounded');
+      stream.setLimits(structureLimits);
+      recompute();
+      stream.setPaused(false);
+      detailStream.setPaused(false);
+    };
+    setCoverageMode('bounded');
+    refreshRegionRef.current = () => recompute();
+    setRegionMode(true);
+    setTerrainHidden(false);
+    const pauseForNavigation = () => {
+      motionQuality.moved();
+      viewDirty = true;
+      loadGate.setPaused(true);
+      stream.setPaused(true);
+      detailStream.setPaused(true);
+      farStream.setPaused(true);
+      clearTimeout(settle);
+      settle = setTimeout(() => {
+        if (!active) return;
+        const center = Array.from(viewer.camera.look);
+        const distance = Math.hypot(...Array.from(viewer.camera.eye).map((n, i) => n - center[i]));
+        if (selectedRegion && regionNeedsRefresh(selectedRegion, center, distance)) recompute();
+        prioritizeCurrentView();
+        prioritizeFar();
+        loadGate.setPaused(false);
+        if (!loadingStopped && !pointerHeld) { stream.setPaused(false); detailStream.setPaused(false); farStream.setPaused(false); refineView(); }
+      }, 900);
+    };
+    const sub = viewer.camera.on('matrix', pauseForNavigation);
+    const projectionSub = viewer.camera.on('projMatrix', pauseForNavigation);
+    const navigationCanvas = canvasRef.current!;
+    const holdLoading = () => { pointerHeld = true; motionQuality.hold(true); loadGate.hold(true); pauseForNavigation(); };
+    const releaseLoading = () => { if (!pointerHeld) return; pointerHeld = false; motionQuality.hold(false); pauseForNavigation(); loadGate.hold(false); };
+    navigationCanvas.addEventListener('pointerdown', holdLoading);
+    window.addEventListener('pointerup', releaseLoading);
+    window.addEventListener('pointercancel', releaseLoading);
+    window.addEventListener('blur', releaseLoading);
+    const baseControllers: AbortController[] = [];
+    streamCleanupRef.current = () => {
+      active = false;
+      motionQuality.dispose();
+      loadGate.dispose();
+      modelQueue.dispose();
+      byteCache.clear();
+      navigationCanvas.removeEventListener('pointerdown', holdLoading);
+      window.removeEventListener('pointerup', releaseLoading);
+      window.removeEventListener('pointercancel', releaseLoading);
+      window.removeEventListener('blur', releaseLoading);
+      coverageActionRef.current = null;
+      coverageReportRef.current = null;
+      setCoverageMode('bounded');
+      refreshRegionRef.current = null;
+      structureFitRef.current = null;
+      lightTintRef.current = null;
+      sampleExportRef.current = null;
+      sampleController?.abort();
+      setSampleBusy(false);
+      setRegionMode(false);
+      clearTimeout(settle);
+      viewer.camera.off(sub);
+      viewer.camera.off(projectionSub);
+      viewer.scene.off(renderSubscription);
+      baseControllers.forEach(c => c.abort());
+      clearInterval(refinementTimer);
+      detailStream.dispose();
+      farStream.dispose();
+      stream.dispose();
+    };
+    // Structures in view start immediately instead of waiting for the whole terrain (≈243MB).
+    // Framing uses the focus or structure bounds; terrain fills in underneath afterwards.
+    frameOnce(); recompute(true); completeRegion = true; setCoverageMode('complete');
+    farStream.select(prioritizeCameraView(farTiles, viewer.camera.viewMatrix, viewer.camera.projMatrix, viewer.camera.eye));
+    // Sequential base loading avoids firing all texture decoders at once.
+    void (async () => {
+      try {
+        for (const [i, url] of (baseUrls ?? []).entries()) {
+          if (!active) return;
+          const controller = new AbortController();
+          baseControllers.push(controller);
+          const r = await fetch(url, { signal: controller.signal });
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const xkt = await r.arrayBuffer();
+          if (!active) return;
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(() => finish(new Error('지형 로딩 시간 초과')), 60_000);
+            const abort = () => finish(new Error('cancelled'));
+            const finish = (e?: Error) => {
+              clearTimeout(timer); controller.signal.removeEventListener('abort', abort);
+              if (e) reject(e); else resolve();
+            };
+            controller.signal.addEventListener('abort', abort, { once: true });
+            try {
+              const model = loader.load({ id: `base${i}`, xkt, edges: false, rotation: [-90, 0, 0] } as unknown as Parameters<typeof loader.load>[0]);
+              model.on('loaded', () => { if (active) frameOnce(); finish(); });
+              model.on('error', () => finish(new Error('지형을 읽지 못했습니다')));
+            } catch (e) { finish(e instanceof Error ? e : new Error(String(e))); }
+          });
+        }
+      } catch {
+        if (active) setTexWarn('일부 지형을 읽지 못했습니다. 모델을 다시 열어 주세요.');
+      } finally {
+        if (active) frameOnce();
+      }
+    })();
+  }, [trackModel, resetObjects]);
+
+  /** ACC 모델 선택 → (캐시/실패 조회 → 없으면 변환 dispatch → 폴링) → GLB/XKT 로드.
+   *  force=true 면 캐시/실패 마커를 지우고 재변환(빈 캐시 갱신·재시도). */
+  const openFromAcc = useCallback(
+    async (f: PickedAccFile, force = false) => {
+      if (!isAccModel(f.name)) {
+        setStatus(`3D 모델(rvt·nwd·dwg·ifc)만 지원합니다 (선택: ${f.name})`);
+        return;
+      }
+      if (!f.accUrn) {
+        setStatus('이 파일은 아직 APS 파생(URN)이 없습니다. ACC에서 변환 완료 후 다시 시도하세요.');
+        return;
+      }
+      setLastFile(f);
+      const { data } = await supabase.auth.getSession();
+      const authz: Record<string, string> = data.session
+        ? { authorization: `Bearer ${data.session.access_token}` }
+        : {};
+      const urn = f.accUrn;
+
+      type State = {
+        ready?: boolean;
+        url?: string;
+        xkt?: boolean;
+        urls?: string[];
+        navUrls?: string[];
+        tiles?: { url: string; aabb: number[]; byteLength?: number; motion?: { url: string; byteLength: number; policy: string; members?: number }; far?: { url: string; byteLength: number; policy: string; members?: number } }[];
+        baseUrls?: string[];
+        instUrls?: string[];
+        lod1Url?: string;
+        focus?: Focus;
+        meta?: MetaInfo;
+        failed?: boolean;
+        error?: string;
+        status?: string;
+        warn?: boolean;
+        usedGB?: number;
+        freeGB?: number;
+      };
+      const getState = async (): Promise<State> => {
+        const r = await fetch(`/api/aps-convert?urn=${encodeURIComponent(urn)}`, { headers: authz });
+        const text = await r.text();
+        try {
+          return JSON.parse(text) as State;
+        } catch {
+          throw new Error(`서버 오류(${r.status}): ${text.slice(0, 160)}`);
+        }
+      };
+      const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms));
+      // XKT(분할) 우선, 없으면 단일 GLB(DWG 등).
+      const doMount = (s: State) => {
+        // 타일(뷰 종속 스트리밍) 우선 → 없으면 분할 XKT → 단일 GLB.
+        if (s.xkt && s.tiles && s.tiles.length) {
+          mountTiles(s.tiles, s.baseUrls, s.instUrls, s.lod1Url, f.name, s.focus);
+          void loadModelIndex(urn, s.meta);
+        }
+        else if (s.xkt && s.urls && s.urls.length) mountXkt(s.urls, s.lod1Url, f.name, s.focus, s.navUrls);
+        else if (s.url) mountGlb(s.url, f.name, s.focus);
+      };
+      const isReady = (s: State) => !!s.ready && (!!s.url || !!(s.urls && s.urls.length) || !!(s.tiles && s.tiles.length));
+
+      setBusy(true);
+      setPick(null);
+      setStatus(force ? `재변환 요청 중… ${f.name}` : `변환 캐시 확인 중… ${f.name}`);
+      try {
+        // 1) 캐시/실패 조회(강제 재변환이면 건너뜀).
+        if (!force) {
+          const st = await getState();
+          if (isReady(st)) {
+            setStatus(`불러오는 중… ${f.name}`);
+            doMount(st);
+            return;
+          }
+          if (st.failed) {
+            setStatus(`변환 실패: ${st.error ?? '알 수 없음'} — '재변환'으로 다시 시도할 수 있습니다.`);
+            setBusy(false);
+            return;
+          }
+        }
+
+        // 2) 변환 워크플로 dispatch(즉시 반환).
+        const res = await fetch('/api/aps-convert', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...authz },
+          body: JSON.stringify({ urn, name: f.name, project: f.accProjectId, item: f.accItemId, force }),
+        });
+        let rj: State = {};
+        try {
+          rj = JSON.parse(await res.text()) as State;
+        } catch {
+          /* 비-JSON */
+        }
+        if (isReady(rj)) {
+          setStatus(`불러오는 중… ${f.name}`);
+          doMount(rj);
+          return;
+        }
+        if (!res.ok) {
+          setStatus(`변환 요청 실패: ${rj.error ?? res.statusText}`);
+          setBusy(false);
+          return;
+        }
+
+        // 3) 백그라운드 변환 중 — 완료(GLB) 또는 실패(error.json) 까지 폴링.
+        const started = Date.now();
+        const MAX_MS = 30 * 60 * 1000;
+        for (;;) {
+          if (Date.now() - started > MAX_MS) {
+            setStatus('변환이 30분을 넘겨 중단했습니다. GitHub Actions 로그를 확인하세요.');
+            setBusy(false);
+            return;
+          }
+          const secs = Math.round((Date.now() - started) / 1000);
+          setStatus(`변환 중… ${f.name} (최초 1회, ${secs}s 경과 · 완료되면 자동 표시)`);
+          await sleep(5000);
+          let st: State;
+          try {
+            st = await getState();
+          } catch {
+            st = { ready: false };
+          }
+          if (isReady(st)) {
+            setStatus(`불러오는 중… ${f.name}`);
+            doMount(st);
+            return;
+          }
+          if (st.failed) {
+            setStatus(`변환 실패: ${st.error ?? '알 수 없음'} — '재변환'으로 다시 시도할 수 있습니다.`);
+            setBusy(false);
+            return;
+          }
+        }
+      } catch (e) {
+        setStatus(`변환/로드 실패: ${errMessage(e)}`);
+        setBusy(false);
+      }
+    },
+    [mountGlb, mountXkt, mountTiles, loadModelIndex],
+  );
+
+  /** 로컬 .glb 드롭/선택(이미 변환된 산출물 눈확인용). */
+  const loadLocal = useCallback(
+    (file: File) => {
+      if (!/\.(glb|gltf)$/i.test(file.name)) {
+        setStatus(`.glb 파일만 지원합니다 (원본 모델은 "ACC에서 열기"). 선택: ${file.name}`);
+        return;
+      }
+      setBusy(true);
+      setStatus(`불러오는 중… ${file.name}`);
+      mountGlb(URL.createObjectURL(file), file.name);
+    },
+    [mountGlb],
+  );
+
+  const onLocalInput = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const f = e.target.files?.[0];
+      if (f) loadLocal(f);
+      e.target.value = '';
+    },
+    [loadLocal],
+  );
+
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setDragOver(false);
+      const f = e.dataTransfer.files?.[0];
+      if (f) loadLocal(f);
+    },
+    [loadLocal],
+  );
+
+  const fitAll = () => {
+    const viewer = viewerRef.current;
+    if (!viewer || !Object.keys(viewer.scene.models).length) return;
+    const box = viewer.scene.aabb as number[];
+    if (box && Array.from(box).every(Number.isFinite)) flyToFramed(viewer, box);
+  };
+
+  return (
+    <div className="threed-test">
+      <div className="threed-test__note">
+        <UiIcon name="cube" size={16} />
+        <span>
+          <strong>3D뷰 (신규 테스트)</strong> — 엔진 <strong>xeokit</strong>(더블프리시전).
+          <strong>ACC 모델(rvt·nwd·dwg·ifc)</strong>을 선택하면 서버에서 타일로 변환(캐시)해
+          화면에 보이는 곳부터 스트리밍합니다. 첫 변환만 대기, 이후 모든 사용자는 즉시.
+        </span>
+      </div>
+
+      <div className="threed-test__viewer">
+        <div className="viewer-bar threed-test__bar">
+          <button className="btn btn--sm btn--primary" onClick={() => setPickerOpen(true)} disabled={busy}>
+            <UiIcon name="folder" size={14} /> ACC에서 열기
+          </button>
+          <button className="btn btn--sm" onClick={fitAll} disabled={!modelName}>
+            전체 맞춤
+          </button>
+          <button
+            className="btn btn--sm"
+            onClick={zoomToSelection}
+            disabled={!modelName}
+            title="먼저 객체를 클릭한 뒤 누르면 그 지점으로 확대(반복하면 더 가까이). 뷰에서 더블클릭해도 그 지점으로 당겨집니다."
+          >
+            선택 확대
+          </button>
+          <button className="btn btn--sm" onClick={() => zoomStep(0.7)} disabled={!modelName} title="확대(휠 위와 동일)">
+            ＋
+          </button>
+          <button className="btn btn--sm" onClick={() => zoomStep(1.43)} disabled={!modelName} title="축소(휠 아래와 동일)">
+            －
+          </button>
+          <button
+            className="btn btn--sm"
+            onClick={() => setBgDark((v) => !v)}
+            title="배경 밝기 전환 — CAD의 흰색(색상7) 선형은 어두운 배경에서 보입니다."
+          >
+            배경 {bgDark ? '밝게' : '어둡게'}
+          </button>
+          {regionMode && <>
+            <button className="btn btn--sm" onClick={() => structureFitRef.current?.()}>구조물 맞춤</button>
+            <button className="btn btn--sm" onClick={() => {
+              const hidden = !terrainHidden;
+              setTerrainHidden(hidden);
+              const models = viewerRef.current?.scene.models ?? {};
+              for (const [id, model] of Object.entries(models)) if (/^base\d+$/.test(id)) model.visible = !hidden;
+            }}>{terrainHidden ? '지형 표시' : '지형 숨김'}</button>
+            {coverageMode !== 'bounded' && <>
+              <span className="threed-test__chip" title="현재 구간 파일을 메모리 상한 안에서 계속 로드하는 모드입니다.">
+                구간 고정{coverageMode === 'paused' ? ' · 일시정지' : ''}
+              </span>
+              <button className="btn btn--sm" onClick={() => coverageActionRef.current?.('bounded')}>기본 보기 복귀</button>
+            </>}
+          </>}
+          {modelTree && (
+            <>
+              <button className={`btn btn--sm${treeOpen ? ' btn--primary' : ''}`} onClick={() => setTreeOpen(o => !o)}>모델 트리</button>
+              <button className={`btn btn--sm${propsOpen ? ' btn--primary' : ''}`} onClick={() => setPropsOpen(o => !o)}>속성</button>
+            </>
+          )}
+          {treeNote && <span className="muted" title={treeNote}>{treeNote}</span>}
+          {/* Diagnostics and admin tools stay one click away instead of crowding the view controls. */}
+          <ToolMenu label="진단 도구">
+            <div className="report-menu__title">모델</div>
+            <MenuItem label="재변환" desc="기존 모델을 유지하며 변환 요청(운영 설정에서 활성화된 경우만)"
+              disabled={busy || !lastFile} onClick={() => lastFile && void openFromAcc(lastFile, true)} />
+            <MenuItem label=".glb 파일 열기" desc="이미 변환된 .glb 를 눈으로 확인" onClick={() => glbInputRef.current?.click()} />
+            <MenuItem label="진단 저장" desc="viewer-diagnostics.json 다운로드" disabled={!modelName} onClick={() => {
+              const report = reportRef.current?.();
+              if (!report) return;
+              const url = URL.createObjectURL(new Blob([JSON.stringify({ ...report as object, streaming: dbg }, null, 2)], { type: 'application/json' }));
+              const a = document.createElement('a'); a.href = url; a.download = 'viewer-diagnostics.json'; a.click();
+              setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }} />
+            {regionMode && <>
+              <div className="report-menu__title">구간 로딩</div>
+              <MenuItem label="현재 위치 불러오기" desc="구간 이동 시 자동 갱신됩니다. 누르면 현재 위치에서 즉시 다시 선택합니다."
+                disabled={coverageMode !== 'bounded'} onClick={() => refreshRegionRef.current?.()} />
+              {coverageMode === 'bounded'
+                ? <MenuItem label="현재 구간 전체 로드" desc="후보 파일을 화면 우선순위로 순차 로드 · 메모리 상한을 넘으면 화면 밖·먼 타일부터 내림"
+                    onClick={() => coverageActionRef.current?.('complete')} />
+                : <MenuItem label={coverageMode === 'paused' ? '구간 로딩 계속' : '구간 로딩 중지'}
+                    onClick={() => coverageActionRef.current?.(coverageMode === 'paused' ? 'complete' : 'paused')} />}
+              <MenuItem label={lightTint ? '경량 표시 끄기' : '경량 표시'} desc="경량(이동·원경용) 타일을 주황색으로 표시해 원본과 구분"
+                onClick={() => { const on = !lightTint; setLightTint(on); lightTintOnRef.current = on; lightTintRef.current?.(on); }} />
+              <MenuItem label={sampleBusy ? '검증 파일 준비 중' : '검증 구간 저장'} desc="부재를 클릭한 뒤 누르면 가까운 구조물 파일 하나(최대 32MiB)와 진단 정보를 ZIP으로 저장"
+                disabled={sampleBusy} onClick={() => void sampleExportRef.current?.()} />
+            </>}
+            {canManage && <>
+              <div className="report-menu__title">관리자</div>
+              <MenuItem label={inventoryBusy ? '저장소 점검 중' : '저장소 용량 점검'} disabled={inventoryBusy} onClick={() => void downloadStorageInventory()} />
+              <MenuItem label={storageBusy ? '저장소 압축 중' : '저장소 압축 실행'} desc="활성 XKT를 원본과 동일한 내용으로 압축해 같은 위치에 교체"
+                disabled={storageBusy} onClick={() => void startStorageCompaction()} />
+              <MenuItem label="경량 파일 생성" disabled={!lastFile?.accUrn || motionJobBusy} onClick={() => void startMotionCache()} />
+              <MenuItem label="경량 생성 상태 확인" onClick={() => void checkMotionCache()} />
+            </>}
+          </ToolMenu>
+          <input ref={glbInputRef} type="file" accept=".glb,.gltf" onChange={onLocalInput} hidden />
+          <div className="spacer" />
+          {modelName && !busy && <span className="muted" title={modelName}>{modelName}</span>}
+          {status && <span className="muted" title={status}>{status}</span>}
+        </div>
+
+        {(motionJob || storageNotice) && <div className="threed-test__notices" role="status">
+          {motionJob && <span>{motionJob}</span>}
+          {storageNotice && <span>{storageNotice}</span>}
+        </div>}
+        <div
+          className={`threed-test__viewport${dragOver ? ' is-dragover' : ''}`}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={onDrop}
+        >
+          <canvas ref={canvasRef} className="threed-test__canvas" />
+          {initializationError && (
+            <div role="alert" style={{ position: 'absolute', inset: 0, display: 'grid', placeContent: 'center', padding: 24, background: 'var(--bg, #fff)', zIndex: 30 }}>
+              <h3>3D 화면을 시작하지 못했습니다</h3>
+              <p>브라우저의 그래픽 기능 초기화에 실패했습니다. 모델 파일을 열기 전에 발생한 오류입니다.</p>
+              <p>다시 시도해도 계속되면 다른 메뉴는 그대로 이용할 수 있습니다.</p>
+              <button className="btn" onClick={() => window.location.reload()}>화면 다시 불러오기</button>
+            </div>
+          )}
+          {/* 방향 큐브(ACC 뷰큐브 유사) — 우상단 코너. */}
+          <canvas ref={navCubeRef} className="threed-test__navcube" width={140} height={140} />
+          {/* 진단 오버레이 — 로드된 지오메트리/카메라 상태를 화면에 표시(스크린샷 디버그용). */}
+          {dbg && (
+            <div
+              style={{
+                position: 'absolute',
+                left: 8,
+                bottom: 8,
+                maxWidth: 'calc(100% - 16px)',
+                padding: '6px 10px',
+                background: 'rgba(0,0,0,0.78)',
+                color: '#0f0',
+                font: '11px/1.4 monospace',
+                borderRadius: 6,
+                pointerEvents: 'none',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-all',
+                zIndex: 20,
+              }}
+            >
+              {dbg} · {performanceText}
+            </div>
+          )}
+          {texWarn && (
+            <div
+              style={{
+                position: 'absolute',
+                left: 8,
+                bottom: 40,
+                maxWidth: 'calc(100% - 16px)',
+                padding: '6px 10px',
+                background: 'rgba(140,20,20,0.9)',
+                color: '#fff',
+                font: '11px/1.4 monospace',
+                borderRadius: 6,
+                pointerEvents: 'none',
+                whiteSpace: 'pre-wrap',
+                zIndex: 21,
+              }}
+            >
+              ⚠ {texWarn}
+            </div>
+          )}
+          {modelTree && treeOpen && (
+            <aside className="threed-test__panel threed-test__panel--left" aria-label="모델 트리">
+              <div className="threed-test__panel-h">
+                <strong>모델 트리</strong>
+                <span className="muted">{(modelTree.n - 1).toLocaleString()}개 객체</span>
+                <div className="spacer" />
+                <button type="button" className="ic-only" onClick={() => setTreeOpen(false)} aria-label="모델 트리 닫기">✕</button>
+              </div>
+              <ModelTreePanel tree={modelTree} hiddenNodes={hiddenNodes} selected={selectedDb} reveal={revealDb}
+                onToggle={toggleNode} onSelect={id => { setRevealDb(null); selectNode(id, false); }} />
+            </aside>
+          )}
+          {modelTree && propsOpen && (
+            <aside className="threed-test__panel threed-test__panel--right" aria-label="속성">
+              <div className="threed-test__panel-h">
+                <strong>속성</strong>
+                <div className="spacer" />
+                <button type="button" className="ic-only" onClick={() => setPropsOpen(false)} aria-label="속성 닫기">✕</button>
+              </div>
+              <PropertyPanel tree={modelTree} selected={selectedDb} unindexed={selectedDb === null ? pick?.id.split('#').pop() ?? null : null}
+                loadProps={loadProps} searchValues={searchValues}
+                onSelect={(id, zoom) => { setRevealDb(id); selectNode(id, zoom); }} onZoom={zoomToNodes} onHighlight={highlightObjects} />
+            </aside>
+          )}
+          {!modelName && !busy && (
+            <div className="threed-test__empty">
+              <UiIcon name="cube" size={40} />
+              <p>
+                상단 <em>ACC에서 열기</em>로 자료관리 모델(rvt·nwd·dwg·ifc)을 여세요.
+              </p>
+              <p className="threed-test__empty-sub">
+                (첫 열람 시 서버 변환 → 이후 캐시에서 즉시 로드 · 로컬 <strong>.glb</strong> 드롭도 가능)
+              </p>
+            </div>
+          )}
+        </div>
+
+        {pick && !modelTree && (
+          <div className="threed-test__props">
+            <div className="threed-test__props-h">선택 객체</div>
+            <dl>
+              <dt>ID</dt>
+              <dd>{pick.id}</dd>
+              {pick.name && (
+                <>
+                  <dt>이름</dt>
+                  <dd>{pick.name}</dd>
+                </>
+              )}
+              {pick.type && (
+                <>
+                  <dt>유형</dt>
+                  <dd>{pick.type}</dd>
+                </>
+              )}
+            </dl>
+            <p className="muted threed-test__props-note">
+              이 ID로 MIR_SMART DB(물량·진도·RFI)를 조인하는 지점입니다.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {pickerOpen && (
+        <AccFilePicker
+          projectId={projectId}
+          canEdit={canEdit}
+          title="3D 모델 열기"
+          actionLabel="열기"
+          accept={isAccModel}
+          onClose={() => setPickerOpen(false)}
+          onPick={(f) => {
+            setPickerOpen(false);
+            void openFromAcc(f);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+export default ThreeDTest;
+
+/** Toolbar dropdown: closes on an item click, an outside press or Escape. */
+function ToolMenu({ label, children }: { label: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEscapeKey(() => setOpen(false), open);
+  useEffect(() => {
+    if (!open) return;
+    const down = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('pointerdown', down);
+    return () => document.removeEventListener('pointerdown', down);
+  }, [open]);
+  return (
+    <div className="report-menu" ref={root}>
+      <button className={`btn btn--sm${open ? ' btn--primary' : ''}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        {label} ▾
+      </button>
+      {open && (
+        <div className="report-menu__pop threed-test__menu" role="menu"
+          onClick={(e) => { if ((e.target as HTMLElement).closest('button')) setOpen(false); }}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MenuItem({ label, desc, disabled, onClick }: { label: string; desc?: string; disabled?: boolean; onClick: () => void }) {
+  return (
+    <button type="button" role="menuitem" className="report-menu__item" disabled={disabled} onClick={onClick}>
+      <span>{label}</span>
+      {desc && <span className="muted">{desc}</span>}
+    </button>
+  );
+}

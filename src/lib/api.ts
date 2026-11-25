@@ -90,6 +90,41 @@ export async function setProjectAcc(projectId: string, fields: Partial<ProjectAc
   throw error;
 }
 
+/**
+ * 현장별 통합모델(3D) 뷰어(0043). 'mir' = 자체 엔진(지정 모델에 자체 엔진 타일이 없으면 기존 뷰어로 대신 연다),
+ * 'aps' = 기존 Autodesk 뷰어 고정. 0043 미적용(열 없음)이면 'mir'.
+ */
+export type ViewerEngine = 'mir' | 'aps';
+
+/** 0043 미적용으로 확인되면 이 탭에서는 다시 묻지 않는다(매 화면 400 응답 방지). */
+const NO_VIEWER_COL = 'mir.noViewerEngineColumn';
+
+export async function getProjectViewer(projectId: string): Promise<ViewerEngine> {
+  try { if (sessionStorage.getItem(NO_VIEWER_COL)) return 'mir'; } catch { /* storage off */ }
+  const { data, error } = await supabase.from('projects').select('viewer_engine').eq('id', projectId).maybeSingle();
+  if (error && /viewer_engine/.test(error.message)) {
+    try { sessionStorage.setItem(NO_VIEWER_COL, '1'); } catch { /* storage off */ }
+  }
+  if (error || !data) return 'mir';
+  return (data as { viewer_engine?: string | null }).viewer_engine === 'aps' ? 'aps' : 'mir';
+}
+
+/** 시스템 관리자만(projects update RLS). */
+export async function setProjectViewer(projectId: string, engine: ViewerEngine): Promise<void> {
+  const { error } = await supabase
+    .from('projects')
+    .update({ viewer_engine: engine === 'aps' ? 'aps' : null })
+    .eq('id', projectId);
+  if (!error) {
+    try { sessionStorage.removeItem(NO_VIEWER_COL); } catch { /* storage off */ }
+    return;
+  }
+  if (error.message.includes('viewer_engine')) {
+    throw new Error('3D 뷰어 설정 열이 아직 없습니다. Supabase 에 0043_project_viewer_engine.sql 을 먼저 적용하세요.');
+  }
+  throw error;
+}
+
 export type ModelPurpose = 'integrated' | '4d' | 'clash';
 
 export interface ModelRecord {
@@ -110,6 +145,11 @@ export interface ModelRecord {
 const BUCKET = 'models';
 
 /** Fill in 0019 columns when a fallback query couldn't select them. */
+/** An IFC file in Supabase storage (not an ACC model mirrored by URN for 4D links, whose bytes live in ACC). */
+export function isIfcModel(m: Pick<ModelRecord, 'name' | 'storage_path'>): boolean {
+  return /\.ifc$/i.test(m.storage_path ?? '') || /\.ifc$/i.test(m.name);
+}
+
 function normalizeModel(r: Record<string, unknown>): ModelRecord {
   return {
     bucket: 'models',

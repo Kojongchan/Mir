@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { EmptyState } from '../components/EmptyState';
 import { errMessage } from '../lib/errors';
 import { useProjectRole } from '../auth/useProjectRole';
-import { MiniChart } from '../components/MiniChart';
+import { TrendChart } from '../components/TrendChart';
 import { formatAmount, listMonthlyRecords, type MonthlyRecord } from '../lib/dashboard';
 import {
   createBillingItem,
@@ -71,9 +71,10 @@ export function Billing() {
           <h3>도급액</h3>
           <div className="dash-stat-big" style={{ fontSize: 30 }}>{formatAmount(contract)}<small>원</small></div>
           {canEdit && (
-            <div className="dash-edit-row" style={{ marginTop: 8 }}>
-              <input type="number" value={draft} onChange={(e) => setDraft(e.target.value)} />
+            <div className="dash-edit-row dash-amount-row" style={{ marginTop: 8 }}>
+              <input type="number" inputMode="numeric" aria-label="도급액(원)" placeholder="원 단위" value={draft} onChange={(e) => setDraft(e.target.value)} />
               <button onClick={onSaveContract}>저장</button>
+              {draft !== '' && Number(draft) > 0 && <span className="muted dash-amount-hint">= {formatAmount(Number(draft))}원</span>}
             </div>
           )}
         </div>
@@ -94,12 +95,16 @@ export function Billing() {
       </section>
 
       <section className="card" style={{ marginTop: 14 }}>
-        <h3>월별 기성 추이 <span className="muted">(누적)</span></h3>
-        <MiniChart
-          height={180}
-          type="bar"
-          series={[{ values: monthly.map((m) => Number(m.billing_amount)), color: 'var(--accent)' }]}
-          labels={monthly.length ? [monthly[0].ym, monthly[monthly.length - 1].ym] : undefined}
+        <h3>월별 기성 추이 <span className="muted">(월 기성 · 누적)</span></h3>
+        <TrendChart
+          height={240}
+          format={(v) => formatAmount(v)}
+          data={monthly.map((m, i) => ({ ym: m.ym, '월 기성': Number(m.billing_amount), 누적: cumulative[i] }))}
+          x="ym"
+          series={[
+            { key: '월 기성', color: 'var(--chart-1)', kind: 'bar' },
+            { key: '누적', color: 'var(--chart-2)' },
+          ]}
         />
         {monthly.length > 0 ? (
           <div className="cde-table-wrap" style={{ padding: 0, marginTop: 12 }}>

@@ -17,15 +17,25 @@
 //   STORAGE_BUCKET(선택, 기본 'models4d')
 // 산출물: Supabase Storage  <bucket>/<projectId-or-urnhash>/model.glb
 // =====================================================================
+// @loaders.gl/polyfills: convert2xkt 가 Node 에서 텍스처 이미지를 파싱하려면 필수(ESM 사이드이펙트).
+// 없으면 [parseGLTFIntoXKTModel] "Install '@loaders.gl/polyfills'" 로 텍스처 프래그가 실패한다.
+import '@loaders.gl/polyfills';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { cacheKey } from './cache-key.mjs';
+import zlib from 'node:zlib';
 import { createClient } from '@supabase/supabase-js';
 import { SVFReader } from 'svf-utils';
 import { AuthenticationClient, Scopes } from '@aps_sdk/authentication';
 import { ModelDerivativeClient } from '@aps_sdk/model-derivative';
 import AdmZip from 'adm-zip';
+import gltfPipeline from 'gltf-pipeline';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { buildMergedGlb } from './mergeGlb.mjs';
+import { encodeXktTransfer } from './xkt-transfer.mjs';
+import { checkStorageBudget } from './storage-budget.mjs';
 
 const APS_BASE = 'https://developer.api.autodesk.com';
 
@@ -49,6 +59,35 @@ function cleanUrl(u) {
 }
 const SUPABASE_URL = cleanUrl(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL);
 
+// Cloudflare R2 (결과 GLB 저장소) — Supabase 무료 50MB 상한 회피(무료 10GB·egress 무료).
+const {
+  R2_ACCOUNT_ID,
+  R2_ACCESS_KEY_ID,
+  R2_SECRET_ACCESS_KEY,
+  R2_BUCKET,
+} = process.env;
+let _r2 = null;
+function r2() {
+  if (!_r2) {
+    _r2 = new S3Client({
+      region: 'auto',
+      endpoint: `https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+      credentials: { accessKeyId: R2_ACCESS_KEY_ID, secretAccessKey: R2_SECRET_ACCESS_KEY },
+    });
+  }
+  return _r2;
+}
+async function r2Put(key, body, contentType, contentEncoding, beforeWrite) {
+  await checkStorageBudget(token => r2().send(new ListObjectsV2Command({
+    Bucket: R2_BUCKET, ContinuationToken: token, MaxKeys: 1000,
+  })), body.byteLength);
+  beforeWrite?.();
+  await r2().send(new PutObjectCommand({ Bucket: R2_BUCKET, Key: key, Body: body, ContentType: contentType, ContentEncoding: contentEncoding }));
+}
+async function r2Delete(key) {
+  await r2().send(new DeleteObjectCommand({ Bucket: R2_BUCKET, Key: key })).catch(() => {});
+}
+
 function need(name, v) {
   if (!v) throw new Error(`환경변수 누락: ${name}`);
   return v;
@@ -69,12 +108,42 @@ async function getSvfDerivatives(urn) {
   const cred = await authClient.getTwoLeggedToken(APS_CLIENT_ID, APS_CLIENT_SECRET, [Scopes.ViewablesRead]);
   const manifest = await md.getManifest(urn, { accessToken: cred.access_token, region: APS_REGION });
   const out = [];
-  const walk = (d) => {
+  const walk = (d, depth = 0) => {
+    // 진단: 이 URN 의 '모든' 뷰어블/리소스를 출력 — 특히 2D(f2d) 뷰가 있으면 폴리선·호·
+    // 선종류·선가중치·해치·TIN 이 벡터로 보존됐을 수 있어 SVF(3D 테셀레이션) 대신 쓸 수 있다.
+    if (d.type === 'view' || d.type === 'geometry' || d.type === 'resource') {
+      console.log(`[manifest] ${' '.repeat(depth * 2)}type=${d.type} role=${d.role || '-'} mime=${d.mime || '-'} name=${(d.name || '-').slice(0, 40)} guid=${(d.guid || '-').slice(0, 12)}`);
+    }
     if (d.type === 'resource' && d.role === 'graphics' && d.mime === 'application/autodesk-svf') out.push(d);
+    d.children?.forEach((c) => walk(c, depth + 1));
+  };
+  manifest.derivatives?.forEach((d) => {
+    console.log(`[manifest] derivative outputType=${d.outputType} name=${d.name || '-'}`);
+    d.children?.forEach((c) => walk(c, 1));
+  });
+  return out;
+}
+
+// ACC 최신 파일은 뷰어용으로 SVF2 만 있을 때가 많다(svf-utils 는 SVF 만 읽음). SVF 파생물이
+// 없는 경우 자동 유료 작업을 요청하지 않고 중단한다. 기존 파생물 읽기용 토큰만 발급한다.
+function scanManifest(mani) {
+  let svf = false, svf2 = false, views3d = 0, views2d = 0;
+  const walk = (d) => {
+    if (d.role === 'graphics' && d.mime === 'application/autodesk-svf') svf = true;
+    if (d.mime === 'application/autodesk-svf2') svf2 = true;
+    if (d.role === '3d') views3d++;
+    if (d.role === '2d') views2d++;
     d.children?.forEach(walk);
   };
-  manifest.derivatives?.forEach((d) => d.children?.forEach(walk));
-  return out;
+  mani.derivatives?.forEach((dd) => dd.children?.forEach(walk));
+  return { svf, svf2, views3d, views2d, status: mani.status, progress: mani.progress };
+}
+async function ensureSvf(urn) {
+  const md = new ModelDerivativeClient();
+  const cred = await new AuthenticationClient().getTwoLeggedToken(APS_CLIENT_ID, APS_CLIENT_SECRET, [Scopes.ViewablesRead]);
+  const state = scanManifest(await md.getManifest(urn, { accessToken: cred.access_token, region: APS_REGION }));
+  // Existing derivatives only. A desktop AEC seat does not authorize a free cloud conversion job.
+  if (!state.svf) throw new Error('기존 SVF 파생물이 없습니다. 추가 비용 방지를 위해 APS 변환 작업을 요청하지 않았습니다.');
 }
 
 // --- 직접 다운로더(레거시 derivativeservice) ---
@@ -130,20 +199,44 @@ async function downloadSvfToDisk(derivative, outDir) {
   const svfManifest = JSON.parse(zip.readAsText('manifest.json'));
   const basePath = svfDerivUrn.substring(0, svfDerivUrn.lastIndexOf('/') + 1);
   const assets = (svfManifest.assets || []).filter(
-    (a) => a.URI && !a.URI.startsWith('embed:') && !a.URI.includes('://') && a.URI !== svfName,
+    (a) =>
+      a.URI &&
+      !a.URI.startsWith('embed:') &&
+      !a.URI.includes('://') &&
+      a.URI !== svfName &&
+      // 속성 DB(objects_*.json.gz)는 지오메트리 GLB 에 불필요(dbId 는 fragment 에서 나옴)하고,
+      // 모델마다 상위폴더 공유(../, RVT)거나 매니페스트에 있는데 실제 404(DWG)라 변환을 죽인다.
+      // read({skipPropertyDb:true}) 로 읽으니 아예 받지 않는다.
+      !/objects_.*\.json\.gz$/i.test(a.URI),
   );
-  console.log(`[convert4d] 에셋 ${assets.length}개 병렬 다운로드…`);
+  const skipped = (svfManifest.assets || []).length - assets.length - 1; /* svf 자기 자신 */
+  console.log(
+    `[convert4d] 에셋 ${assets.length}개 병렬 다운로드…${skipped > 0 ? ` (속성DB ${skipped}개 제외)` : ''}`,
+  );
   let done = 0;
+  // 원격 derivative URN 은 '..' 를 해석하지 못한다(APS 404). RVT 등은 공유 '속성 DB'
+  // (objects_*.json.gz)를 상위 폴더(../../)로 참조하므로, 다운로드용 URN 에서만 '..' 를
+  // 미리 정규화한다. 로컬 저장 경로(path.join)는 그대로 두면 svf-utils 가 SVF 기준으로
+  // 같은 위치에서 되찾는다(양쪽 경로 일치).
+  const normUrn = (p) => {
+    const out = [];
+    for (const seg of p.split('/')) {
+      if (seg === '..') out.pop();
+      else if (seg !== '.') out.push(seg);
+    }
+    return out.join('/');
+  };
   const downloadOne = async (asset) => {
+    const remote = normUrn(basePath + asset.URI);
     let bytes;
     try {
-      bytes = await fetchDerivativeBytes(token, basePath + asset.URI);
+      bytes = await fetchDerivativeBytes(token, remote);
     } catch (e) {
       if (e?.status === 401) {
         token = await mintApsToken(); // 장시간 다운로드 중 토큰 만료 → 재발급
-        bytes = await fetchDerivativeBytes(token, basePath + asset.URI);
+        bytes = await fetchDerivativeBytes(token, remote);
       } else {
-        throw new Error(`에셋 다운로드 실패(${asset.URI}): ${e?.message || e}`);
+        throw new Error(`에셋 다운로드 실패(${asset.URI}): ${e?.message || e}`, { cause: e });
       }
     }
     const dest = path.join(outDir, asset.URI);
@@ -165,32 +258,120 @@ async function downloadSvfToDisk(derivative, outDir) {
   return path.join(outDir, svfName);
 }
 
+// === 지형 항공사진 정합의 근본 수정: SVF 재질의 '진짜' 텍스처 변환(offset/scale/rotation/wrap)을
+// 원본 Materials.json.gz 에서 직접 읽는다. svf-utils 의 parseTextureProperty 는 texture_UScale/
+// VScale 만 읽고 texture_UOffset/VOffset/WAngle 를 버려서(materials.js: "TODO: parse texture
+// transforms aside from scale"), 지형 UV 가 어긋난다. 여기서 Navisworks 가 구운 그대로를 복원한다.
+// 반환 배열의 인덱스는 svf-utils 의 material id 와 동일(둘 다 Object.keys(json.materials) 순서).
+function parseMaterialTransforms(svfDir, log = () => {}) {
+  let file = null;
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/Materials\.json(\.gz)?$/i.test(e.name)) file = p;
+    }
+  };
+  try { walk(svfDir); } catch { /* 무시 */ }
+  if (!file) { log('[matxf] Materials.json(.gz) 못 찾음 — 텍스처 변환 복원 생략'); return null; }
+  let buf;
+  try {
+    buf = fs.readFileSync(file);
+    if (buf[0] === 0x1f && buf[1] === 0x8b) buf = zlib.gunzipSync(buf);
+  } catch (e) { log(`[matxf] 읽기 실패: ${e?.message || e}`); return null; }
+  let json;
+  try { json = JSON.parse(buf.toString()); } catch (e) { log(`[matxf] JSON 파싱 실패: ${e?.message || e}`); return null; }
+  if (!json?.materials) { log('[matxf] materials 키 없음'); return null; }
+  const sc = (m, k) => m?.properties?.scalars?.[k]?.values?.[0];
+  const bo = (m, k) => { const v = m?.properties?.booleans?.[k]; return typeof v === 'object' ? v?.values?.[0] : v; };
+  const out = [];
+  let dumped = 0, rawDump = 0, texDump = 0;
+  log(`[matxf] top keys=${JSON.stringify(Object.keys(json))}`);
+  for (const key of Object.keys(json.materials)) {
+    const group = json.materials[key];
+    const mat = group?.materials?.[group?.userassets?.[0]];
+    // 진단: 실제 그룹 구조를 눈으로 확인(내 파싱 가정이 틀린 원인 규명).
+    if (rawDump < 2) { rawDump++; log(`[matxf] RAWGROUP[${key}]=${JSON.stringify(group).slice(0, 1400)}`); }
+    if (texDump < 3 && mat?.textures) { texDump++; log(`[matxf] TEX keys=${JSON.stringify(Object.keys(mat.textures))} matKeys=${JSON.stringify(Object.keys(mat))} propKeys=${JSON.stringify(Object.keys(mat.properties || {}))}`); }
+    let xf = null;
+    // 텍스처 노드 찾기: (1) phong 의 generic_diffuse 연결 우선, (2) 실패 시 그룹 내에서
+    // unifiedbitmap_Bitmap uri 를 가진 노드를 직접 탐색(구조 변형에 견고). offset 스칼라는
+    // 이 텍스처 노드(properties.scalars)에 들어있다.
+    const gmats = group?.materials || {};
+    let tex = null;
+    const conn = mat?.textures?.generic_diffuse?.connections?.[0];
+    if (conn != null && gmats[conn]?.properties?.uris?.unifiedbitmap_Bitmap?.values?.[0]) tex = gmats[conn];
+    if (!tex) {
+      for (const mk of Object.keys(gmats)) {
+        if (gmats[mk]?.properties?.uris?.unifiedbitmap_Bitmap?.values?.[0]) { tex = gmats[mk]; break; }
+      }
+    }
+    const uri = tex?.properties?.uris?.unifiedbitmap_Bitmap?.values?.[0];
+    if (tex && uri) {
+      xf = {
+        uri,
+        uScale: sc(tex, 'texture_UScale') ?? 1,
+        vScale: sc(tex, 'texture_VScale') ?? 1,
+        uOffset: sc(tex, 'texture_UOffset') ?? 0,
+        vOffset: sc(tex, 'texture_VOffset') ?? 0,
+        wAngle: sc(tex, 'texture_WAngle') ?? 0,
+        wrapU: bo(tex, 'texture_URepeat') ?? bo(tex, 'unifiedbitmap_URepeat') ?? bo(tex, 'texture_UWrap'),
+        wrapV: bo(tex, 'texture_VRepeat') ?? bo(tex, 'unifiedbitmap_VRepeat') ?? bo(tex, 'texture_VWrap'),
+      };
+      if (dumped < 8) {
+        dumped++;
+        // 진단: 실제 스칼라/불리언 키 전체 — 정확한 offset/wrap 키를 눈으로 확인.
+        log(`[matxf] #${out.length} ${uri.slice(-30)} U(s=${xf.uScale},o=${xf.uOffset}) V(s=${xf.vScale},o=${xf.vOffset}) W=${xf.wAngle} wrap=(${xf.wrapU},${xf.wrapV})`);
+        log(`[matxf]   scalars=${JSON.stringify(tex?.properties?.scalars || {}).slice(0, 700)}`);
+      }
+    }
+    out.push(xf);
+  }
+  const withTex = out.filter(Boolean).length;
+  log(`[matxf] 재질 ${out.length}개 중 텍스처 변환 ${withTex}개 복원`);
+  return out;
+}
+
+// 실패 마커(error.json)를 남길 컨텍스트 — 프런트가 실패를 즉시 감지하도록.
+let errCtx = null;
+
 async function main() {
   need('APS_CLIENT_ID', APS_CLIENT_ID);
   need('APS_CLIENT_SECRET', APS_CLIENT_SECRET);
-  need('SUPABASE_URL', SUPABASE_URL);
-  need('SUPABASE_SERVICE_ROLE_KEY', SUPABASE_SERVICE_ROLE_KEY);
-  let host = '';
-  try {
-    host = new URL(SUPABASE_URL).host;
-  } catch {
-    throw new Error(`SUPABASE_URL 형식 오류. "https://<프로젝트>.supabase.co" 형태여야 합니다.`);
+  need('R2_ACCOUNT_ID', R2_ACCOUNT_ID);
+  need('R2_ACCESS_KEY_ID', R2_ACCESS_KEY_ID);
+  need('R2_SECRET_ACCESS_KEY', R2_SECRET_ACCESS_KEY);
+  need('R2_BUCKET', R2_BUCKET);
+  // URN 을 직접 받으면 Supabase 불필요(앱은 URN 을 넘긴다). PROJECT_ID 로 조회할 때만 필요.
+  let urn;
+  if (URN_ENV) {
+    urn = URN_ENV;
+  } else {
+    need('SUPABASE_URL', SUPABASE_URL);
+    need('SUPABASE_SERVICE_ROLE_KEY', SUPABASE_SERVICE_ROLE_KEY);
+    let host;
+    try { host = new URL(SUPABASE_URL).host; } catch {
+      throw new Error(`SUPABASE_URL 형식 오류. "https://<프로젝트>.supabase.co" 형태여야 합니다.`);
+    }
+    console.log(`[convert4d] Supabase host: ${host}`);
+    if (!/supabase\.(co|in|net)$/.test(host)) {
+      throw new Error(
+        `SUPABASE_URL 시크릿에 프로젝트 URL이 아니라 다른 값(키 등)이 들어간 것 같습니다. ` +
+          `Supabase 대시보드 → Project Settings → API → "Project URL"(https://xxxx.supabase.co)을 넣으세요. 현재 host=${host}`,
+      );
+    }
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+    urn = await resolveUrn(supabase);
   }
-  console.log(`[convert4d] Supabase host: ${host}`);
-  if (!/supabase\.(co|in|net)$/.test(host)) {
-    throw new Error(
-      `SUPABASE_URL 시크릿에 프로젝트 URL이 아니라 다른 값(키 등)이 들어간 것 같습니다. ` +
-        `Supabase 대시보드 → Project Settings → API → "Project URL"(https://xxxx.supabase.co)을 넣으세요. 현재 host=${host}`,
-    );
-  }
-
-  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
-  const urn = await resolveUrn(supabase);
-  const keyBase = PROJECT_ID || urn.replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
+  const keyBase = PROJECT_ID || cacheKey(urn);
   console.log(`[convert4d] URN=${urn.slice(0, 24)}… region=${APS_REGION} bucket=${STORAGE_BUCKET} key=${keyBase}`);
+  errCtx = { keyBase };
+  // 이전 실패 마커 제거 — 재시도 중엔 '처리중'으로 보이게(실패로 오인 방지).
+  await r2Delete(`${keyBase}/error.json`);
 
+  await ensureSvf(urn); // 기존 SVF만 사용. 없으면 비용 발생 가능한 자동 변환 없이 종료.
   const derivatives = await getSvfDerivatives(urn);
-  if (derivatives.length === 0) throw new Error('SVF 파생물을 찾지 못했습니다.');
+  if (derivatives.length === 0) throw new Error('SVF 파생물을 찾지 못했습니다(변환 후에도 없음).');
   console.log(`[convert4d] SVF 파생물 ${derivatives.length}개`);
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'svf2gltf-'));
@@ -202,8 +383,138 @@ async function main() {
   const svfPath = await downloadSvfToDisk(derivative, path.join(tmp, 'svf'));
   console.log(`[convert4d] SVF 읽는 중 (${svfPath})…`);
   const reader = await SVFReader.FromFileSystem(svfPath);
-  const scene = await reader.read({ log: () => process.stdout.write('.') });
+  // skipPropertyDb: 속성 DB(dbId→속성)는 지오메트리 변환에 불필요 — 안 읽어 404/ENOENT 회피.
+  const scene = await reader.read({ skipPropertyDb: true, log: () => process.stdout.write('.') });
   process.stdout.write('\n');
+  // 재질 텍스처 변환(offset/scale/rotation)을 원본 SVF 에서 직접 복원(svf-utils 가 버린 값).
+  const matXforms = parseMaterialTransforms(path.dirname(svfPath), console.log);
+
+  // === XKT 파이프라인(비-DWG 메시 모델): 감량 없이 재질그룹별 GLB → convert2xkt → 분할 XKT →
+  // 매니페스트. 뷰어(XKTLoaderPlugin)가 여러 XKT 를 한 씬에 스트리밍 로드(xeokit-bim-viewer 방식).
+  // 통짜 GLB(4GB 한계)·감량(shard/과감량)을 모두 회피. DWG(선형)는 기존 GLB 경로 유지. ===
+  const useXkt = process.env.XKT !== '0' && process.env.INCLUDE_LINES !== '1';
+  if (useXkt) {
+    process.env.DECIMATE = '0'; // XKT 는 원본 정밀도 보존(감량 없음)
+    fs.mkdirSync('out/xkt', { recursive: true });
+    const mod = await import('@xeokit/xeokit-convert');
+    const convert2xkt = mod.convert2xkt || mod.default?.convert2xkt || mod.default;
+    if (typeof convert2xkt !== 'function') throw new Error('convert2xkt 로드 실패(@xeokit/xeokit-convert)');
+    // convert2xkt(XKTModel.finalize)는 텍스처 Basis 인코딩 시 CWD 기준 modules/textures/dist/libs/
+    // basis_encoder.wasm 을 찾는다 → @loaders.gl/textures 의 실제 위치로 심볼릭 링크(없으면 텍스처 드롭).
+    try {
+      const libs = path.resolve('node_modules/@loaders.gl/textures/dist/libs');
+      if (fs.existsSync(libs)) {
+        fs.mkdirSync('modules/textures/dist', { recursive: true });
+        if (!fs.existsSync('modules/textures/dist/libs')) fs.symlinkSync(libs, 'modules/textures/dist/libs');
+        console.log('[convert4d] basis_encoder 경로 연결(modules/textures/dist/libs → loaders.gl)');
+      } else {
+        console.warn('[convert4d] @loaders.gl/textures libs 없음 — 텍스처 Basis 인코딩 불가할 수 있음');
+      }
+    } catch (e) { console.warn('[convert4d] basis 경로 연결 실패:', e?.message || e); }
+    // 스트리밍: mergeGlb 가 청크 GLB 를 하나 만들 때마다 여기서 XKT 로 굽고 R2 업로드 후 즉시 삭제
+    // → 디스크·메모리 모두 한 청크로 상한(대용량 OOM/디스크풀 원천 차단).
+    // Immutable chunks: failed rebuilds cannot overwrite files referenced by the last good manifest.
+    const generation = `runs/${randomUUID()}`;
+    const stagedKeys = [];
+    let publishAttempted = false;
+    try {
+    const xktFiles = [];
+    const chunkInfo = {};
+    const failedChunks = [];
+    const navFiles = [];
+    const baseFiles = [];
+    const instFiles = []; // 인스턴스 레이어(항상 로드 구조물 뼈대)
+    let lodFile = null;
+    // 업로드 바이트 누계 — 앱이 실제로 내려받는 총 트래픽(전산실 모니터링용)을 로그로 남긴다.
+    let detailBytes = 0, navBytes = 0, lodBytes = 0, baseBytes = 0, instBytes = 0;
+    const MB = (b) => (b / 1048576).toFixed(1);
+    // kind: 'detail'(상세/타일 c*.xkt) | 'nav' | 'lod1'(개요) | 'base'(지형 항상로드 b*.xkt) | 'inst'(인스턴스 레이어 i*.xkt)
+    const onChunk = async (glbPath, idx, tris, kind = 'detail') => {
+      const xktPath = glbPath.replace(/\.glb$/, '.xkt');
+      const name = `${generation}/${path.basename(xktPath)}`;
+      try {
+        await convert2xkt({ source: glbPath, output: xktPath, log: () => {} });
+        const buf = fs.readFileSync(xktPath);
+        const transfer = encodeXktTransfer(buf);
+        stagedKeys.push(`${keyBase}/xkt/${name}`);
+        await r2Put(`${keyBase}/xkt/${name}`, transfer.body, 'application/octet-stream', transfer.contentEncoding);
+        // byteLength remains decoded file size for the viewer's residency budget.
+        chunkInfo[name] = { byteLength: buf.length, transferByteLength: transfer.transferByteLength,
+          contentEncoding: transfer.contentEncoding ?? 'identity', triangles: tris, kind };
+        console.log(`[convert4d] transport ${MB(buf.length)}MB → ${MB(transfer.transferByteLength)}MB (lossless)`);
+        if (kind === 'lod1') { lodFile = name; lodBytes += buf.length; console.log(`[convert4d]   LOD1 → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
+        else if (kind === 'motion') { console.log(`[convert4d] motion tile ${idx}: ${tris} triangles`); }
+        else if (kind === 'nav') { navFiles.push(name); navBytes += buf.length; console.log(`[convert4d]   nav ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
+        else if (kind === 'base') { baseFiles.push(name); baseBytes += buf.length; console.log(`[convert4d]   지형베이스 ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
+        else if (kind === 'inst') { instFiles.push(name); instBytes += buf.length; console.log(`[convert4d]   인스턴스레이어 ${idx} → ${name} (${MB(buf.length)}MB) 업로드`); }
+        else { xktFiles.push(name); detailBytes += buf.length; console.log(`[convert4d]   청크 ${idx} → ${name} (${(tris / 1e6).toFixed(1)}M삼각형 · ${MB(buf.length)}MB) 업로드`); }
+      } catch (e) {
+        failedChunks.push({ name, kind });
+        throw new Error(`XKT ${kind} 청크 변환/업로드 실패: 게시를 중단합니다. ${e?.message || e}`, { cause: e });
+      } finally {
+        // RENDER_TEST 시 진단용으로 남긴다: LOD1 GLB(개요) + 첫 상세청크 XKT(c0). 나머지는 삭제.
+        const keepGlb = kind === 'lod1' && process.env.RENDER_TEST === '1';
+        const keepXkt = kind === 'detail' && idx === 0 && process.env.RENDER_TEST === '1';
+        if (!keepGlb) fs.rmSync(glbPath, { force: true });
+        if (!keepXkt) fs.rmSync(xktPath, { force: true });
+      }
+    };
+    console.log('[convert4d] XKT 스트리밍 변환 시작(상세+nav LOD)…');
+    const res = await buildMergedGlb(scene, { xktStreamDir: 'out/xkt', onChunk, log: console.log, matXforms });
+    if (failedChunks.length) throw new Error(`XKT 청크 ${failedChunks.length}개 실패: 불완전한 모델은 게시하지 않습니다.`);
+    if (xktFiles.length === 0) throw new Error('XKT 청크 0개 — 변환할 지오메트리 없음');
+    // 매니페스트: 상세청크(xktFiles) + 내비 LOD(navFiles) + 개요(lod1).
+    // 뷰어: 정지=상세, 회전중=nav(텍스처 입힌 중간해상도), 극단 줌아웃=lod1.
+    // 타일 모드: xktFiles 각각이 '공간 타일(원본 형상)' + AABB. 뷰어가 개요 먼저→보는 타일만 스트리밍.
+    const manifest = {
+      schemaVersion: 2, tileLayout: res.tileLayout ?? null, xktFiles, navFiles, lod1: lodFile, chunkInfo, focus: res.focus || null,
+      build: { commit: process.env.GITHUB_SHA || null, ref: process.env.GITHUB_REF || null,
+        createdAt: new Date().toISOString(),
+        options: { tiles: process.env.XKT_TILES === '1', tileM: Number(process.env.XKT_TILE_M || 200),
+          tileCap: Number(process.env.XKT_TILE_CAP || 1200000), instance: process.env.XKT_INSTANCE === '1',
+          motionLod: process.env.XKT_MOTION_LOD === '1', tileReuse: process.env.XKT_TILE_REUSE !== '0', tileInstanceReferences: res.tileInstanceReferences ?? 0 } },
+    };
+    if (res.tiles) {
+      manifest.tiles = xktFiles.map((n) => ({ n, aabb: res.tileAabbs?.[path.basename(n).replace(/\.xkt$/, '')], byteLength: chunkInfo[n].byteLength,
+        ...(res.tileLods?.[path.basename(n).replace(/\.xkt$/, '')] ? { motion: (() => {
+          const meta = res.tileLods[path.basename(n).replace(/\.xkt$/, '')];
+          const key = `${generation}/${meta.n}`;
+          if (!chunkInfo[key]) throw new Error('Missing paired motion tile');
+          return { ...meta, n: key, byteLength: chunkInfo[key].byteLength };
+        })() } : {}) }));
+      if (manifest.tiles.some(t => !Array.isArray(t.aabb) || t.aabb.length !== 6 || !t.aabb.every(Number.isFinite))) {
+        throw new Error('타일 공간 정보 누락: 불완전한 모델은 게시하지 않습니다.');
+      }
+      manifest.base = baseFiles; // 지형 항상로드 베이스(뷰어가 처음에 로드, 절대 언로드 안 함)
+      if (instFiles.length) manifest.inst = instFiles; // 인스턴스 레이어(반복 구조물 뼈대, 항상 로드)
+      console.log(`[convert4d] 타일 매니페스트: 구조물 타일 ${manifest.tiles.length}개 + 지형베이스 ${baseFiles.length}청크 + 인스턴스 ${instFiles.length}청크 + 개요 lod1`);
+    }
+    // A lost response may still mean a successful manifest write. Once attempted,
+    // never delete generation files automatically.
+    await r2Put(`${keyBase}/xkt/manifest.json`, Buffer.from(JSON.stringify(manifest)),
+      'application/json', undefined, () => { publishAttempted = true; });
+    if (res.focus) await r2Put(`${keyBase}/focus.json`, Buffer.from(JSON.stringify(res.focus)), 'application/json');
+    else await r2Delete(`${keyBase}/focus.json`);
+    await r2Delete(`${keyBase}/model.glb`); // 구 GLB 캐시 제거(프런트가 XKT 우선)
+    await r2Delete(`${keyBase}/error.json`);
+    console.log(`[convert4d] XKT 업로드 완료: 상세 ${xktFiles.length}청크 · nav ${navFiles.length}청크(삼각형 ${Math.round(res.navTris || 0).toLocaleString()}) · 정점 ${res.vertices.toLocaleString()} · 삼각형 ${Math.round(res.triangles).toLocaleString()} (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+    // 앱 최초 로드 시 실제 다운로드량(= 전산실 트래픽) — 상세+개요가 기본, nav 는 회전시에만.
+    if (res.tiles) {
+      const initMB = MB(baseBytes + lodBytes + instBytes);
+      console.log(`[convert4d] 다운로드 용량: 지형베이스(항상) ${MB(baseBytes)}MB + 인스턴스레이어(항상) ${MB(instBytes)}MB/${instFiles.length}청크 + 개요 ${MB(lodBytes)}MB = 최초 ~${initMB}MB · 구조물타일(보는 곳만) 합계 ${MB(detailBytes)}MB/${xktFiles.length}개 = 타일당 평균 ${xktFiles.length ? MB(detailBytes / xktFiles.length) : 0}MB${res.instMeshes ? ` · 인스턴스 메시 ${res.instMeshes.toLocaleString()}개(항상 표시)` : ''}`);
+    } else {
+      console.log(`[convert4d] 다운로드 용량(트래픽): 상세 ${MB(detailBytes)}MB + 개요 ${MB(lodBytes)}MB = 최초 ${MB(detailBytes + lodBytes)}MB · nav(회전시) ${MB(navBytes)}MB · 합계 ${MB(detailBytes + lodBytes + navBytes)}MB`);
+    }
+    console.log('[convert4d] DONE');
+    return;
+    } catch (error) {
+      if (!publishAttempted) {
+        // Only this run's unique generation; never the previous manifest/cache.
+        for (const key of stagedKeys) await r2Delete(key);
+      }
+      throw error;
+    }
+  }
 
   // 재질별 병합 + 정점당 dbId → 단일 GLB(거대 모델의 glTF JSON 한계 회피).
   fs.mkdirSync('out', { recursive: true });
@@ -214,24 +525,68 @@ async function main() {
     `[convert4d] GLB 완료: ${(res.bytes / 1048576).toFixed(1)} MB · 메시 ${res.groups} · 정점 ${res.vertices.toLocaleString()} · 단순화 ${res.decimated} (${((Date.now() - t0) / 1000).toFixed(1)}s)`,
   );
 
-  // Supabase Storage 업로드(버킷 없으면 생성). 대용량이라 실패해도 아티팩트로 남기고 계속.
-  await supabase.storage.createBucket(STORAGE_BUCKET, { public: false }).catch(() => {});
-  const objectPath = `${keyBase}/model.glb`;
-  try {
-    const fileBuf = fs.readFileSync(outPath);
-    const up = await supabase.storage.from(STORAGE_BUCKET).upload(objectPath, fileBuf, {
-      contentType: 'model/gltf-binary',
-      upsert: true,
-    });
-    if (up.error) throw up.error;
-    console.log(`[convert4d] 업로드 완료: ${STORAGE_BUCKET}/${objectPath}`);
-  } catch (e) {
-    console.warn(`[convert4d] 업로드 실패(아티팩트로 보관): ${e?.message || e}`);
+  // Draco 압축 — Supabase 무료 스토리지 상한(50MB) 아래로 낮추고 로드도 빠르게.
+  // (xeokit 는 KHR_draco_mesh_compression 디코드 지원. meshopt 는 xeokit 가 요구하는
+  //  KHR_mesh_quantization 미지원이라 부적합 → Draco 사용.) 위치 14bit 로 형상 보존.
+  const rawBytes = res.bytes;
+  // Draco 는 삼각형/점 전용 — 선(line) 프리미티브를 제대로 못 다뤄 대형 선형이 깨지거나
+  // 드롭된다(DWG 지형 삼각망 50만 선분이 안 보이던 원인). DWG(선 포함)는 Draco 를 건너뛴다.
+  // R2 는 파일 크기 제한이 없어 비압축(수십 MB)도 문제없다.
+  const skipDraco = process.env.INCLUDE_LINES === '1';
+  if (skipDraco) {
+    console.log(`[convert4d] Draco 건너뜀(DWG 선형 보존) — 비압축 ${(rawBytes / 1048576).toFixed(1)}MB 업로드`);
+  } else {
+    // Draco 는 삼각형만 압축 — best-effort(실패 시 원본 사용).
+    try {
+      console.log(`[convert4d] Draco 압축 중…`);
+      const compressed = await gltfPipeline.processGlb(fs.readFileSync(outPath), {
+        dracoOptions: {
+          compressionLevel: 7,
+          quantizePositionBits: 16,
+          quantizeNormalBits: 10,
+          quantizeTexcoordBits: 12,
+          quantizeGenericBits: 16, // _DBID 최대한 보존
+          unifiedQuantization: true, // 병합 모델(실좌표) 정합
+        },
+      });
+      fs.writeFileSync(outPath, compressed.glb);
+      const cBytes = fs.statSync(outPath).size;
+      console.log(
+        `[convert4d] 압축 완료: ${(rawBytes / 1048576).toFixed(1)}MB → ${(cBytes / 1048576).toFixed(1)}MB`,
+      );
+    } catch (e) {
+      console.warn(`[convert4d] Draco 압축 건너뜀(${e?.message || e}) — 원본 GLB 사용`);
+    }
   }
+
+  // Cloudflare R2 업로드(파일당 50MB 제한 없음). 실패는 치명적으로 처리(main().catch
+  // 에서 error.json 마커 → 프런트가 무한 폴링 대신 즉시 실패 표시).
+  const objectPath = `${keyBase}/model.glb`;
+  const fileBuf = fs.readFileSync(outPath);
+  await r2Put(objectPath, fileBuf, 'model/gltf-binary');
+  // 카메라 초점(이상치 제외 focus 박스) — 프런트가 flyTo 대상으로 사용(콩알 렌더 방지).
+  if (res.focus) {
+    await r2Put(`${keyBase}/focus.json`, Buffer.from(JSON.stringify(res.focus)), 'application/json');
+    try { fs.writeFileSync('out/focus.json', JSON.stringify(res.focus)); } catch { /* 진단용, 무시 */ }
+  } else {
+    await r2Delete(`${keyBase}/focus.json`);
+  }
+  await r2Delete(`${keyBase}/error.json`);
+  console.log(
+    `[convert4d] 업로드 완료(R2): ${R2_BUCKET}/${objectPath} (${(fileBuf.length / 1048576).toFixed(1)}MB)`,
+  );
   console.log(`[convert4d] DONE`);
 }
 
-main().catch((e) => {
+main().catch(async (e) => {
   console.error('[convert4d] 실패:', e?.stack || e?.message || e);
+  // 실패 마커를 R2 에 남겨 프런트가 즉시 감지하게 한다(무한 폴링 방지).
+  if (errCtx) {
+    await r2Put(
+      `${errCtx.keyBase}/error.json`,
+      Buffer.from(JSON.stringify({ error: String(e?.message || e).slice(0, 300), at: new Date().toISOString() })),
+      'application/json',
+    ).catch(() => {});
+  }
   process.exit(1);
 });

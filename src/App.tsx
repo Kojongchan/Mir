@@ -2,23 +2,27 @@ import { lazy, Suspense, type ComponentType, type ReactElement } from 'react';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
 import { UiIconSprite } from './components/icons/UiIcon';
+import { DialogHost } from './components/DialogHost';
+import { RouteFallback } from './components/RouteFallback';
 // 셸/경량 페이지는 즉시 로드(첫 진입 지연 최소화).
 import { Login } from './pages/Login';
 import { ProjectSelect } from './pages/ProjectSelect';
 import { ProjectShell } from './pages/ProjectShell';
-import { Dashboard } from './pages/Dashboard';
-import { Schedule } from './pages/Schedule';
-import { DailyLogs } from './pages/DailyLogs';
-import { Issues } from './pages/Issues';
-import { Billing } from './pages/Billing';
-import { Subcontracts } from './pages/Subcontracts';
-import { Board } from './pages/Board';
-import { ProjectMembers } from './pages/ProjectMembers';
 
 // Q1 코드 스플리팅 — 무거운 의존성(APS 뷰어·web-ifc·pdfjs·mammoth/xlsx·recharts)을 안은
 // 페이지는 지연 로드해 초기 번들에서 분리한다. named export → default 로 감싼다.
 const named = <T extends string>(p: Promise<Record<T, ComponentType<any>>>, key: T) =>
   p.then((m) => ({ default: m[key] }));
+// 포털 화면도 지연 로드: 사업개요·공정·기성(recharts), 이슈(xlsx 내보내기·pdf 미리보기)가 로그인 화면 번들에
+// 끌려오지 않게(전에는 첫 화면이 charts·pdf·docs 청크 ≈1.1MB 를 함께 받음).
+const Dashboard = lazy(() => named(import('./pages/Dashboard'), 'Dashboard'));
+const Schedule = lazy(() => named(import('./pages/Schedule'), 'Schedule'));
+const DailyLogs = lazy(() => named(import('./pages/DailyLogs'), 'DailyLogs'));
+const Issues = lazy(() => named(import('./pages/Issues'), 'Issues'));
+const Billing = lazy(() => named(import('./pages/Billing'), 'Billing'));
+const Subcontracts = lazy(() => named(import('./pages/Subcontracts'), 'Subcontracts'));
+const Board = lazy(() => named(import('./pages/Board'), 'Board'));
+const ProjectMembers = lazy(() => named(import('./pages/ProjectMembers'), 'ProjectMembers'));
 const DocumentManager = lazy(() => named(import('./pages/DocumentManager'), 'DocumentManager'));
 const Drawings = lazy(() => named(import('./pages/Drawings'), 'Drawings'));
 const Quantities = lazy(() => named(import('./pages/Quantities'), 'Quantities'));
@@ -26,16 +30,11 @@ const Admin = lazy(() => named(import('./pages/Admin'), 'Admin'));
 const FileViewer = lazy(() => named(import('./pages/FileViewer'), 'FileViewer'));
 const AccModels = lazy(() => named(import('./pages/AccModels'), 'AccModels'));
 const StyleGuide = lazy(() => named(import('./pages/StyleGuide'), 'StyleGuide'));
-
-/** 지연 로드 라우트의 로딩 자리표시(Suspense fallback). */
-function RouteFallback() {
-  return (
-    <div className="route-loading" aria-busy="true" aria-live="polite">
-      <span className="sr-only">불러오는 중…</span>
-      <div className="skeleton skeleton--block" style={{ height: 40, maxWidth: 320 }} />
-    </div>
-  );
-}
+// 3D뷰(신규 테스트) — 자체 뷰어 엔진(Three.js+web-ifc)을 네이티브 메뉴로 검증.
+const ThreeDTest = lazy(() => named(import('./pages/ThreeDTest'), 'ThreeDTest'));
+// 3D뷰(신규 테스트 2차) — 표준 3D Tiles + three.js 엔진 시제품(D23). 기존 화면과 비교용.
+const ThreeDTest2 = lazy(() => named(import('./pages/ThreeDTest2'), 'ThreeDTest2'));
+const ModelRoute = lazy(() => named(import('./pages/ModelRoute'), 'ModelRoute'));
 
 function Protected({ children }: { children: ReactElement }) {
   const { session, loading } = useAuth();
@@ -68,6 +67,7 @@ export default function App() {
   return (
     <AuthProvider>
       <UiIconSprite />
+      <DialogHost />
       <BrowserRouter>
         <Suspense fallback={<RouteFallback />}>
         <Routes>
@@ -105,11 +105,17 @@ export default function App() {
             {/* key 로 메뉴마다 별도 인스턴스 강제 — 같은 컴포넌트 타입이라 React 가
                 인스턴스를 재사용하면 init effect([])·mode refs 가 첫 진입 모드로 고정돼
                 세 뷰가 연동되는 문제가 생긴다(S52 버그). */}
-            <Route path="model" element={<AccModels key="integrated" />} />
+            {/* 통합모델(3D): 현장별 뷰어(0043) — 기본 자체 엔진, 'aps' 현장·타일 없는 모델은 기존 Autodesk 뷰어. */}
+            <Route path="model" element={<ModelRoute />} />
             {/* 공정관리(4D) = APS(ACC) 모델 위 4D 시뮬(S50). */}
             <Route path="viewer" element={<AccModels key="fourd" mode4d />} />
             {/* 간섭검토 = APS(ACC) 모델 위 간섭(S49). */}
             <Route path="clash" element={<AccModels key="clash" autoClash />} />
+            {/* 3D뷰(신규 테스트) — iframe 없이 자체 뷰어를 직접 띄우는 실험 메뉴. */}
+            <Route path="model-test" element={<ThreeDTest />} />
+            {/* One page, two tilesets: the keys make switching between them start a fresh viewer. */}
+            <Route path="model-test-2" element={<ThreeDTest2 key="tiles3d" />} />
+            <Route path="model-test-3" element={<ThreeDTest2 key="tiles3d-svf" variant="svf" />} />
             <Route path="quantities" element={<Quantities />} />
             <Route path="drawings" element={<Drawings />} />
             <Route path="docs" element={<DocumentManager />} />

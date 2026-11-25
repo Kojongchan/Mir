@@ -5,7 +5,7 @@ import { useAuth } from '../auth/AuthProvider';
 import { IfcViewer, type ElementMeta, type UpAxis } from '../viewer/IfcViewer';
 import { PropertiesPanel } from '../components/PropertiesPanel';
 import { useStore } from '../store/useStore';
-import { downloadModelBytes, listModels, type ModelRecord } from '../lib/api';
+import { downloadModelBytes, isIfcModel, listModels, type ModelRecord } from '../lib/api';
 import { createBillingItem, listBillingItems } from '../lib/portal';
 import {
   computeQuantities,
@@ -16,6 +16,16 @@ import {
   type QtyResult,
   type QtyUnitMode,
 } from '../lib/quantities';
+
+/** Category counts within one loaded model (or all), most frequent first. */
+function categoriesFor(meta: ElementMeta[], model: 'all' | number): [string, number][] {
+  const cats = new Map<string, number>();
+  for (const e of meta) {
+    if (model !== 'all' && e.modelID !== model) continue;
+    cats.set(e.category, (cats.get(e.category) ?? 0) + 1);
+  }
+  return [...cats.entries()].sort((a, b) => b[1] - a[1]);
+}
 
 /**
  * 5D 물량 산출(QTO) — BIM 요소 물량을 공종/카테고리별로 집계하고 기성내역과
@@ -58,7 +68,14 @@ export function Quantities() {
   }, [setSelected]);
 
   useEffect(() => {
-    listModels(projectId).then(setModels).catch(() => setModels([]));
+    // Only IFC files can be measured here; ACC models (rows mirrored by URN for 4D links) have no bytes in storage.
+    listModels(projectId).then(ms => {
+      const ifc = ms.filter(isIfcModel);
+      setModels(ifc);
+      if (!ifc.length) setStatus(ms.length
+        ? `물량 산출은 IFC 모델 전용입니다 — 이 프로젝트의 모델 ${ms.length}개는 ACC 모델이라 아직 대상이 아닙니다.`
+        : '이 프로젝트에는 IFC 모델이 없습니다.');
+    }).catch(() => setModels([]));
   }, [projectId]);
 
   useEffect(() => {
@@ -74,7 +91,7 @@ export function Quantities() {
     for (const m of models) {
       setStatus(`불러오는 중: ${m.name} (${ok + 1}/${models.length})`);
       try {
-        const bytes = await downloadModelBytes(m.storage_path);
+        const bytes = await downloadModelBytes(m.storage_path, m.bucket);
         const saved = loadUpAxisPref(m.id);
         await viewer.loadIfc(bytes, { label: m.name, ...(saved ? { upAxis: saved } : {}) });
         ok++;
@@ -87,16 +104,10 @@ export function Quantities() {
   };
 
   // --- 대상 선택기(모델 → 카테고리) ----------------------------------
+  // `meta` is the recompute trigger: it is replaced whenever a model loads or unloads.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const loadedModels = useMemo(() => viewer?.getLoadedModels() ?? [], [viewer, meta]);
-  const categoriesFor = (model: 'all' | number) => {
-    const cats = new Map<string, number>();
-    for (const e of meta) {
-      if (model !== 'all' && e.modelID !== model) continue;
-      cats.set(e.category, (cats.get(e.category) ?? 0) + 1);
-    }
-    return [...cats.entries()].sort((a, b) => b[1] - a[1]);
-  };
-  const cats = useMemo(() => categoriesFor(selModel), [meta, selModel]);
+  const cats = useMemo(() => categoriesFor(meta, selModel), [meta, selModel]);
   const items = useMemo(
     () =>
       meta.filter(

@@ -9,3 +9,6 @@ dist-ssr
 .vscode/*
 !.vscode/extensions.json
 public/web-ifc/*.wasm
+.ui-check
+.responsive-check
+public/basis/

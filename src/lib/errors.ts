@@ -22,3 +22,14 @@ export function errMessage(e: unknown): string {
   if (isSetupError(e)) return SETUP_HINT;
   return (e as { message?: string })?.message ?? String(e);
 }
+
+/** JSON body of an API response. A gateway error page (HTML on a timeout) becomes a readable error
+ *  instead of "Unexpected token '<'". */
+export async function readApiJson<T>(response: Response): Promise<T> {
+  const text = await response.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`서버 응답 오류 (HTTP ${response.status}) — 잠시 후 다시 시도해 주세요.`);
+  }
+}
