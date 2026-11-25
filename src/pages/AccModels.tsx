@@ -167,7 +167,8 @@ function updateFolder(nodes: FolderNode[], id: string, fn: (n: FolderNode) => Fo
   });
 }
 
-export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: boolean; mode4d?: boolean } = {}) {
+/** `notice`: one line above the viewer (통합모델(3D) opened here instead of the own engine, shown to managers). */
+export function AccModels({ autoClash = false, mode4d = false, notice }: { autoClash?: boolean; mode4d?: boolean; notice?: string } = {}) {
   const { projectId = '' } = useParams();
   const navigate = useNavigate();
   const { profile } = useAuth();
@@ -1100,6 +1101,7 @@ export function AccModels({ autoClash = false, mode4d = false }: { autoClash?: b
 
   return (
     <div className="acc-viewer-root">
+      {notice && <div className="viewer-engine-notice" role="note">{notice}</div>}
       <div className="viewer-topbar">
         <strong style={{ fontSize: 13 }}>{autoClash ? '🔍 간섭검토' : mode4d ? '🏗 공정관리(4D)' : '🧊 통합모델(3D)'}</strong>
         {/* 4D 매칭(규칙 편집기)은 하단 타임라인의 "공정표 임포트" 옆 버튼으로 통합(#3b). */}

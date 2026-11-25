@@ -34,6 +34,7 @@ const StyleGuide = lazy(() => named(import('./pages/StyleGuide'), 'StyleGuide'))
 const ThreeDTest = lazy(() => named(import('./pages/ThreeDTest'), 'ThreeDTest'));
 // 3D뷰(신규 테스트 2차) — 표준 3D Tiles + three.js 엔진 시제품(D23). 기존 화면과 비교용.
 const ThreeDTest2 = lazy(() => named(import('./pages/ThreeDTest2'), 'ThreeDTest2'));
+const ModelRoute = lazy(() => named(import('./pages/ModelRoute'), 'ModelRoute'));
 
 function Protected({ children }: { children: ReactElement }) {
   const { session, loading } = useAuth();
@@ -104,7 +105,8 @@ export default function App() {
             {/* key 로 메뉴마다 별도 인스턴스 강제 — 같은 컴포넌트 타입이라 React 가
                 인스턴스를 재사용하면 init effect([])·mode refs 가 첫 진입 모드로 고정돼
                 세 뷰가 연동되는 문제가 생긴다(S52 버그). */}
-            <Route path="model" element={<AccModels key="integrated" />} />
+            {/* 통합모델(3D): 현장별 뷰어(0043) — 기본 자체 엔진, 'aps' 현장·타일 없는 모델은 기존 Autodesk 뷰어. */}
+            <Route path="model" element={<ModelRoute />} />
             {/* 공정관리(4D) = APS(ACC) 모델 위 4D 시뮬(S50). */}
             <Route path="viewer" element={<AccModels key="fourd" mode4d />} />
             {/* 간섭검토 = APS(ACC) 모델 위 간섭(S49). */}

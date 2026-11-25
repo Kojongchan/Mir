@@ -3,7 +3,9 @@ import { useParams } from 'react-router-dom';
 import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
 import { useProjectRole } from '../auth/useProjectRole';
 import { supabase } from '../lib/supabase';
-import { isAccModel } from '../lib/aps';
+import { accFetch, isAccModel } from '../lib/aps';
+import { getProjectAcc } from '../lib/api';
+import { openOrder, type OpenCandidate } from '../lib/accVersions';
 import { errMessage, readApiJson } from '../lib/errors';
 import { dialogOpen } from '../lib/useEscapeKey';
 import { UiIcon } from '../components/icons/UiIcon';
@@ -34,7 +36,7 @@ const storedQuality = (): Quality => {
 };
 
 /** Outlines between objects (on unless turned off) and the colour mode, remembered in this browser. */
-const OUTLINE_KEY = 'mir.viewer2.outlines', COLOR_KEY = 'mir.viewer2.colorMode';
+const OUTLINE_KEY = 'mir.viewer2.outlines', COLOR_KEY = 'mir.viewer2.colorMode', STATS_KEY = 'mir.viewer2.stats';
 const storedOutlines = () => { try { return localStorage.getItem(OUTLINE_KEY) !== '0'; } catch { return true; } };
 const storedColorMode = (): ColorMode => {
   try { const m = localStorage.getItem(COLOR_KEY); return m && m in COLOR_MODES ? (m as ColorMode) : 'model'; } catch { return 'model'; }
@@ -52,10 +54,26 @@ const UNDO_STEPS = 30;
 type Visibility = { hidden: ReadonlySet<number>; past: ReadonlySet<number>[] };
 const NO_HIDDEN: Visibility = { hidden: new Set(), past: [] };
 
-export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
+/** Why the project's model cannot be shown in this engine (통합모델(3D) then opens the Autodesk viewer instead). */
+export type ViewerUnavailable = 'no-mapping' | 'no-model' | 'no-tiles';
+
+/** 통합모델(3D) status line: which version opened, and why not the newest when its tiles are not built yet. */
+function versionNote(opened: OpenCandidate, latest: OpenCandidate | undefined): string {
+  const v = (n: number | null) => (n ? `V${n}` : '지정한 버전');
+  if (!latest || latest.urn === opened.urn) return opened.versionNumber ? `최신 버전(${v(opened.versionNumber)})` : '';
+  return `최신 버전(${v(latest.versionNumber)})은 자체 엔진 타일 준비 전이라 ${v(opened.versionNumber)}을 표시합니다`;
+}
+
+/**
+ * `project`: the project's 통합모델(3D) page — opens the model the admin designated (its newest version that has
+ * tiles), without the test notes; `onUnavailable` when there is nothing to show here.
+ */
+export function ThreeDTest2({ variant, project = false, onUnavailable }: {
+  variant?: 'svf'; project?: boolean; onUnavailable?: (why: ViewerUnavailable) => void;
+} = {}) {
   const { projectId = '' } = useParams();
   const tilesQuery = variant ? `tiles3d=1&variant=${variant}` : 'tiles3d=1';
-  const tilesName = variant ? '3차 화면용(SVF 정밀) 타일' : '2차 화면용 타일';
+  const tilesName = project ? '자체 엔진용 타일' : variant ? '3차 화면용(SVF 정밀) 타일' : '2차 화면용 타일';
   const { canEdit, canManage } = useProjectRole(projectId);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<TilesViewer | null>(null);
@@ -104,6 +122,15 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
   const hiddenNodes = visibility.hidden;
   const [highlightIds, setHighlightIds] = useState<number[] | null>(null);
   const [statsOpen, setStatsOpen] = useState(false); // narrow screens: one summary line until tapped
+  // The performance line: on in the test pages, off in 통합모델(3D) unless turned on (보기 설정 > 성능 표시).
+  const [statsShown, setStatsShown] = useState(() => { try { const v = localStorage.getItem(STATS_KEY); return v === null ? !project : v === '1'; } catch { return !project; } });
+  const settingsRef = useRef<HTMLDetailsElement>(null);
+  // The settings drop-down closes on a click elsewhere.
+  useEffect(() => {
+    const close = (e: PointerEvent) => { const d = settingsRef.current; if (d?.open && !d.contains(e.target as Node)) d.open = false; };
+    window.addEventListener('pointerdown', close);
+    return () => window.removeEventListener('pointerdown', close);
+  }, []);
   // Phones and narrow tablets: panels start closed and one at a time (side by side they cover the view).
   const [treeOpen, setTreeOpen] = useState(() => !narrowScreen());
   const [propsOpen, setPropsOpen] = useState(() => !narrowScreen());
@@ -227,12 +254,13 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
    * The model's signed tile list from the server (the tree comes along; an older API answer without it is completed
    * from the model state), kept in this browser for opening again; null with the reason shown when there is none.
    */
-  const fetchTiles = useCallback(async (f: PickedAccFile, scope: string): Promise<SignedTiles | null> => {
+  const fetchTiles = useCallback(async (f: PickedAccFile, scope: string, quiet = false): Promise<SignedTiles | null> => {
     const headers = await authHeaders();
     const urn = encodeURIComponent(f.accUrn ?? '');
     const r = await fetch(`/api/aps-convert?urn=${urn}&${tilesQuery}`, { headers });
     const tiles = await readApiJson<{ run?: string; urls?: Record<string, string>; builtAt?: string; expiresIn?: number; meta?: MetaInfo; error?: string; missing?: boolean }>(r);
     const ok = r.ok && !!tiles.urls?.['tileset.json'];
+    if (!ok && quiet && tiles.missing) return null;
     let meta = tiles.meta, converted = false;
     if ((!ok && tiles.missing) || (ok && !meta)) {
       const state = await readApiJson<{ meta?: MetaInfo; tiles?: unknown[] }>(await fetch(`/api/aps-convert?urn=${urn}`, { headers }));
@@ -254,10 +282,11 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
 
   /** Bumped per opened model: a list that arrives for an earlier one is dropped. */
   const openSeq = useRef(0);
-  const openModel = useCallback(async (f: PickedAccFile) => {
+  /** Opens a model; true once its tiles are shown. `quiet`: a model without tiles leaves the page as it was. */
+  const openModel = useCallback(async (f: PickedAccFile, quiet = false): Promise<boolean> => {
     const viewer = viewerRef.current;
-    if (!viewer) return;
-    if (!f.accUrn) { setStatus('이 파일은 아직 APS 파생(URN)이 없습니다.'); return; }
+    if (!viewer) return false;
+    if (!f.accUrn) { setStatus('이 파일은 아직 APS 파생(URN)이 없습니다.'); return false; }
     const seq = ++openSeq.current;
     const show = (t: SignedTiles) => {
       setSelection([]); setRevealDb(null); setVisibility(NO_HIDDEN); setHighlightIds(null);
@@ -267,9 +296,9 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
       renewAt.current = { urn: f.accUrn!, at: Math.max(Date.now() + 60_000, t.expiresAt - 15 * 60_000) };
       viewer.open(t.urls, (t.meta?.objects ?? 0) + 1);
       void index.open(f.accUrn!, t.meta);
-      setStatus(`${f.name} · 3D Tiles ${Object.keys(t.urls).length.toLocaleString()}개 파일${t.builtAt ? ` · 생성 ${t.builtAt.slice(0, 10)}` : ''}`);
+      setStatus(project ? f.name : `${f.name} · 3D Tiles ${Object.keys(t.urls).length.toLocaleString()}개 파일${t.builtAt ? ` · 생성 ${t.builtAt.slice(0, 10)}` : ''}`);
     };
-    setBusy(true); setStatus(`불러오는 중… ${f.name}`); setModelName(f.name); setMissing(null);
+    setBusy(true); setStatus(`불러오는 중… ${f.name}`); if (!quiet) { setModelName(f.name); setMissing(null); }
     try {
       const { data } = await supabase.auth.getSession();
       const scope = `${data.session?.user.id ?? ''}|${tilesQuery}|${f.accUrn}`;
@@ -277,23 +306,63 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
       if (kept && kept.expiresAt - Date.now() > 30 * 60_000) {
         // Opened before in this browser: at once from the kept list, a fresh one behind it (a newer build replaces
         // the view; the same build only renews the URLs).
+        setModelName(f.name); setMissing(null);
         show(kept);
         setBusy(false);
-        const fresh = await fetchTiles(f, scope).catch(() => null);
-        if (!fresh || seq !== openSeq.current) return;
-        if (fresh.run !== kept.run) { show(fresh); setStatus(s => `${s} · 새로 생성된 타일로 바꿨습니다`); return; }
-        Object.assign(urlsRef.current ?? {}, fresh.urls);
-        viewer.updateUrls(fresh.urls);
-        renewAt.current = { urn: f.accUrn, at: fresh.expiresAt - 15 * 60_000 };
-        return;
+        void fetchTiles(f, scope, true).catch(() => null).then(fresh => {
+          if (!fresh || seq !== openSeq.current) return;
+          if (fresh.run !== kept.run) { show(fresh); setStatus(s => `${s} · 새로 생성된 타일로 바꿨습니다`); return; }
+          Object.assign(urlsRef.current ?? {}, fresh.urls);
+          viewer.updateUrls(fresh.urls);
+          renewAt.current = { urn: f.accUrn!, at: fresh.expiresAt - 15 * 60_000 };
+        });
+        return true;
       }
+      const fresh = await fetchTiles(f, scope, quiet);
+      if (!fresh || seq !== openSeq.current) return false;
       setSelection([]); setRevealDb(null); setVisibility(NO_HIDDEN); setHighlightIds(null);
       index.reset(); boxesRef.current = null; urlsRef.current = null;
-      const fresh = await fetchTiles(f, scope);
-      if (fresh && seq === openSeq.current) show(fresh);
-    } catch (e) { setStatus(`열기 실패: ${errMessage(e)}`); }
+      setModelName(f.name); setMissing(null);
+      show(fresh);
+      return true;
+    } catch (e) { setStatus(`열기 실패: ${errMessage(e)}`); return false; }
     finally { if (seq === openSeq.current) setBusy(false); }
-  }, [index, tilesQuery, fetchTiles]);
+  }, [index, tilesQuery, fetchTiles, project]);
+
+  // 통합모델(3D): the designated model opens by itself — the newest version that has tiles (a new version is shown
+  // once its tiles are built), else the version the admin designated. Nothing to open here: onUnavailable.
+  const unavailable = useRef(onUnavailable);
+  unavailable.current = onUnavailable;
+  const [pinnedNote, setPinnedNote] = useState('');
+  useEffect(() => {
+    if (!project || initError) return;
+    let cancelled = false;
+    void (async () => {
+      const acc = await getProjectAcc(projectId);
+      if (cancelled) return;
+      if (!acc.acc_project_id || !acc.acc_default_urn) { unavailable.current?.(acc.acc_project_id ? 'no-model' : 'no-mapping'); return; }
+      let order: OpenCandidate[] = [{ urn: acc.acc_default_urn, versionNumber: null }];
+      if (acc.acc_default_item_id) {
+        try {
+          const r = await accFetch({ action: 'versions', project: acc.acc_project_id, item: acc.acc_default_item_id });
+          order = openOrder(acc.acc_default_urn, r.versions ?? [], 5);
+        } catch { /* the designated version */ }
+      }
+      const file: PickedAccFile = { accProjectId: acc.acc_project_id, accItemId: acc.acc_default_item_id ?? '', accUrn: null,
+        name: acc.acc_default_name || '통합모델', size: null, folderId: null, folderIds: [], folderNames: [] };
+      for (const c of order) {
+        if (cancelled) return;
+        if (await openModel({ ...file, accUrn: c.urn }, true)) {
+          if (!cancelled) setPinnedNote(versionNote(c, order[0]));
+          return;
+        }
+      }
+      if (!cancelled) { setStatus(''); unavailable.current?.('no-tiles'); }
+    })().catch(e => { if (!cancelled) setStatus(`열기 실패: ${errMessage(e)}`); });
+    return () => { cancelled = true; };
+    // openModel changes with the model index; the designated model is opened once per page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project, projectId, initError]);
 
   // Signed tile URLs last 9 h: renew them 15 min early so a long session keeps loading tiles (kept for reopening too).
   useEffect(() => {
@@ -403,8 +472,8 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
   const statsShort = stats && `${PROFILES[stats.tier].label} · ${stats.errorTarget}px · ${stats.fps}fps · 삼각형 ${stats.triangles.toLocaleString()}`;
 
   return (
-    <div className="threed-test threed-test--v2">
-      <div className="threed-test__note">
+    <div className={`threed-test threed-test--v2${project ? ' threed-test--project' : ''}`}>
+      {!project && <div className="threed-test__note">
         <UiIcon name="cube" size={16} />
         <span>
           {variant === 'svf' ? (
@@ -419,7 +488,7 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
             </>
           )}
         </span>
-      </div>
+      </div>}
       <div className="threed-test__viewer">
         <div className="viewer-bar threed-test__bar">
           {/* The tools: in line on wide screens, one scrolling row on phones (status on its own line below). */}
@@ -439,40 +508,50 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
           )}
           <button className="btn btn--sm" disabled={!modelName || capturing} onClick={() => void capture()}
             title="지금 화면을 2배 해상도로, 멀리 있는 부분까지 세밀한 단계를 불러온 뒤 PNG 로 저장">{capturing ? '캡처 중…' : '고화질 캡처'}</button>
-          <label className="threed-test2__tier" title="기기 등급: 화면 오차(px)와 메모리 상한을 정합니다">
-            기기
-            <select value={tier} onChange={e => {
-              const value = e.target.value as DeviceTier | 'auto';
-              setTier(value);
-              const viewer = viewerRef.current;
-              viewer?.setTier(value === 'auto' ? viewer.detectedTier : value);
-            }}>
-              <option value="auto">자동{stats ? ` (${PROFILES[stats.tier].label})` : ''}</option>
-              <option value="high">{PROFILES.high.label}</option>
-              <option value="pc">{PROFILES.pc.label}</option>
-              <option value="mobile">{PROFILES.mobile.label}</option>
-            </select>
-          </label>
-          <label className="threed-test2__tier" title="화질: 높을수록 멀리 있는 부분도 세밀한 단계로 그리고 메모리를 더 씁니다">
-            화질
-            <select value={quality} onChange={e => {
-              const value = e.target.value as Quality;
-              setQuality(value);
-              viewerRef.current?.setQuality(value);
-              try { localStorage.setItem(QUALITY_KEY, value); } catch { /* private mode */ }
-            }}>
-              {(Object.keys(QUALITIES) as Quality[]).map(q => <option key={q} value={q}>{QUALITIES[q].label}</option>)}
-            </select>
-          </label>
-          <button className={`btn btn--sm${outlines ? ' btn--primary' : ''}`} aria-pressed={outlines}
-            title="객체 사이 경계선: 붙어 있거나 겹친 같은 색 구조물을 구분합니다"
-            onClick={() => { const next = !outlines; setOutlines(next); viewerRef.current?.setOutlines(next); remember(OUTLINE_KEY, next ? '1' : '0'); }}>외곽선</button>
-          <label className="threed-test2__tier" title="색 구분: 파일별 또는 분류(Revit 범주·도면층)별로 칠합니다">
-            색
-            <select value={colorMode} onChange={e => { const m = e.target.value as ColorMode; setColorMode(m); remember(COLOR_KEY, m); }}>
-              {(Object.keys(COLOR_MODES) as ColorMode[]).map(m => <option key={m} value={m}>{COLOR_MODES[m]}</option>)}
-            </select>
-          </label>
+          {/* Picture settings in one drop-down (기기·화질·외곽선·색, 성능 표시). */}
+          <details className="threed-test2__settings" ref={settingsRef}>
+            <summary className="btn btn--sm" title="보기 설정: 기기 등급·화질·외곽선·색 구분·성능 표시">보기 설정</summary>
+            <div className="threed-test2__settings-pop">
+              <label className="threed-test2__tier" title="기기 등급: 화면 오차(px)와 메모리 상한을 정합니다">
+                기기
+                <select value={tier} onChange={e => {
+                  const value = e.target.value as DeviceTier | 'auto';
+                  setTier(value);
+                  const viewer = viewerRef.current;
+                  viewer?.setTier(value === 'auto' ? viewer.detectedTier : value);
+                }}>
+                  <option value="auto">자동{stats ? ` (${PROFILES[stats.tier].label})` : ''}</option>
+                  <option value="high">{PROFILES.high.label}</option>
+                  <option value="pc">{PROFILES.pc.label}</option>
+                  <option value="mobile">{PROFILES.mobile.label}</option>
+                </select>
+              </label>
+              <label className="threed-test2__tier" title="화질: 높을수록 멀리 있는 부분도 세밀한 단계로 그리고 메모리를 더 씁니다">
+                화질
+                <select value={quality} onChange={e => {
+                  const value = e.target.value as Quality;
+                  setQuality(value);
+                  viewerRef.current?.setQuality(value);
+                  try { localStorage.setItem(QUALITY_KEY, value); } catch { /* private mode */ }
+                }}>
+                  {(Object.keys(QUALITIES) as Quality[]).map(q => <option key={q} value={q}>{QUALITIES[q].label}</option>)}
+                </select>
+              </label>
+              <button className={`btn btn--sm${outlines ? ' btn--primary' : ''}`} aria-pressed={outlines}
+                title="객체 사이 경계선: 붙어 있거나 겹친 같은 색 구조물을 구분합니다"
+                onClick={() => { const next = !outlines; setOutlines(next); viewerRef.current?.setOutlines(next); remember(OUTLINE_KEY, next ? '1' : '0'); }}>외곽선</button>
+              <label className="threed-test2__tier" title="색 구분: 파일별 또는 분류(Revit 범주·도면층)별로 칠합니다">
+                색
+                <select value={colorMode} onChange={e => { const m = e.target.value as ColorMode; setColorMode(m); remember(COLOR_KEY, m); }}>
+                  {(Object.keys(COLOR_MODES) as ColorMode[]).map(m => <option key={m} value={m}>{COLOR_MODES[m]}</option>)}
+                </select>
+              </label>
+              <label className="threed-test2__tier" title="화면 오른쪽 아래에 그리기 속도·타일 수를 표시합니다">
+                <input type="checkbox" checked={statsShown} onChange={e => { setStatsShown(e.target.checked); remember(STATS_KEY, e.target.checked ? '1' : '0'); }} />
+                성능 표시
+              </label>
+            </div>
+          </details>
           {tree && (
             <>
               <button className={`btn btn--sm${treeOpen ? ' btn--primary' : ''}`} onClick={() => { setTreeOpen(o => !o); if (narrowScreen()) setPropsOpen(false); }}>모델 트리</button>
@@ -482,7 +561,7 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
           </div>
           {index.note && <span className="muted threed-test__model">{index.note}</span>}
           <div className="spacer" />
-          {status && <span className="muted threed-test2__status" title={status}>{status}</span>}
+          {status && <span className="muted threed-test2__status" title={pinnedNote ? `${status} · ${pinnedNote}` : status}>{status}{pinnedNote && ` · ${pinnedNote}`}</span>}
         </div>
         <div className={`threed-test__viewport${placing ? ' threed-test2__placing' : ''}`}>
           <canvas ref={canvasRef} className="threed-test__canvas" />
@@ -492,7 +571,7 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
               {missing.converted ? (
                 <>
                   <p><strong>{missing.file.name}</strong> 은(는) {tilesName}이 아직 없습니다.</p>
-                  {variant ? <p className="threed-test__empty-sub">3차 화면은 시험판이라 시험 타일을 만든 모델만 열립니다(GitHub Actions에서 생성).</p> : <>
+                  {variant ? <p className="threed-test__empty-sub">{project ? '자체 엔진용 타일은 관리자가 모델 변환 작업(GitHub Actions)으로 만듭니다.' : '3차 화면은 시험판이라 시험 타일을 만든 모델만 열립니다(GitHub Actions에서 생성).'}</p> : <>
                   <p className="threed-test__empty-sub">2차 화면은 시제품이라 타일을 만든 모델만 열립니다. 변환된 모델로부터 만들며 보통 10~20분 걸립니다.</p>
                   {job ? <p className="threed-test__empty-sub">{job.note}</p>
                     : canManage ? <button className="btn btn--primary btn--sm" onClick={() => void buildTiles()}>2차 타일 만들기</button>
@@ -516,7 +595,9 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
           {!modelName && !initError && (
             <div className="threed-test__empty">
               <UiIcon name="cube" size={40} />
-              <p>상단 <em>ACC에서 열기</em>로 모델을 여세요. (2차 엔진용 타일이 생성된 모델만 열립니다)</p>
+              {project
+                ? <p>{busy ? '통합모델을 여는 중…' : <>상단 <em>ACC에서 열기</em>로 모델을 여세요. (자체 엔진용 타일이 만들어진 모델만 열립니다)</>}</p>
+                : <p>상단 <em>ACC에서 열기</em>로 모델을 여세요. (2차 엔진용 타일이 생성된 모델만 열립니다)</p>}
             </div>
           )}
           {tree && treeOpen && (
@@ -633,7 +714,7 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
               </div>
             )}
           </div>
-          {statsText && (
+          {statsText && statsShown && (
             <button type="button" className={`threed-test2__stats${statsOpen ? ' is-open' : ''}`} onClick={() => setStatsOpen(o => !o)}
               aria-expanded={statsOpen} title="성능 표시 (좁은 화면에서는 눌러서 펼침)">
               <span className="threed-test2__stats-full">{statsText}</span>
@@ -644,7 +725,7 @@ export function ThreeDTest2({ variant }: { variant?: 'svf' } = {}) {
       </div>
       {pickerOpen && (
         <AccFilePicker projectId={projectId} canEdit={canEdit} title="3D 모델 열기" actionLabel="열기" accept={isAccModel}
-          onClose={() => setPickerOpen(false)} onPick={f => { setPickerOpen(false); void openModel(f); }} />
+          onClose={() => setPickerOpen(false)} onPick={f => { setPickerOpen(false); setPinnedNote(''); void openModel(f); }} />
       )}
     </div>
   );

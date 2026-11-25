@@ -1085,6 +1085,19 @@ button:disabled {
   font-size: 13px;
   cursor: pointer;
 }
+/* 현장별 통합모델(3D) 뷰어(0043) */
+.admin-viewer-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.admin-viewer-pick > strong {
+  font-size: 12px;
+}
 
 .admin-table {
   width: 100%;
@@ -7761,4 +7774,58 @@ textarea.input {
   select {
     min-height: 34px;
   }
+}
+
+/* 통합모델(3D) 자체 엔진: 보기 설정 드롭다운(기기·화질·외곽선·색·성능 표시) */
+.threed-test2__settings {
+  position: relative;
+}
+.threed-test2__settings > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.threed-test2__settings > summary::-webkit-details-marker {
+  display: none;
+}
+.threed-test2__settings > summary::after {
+  content: ' ▾';
+  font-size: 10px;
+}
+.threed-test2__settings[open] > summary {
+  background: var(--color-surface-hover, rgba(127, 127, 127, 0.12));
+}
+.threed-test2__settings-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 200px;
+  padding: 10px 12px;
+  background: var(--color-surface, var(--panel));
+  border: 1px solid var(--color-border, var(--border));
+  border-radius: 10px;
+  box-shadow: var(--shadow-md, 0 4px 16px rgba(0, 0, 0, 0.12));
+}
+@media (max-width: 640px) {
+  /* 도구 줄이 가로 스크롤(넘침 잘림)이라 화면 기준으로 띄운다 */
+  .threed-test2__settings-pop {
+    position: fixed;
+    top: auto;
+    left: 8px;
+    right: 8px;
+  }
+}
+
+/* 통합모델(3D): 자체 엔진 대신 기존 뷰어로 연 이유(관리자에게만) */
+.viewer-engine-notice {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--color-text-secondary, var(--muted));
+  background: var(--color-surface-subtle, rgba(127, 127, 127, 0.08));
+  border-bottom: 1px solid var(--color-border, var(--border));
 }

@@ -90,6 +90,31 @@ export async function setProjectAcc(projectId: string, fields: Partial<ProjectAc
   throw error;
 }
 
+/**
+ * 현장별 통합모델(3D) 뷰어(0043). 'mir' = 자체 엔진(지정 모델에 자체 엔진 타일이 없으면 기존 뷰어로 대신 연다),
+ * 'aps' = 기존 Autodesk 뷰어 고정. 0043 미적용(열 없음)이면 'mir'.
+ */
+export type ViewerEngine = 'mir' | 'aps';
+
+export async function getProjectViewer(projectId: string): Promise<ViewerEngine> {
+  const { data, error } = await supabase.from('projects').select('viewer_engine').eq('id', projectId).maybeSingle();
+  if (error || !data) return 'mir';
+  return (data as { viewer_engine?: string | null }).viewer_engine === 'aps' ? 'aps' : 'mir';
+}
+
+/** 시스템 관리자만(projects update RLS). */
+export async function setProjectViewer(projectId: string, engine: ViewerEngine): Promise<void> {
+  const { error } = await supabase
+    .from('projects')
+    .update({ viewer_engine: engine === 'aps' ? 'aps' : null })
+    .eq('id', projectId);
+  if (!error) return;
+  if (error.message.includes('viewer_engine')) {
+    throw new Error('3D 뷰어 설정 열이 아직 없습니다. Supabase 에 0043_project_viewer_engine.sql 을 먼저 적용하세요.');
+  }
+  throw error;
+}
+
 export type ModelPurpose = 'integrated' | '4d' | 'clash';
 
 export interface ModelRecord {
