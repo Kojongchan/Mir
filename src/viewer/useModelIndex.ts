@@ -7,7 +7,10 @@ import { openPropsCache, propsCacheOf, propsKey } from './propsCache';
 
 /** Model index from the cache state (`meta`): tree URL and property shards (scripts/build-meta-index.mjs). */
 export type MetaInfo = { tree: string; shardSize: number; shardCount: number; objects?: number; alias?: string };
-type Pending = { query: string; key: string; onProgress: (done: number, total: number) => void; resolve: (ids: number[]) => void; reject: (e: Error) => void };
+type Pending = {
+  type: 'search' | 'external'; query: string; ids?: string[]; key: string; onProgress: (done: number, total: number) => void;
+  resolve: (answer: { ids?: number[]; found?: Record<string, number> }) => void; reject: (e: Error) => void;
+};
 type Shard = Record<string, ObjectProps>;
 type MetaState = {
   urn: string; shardSize: number; shardCount: number; cacheName: string | null;
@@ -123,14 +126,14 @@ export function useModelIndex() {
     }));
   }, [fetchShard]);
 
-  const searchValues = useCallback((query: string, onProgress: (done: number, total: number) => void) => {
-    const meta = metaRef.current;
-    if (!meta) return Promise.resolve([] as number[]);
+  /** One question to the search worker (it loads every property shard once per model). */
+  const ask = useCallback((meta: MetaState, type: Pending['type'], query: string, ids: string[] | undefined,
+    onProgress: (done: number, total: number) => void) => {
     let w = searchRef.current;
     if (!w) {
       const worker = new Worker(new URL('./propSearch.worker.ts', import.meta.url), { type: 'module' });
       const state: NonNullable<typeof searchRef.current> = { worker, seq: 0, pending: new Map() };
-      worker.onmessage = async (e: MessageEvent<{ type: string; seq?: number; ids?: number[]; done?: number; total?: number; message?: string }>) => {
+      worker.onmessage = async (e: MessageEvent<{ type: string; seq?: number; ids?: number[]; found?: Record<string, number>; done?: number; total?: number; message?: string }>) => {
         const msg = e.data;
         if (msg.type === 'progress') { for (const p of state.pending.values()) p.onProgress(msg.done ?? 0, msg.total ?? 0); return; }
         const p = msg.seq === undefined ? undefined : state.pending.get(msg.seq);
@@ -141,12 +144,12 @@ export function useModelIndex() {
             const meta = metaRef.current;
             if (!meta || meta.urn !== p.key) throw new Error('다른 모델이 열렸습니다.');
             await meta.cache; // generation checked before the worker uses the cache
-            worker.postMessage({ type: 'search', key: p.key, urls: await shardUrls(meta), cacheName: meta.cacheName, query: p.query, seq: msg.seq });
+            worker.postMessage({ type: p.type, key: p.key, urls: await shardUrls(meta), cacheName: meta.cacheName, query: p.query, ids: p.ids, seq: msg.seq });
           } catch (err) { state.pending.delete(msg.seq!); p.reject(err as Error); }
           return;
         }
         state.pending.delete(msg.seq!);
-        if (msg.type === 'result') p.resolve(msg.ids ?? []);
+        if (msg.type === 'result') p.resolve({ ids: msg.ids, found: msg.found });
         else p.reject(new Error(msg.message ?? '검색 실패'));
       };
       worker.onerror = e => {
@@ -156,11 +159,31 @@ export function useModelIndex() {
       searchRef.current = w = state;
     }
     const seq = ++w.seq;
-    return new Promise<number[]>((resolve, reject) => {
-      w!.pending.set(seq, { query, key: meta.urn, onProgress, resolve, reject });
-      w!.worker.postMessage({ type: 'search', key: meta.urn, query, seq });
+    return new Promise<{ ids?: number[]; found?: Record<string, number> }>((resolve, reject) => {
+      w!.pending.set(seq, { type, query, ids, key: meta.urn, onProgress, resolve, reject });
+      w!.worker.postMessage({ type, key: meta.urn, query, ids, seq });
     });
   }, [shardUrls]);
 
-  return { tree, note, open, reset, loadProps, searchValues, prefetch };
+  const searchValues = useCallback(async (query: string, onProgress: (done: number, total: number) => void) => {
+    const meta = metaRef.current;
+    if (!meta) return [] as number[];
+    return (await ask(meta, 'search', query, undefined, onProgress)).ids ?? [];
+  }, [ask]);
+
+  /**
+   * External id (issue / clash anchor: Revit UniqueId, IFC GlobalId) → object of the open model, for the ids found.
+   * The first call loads every property shard in the search worker (≈8 MB, kept in this browser).
+   */
+  const findExternal = useCallback(async (ids: string[]): Promise<Map<string, number>> => {
+    const meta = metaRef.current;
+    if (!meta || !ids.length) return new Map();
+    const found = (await ask(meta, 'external', '', ids, () => {})).found ?? {};
+    return metaRef.current === meta ? new Map(Object.entries(found)) : new Map();
+  }, [ask]);
+
+  /** The external id of one object (from its property shard), or null. */
+  const externalOf = useCallback(async (dbId: number): Promise<string | null> => (await loadProps(dbId))?.x ?? null, [loadProps]);
+
+  return { tree, note, open, reset, loadProps, searchValues, prefetch, findExternal, externalOf };
 }

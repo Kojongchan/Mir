@@ -12,6 +12,8 @@ export class PropSearchIndex {
   private objects: number[] | Int32Array = [];
   private starts: number[] | Int32Array = [0];
   private entries: number[] | Int32Array = [];
+  /** External id (Revit UniqueId / IFC GlobalId — what issues and clashes are anchored to) → object. */
+  private externals = new Map<string, number>();
 
   /** Add one shard (objects must be added once, all before `seal`). */
   addShard(shard: Shard): void {
@@ -31,7 +33,7 @@ export class PropSearchIndex {
         const v = entry(`${label} ${typeof value === 'number' ? value : String(value)}${unit ? ` ${unit}` : ''}`.toLowerCase());
         if (!seen.has(v)) { seen.add(v); entries.push(v); }
       }
-      if (obj.x) entries.push(entry(`external id ${obj.x}`.toLowerCase()));
+      if (obj.x) { entries.push(entry(`external id ${obj.x}`.toLowerCase())); this.externals.set(obj.x, id); }
       objects.push(id);
       starts.push(entries.length);
     }
@@ -46,6 +48,13 @@ export class PropSearchIndex {
   }
 
   get size(): number { return this.objects.length; }
+
+  /** The objects of these external ids (ids not in the model are left out). */
+  findExternal(ids: readonly string[]): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const x of ids) { const id = this.externals.get(x); if (id !== undefined) out[x] = id; }
+    return out;
+  }
 
   /** Objects whose properties contain every term (case-insensitive substring of "label value"). */
   search(query: string): number[] {

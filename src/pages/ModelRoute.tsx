@@ -5,6 +5,7 @@ import { useProjectRole } from '../auth/useProjectRole';
 import { getProjectViewer, type ViewerEngine } from '../lib/api';
 import { RouteFallback } from '../components/RouteFallback';
 import type { ViewerUnavailable } from './ThreeDTest2';
+import { isMirView } from '../components/model/MirIssueLayer';
 
 const named = <T extends string>(p: Promise<Record<T, ComponentType<any>>>, key: T) =>
   p.then((m) => ({ default: m[key] }));
@@ -22,7 +23,7 @@ const FALLBACK_NOTE: Record<ViewerUnavailable, string> = {
  * 통합모델(3D): the viewer the system admin chose for this project (0043 viewer_engine) — the own engine
  * (three.js + 3D Tiles) by default, the Autodesk viewer when set to 'aps' or when the own engine has nothing to show.
  */
-export function ModelRoute() {
+export function ModelRoute({ purpose = 'model' }: { purpose?: 'model' | 'clash' } = {}) {
   const { projectId = '' } = useParams();
   const { profile } = useAuth();
   const { canManage } = useProjectRole(projectId);
@@ -30,9 +31,12 @@ export function ModelRoute() {
   const [fallback, setFallback] = useState<ViewerUnavailable | null>(null);
   const [params] = useSearchParams();
   const location = useLocation();
-  // Links the own engine does not take yet (이슈 위치·뷰포인트, 자료관리의 특정 버전 열기) open the Autodesk viewer.
+  // Links the own engine does not take open the Autodesk viewer: a version picked in 자료 관리 (?urn=), a viewpoint
+  // saved in the Autodesk viewer, and the old IFC-viewer links. 이슈 「위치 보기」(?focusGlobalId=) and viewpoints saved
+  // in the own engine open here.
   const state = location.state as Record<string, unknown> | null;
-  const apsLink = params.has('urn') || params.has('focusGlobalId') || !!(state && ('applyApsState' in state || 'openViewpoint' in state || 'focus' in state));
+  const apsLink = params.has('urn')
+    || !!(state && (('applyApsState' in state && !isMirView(state.applyApsState)) || 'openViewpoint' in state || 'focus' in state));
 
   useEffect(() => {
     let alive = true;
@@ -40,15 +44,16 @@ export function ModelRoute() {
     setFallback(null);
     void getProjectViewer(projectId).then((e) => { if (alive) setEngine(e); });
     return () => { alive = false; };
-  }, [projectId]);
+  }, [projectId, purpose]);
 
   if (!engine) return <RouteFallback />;
-  if (engine === 'aps' || apsLink) return <AccModels key={`aps-${projectId}`} />;
+  const clash = purpose === 'clash';
+  if (engine === 'aps' || apsLink) return <AccModels key={`aps-${purpose}-${projectId}`} autoClash={clash} />;
   if (fallback) {
-    const note = canManage || profile?.is_admin ? FALLBACK_NOTE[fallback] : undefined;
-    return <AccModels key={`fallback-${projectId}`} notice={note} />;
+    const note = canManage || profile?.is_admin ? FALLBACK_NOTE[fallback].replace('통합모델(3D)', clash ? '간섭검토' : '통합모델(3D)') : undefined;
+    return <AccModels key={`fallback-${purpose}-${projectId}`} autoClash={clash} notice={note} />;
   }
-  return <ThreeDTest2 key={`mir-${projectId}`} variant="svf" project onUnavailable={setFallback} />;
+  return <ThreeDTest2 key={`mir-${purpose}-${projectId}`} variant="svf" project purpose={purpose} onUnavailable={setFallback} />;
 }
 
 export default ModelRoute;

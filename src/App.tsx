@@ -106,11 +106,12 @@ export default function App() {
                 인스턴스를 재사용하면 init effect([])·mode refs 가 첫 진입 모드로 고정돼
                 세 뷰가 연동되는 문제가 생긴다(S52 버그). */}
             {/* 통합모델(3D): 현장별 뷰어(0043) — 기본 자체 엔진, 'aps' 현장·타일 없는 모델은 기존 Autodesk 뷰어. */}
-            <Route path="model" element={<ModelRoute />} />
+            <Route path="model" element={<ModelRoute key="model" />} />
             {/* 공정관리(4D) = APS(ACC) 모델 위 4D 시뮬(S50). */}
             <Route path="viewer" element={<AccModels key="fourd" mode4d />} />
             {/* 간섭검토 = APS(ACC) 모델 위 간섭(S49). */}
-            <Route path="clash" element={<AccModels key="clash" autoClash />} />
+            {/* 간섭검토: 현장별 뷰어(0043) — 자체 엔진(간섭 모델 acc_clash), 'aps' 현장·타일 없는 모델은 기존 뷰어. */}
+            <Route path="clash" element={<ModelRoute key="clash" purpose="clash" />} />
             {/* 3D뷰(신규 테스트) — iframe 없이 자체 뷰어를 직접 띄우는 실험 메뉴. */}
             <Route path="model-test" element={<ThreeDTest />} />
             {/* One page, two tilesets: the keys make switching between them start a fresh viewer. */}

@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useLocation, useParams, useSearchParams } from 'react-router-dom';
+import { useAuth } from '../auth/AuthProvider';
+import { listIssues, createIssue, logIssueEvent, type Issue } from '../lib/issues';
+import { listIssueCategories, type IssueCategory } from '../lib/issueCategories';
+import { addIssueViewpoint } from '../lib/issueViewpoints';
+import { MirIssueForm, MirIssuePins, MirIssuePopup, isMirView, type MirViewState } from '../components/model/MirIssueLayer';
+import { MirClashPanel } from '../components/model/MirClashPanel';
+import { MirMarkupEditor, MirMeasureLayer, MirViewpointPanel, loadHomeView, type Measure } from '../components/model/MirViewTools';
 import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
 import { useProjectRole } from '../auth/useProjectRole';
 import { supabase } from '../lib/supabase';
@@ -68,13 +75,27 @@ function versionNote(opened: OpenCandidate, latest: OpenCandidate | undefined): 
  * `project`: the project's 통합모델(3D) page — opens the model the admin designated (its newest version that has
  * tiles), without the test notes; `onUnavailable` when there is nothing to show here.
  */
-export function ThreeDTest2({ variant, project = false, onUnavailable }: {
-  variant?: 'svf'; project?: boolean; onUnavailable?: (why: ViewerUnavailable) => void;
+export function ThreeDTest2({ variant, project = false, purpose = 'model', onUnavailable }: {
+  variant?: 'svf'; project?: boolean;
+  /** Which designated model a project page opens: 통합모델(3D) (acc_default) or 간섭검토 (acc_clash, with the clash panel). */
+  purpose?: 'model' | 'clash';
+  onUnavailable?: (why: ViewerUnavailable) => void;
 } = {}) {
   const { projectId = '' } = useParams();
   const tilesQuery = variant ? `tiles3d=1&variant=${variant}` : 'tiles3d=1';
   const tilesName = project ? '자체 엔진용 타일' : variant ? '3차 화면용(SVF 정밀) 타일' : '2차 화면용 타일';
   const { canEdit, canManage } = useProjectRole(projectId);
+  const { profile } = useAuth();
+  const authorName = profile?.full_name ?? profile?.username ?? null;
+  const [params] = useSearchParams();
+  const location = useLocation();
+  // Links from 협업·이슈: an object to show (?focusGlobalId=) or a viewpoint saved in this engine.
+  const focusGlobalId = project ? params.get('focusGlobalId') ?? '' : '';
+  // 간섭 이슈의 「위치 보기」: 두 부재(?focusClashA=&focusClashB=).
+  const focusClashA = project ? params.get('focusClashA') ?? '' : '', focusClashB = project ? params.get('focusClashB') ?? '' : '';
+  const [clashOpen, setClashOpen] = useState(project && purpose === 'clash');
+  const linkedView = project ? (location.state as { applyApsState?: unknown } | null)?.applyApsState : undefined;
+  const linkedViewRef = useRef<MirViewState | null>(isMirView(linkedView) ? linkedView : null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<TilesViewer | null>(null);
   const urlsRef = useRef<Record<string, string> | null>(null);
@@ -111,6 +132,20 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
   const heightCancelled = useRef(false), heightBefore = useRef(0);
   const placingRef = useRef(false);
   useEffect(() => { placingRef.current = placing; }, [placing]);
+  // 통합모델(3D) 도구: 홈뷰·관측점 창, 거리 측정(두 점 클릭), 단면(축 평면 / 선택 상자), 마크업(지금 화면에 그리기).
+  const [vpOpen, setVpOpen] = useState(false);
+  const [measuring, setMeasuring] = useState(false);
+  const measuringRef = useRef(false);
+  useEffect(() => { measuringRef.current = measuring; }, [measuring]);
+  const [measures, setMeasures] = useState<Measure[]>([]);
+  const [measureFrom, setMeasureFrom] = useState<{ p: [number, number, number]; z: number } | null>(null);
+  const measureFromRef = useRef<{ p: [number, number, number]; z: number } | null>(null);
+  useEffect(() => { measureFromRef.current = measureFrom; }, [measureFrom]);
+  type Section = { axis: 0 | 1 | 2; t: number; flip: boolean } | { box: [number, number, number, number, number, number] };
+  const [section, setSection] = useState<Section | null>(null);
+  const [markupImage, setMarkupImage] = useState<string | null>(null);
+  // The view the designated model starts from (a linked viewpoint, else this browser's home view).
+  const startViewRef = useRef<{ position: [number, number, number]; target: [number, number, number] } | null>(null);
   const [colorMode, setColorMode] = useState<ColorMode>(storedColorMode);
   // Selected objects in the order picked; the last one is shown in the tree and (alone) in the property panel.
   const [selection, setSelection] = useState<readonly number[]>([]);
@@ -132,8 +167,9 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
     return () => window.removeEventListener('pointerdown', close);
   }, []);
   // Phones and narrow tablets: panels start closed and one at a time (side by side they cover the view).
-  const [treeOpen, setTreeOpen] = useState(() => !narrowScreen());
-  const [propsOpen, setPropsOpen] = useState(() => !narrowScreen());
+  // 간섭검토 starts with its own window only (the tree and properties stay one click away).
+  const [treeOpen, setTreeOpen] = useState(() => !narrowScreen() && purpose !== 'clash');
+  const [propsOpen, setPropsOpen] = useState(() => !narrowScreen() && purpose !== 'clash');
 
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -176,13 +212,18 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
   const painted = useMemo(() => (tree ? paintFor(tree, colorMode) : null), [tree, colorMode]);
   useEffect(() => { viewerRef.current?.setPaint(painted?.paint ?? null); }, [painted]);
 
-  /** Per-object boxes (objects.bin, tileset frame) for zooming; loaded on first use. */
-  const zoomTo = useCallback(async (ids: number[]) => {
+  /** Per-object boxes (objects.bin, tileset frame) for zooming and issue pins; loaded on first use. */
+  const loadBoxes = useCallback((): Promise<Float32Array> | null => {
     const url = urlsRef.current?.['objects.bin'];
-    if (!url || !ids.length) return;
+    if (!url) return null;
     boxesRef.current ??= fetch(url).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); }).then(b => new Float32Array(b));
+    return boxesRef.current;
+  }, []);
+  const zoomTo = useCallback(async (ids: number[]) => {
+    const loading = loadBoxes();
+    if (!loading || !ids.length) return;
     try {
-      const boxes = await boxesRef.current;
+      const boxes = await loading;
       const box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
       for (const id of expand(ids)) {
         if (id * 6 + 5 >= boxes.length || Number.isNaN(boxes[id * 6])) continue;
@@ -191,7 +232,7 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
       if (box.every(Number.isFinite)) viewerRef.current?.frameBox(box);
       else setStatus('선택한 객체의 위치 정보가 없습니다.');
     } catch (e) { boxesRef.current = null; setStatus(`위치 정보를 불러오지 못했습니다: ${errMessage(e)}`); }
-  }, [expand]);
+  }, [expand, loadBoxes]);
 
   // Click (not drag) selects the object under the pointer — or, choosing where a walk starts, puts the person there;
   // double-click flies toward the clicked point.
@@ -204,6 +245,17 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
       const start = down; down = null;
       if (!start || e.button !== 0 || Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4 || performance.now() - start.t > 500) return;
       const rect = canvas.getBoundingClientRect();
+      if (measuringRef.current) {
+        const viewer = viewerRef.current;
+        const hit = viewer?.pick(e.clientX - rect.left, e.clientY - rect.top);
+        if (!viewer || !hit) { setStatus('측정: 모델 위를 클릭하세요.'); return; }
+        const p: [number, number, number] = [hit.point.x, hit.point.y, hit.point.z];
+        const z = viewer.sceneToModel(p[0], p[1], p[2])[2];
+        const from = measureFromRef.current;
+        if (!from) setMeasureFrom({ p, z });
+        else { setMeasures(m => [...m, { a: from.p, b: p, za: from.z, zb: z }]); setMeasureFrom(null); }
+        return;
+      }
       if (placingRef.current) {
         if (!viewerRef.current?.startWalkAt(e.clientX - rect.left, e.clientY - rect.top)) setStatus('그곳에는 설 곳이 없습니다 — 모델 위를 클릭하세요.');
         return;
@@ -240,7 +292,12 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
       const actions = keyActions.current;
       if (typing || !actions) return;
       const mod = e.ctrlKey || e.metaKey;
-      if (e.key === 'Escape') { if (placingRef.current) setPlacing(false); else setSelection(prev => (prev.length ? [] : prev)); }
+      if (e.key === 'Escape') {
+        if (placingRef.current) setPlacing(false);
+        else if (measureFromRef.current) setMeasureFrom(null);
+        else if (measuringRef.current) setMeasuring(false);
+        else setSelection(prev => (prev.length ? [] : prev));
+      }
       else if (e.code === 'KeyZ' && mod && !e.shiftKey && !e.altKey) { e.preventDefault(); actions.undo(); }
       else if (mod || e.altKey) return;
       else if (e.code === 'KeyH') { if (e.shiftKey) actions.showAll(); else actions.hide(); }
@@ -294,6 +351,7 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
       urlsRef.current = { ...t.urls };
       // Renewed 15 min before the URLs expire, so a long session keeps loading tiles.
       renewAt.current = { urn: f.accUrn!, at: Math.max(Date.now() + 60_000, t.expiresAt - 15 * 60_000) };
+      if (startViewRef.current) { viewer.startView = startViewRef.current; startViewRef.current = null; }
       viewer.open(t.urls, (t.meta?.objects ?? 0) + 1);
       void index.open(f.accUrn!, t.meta);
       setStatus(project ? f.name : `${f.name} · 3D Tiles ${Object.keys(t.urls).length.toLocaleString()}개 파일${t.builtAt ? ` · 생성 ${t.builtAt.slice(0, 10)}` : ''}`);
@@ -340,16 +398,22 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
     void (async () => {
       const acc = await getProjectAcc(projectId);
       if (cancelled) return;
-      if (!acc.acc_project_id || !acc.acc_default_urn) { unavailable.current?.(acc.acc_project_id ? 'no-model' : 'no-mapping'); return; }
-      let order: OpenCandidate[] = [{ urn: acc.acc_default_urn, versionNumber: null }];
-      if (acc.acc_default_item_id) {
+      const clash = purpose === 'clash';
+      const pinnedUrn = clash ? acc.acc_clash_urn : acc.acc_default_urn;
+      const pinnedItem = clash ? acc.acc_clash_item_id : acc.acc_default_item_id;
+      const pinnedName = clash ? acc.acc_clash_name : acc.acc_default_name;
+      if (!acc.acc_project_id || !pinnedUrn) { unavailable.current?.(acc.acc_project_id ? 'no-model' : 'no-mapping'); return; }
+      let order: OpenCandidate[] = [{ urn: pinnedUrn, versionNumber: null }];
+      if (pinnedItem) {
         try {
-          const r = await accFetch({ action: 'versions', project: acc.acc_project_id, item: acc.acc_default_item_id });
-          order = openOrder(acc.acc_default_urn, r.versions ?? [], 5);
+          const r = await accFetch({ action: 'versions', project: acc.acc_project_id, item: pinnedItem });
+          order = openOrder(pinnedUrn, r.versions ?? [], 5);
         } catch { /* the designated version */ }
       }
-      const file: PickedAccFile = { accProjectId: acc.acc_project_id, accItemId: acc.acc_default_item_id ?? '', accUrn: null,
-        name: acc.acc_default_name || '통합모델', size: null, folderId: null, folderIds: [], folderNames: [] };
+      const file: PickedAccFile = { accProjectId: acc.acc_project_id, accItemId: pinnedItem ?? '', accUrn: null,
+        name: pinnedName || (clash ? '간섭 모델' : '통합모델'), size: null, folderId: null, folderIds: [], folderNames: [] };
+      startViewRef.current = linkedViewRef.current ?? loadHomeView(`${projectId}:${purpose}`);
+      linkedViewRef.current = null;
       for (const c of order) {
         if (cancelled) return;
         if (await openModel({ ...file, accUrn: c.urn }, true)) {
@@ -362,7 +426,7 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
     return () => { cancelled = true; };
     // openModel changes with the model index; the designated model is opened once per page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project, projectId, initError]);
+  }, [project, projectId, initError, purpose]);
 
   // Signed tile URLs last 9 h: renew them 15 min early so a long session keeps loading tiles (kept for reopening too).
   useEffect(() => {
@@ -384,6 +448,168 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
     }, 30_000);
     return () => clearInterval(timer);
   }, [tilesQuery]);
+
+  // ── 이슈(통합모델(3D)): 핀·선택 객체에 이슈 만들기·위치 보기·뷰포인트 — 기존 뷰어와 같은 이슈 데이터 ──────────────
+  const [issues, setIssues] = useState<Issue[]>([]);
+  const [issueCats, setIssueCats] = useState<IssueCategory[]>([]);
+  // global_id → dbId of the open model, and its object boxes (for the pins), resolved once the view has settled.
+  const [anchors, setAnchors] = useState<ReadonlyMap<string, number>>(new Map());
+  const [pinBoxes, setPinBoxes] = useState<Float32Array | null>(null);
+  const [pinsOn, setPinsOn] = useState(true);
+  const [popIssue, setPopIssue] = useState<Issue | null>(null);
+  const [issueFormOpen, setIssueFormOpen] = useState(false);
+  const reloadIssues = useCallback(() => { listIssues(projectId).then(setIssues).catch(() => {}); }, [projectId]);
+  useEffect(() => {
+    if (!project) return;
+    reloadIssues();
+    listIssueCategories(projectId).then(setIssueCats).catch(() => setIssueCats([]));
+  }, [project, projectId, reloadIssues]);
+  useEffect(() => { setAnchors(new Map()); setPinBoxes(null); setPopIssue(null); }, [tree]);
+  const settled = !!stats && stats.settledMs !== null;
+  const wantedIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const it of issues) { if (it.global_id) ids.add(it.global_id); if (it.global_id_b) ids.add(it.global_id_b); }
+    for (const x of [focusGlobalId, focusClashA, focusClashB]) if (x) ids.add(x);
+    return [...ids].sort();
+  }, [issues, focusGlobalId, focusClashA, focusClashB]);
+  useEffect(() => {
+    if (!project || !tree || !settled) return;
+    const missingIds = wantedIds.filter(x => !anchors.has(x));
+    if (!missingIds.length) return;
+    let cancelled = false;
+    void index.findExternal(missingIds).then(found => {
+      if (cancelled || !found.size) return;
+      setAnchors(prev => { const next = new Map(prev); for (const [x, id] of found) next.set(x, id); return next; });
+    }).catch(() => {});
+    void loadBoxes()?.then(b => { if (!cancelled) setPinBoxes(b); }).catch(() => {});
+    return () => { cancelled = true; };
+    // anchors only grows here; a model change clears it (above)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project, tree, settled, wantedIds, index, loadBoxes]);
+
+  /** 위치 보기: the issue's object (both, for a clash issue) selected and in view. */
+  const focusIssue = useCallback((issue: Issue) => {
+    const ids = [issue.global_id, issue.global_id_b].map(x => (x ? anchors.get(x) : undefined)).filter((x): x is number => x !== undefined);
+    if (!ids.length) { setStatus('이 이슈의 객체를 지금 모델에서 찾지 못했습니다.'); return; }
+    setSelection(ids); setRevealDb(ids[ids.length - 1]);
+    void zoomTo(ids);
+  }, [anchors, zoomTo]);
+
+  // ?focusGlobalId= (협업·이슈 「위치 보기」): the object once it is found.
+  const focusedLink = useRef('');
+  useEffect(() => {
+    if (!focusGlobalId || focusedLink.current === focusGlobalId) return;
+    const id = anchors.get(focusGlobalId);
+    if (id === undefined) return;
+    focusedLink.current = focusGlobalId;
+    setSelection([id]); setRevealDb(id);
+    void zoomTo([id]);
+  }, [focusGlobalId, anchors, zoomTo]);
+  useEffect(() => {
+    const key = `${focusClashA}|${focusClashB}`;
+    if (!focusClashA || focusedLink.current === key) return;
+    const ids = [anchors.get(focusClashA), anchors.get(focusClashB)].filter((x): x is number => x !== undefined);
+    if (!ids.length) return;
+    focusedLink.current = key;
+    setSelection(ids); setRevealDb(ids[ids.length - 1]);
+    void zoomTo(ids);
+  }, [focusClashA, focusClashB, anchors, zoomTo]);
+  // A viewpoint saved in this engine (협업·이슈 「3D에서 열기」) is the start view of the designated model (above).
+
+  /** The view now (camera + snapshot) saved as a viewpoint of the issue — best effort, like the Autodesk viewer. */
+  const saveViewFor = useCallback(async (issueId: string, title: string | null): Promise<boolean> => {
+    const viewer = viewerRef.current;
+    if (!viewer) return false;
+    try {
+      const blob = await viewer.snapshot(640);
+      const snapshot = await new Promise<string | null>(resolve => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+      const cameraState: MirViewState = { engine: 'mir', ...viewer.getView() };
+      await addIssueViewpoint({ issueId, projectId, title, cameraState, snapshot, authorName });
+      await logIssueEvent(issueId, projectId, 'viewpoint_add', title, authorName);
+      return true;
+    } catch { return false; }
+  }, [projectId, authorName]);
+
+  const submitIssue = useCallback(async (form: { title: string; category_id: string; type: Issue['type'] }) => {
+    const dbId = selection.length === 1 ? selection[0] : null;
+    if (dbId === null) return;
+    try {
+      const ext = await index.externalOf(dbId);
+      if (!ext) { setStatus('이 객체의 고유 ID(GlobalId)를 찾지 못해 이슈를 묶을 수 없습니다.'); setIssueFormOpen(false); return; }
+      const issueId = await createIssue(projectId, { title: form.title, type: form.type, category_id: form.category_id || null, priority: 'normal', global_id: ext }, authorName);
+      setAnchors(prev => new Map(prev).set(ext, dbId));
+      void loadBoxes()?.then(setPinBoxes).catch(() => {});
+      const saved = await saveViewFor(issueId, form.title);
+      reloadIssues();
+      setIssueFormOpen(false);
+      setStatus(saved ? `이슈를 만들었습니다: ${form.title} (현재 뷰 저장)` : `이슈를 만들었습니다: ${form.title}`);
+    } catch (e) { setStatus(`이슈 생성 실패: ${errMessage(e)}`); }
+  }, [selection, index, projectId, authorName, loadBoxes, saveViewFor, reloadIssues]);
+
+  // 단면 → the viewer's clipping planes (tileset frame). Axis plane: keeps the part below the position (뒤집기: above).
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    if (!section) { viewer.setSection([]); return; }
+    if ('box' in section) {
+      const b = section.box;
+      viewer.setSection([0, 1, 2].flatMap(a => {
+        const n = [0, 0, 0]; n[a] = 1;
+        const lo = [0, 0, 0], hi = [0, 0, 0]; lo[a] = b[a]; hi[a] = b[a + 3];
+        return [{ at: lo, normal: n }, { at: hi, normal: n.map(v => -v) }];
+      }));
+      return;
+    }
+    const box = viewer.structureBox();
+    if (!box) return;
+    const at = [0, 0, 0], n = [0, 0, 0];
+    at[section.axis] = box[section.axis] + section.t * (box[section.axis + 3] - box[section.axis]);
+    n[section.axis] = section.flip ? 1 : -1;
+    viewer.setSection([{ at, normal: n }]);
+  }, [section, tree]);
+  /** 선택 상자 단면: the selected objects' box, 1 m wider on every side. */
+  const sectionToSelection = useCallback(async () => {
+    const loading = loadBoxes();
+    if (!loading || !selection.length) return;
+    const boxes = await loading;
+    const box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+    for (const id of expand(selection)) {
+      if (id * 6 + 5 >= boxes.length || Number.isNaN(boxes[id * 6])) continue;
+      for (let a = 0; a < 3; a++) { box[a] = Math.min(box[a], boxes[id * 6 + a]); box[a + 3] = Math.max(box[a + 3], boxes[id * 6 + 3 + a]); }
+    }
+    if (!box.every(Number.isFinite)) { setStatus('선택한 객체의 위치 정보가 없습니다.'); return; }
+    setSection({ box: [box[0] - 1, box[1] - 1, box[2] - 1, box[3] + 1, box[4] + 1, box[5] + 1] });
+  }, [loadBoxes, selection, expand]);
+  const openMarkup = useCallback(async () => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const blob = await viewer.snapshot(1920).catch(() => null);
+    if (!blob) { setStatus('화면을 캡처하지 못했습니다.'); return; }
+    const url = await new Promise<string | null>(resolve => { const r = new FileReader(); r.onload = () => resolve(typeof r.result === 'string' ? r.result : null); r.onerror = () => resolve(null); r.readAsDataURL(blob); });
+    if (url) setMarkupImage(url);
+  }, []);
+
+  /** 간섭 결과 한 건: 두 부재를 선택해 보여 준다. */
+  const showClash = useCallback((a: number, b: number) => {
+    setSelection([a, b]); setRevealDb(b);
+    void zoomTo([a, b]);
+  }, [zoomTo]);
+  const snapshotUrl = useCallback(async (): Promise<string | null> => {
+    const viewer = viewerRef.current;
+    if (!viewer) return null;
+    const blob = await viewer.snapshot(960);
+    return await new Promise<string | null>(resolve => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  }, []);
 
   /** Project admins: build this model's tiles (Actions job, ≈10–20 min), then open it when the job succeeds. */
   const buildTiles = useCallback(async () => {
@@ -558,6 +784,31 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
               <button className={`btn btn--sm${propsOpen ? ' btn--primary' : ''}`} onClick={() => { setPropsOpen(o => !o); if (narrowScreen()) setTreeOpen(false); }}>속성</button>
             </>
           )}
+          {project && tree && purpose === 'clash' && (
+            <button className={`btn btn--sm${clashOpen ? ' btn--primary' : ''}`} aria-pressed={clashOpen} onClick={() => setClashOpen(v => !v)}
+              title="간섭검토 창 열기/닫기">간섭검토</button>
+          )}
+          {project && tree && (
+            <>
+              <button className={`btn btn--sm${pinsOn ? ' btn--primary' : ''}`} aria-pressed={pinsOn} onClick={() => setPinsOn(v => !v)}
+                title="이슈 핀 표시/숨김 (객체에 묶인 이슈 — 빨강 미해결·초록 해결)">이슈 핀</button>
+              {canEdit && (
+                <button className="btn btn--sm" disabled={selection.length !== 1} onClick={() => setIssueFormOpen(true)}
+                  title={selection.length === 1 ? '선택한 객체 위치에 이슈 만들기 (지금 화면이 뷰포인트로 저장됨)' : '객체 하나를 선택하면 그 위치에 이슈를 만들 수 있습니다'}>＋ 이슈</button>
+              )}
+            </>
+          )}
+          {project && modelName && (
+            <>
+              <button className={`btn btn--sm${vpOpen ? ' btn--primary' : ''}`} aria-pressed={vpOpen} onClick={() => setVpOpen(v => !v)}
+                title="홈뷰(처음 보이는 시점)와 관측점(이름 붙인 시점) 저장·이동">시점</button>
+              <button className={`btn btn--sm${measuring ? ' btn--primary' : ''}`} aria-pressed={measuring}
+                onClick={() => { setMeasuring(v => !v); setMeasureFrom(null); }} title="거리 측정: 모델 위 두 점을 차례로 클릭 (Esc 로 끝)">측정</button>
+              <button className={`btn btn--sm${section ? ' btn--primary' : ''}`} aria-pressed={!!section}
+                onClick={() => setSection(v => (v ? null : { axis: 2, t: 0.5, flip: false }))} title="단면: 평면으로 잘라 안쪽 보기 (선택 객체 상자로도)">단면</button>
+              <button className="btn btn--sm" onClick={() => void openMarkup()} title="마크업: 지금 화면에 화살표·글자를 그려 PNG 로 저장">마크업</button>
+            </>
+          )}
           </div>
           {index.note && <span className="muted threed-test__model">{index.note}</span>}
           <div className="spacer" />
@@ -630,8 +881,56 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
                 onZoom={ids => void zoomTo(ids)} onHighlight={setHighlightIds} />
             </aside>
           )}
+          {project && pinsOn && pinBoxes && anchors.size > 0 && viewerRef.current && (
+            <MirIssuePins viewer={viewerRef.current} issues={issues} anchors={anchors} boxes={pinBoxes} onPinClick={setPopIssue} />
+          )}
+          {popIssue && (
+            <MirIssuePopup issue={popIssue} projectId={projectId} canEdit={canEdit} onClose={() => setPopIssue(null)} onFocus={focusIssue}
+              onSaveView={it => void saveViewFor(it.id, it.title).then(ok => setStatus(ok ? '현재 뷰를 이슈 뷰포인트로 저장했습니다.' : '뷰포인트를 저장하지 못했습니다.'))} />
+          )}
+          {issueFormOpen && <MirIssueForm categories={issueCats} onSubmit={submitIssue} onClose={() => setIssueFormOpen(false)} />}
+          {project && viewerRef.current && (measures.length > 0 || measureFrom) && (
+            <MirMeasureLayer viewer={viewerRef.current} measures={measures} pending={measureFrom?.p ?? null} />
+          )}
+          {project && vpOpen && viewerRef.current && (
+            <MirViewpointPanel viewer={viewerRef.current} projectId={`${projectId}:${purpose}`} onClose={() => setVpOpen(false)} onStatus={setStatus} />
+          )}
+          {markupImage && <MirMarkupEditor image={markupImage} fileName={`${(modelName || '3D').replace(/\.[^.]+$/, '')}_마크업.png`} onClose={() => setMarkupImage(null)} />}
+          {project && clashOpen && tree && (
+            <MirClashPanel tree={tree} projectId={projectId} canEdit={canEdit} urls={() => urlsRef.current} boxes={loadBoxes}
+              externalOf={index.externalOf} findExternal={index.findExternal} onShow={showClash} snapshot={snapshotUrl}
+              onIssueCreated={reloadIssues} onClose={() => setClashOpen(false)} />
+          )}
           {/* Top centre: what is selected / hidden and what to do with it, then the colour legend. */}
           <div className="threed-test2__top">
+            {measuring && (
+              <div className="threed-test2__selbar" role="toolbar" aria-label="측정">
+                <strong>측정</strong>
+                <span className="muted">{measureFrom ? '끝점을 클릭하세요 (Esc 취소)' : '시작점을 클릭하세요'} · 측정 {measures.length}개</span>
+                {measures.length > 0 && <button type="button" className="btn btn--sm" onClick={() => setMeasures([])}>모두 지우기</button>}
+                <button type="button" className="btn btn--sm" onClick={() => { setMeasuring(false); setMeasureFrom(null); }}>끝내기</button>
+              </div>
+            )}
+            {section && (
+              <div className="threed-test2__selbar" role="toolbar" aria-label="단면">
+                <strong>단면</strong>
+                {'box' in section ? <span className="muted">선택 객체 상자</span> : (
+                  <>
+                    {(['X축', 'Y축', '높이'] as const).map((label, a) => (
+                      <button key={label} type="button" className={`btn btn--sm${section.axis === a ? ' btn--primary' : ''}`}
+                        onClick={() => setSection({ axis: a as 0 | 1 | 2, t: 0.5, flip: section.flip })}>{label}</button>
+                    ))}
+                    <input type="range" min={0} max={1000} value={Math.round(section.t * 1000)} aria-label="단면 위치"
+                      onChange={e => setSection({ ...section, t: Number(e.target.value) / 1000 })} />
+                    <button type="button" className="btn btn--sm" onClick={() => setSection({ ...section, flip: !section.flip })} title="자르는 쪽 바꾸기">뒤집기</button>
+                  </>
+                )}
+                <button type="button" className="btn btn--sm" disabled={!selection.length} onClick={() => void sectionToSelection()}
+                  title="선택한 객체 둘레(1 m 여유)만 남기기">선택 상자</button>
+                {'box' in section && <button type="button" className="btn btn--sm" onClick={() => setSection({ axis: 2, t: 0.5, flip: false })}>평면으로</button>}
+                <button type="button" className="btn btn--sm" onClick={() => setSection(null)}>끄기</button>
+              </div>
+            )}
             {placing && !walk && (
               <div className="threed-test2__selbar" role="toolbar" aria-label="보행 시작 위치">
                 <strong>보행</strong>
