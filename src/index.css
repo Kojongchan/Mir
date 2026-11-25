@@ -7829,3 +7829,110 @@ textarea.input {
   background: var(--color-surface-subtle, rgba(127, 127, 127, 0.08));
   border-bottom: 1px solid var(--color-border, var(--border));
 }
+
+/* 통합모델(3D) 자체 엔진: 이슈 핀·요약·만들기 (기존 뷰어와 같은 모양) */
+.mir-pins {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  overflow: hidden;
+  pointer-events: none;
+}
+.mir-pin {
+  position: absolute;
+  transform: translate(-50%, -100%); /* 핀 끝이 객체를 가리킴 */
+  pointer-events: auto;
+  cursor: pointer;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
+}
+.mir-issue-pop {
+  position: absolute;
+  left: 12px;
+  bottom: 52px;
+  z-index: 30;
+  width: min(300px, calc(100% - 24px));
+  padding: 12px;
+  background: var(--color-surface, var(--panel));
+  color: var(--text);
+  border: 1px solid var(--color-border, var(--border));
+  border-radius: 10px;
+  box-shadow: var(--shadow-md, 0 6px 24px rgba(0, 0, 0, 0.25));
+}
+.mir-issue-pop__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.mir-issue-pop__head strong {
+  flex: 1;
+  font-size: 13px;
+}
+.mir-issue-pop__meta {
+  margin-top: 4px;
+  font-size: 12px;
+}
+.mir-issue-pop__desc {
+  margin-top: 6px;
+  max-height: 80px;
+  overflow-y: auto;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+.mir-issue-pop__acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.mir-issue-form__backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+}
+.mir-issue-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(340px, calc(100% - 24px));
+  padding: 16px;
+  background: var(--color-surface, var(--panel));
+  color: var(--text);
+  border: 1px solid var(--color-border, var(--border));
+  border-radius: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+.mir-issue-form > strong {
+  font-size: 14px;
+}
+.mir-issue-form__sub {
+  margin-top: -4px;
+  font-size: 11px;
+}
+.mir-issue-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.mir-issue-form input,
+.mir-issue-form select {
+  width: 100%;
+}
+.mir-issue-form__row {
+  display: flex;
+  gap: 8px;
+}
+.mir-issue-form__row > label {
+  flex: 1;
+}
+.mir-issue-form__acts {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}

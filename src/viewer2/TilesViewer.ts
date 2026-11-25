@@ -105,6 +105,8 @@ export class TilesViewer {
   /** Picture quality over the tier (finer error, larger cache). */
   quality: Quality = 'standard';
   onStats?: (stats: ViewerStats) => void;
+  /** Called after a frame in which the camera moved or the canvas was resized (overlays that follow the model). */
+  private readonly viewListeners = new Set<() => void>();
   private tiles: TilesRenderer | null = null;
   private state: ObjectStateTexture | null = null;
   private surface: { opaque: Material; transparent: Material } | null = null;
@@ -113,6 +115,7 @@ export class TilesViewer {
   private readonly clock = new Clock();
   private readonly resize: ResizeObserver;
   private raf = 0;
+  private viewChanged = false;
   private dirty = true;
   private needsUpdate = true;
   private frameTimes: number[] = [];
@@ -966,6 +969,51 @@ export class TilesViewer {
     this.applyView();
     this.tiles?.setResolutionFromRenderer(this.camera, this.renderer);
     this.needsUpdate = this.dirty = true;
+    this.viewChanged = true;
+  }
+
+  /** Follow camera moves and resizes (issue pins, measurements); returns the unsubscribe. */
+  onViewChange(listener: () => void): () => void {
+    this.viewListeners.add(listener);
+    return () => { this.viewListeners.delete(listener); };
+  }
+
+  /**
+   * A tileset-frame point (Z-up, as in objects.bin) on the canvas, in CSS pixels from its top left, with its distance
+   * from the camera; null behind the camera.
+   */
+  toScreen(x: number, y: number, z: number): { x: number; y: number; distance: number } | null {
+    const p = new Vector3(x, y, z).applyMatrix4(this.world.matrixWorld);
+    const distance = p.distanceTo(this.camera.position);
+    p.project(this.camera);
+    if (p.z > 1 || p.z < -1) return null;
+    const el = this.canvas;
+    return { x: (p.x + 1) / 2 * el.clientWidth, y: (1 - p.y) / 2 * el.clientHeight, distance };
+  }
+
+  /** The camera (scene frame) for a viewpoint: where it is and where it looks. */
+  getView(): { position: [number, number, number]; target: [number, number, number] } {
+    const p = this.camera.position, t = this.controls.getTarget(new Vector3(), false);
+    return { position: [p.x, p.y, p.z], target: [t.x, t.y, t.z] };
+  }
+
+  /** Back to a viewpoint saved with getView. */
+  setView(view: { position: ArrayLike<number>; target: ArrayLike<number> }, animate = true): void {
+    const [px, py, pz] = Array.from(view.position), [tx, ty, tz] = Array.from(view.target);
+    if (![px, py, pz, tx, ty, tz].every(Number.isFinite)) return;
+    this.lookAt(new Vector3(px, py, pz), new Vector3(tx, ty, tz), animate);
+  }
+
+  /** The view as it is now, as a JPEG (issue viewpoints), at most `maxWidth` px wide. */
+  async snapshot(maxWidth = 960): Promise<Blob> {
+    if (!this.walkState) this.controls.update(0);
+    this.camera.updateMatrixWorld();
+    this.draw(); // read in this task, before the browser composites (no preserveDrawingBuffer needed)
+    const src = this.canvas, scale = Math.min(1, maxWidth / Math.max(1, src.width));
+    const out = document.createElement('canvas');
+    out.width = Math.max(1, Math.round(src.width * scale)); out.height = Math.max(1, Math.round(src.height * scale));
+    out.getContext('2d')?.drawImage(src, 0, 0, out.width, out.height);
+    return await new Promise<Blob>((resolve, reject) => out.toBlob(b => (b ? resolve(b) : reject(new Error('이미지를 만들지 못했습니다.'))), 'image/jpeg', 0.85));
   }
 
   /**
@@ -1329,7 +1377,7 @@ export class TilesViewer {
     this.raf = requestAnimationFrame(this.loop);
     const dt = this.clock.getDelta();
     const moved = this.walkState ? this.walkFrame(dt) : this.controls.update(dt);
-    if (moved) { this.dirty = true; this.needsUpdate = true; this.view++; this.moving = true; }
+    if (moved) { this.dirty = true; this.needsUpdate = true; this.view++; this.moving = true; this.viewChanged = true; }
     else if (this.moving) { this.moving = false; this.sampleWanted = this.roomWanted = true; } // at rest: sample what is under the mouse now
     const tiles = this.tiles;
     const failed = (tiles as unknown as { stats?: TileStats } | null)?.stats?.failed ?? 0;
@@ -1362,6 +1410,7 @@ export class TilesViewer {
     // at most every SAMPLE_EVERY ms, none while the camera moves.
     if (this.pointer && this.sampleWanted && !this.sampling && !moved && now - this.sampledAt >= SAMPLE_EVERY) this.sampleSurface();
     else if (this.roomWanted && !this.walkState && !this.roomSampling && !moved && now - this.sampledAt >= SAMPLE_EVERY) this.sampleRoom();
+    if (this.viewChanged) { this.viewChanged = false; for (const f of this.viewListeners) f(); }
     if (!this.dirty) return;
     this.dirty = false;
     this.frame = this.draw();

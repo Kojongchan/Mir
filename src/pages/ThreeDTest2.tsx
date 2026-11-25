@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useLocation, useParams, useSearchParams } from 'react-router-dom';
+import { useAuth } from '../auth/AuthProvider';
+import { listIssues, createIssue, logIssueEvent, type Issue } from '../lib/issues';
+import { listIssueCategories, type IssueCategory } from '../lib/issueCategories';
+import { addIssueViewpoint } from '../lib/issueViewpoints';
+import { MirIssueForm, MirIssuePins, MirIssuePopup, isMirView, type MirViewState } from '../components/model/MirIssueLayer';
 import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
 import { useProjectRole } from '../auth/useProjectRole';
 import { supabase } from '../lib/supabase';
@@ -75,6 +80,14 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
   const tilesQuery = variant ? `tiles3d=1&variant=${variant}` : 'tiles3d=1';
   const tilesName = project ? '자체 엔진용 타일' : variant ? '3차 화면용(SVF 정밀) 타일' : '2차 화면용 타일';
   const { canEdit, canManage } = useProjectRole(projectId);
+  const { profile } = useAuth();
+  const authorName = profile?.full_name ?? profile?.username ?? null;
+  const [params] = useSearchParams();
+  const location = useLocation();
+  // Links from 협업·이슈: an object to show (?focusGlobalId=) or a viewpoint saved in this engine.
+  const focusGlobalId = project ? params.get('focusGlobalId') ?? '' : '';
+  const linkedView = project ? (location.state as { applyApsState?: unknown } | null)?.applyApsState : undefined;
+  const linkedViewRef = useRef<MirViewState | null>(isMirView(linkedView) ? linkedView : null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewerRef = useRef<TilesViewer | null>(null);
   const urlsRef = useRef<Record<string, string> | null>(null);
@@ -176,13 +189,18 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
   const painted = useMemo(() => (tree ? paintFor(tree, colorMode) : null), [tree, colorMode]);
   useEffect(() => { viewerRef.current?.setPaint(painted?.paint ?? null); }, [painted]);
 
-  /** Per-object boxes (objects.bin, tileset frame) for zooming; loaded on first use. */
-  const zoomTo = useCallback(async (ids: number[]) => {
+  /** Per-object boxes (objects.bin, tileset frame) for zooming and issue pins; loaded on first use. */
+  const loadBoxes = useCallback((): Promise<Float32Array> | null => {
     const url = urlsRef.current?.['objects.bin'];
-    if (!url || !ids.length) return;
+    if (!url) return null;
     boxesRef.current ??= fetch(url).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); }).then(b => new Float32Array(b));
+    return boxesRef.current;
+  }, []);
+  const zoomTo = useCallback(async (ids: number[]) => {
+    const loading = loadBoxes();
+    if (!loading || !ids.length) return;
     try {
-      const boxes = await boxesRef.current;
+      const boxes = await loading;
       const box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
       for (const id of expand(ids)) {
         if (id * 6 + 5 >= boxes.length || Number.isNaN(boxes[id * 6])) continue;
@@ -191,7 +209,7 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
       if (box.every(Number.isFinite)) viewerRef.current?.frameBox(box);
       else setStatus('선택한 객체의 위치 정보가 없습니다.');
     } catch (e) { boxesRef.current = null; setStatus(`위치 정보를 불러오지 못했습니다: ${errMessage(e)}`); }
-  }, [expand]);
+  }, [expand, loadBoxes]);
 
   // Click (not drag) selects the object under the pointer — or, choosing where a walk starts, puts the person there;
   // double-click flies toward the clicked point.
@@ -385,6 +403,105 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
     return () => clearInterval(timer);
   }, [tilesQuery]);
 
+  // ── 이슈(통합모델(3D)): 핀·선택 객체에 이슈 만들기·위치 보기·뷰포인트 — 기존 뷰어와 같은 이슈 데이터 ──────────────
+  const [issues, setIssues] = useState<Issue[]>([]);
+  const [issueCats, setIssueCats] = useState<IssueCategory[]>([]);
+  // global_id → dbId of the open model, and its object boxes (for the pins), resolved once the view has settled.
+  const [anchors, setAnchors] = useState<ReadonlyMap<string, number>>(new Map());
+  const [pinBoxes, setPinBoxes] = useState<Float32Array | null>(null);
+  const [pinsOn, setPinsOn] = useState(true);
+  const [popIssue, setPopIssue] = useState<Issue | null>(null);
+  const [issueFormOpen, setIssueFormOpen] = useState(false);
+  const reloadIssues = useCallback(() => { listIssues(projectId).then(setIssues).catch(() => {}); }, [projectId]);
+  useEffect(() => {
+    if (!project) return;
+    reloadIssues();
+    listIssueCategories(projectId).then(setIssueCats).catch(() => setIssueCats([]));
+  }, [project, projectId, reloadIssues]);
+  useEffect(() => { setAnchors(new Map()); setPinBoxes(null); setPopIssue(null); }, [tree]);
+  const settled = !!stats && stats.settledMs !== null;
+  const wantedIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const it of issues) { if (it.global_id) ids.add(it.global_id); if (it.global_id_b) ids.add(it.global_id_b); }
+    if (focusGlobalId) ids.add(focusGlobalId);
+    return [...ids].sort();
+  }, [issues, focusGlobalId]);
+  useEffect(() => {
+    if (!project || !tree || !settled) return;
+    const missingIds = wantedIds.filter(x => !anchors.has(x));
+    if (!missingIds.length) return;
+    let cancelled = false;
+    void index.findExternal(missingIds).then(found => {
+      if (cancelled || !found.size) return;
+      setAnchors(prev => { const next = new Map(prev); for (const [x, id] of found) next.set(x, id); return next; });
+    }).catch(() => {});
+    void loadBoxes()?.then(b => { if (!cancelled) setPinBoxes(b); }).catch(() => {});
+    return () => { cancelled = true; };
+    // anchors only grows here; a model change clears it (above)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project, tree, settled, wantedIds, index, loadBoxes]);
+
+  /** 위치 보기: the issue's object (both, for a clash issue) selected and in view. */
+  const focusIssue = useCallback((issue: Issue) => {
+    const ids = [issue.global_id, issue.global_id_b].map(x => (x ? anchors.get(x) : undefined)).filter((x): x is number => x !== undefined);
+    if (!ids.length) { setStatus('이 이슈의 객체를 지금 모델에서 찾지 못했습니다.'); return; }
+    setSelection(ids); setRevealDb(ids[ids.length - 1]);
+    void zoomTo(ids);
+  }, [anchors, zoomTo]);
+
+  // ?focusGlobalId= (협업·이슈 「위치 보기」): the object once it is found.
+  const focusedLink = useRef('');
+  useEffect(() => {
+    if (!focusGlobalId || focusedLink.current === focusGlobalId) return;
+    const id = anchors.get(focusGlobalId);
+    if (id === undefined) return;
+    focusedLink.current = focusGlobalId;
+    setSelection([id]); setRevealDb(id);
+    void zoomTo([id]);
+  }, [focusGlobalId, anchors, zoomTo]);
+  // A viewpoint saved in this engine (협업·이슈 「3D에서 열기」): once the model is open.
+  useEffect(() => {
+    const view = linkedViewRef.current;
+    if (!view || !tree) return;
+    linkedViewRef.current = null;
+    viewerRef.current?.setView(view, false);
+  }, [tree]);
+
+  /** The view now (camera + snapshot) saved as a viewpoint of the issue — best effort, like the Autodesk viewer. */
+  const saveViewFor = useCallback(async (issueId: string, title: string | null): Promise<boolean> => {
+    const viewer = viewerRef.current;
+    if (!viewer) return false;
+    try {
+      const blob = await viewer.snapshot(640);
+      const snapshot = await new Promise<string | null>(resolve => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+      const cameraState: MirViewState = { engine: 'mir', ...viewer.getView() };
+      await addIssueViewpoint({ issueId, projectId, title, cameraState, snapshot, authorName });
+      await logIssueEvent(issueId, projectId, 'viewpoint_add', title, authorName);
+      return true;
+    } catch { return false; }
+  }, [projectId, authorName]);
+
+  const submitIssue = useCallback(async (form: { title: string; category_id: string; type: Issue['type'] }) => {
+    const dbId = selection.length === 1 ? selection[0] : null;
+    if (dbId === null) return;
+    try {
+      const ext = await index.externalOf(dbId);
+      if (!ext) { setStatus('이 객체의 고유 ID(GlobalId)를 찾지 못해 이슈를 묶을 수 없습니다.'); setIssueFormOpen(false); return; }
+      const issueId = await createIssue(projectId, { title: form.title, type: form.type, category_id: form.category_id || null, priority: 'normal', global_id: ext }, authorName);
+      setAnchors(prev => new Map(prev).set(ext, dbId));
+      void loadBoxes()?.then(setPinBoxes).catch(() => {});
+      const saved = await saveViewFor(issueId, form.title);
+      reloadIssues();
+      setIssueFormOpen(false);
+      setStatus(saved ? `이슈를 만들었습니다: ${form.title} (현재 뷰 저장)` : `이슈를 만들었습니다: ${form.title}`);
+    } catch (e) { setStatus(`이슈 생성 실패: ${errMessage(e)}`); }
+  }, [selection, index, projectId, authorName, loadBoxes, saveViewFor, reloadIssues]);
+
   /** Project admins: build this model's tiles (Actions job, ≈10–20 min), then open it when the job succeeds. */
   const buildTiles = useCallback(async () => {
     if (!missing?.converted || job) return;
@@ -558,6 +675,16 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
               <button className={`btn btn--sm${propsOpen ? ' btn--primary' : ''}`} onClick={() => { setPropsOpen(o => !o); if (narrowScreen()) setTreeOpen(false); }}>속성</button>
             </>
           )}
+          {project && tree && (
+            <>
+              <button className={`btn btn--sm${pinsOn ? ' btn--primary' : ''}`} aria-pressed={pinsOn} onClick={() => setPinsOn(v => !v)}
+                title="이슈 핀 표시/숨김 (객체에 묶인 이슈 — 빨강 미해결·초록 해결)">이슈 핀</button>
+              {canEdit && (
+                <button className="btn btn--sm" disabled={selection.length !== 1} onClick={() => setIssueFormOpen(true)}
+                  title={selection.length === 1 ? '선택한 객체 위치에 이슈 만들기 (지금 화면이 뷰포인트로 저장됨)' : '객체 하나를 선택하면 그 위치에 이슈를 만들 수 있습니다'}>＋ 이슈</button>
+              )}
+            </>
+          )}
           </div>
           {index.note && <span className="muted threed-test__model">{index.note}</span>}
           <div className="spacer" />
@@ -630,6 +757,14 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
                 onZoom={ids => void zoomTo(ids)} onHighlight={setHighlightIds} />
             </aside>
           )}
+          {project && pinsOn && pinBoxes && anchors.size > 0 && viewerRef.current && (
+            <MirIssuePins viewer={viewerRef.current} issues={issues} anchors={anchors} boxes={pinBoxes} onPinClick={setPopIssue} />
+          )}
+          {popIssue && (
+            <MirIssuePopup issue={popIssue} projectId={projectId} canEdit={canEdit} onClose={() => setPopIssue(null)} onFocus={focusIssue}
+              onSaveView={it => void saveViewFor(it.id, it.title).then(ok => setStatus(ok ? '현재 뷰를 이슈 뷰포인트로 저장했습니다.' : '뷰포인트를 저장하지 못했습니다.'))} />
+          )}
+          {issueFormOpen && <MirIssueForm categories={issueCats} onSubmit={submitIssue} onClose={() => setIssueFormOpen(false)} />}
           {/* Top centre: what is selected / hidden and what to do with it, then the colour legend. */}
           <div className="threed-test2__top">
             {placing && !walk && (

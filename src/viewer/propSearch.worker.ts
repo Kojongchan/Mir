@@ -5,7 +5,8 @@
 import { PropSearchIndex, type Shard } from './PropSearchIndex';
 import { propsKey } from './propsCache';
 
-type Request = { type: 'search'; key: string; urls?: string[]; cacheName?: string | null; query: string; seq: number };
+/** 'search': objects whose properties match `query`; 'external': the objects of the external ids in `ids`. */
+type Request = { type: 'search' | 'external'; key: string; urls?: string[]; cacheName?: string | null; query: string; ids?: string[]; seq: number };
 let index: PropSearchIndex | null = null;
 let indexKey = '';
 let loading: Promise<void> | null = null;
@@ -44,14 +45,15 @@ async function load(urls: string[], key: string, cacheName: string | null | unde
 }
 
 self.onmessage = async (e: MessageEvent<Request>) => {
-  const { key, urls, cacheName, query, seq } = e.data;
+  const { type, key, urls, cacheName, query, ids, seq } = e.data;
   try {
     if (indexKey !== key || !index) {
       if (!urls) { postMessage({ type: 'need-urls', seq }); return; }
       loading ??= load(urls, key, cacheName).finally(() => { loading = null; });
       await loading;
     }
-    postMessage({ type: 'result', seq, ids: index!.search(query), objects: index!.size });
+    if (type === 'external') postMessage({ type: 'result', seq, found: index!.findExternal(ids ?? []), objects: index!.size });
+    else postMessage({ type: 'result', seq, ids: index!.search(query), objects: index!.size });
   } catch (err) {
     postMessage({ type: 'error', seq, message: (err as Error).message });
   }
