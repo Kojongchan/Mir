@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TilesViewer } from '../../viewer2/TilesViewer';
 import { MarkupOverlay, type MarkupTool } from '../MarkupOverlay';
 import { REDLINE_COLORS, bakeMarkup, type MarkupShape, type RedlineColor } from '../../lib/viewpoints';
@@ -78,34 +78,61 @@ export function MirViewpointPanel({ viewer, projectId, onClose, onStatus }: {
   );
 }
 
-/** 측정 한 건: 장면 좌표 두 점(+ 높이 차이용 모델 좌표 Z). */
-export type Measure = { a: [number, number, number]; b: [number, number, number]; za: number; zb: number };
+/** 측정 종류: 거리(두 점)·각도(세 점, 가운데가 꼭짓점)·면적(여러 점, 첫 점을 다시 누르거나 Enter 로 닫음). */
+export type MeasureKind = 'distance' | 'angle' | 'area';
+/** 측정 한 건: 장면 좌표 점들과 각 점의 모델 높이(Z). */
+export type Measure = { kind: MeasureKind; pts: [number, number, number][]; zs: number[] };
+type P3 = [number, number, number];
+const sub = (a: P3, b: P3): P3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const len = (v: P3) => Math.hypot(v[0], v[1], v[2]);
+const cross = (a: P3, b: P3): P3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 
-/** 측정선·거리 표시(카메라를 따라 다시 그린다). */
-export function MirMeasureLayer({ viewer, measures, pending }: { viewer: TilesViewer; measures: Measure[]; pending: [number, number, number] | null }) {
+/** 한 건의 결과 문구. */
+export function measureLabel(m: Measure): string {
+  if (m.kind === 'distance') {
+    const d = len(sub(m.pts[1], m.pts[0])), dz = m.zs[1] - m.zs[0];
+    return `${d.toFixed(3)} m${Math.abs(dz) >= 0.001 ? ` · 높이차 ${dz >= 0 ? '+' : ''}${dz.toFixed(3)} m` : ''}`;
+  }
+  if (m.kind === 'angle') {
+    const u = sub(m.pts[0], m.pts[1]), v = sub(m.pts[2], m.pts[1]);
+    const c = (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / Math.max(1e-9, len(u) * len(v));
+    return `${(Math.acos(Math.max(-1, Math.min(1, c))) * 180 / Math.PI).toFixed(2)}°`;
+  }
+  // 면적: 다각형(3D, 평면에 가깝다고 보고) 법선 방향 넓이 = |Σ pᵢ × pᵢ₊₁| / 2, 둘레 함께.
+  let s: P3 = [0, 0, 0], perimeter = 0;
+  for (let i = 0; i < m.pts.length; i++) {
+    const a = m.pts[i], b = m.pts[(i + 1) % m.pts.length];
+    const c = cross(a, b); s = [s[0] + c[0], s[1] + c[1], s[2] + c[2]];
+    perimeter += len(sub(b, a));
+  }
+  return `${(len(s) / 2).toFixed(3)} m² · 둘레 ${perimeter.toFixed(2)} m`;
+}
+
+/** 측정선·결과 표시(카메라를 따라 다시 그린다). `pending`: 그리는 중인 점들. */
+export function MirMeasureLayer({ viewer, measures, pending, kind }: { viewer: TilesViewer; measures: Measure[]; pending: P3[]; kind: MeasureKind }) {
   const [, setTick] = useState(0);
   const redraw = useCallback(() => setTick(t => t + 1), []);
   useEffect(() => viewer.onViewChange(redraw), [viewer, redraw]);
-  const scr = (p: [number, number, number]) => viewer.sceneToScreen(p[0], p[1], p[2]);
+  const scr = (p: P3) => viewer.sceneToScreen(p[0], p[1], p[2]);
+  const shape = (pts: P3[], closed: boolean, key: string, label: string | null) => {
+    const s = pts.map(scr);
+    if (s.some(p => !p)) return null;
+    const xy = s as { x: number; y: number }[];
+    const path = xy.map((p, i) => `${i ? 'L' : 'M'}${p.x},${p.y}`).join(' ') + (closed ? ' Z' : '');
+    const anchor = closed ? { x: xy.reduce((a, p) => a + p.x, 0) / xy.length, y: xy.reduce((a, p) => a + p.y, 0) / xy.length }
+      : xy.length === 3 ? xy[1] : { x: (xy[0].x + xy[xy.length - 1].x) / 2, y: (xy[0].y + xy[xy.length - 1].y) / 2 };
+    return (
+      <g key={key}>
+        <path d={path} className={`mir-measure__line${closed ? ' is-area' : ''}`} />
+        {xy.map((p, i) => <circle key={i} cx={p.x} cy={p.y} r={4} className="mir-measure__dot" />)}
+        {label && <text x={anchor.x} y={anchor.y - 10} className="mir-measure__label" textAnchor="middle">{label}</text>}
+      </g>
+    );
+  };
   return (
     <svg className="mir-measure" aria-label="측정">
-      {measures.map((m, i) => {
-        const a = scr(m.a), b = scr(m.b);
-        if (!a || !b) return null;
-        const d = Math.hypot(m.b[0] - m.a[0], m.b[1] - m.a[1], m.b[2] - m.a[2]);
-        const dz = m.zb - m.za;
-        const label = `${d.toFixed(3)} m${Math.abs(dz) >= 0.001 ? ` · 높이차 ${dz >= 0 ? '+' : ''}${dz.toFixed(3)} m` : ''}`;
-        const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-        return (
-          <g key={i}>
-            <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} className="mir-measure__line" />
-            <circle cx={a.x} cy={a.y} r={4} className="mir-measure__dot" />
-            <circle cx={b.x} cy={b.y} r={4} className="mir-measure__dot" />
-            <text x={mx} y={my - 8} className="mir-measure__label" textAnchor="middle">{label}</text>
-          </g>
-        );
-      })}
-      {pending && (() => { const p = scr(pending); return p ? <circle cx={p.x} cy={p.y} r={5} className="mir-measure__dot is-pending" /> : null; })()}
+      {measures.map((m, i) => shape(m.pts, m.kind === 'area', `m${i}`, measureLabel(m)))}
+      {pending.length > 0 && shape(pending, false, 'pending', kind === 'area' && pending.length >= 3 ? measureLabel({ kind, pts: pending, zs: pending.map(() => 0) }) : null)}
     </svg>
   );
 }
@@ -150,5 +177,116 @@ export function MirMarkupEditor({ image, fileName, onClose }: { image: string; f
         </div>
       </div>
     </div>
+  );
+}
+
+/** 미니맵: 구조물 평면 배치(객체 상자 중심)와 카메라 위치·바라보는 방향. 누르면 그곳으로 시점을 옮긴다. */
+export function MirMinimap({ viewer, boxes, bounds, onClose }: {
+  viewer: TilesViewer; boxes: Float32Array; bounds: [number, number, number, number, number, number]; onClose: () => void;
+}) {
+  const W = 260, H = 160, PAD = 8;
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const baseRef = useRef<HTMLCanvasElement | null>(null);
+  const sx = (W - PAD * 2) / Math.max(1e-6, bounds[3] - bounds[0]), sy = (H - PAD * 2) / Math.max(1e-6, bounds[4] - bounds[1]);
+  const scale = Math.min(sx, sy);
+  const ox = PAD + ((W - PAD * 2) - (bounds[3] - bounds[0]) * scale) / 2, oy = PAD + ((H - PAD * 2) - (bounds[4] - bounds[1]) * scale) / 2;
+  const toPx = useCallback((x: number, y: number) => ({ x: ox + (x - bounds[0]) * scale, y: H - (oy + (y - bounds[1]) * scale) }), [bounds, scale, ox, oy]);
+  const draw = useCallback(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    if (c.width !== W * dpr) { c.width = W * dpr; c.height = H * dpr; }
+    const g = c.getContext('2d');
+    if (!g) return;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (!baseRef.current) {
+      const b = document.createElement('canvas');
+      b.width = W * dpr; b.height = H * dpr;
+      const bg = b.getContext('2d')!;
+      bg.setTransform(dpr, 0, 0, dpr, 0, 0);
+      bg.fillStyle = 'rgba(120,130,145,0.55)';
+      for (let id = 1; id * 6 + 5 < boxes.length; id++) {
+        const o = id * 6;
+        if (Number.isNaN(boxes[o])) continue;
+        const p = toPx((boxes[o] + boxes[o + 3]) / 2, (boxes[o + 1] + boxes[o + 4]) / 2);
+        bg.fillRect(p.x, p.y, 1, 1);
+      }
+      baseRef.current = b;
+    }
+    g.clearRect(0, 0, W, H);
+    g.drawImage(baseRef.current, 0, 0, W, H);
+    const cam = viewer.camera.position, t = viewer.target;
+    const pc = viewer.sceneToModel(cam.x, cam.y, cam.z), pt = viewer.sceneToModel(t.x, t.y, t.z);
+    const a = toPx(pc[0], pc[1]), b = toPx(pt[0], pt[1]);
+    g.strokeStyle = '#dc2626'; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
+    g.fillStyle = '#dc2626';
+    g.beginPath(); g.arc(a.x, a.y, 4, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = '#fff'; g.lineWidth = 1.5;
+    g.beginPath(); g.arc(b.x, b.y, 3, 0, Math.PI * 2); g.stroke();
+  }, [viewer, boxes, toPx]);
+  useEffect(() => { baseRef.current = null; draw(); }, [draw]);
+  useEffect(() => viewer.onViewChange(draw), [viewer, draw]);
+  const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const px = e.clientX - r.left, py = e.clientY - r.top;
+    const x = bounds[0] + (px - ox) / scale, y = bounds[1] + (H - py - oy) / scale;
+    const t = viewer.target, cur = viewer.sceneToModel(t.x, t.y, t.z);
+    const next = viewer.modelToScene(x, y, cur[2]);
+    const shift = next.clone().sub(t);
+    viewer.lookAt(viewer.camera.position.clone().add(shift), next);
+  };
+  return (
+    <div className="mir-minimap" aria-label="미니맵">
+      <canvas ref={canvasRef} style={{ width: W, height: H }} onClick={onClick} title="누르면 그곳으로 시점을 옮깁니다" />
+      <button type="button" className="ic-only mir-minimap__close" onClick={onClose} aria-label="미니맵 닫기">✕</button>
+    </div>
+  );
+}
+
+/** 층 필터: 객체 속성의 층(레벨) 값 목록 — 누르면 그 층만 보이기. */
+export function MirLevelPanel({ load, onPick, onShowAll, onClose }: {
+  load: (onProgress: (done: number, total: number) => void) => Promise<{ value: string; count: number }[]>;
+  onPick: (value: string) => void;
+  onShowAll: () => void;
+  onClose: () => void;
+}) {
+  const [levels, setLevels] = useState<{ value: string; count: number }[] | null>(null);
+  const [progress, setProgress] = useState('');
+  const [picked, setPicked] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let alive = true;
+    load((done, total) => { if (alive) setProgress(`속성 색인 읽는 중 ${done}/${total}`); })
+      .then(list => { if (alive) setLevels(list); })
+      .catch(e => { if (alive) setError(e instanceof Error ? e.message : String(e)); });
+    return () => { alive = false; };
+  }, [load]);
+  return (
+    <aside className="mir-vp mir-levels" aria-label="층 필터">
+      <div className="threed-test__panel-h">
+        <strong>층 필터</strong>
+        <div className="spacer" />
+        {picked && <button type="button" className="btn btn--sm" onClick={() => { setPicked(null); onShowAll(); }}>모두 보이기</button>}
+        <button type="button" className="ic-only" onClick={onClose} aria-label="닫기">✕</button>
+      </div>
+      <div className="mir-vp__body">
+        {error && <p className="muted">층 정보를 읽지 못했습니다: {error}</p>}
+        {!levels && !error && <p className="muted">{progress || '층 정보 읽는 중…'}</p>}
+        {levels && levels.length === 0 && <p className="muted">이 모델에는 층(레벨) 속성이 없습니다. 토목 모델은 보통 층 대신 「단면」이나 모델 트리로 나눠 봅니다.</p>}
+        {levels && levels.length > 0 && (
+          <ul className="mir-vp__list">
+            {levels.map(l => (
+              <li key={l.value}>
+                <button type="button" className={`mir-vp__item${picked === l.value ? ' is-on' : ''}`} onClick={() => { setPicked(l.value); onPick(l.value); }}>
+                  <span className="mir-vp__name">{l.value}</span>
+                  <span className="muted">{l.count.toLocaleString()}개</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </aside>
   );
 }

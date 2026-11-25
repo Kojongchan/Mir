@@ -6,7 +6,7 @@ import { listIssueCategories, type IssueCategory } from '../lib/issueCategories'
 import { addIssueViewpoint } from '../lib/issueViewpoints';
 import { MirIssueForm, MirIssuePins, MirIssuePopup, isMirView, type MirViewState } from '../components/model/MirIssueLayer';
 import { MirClashPanel } from '../components/model/MirClashPanel';
-import { MirMarkupEditor, MirMeasureLayer, MirViewpointPanel, loadHomeView, type Measure } from '../components/model/MirViewTools';
+import { MirLevelPanel, MirMarkupEditor, MirMeasureLayer, MirMinimap, MirViewpointPanel, loadHomeView, type Measure, type MeasureKind } from '../components/model/MirViewTools';
 import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
 import { useProjectRole } from '../auth/useProjectRole';
 import { supabase } from '../lib/supabase';
@@ -140,12 +140,31 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
   const measuringRef = useRef(false);
   useEffect(() => { measuringRef.current = measuring; }, [measuring]);
   const [measures, setMeasures] = useState<Measure[]>([]);
-  const [measureFrom, setMeasureFrom] = useState<{ p: [number, number, number]; z: number } | null>(null);
-  const measureFromRef = useRef<{ p: [number, number, number]; z: number } | null>(null);
-  useEffect(() => { measureFromRef.current = measureFrom; }, [measureFrom]);
+  // 측정 중인 점들(거리 2 · 각도 3 · 면적 여러 개)과 측정 종류.
+  const [measureKind, setMeasureKind] = useState<MeasureKind>('distance');
+  const measureKindRef = useRef<MeasureKind>('distance');
+  useEffect(() => { measureKindRef.current = measureKind; }, [measureKind]);
+  const [measurePts, setMeasurePts] = useState<{ p: [number, number, number]; z: number }[]>([]);
+  const measurePtsRef = useRef<{ p: [number, number, number]; z: number }[]>([]);
+  useEffect(() => { measurePtsRef.current = measurePts; }, [measurePts]);
+  /** 면적: 지금까지의 점으로 닫는다(3점 이상). */
+  const closeArea = useCallback(() => {
+    const pts = measurePtsRef.current;
+    if (measureKindRef.current !== 'area' || pts.length < 3) return;
+    setMeasures(m => [...m, { kind: 'area', pts: pts.map(x => x.p), zs: pts.map(x => x.z) }]);
+    setMeasurePts([]);
+  }, []);
   type Section = { axis: 0 | 1 | 2; t: number; flip: boolean } | { box: [number, number, number, number, number, number] };
   const [section, setSection] = useState<Section | null>(null);
   const [markupImage, setMarkupImage] = useState<string | null>(null);
+  // 영역 줌(끌어서 그린 사각형으로 확대), 분해(객체 벌려 보기, 0~100), 층 필터, 미니맵.
+  const [zoomBox, setZoomBox] = useState(false);
+  const [zoomRect, setZoomRect] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [explode, setExplode] = useState<number | null>(null);
+  const explodeCentre = useRef<[number, number, number] | null>(null);
+  const [levelsOpen, setLevelsOpen] = useState(false);
+  const [minimap, setMinimap] = useState<{ boxes: Float32Array; bounds: [number, number, number, number, number, number] } | null>(null);
+  const toolsRef = useRef<HTMLDetailsElement>(null);
   // The view the designated model starts from (a linked viewpoint, else this browser's home view).
   const startViewRef = useRef<{ position: [number, number, number]; target: [number, number, number] } | null>(null);
   const [colorMode, setColorMode] = useState<ColorMode>(storedColorMode);
@@ -224,7 +243,7 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
   }, [painted, clashView]);
   useEffect(() => { viewerRef.current?.setPaint(paintWithClash); }, [paintWithClash]);
   useEffect(() => { viewerRef.current?.setGhost(clashView?.ghost ? [clashView.a, clashView.b] : null); }, [clashView]);
-  useEffect(() => { setClashView(null); }, [tree]);
+  useEffect(() => { setClashView(null); setExplode(null); setMinimap(null); setLevelsOpen(false); }, [tree]);
 
   /** Per-object boxes (objects.bin, tileset frame) for zooming and issue pins; loaded on first use. */
   const loadBoxes = useCallback((): Promise<Float32Array> | null => {
@@ -265,9 +284,16 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
         if (!viewer || !hit) { setStatus('측정: 모델 위를 클릭하세요.'); return; }
         const p: [number, number, number] = [hit.point.x, hit.point.y, hit.point.z];
         const z = viewer.sceneToModel(p[0], p[1], p[2])[2];
-        const from = measureFromRef.current;
-        if (!from) setMeasureFrom({ p, z });
-        else { setMeasures(m => [...m, { a: from.p, b: p, za: from.z, zb: z }]); setMeasureFrom(null); }
+        const kind = measureKindRef.current, pts = measurePtsRef.current;
+        // 면적: 첫 점 가까이(12px) 다시 누르면 닫는다.
+        if (kind === 'area' && pts.length >= 3) {
+          const first = viewer.sceneToScreen(pts[0].p[0], pts[0].p[1], pts[0].p[2]);
+          if (first && Math.hypot(first.x - (e.clientX - rect.left), first.y - (e.clientY - rect.top)) < 12) { closeArea(); return; }
+        }
+        const next = [...pts, { p, z }];
+        const need = kind === 'distance' ? 2 : kind === 'angle' ? 3 : Infinity;
+        if (next.length >= need) { setMeasures(m => [...m, { kind, pts: next.map(x => x.p), zs: next.map(x => x.z) }]); setMeasurePts([]); }
+        else setMeasurePts(next);
         return;
       }
       if (placingRef.current) {
@@ -306,9 +332,10 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
       const actions = keyActions.current;
       if (typing || !actions) return;
       const mod = e.ctrlKey || e.metaKey;
+      if (e.key === 'Enter' && measuringRef.current) { closeArea(); return; }
       if (e.key === 'Escape') {
         if (placingRef.current) setPlacing(false);
-        else if (measureFromRef.current) setMeasureFrom(null);
+        else if (measurePtsRef.current.length) setMeasurePts([]);
         else if (measuringRef.current) setMeasuring(false);
         else setSelection(prev => (prev.length ? [] : prev));
       }
@@ -610,6 +637,25 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
     if (url) setMarkupImage(url);
   }, []);
 
+  // 분해: 켤 때의 회전 중심(모델 좌표)에서 객체를 상자 중심 방향으로 벌린다(0~100 → 0~2배).
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    if (explode === null) { viewer.setExplode(null, null, 0); explodeCentre.current = null; return; }
+    const loading = loadBoxes();
+    if (!loading) return;
+    if (!explodeCentre.current) { const t = viewer.target; explodeCentre.current = viewer.sceneToModel(t.x, t.y, t.z); }
+    const centre = explodeCentre.current;
+    void loading.then(boxes => viewer.setExplode(boxes, centre, explode / 50)).catch(() => {});
+    // loadBoxes is stable per model
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [explode]);
+  const openMinimap = useCallback(async () => {
+    const viewer = viewerRef.current, loading = loadBoxes();
+    const bounds = viewer?.structureBox();
+    if (!viewer || !loading || !bounds) { setStatus('모델을 연 뒤 미니맵을 볼 수 있습니다.'); return; }
+    setMinimap({ boxes: await loading, bounds });
+  }, [loadBoxes]);
   /** 간섭 결과 한 건: 두 부재를 선택해 보여 준다. */
   const showClash = useCallback((a: number, b: number) => {
     setSelection([]); setRevealDb(b);
@@ -724,6 +770,12 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
   const selectMany = useCallback((ids: number[], additive: boolean) => {
     setSelection(prev => (additive ? [...new Set([...prev, ...ids])] : ids));
   }, []);
+
+  /** 층 하나만 보이기(나머지 숨김 — 되돌리기·모두 보이기로 복원). */
+  const isolateLevel = useCallback(async (value: string) => {
+    const ids = await index.levelObjects(value);
+    if (tree && ids.length) changeHidden(() => new Set(tree.hideAllBut(ids)));
+  }, [index, tree, changeHidden]);
 
   const statsText = stats && [
     `${PROFILES[stats.tier].label} · 오차 ${stats.errorTarget}px`,
@@ -840,10 +892,23 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
               <button className={`btn btn--sm${vpOpen ? ' btn--primary' : ''}`} aria-pressed={vpOpen} onClick={() => setVpOpen(v => !v)}
                 title="홈뷰(처음 보이는 시점)와 관측점(이름 붙인 시점) 저장·이동">시점</button>
               <button className={`btn btn--sm${measuring ? ' btn--primary' : ''}`} aria-pressed={measuring}
-                onClick={() => { setMeasuring(v => !v); setMeasureFrom(null); }} title="거리 측정: 모델 위 두 점을 차례로 클릭 (Esc 로 끝)">측정</button>
+                onClick={() => { setMeasuring(v => !v); setMeasurePts([]); }} title="측정: 거리(두 점)·각도(세 점)·면적(여러 점) — 모델 위를 클릭 (Esc 로 끝)">측정</button>
               <button className={`btn btn--sm${section ? ' btn--primary' : ''}`} aria-pressed={!!section}
                 onClick={() => setSection(v => (v ? null : { axis: 2, t: 0.5, flip: false }))} title="단면: 평면으로 잘라 안쪽 보기 (선택 객체 상자로도)">단면</button>
               <button className="btn btn--sm" onClick={() => void openMarkup()} title="마크업: 지금 화면에 화살표·글자를 그려 PNG 로 저장">마크업</button>
+              <details className="threed-test2__settings" ref={toolsRef}>
+                <summary className="btn btn--sm" title="영역 줌·분해·층 필터·미니맵">도구</summary>
+                <div className="threed-test2__settings-pop">
+                  <button type="button" className={`btn btn--sm${zoomBox ? ' btn--primary' : ''}`}
+                    onClick={() => { setZoomBox(v => !v); if (toolsRef.current) toolsRef.current.open = false; }} title="끌어서 그린 사각형 부분으로 확대">영역 줌</button>
+                  <button type="button" className={`btn btn--sm${explode !== null ? ' btn--primary' : ''}`}
+                    onClick={() => { setExplode(v => (v === null ? 30 : null)); if (toolsRef.current) toolsRef.current.open = false; }} title="지금 회전 중심에서 객체를 벌려 보기">분해</button>
+                  <button type="button" className={`btn btn--sm${levelsOpen ? ' btn--primary' : ''}`}
+                    onClick={() => { setLevelsOpen(v => !v); if (toolsRef.current) toolsRef.current.open = false; }} title="층(레벨) 속성별로 그 층만 보기">층 필터</button>
+                  <button type="button" className={`btn btn--sm${minimap ? ' btn--primary' : ''}`}
+                    onClick={() => { if (minimap) setMinimap(null); else void openMinimap(); if (toolsRef.current) toolsRef.current.open = false; }} title="평면 배치와 카메라 위치(누르면 그곳으로)">미니맵</button>
+                </div>
+              </details>
             </>
           )}
           </div>
@@ -926,12 +991,26 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
               onSaveView={it => void saveViewFor(it.id, it.title).then(ok => setStatus(ok ? '현재 뷰를 이슈 뷰포인트로 저장했습니다.' : '뷰포인트를 저장하지 못했습니다.'))} />
           )}
           {issueFormOpen && <MirIssueForm categories={issueCats} onSubmit={submitIssue} onClose={() => setIssueFormOpen(false)} />}
-          {project && viewerRef.current && (measures.length > 0 || measureFrom) && (
-            <MirMeasureLayer viewer={viewerRef.current} measures={measures} pending={measureFrom?.p ?? null} />
+          {project && viewerRef.current && (measures.length > 0 || measurePts.length > 0) && (
+            <MirMeasureLayer viewer={viewerRef.current} measures={measures} pending={measurePts.map(x => x.p)} kind={measureKind} />
           )}
           {project && vpOpen && viewerRef.current && (
             <MirViewpointPanel viewer={viewerRef.current} projectId={`${projectId}:${purpose}`} onClose={() => setVpOpen(false)} onStatus={setStatus} />
           )}
+          {zoomBox && (
+            <div className="mir-zoombox" aria-label="영역 줌: 확대할 부분을 끌어서 그리세요"
+              onPointerDown={e => { const r = e.currentTarget.getBoundingClientRect(); e.currentTarget.setPointerCapture(e.pointerId); setZoomRect({ x0: e.clientX - r.left, y0: e.clientY - r.top, x1: e.clientX - r.left, y1: e.clientY - r.top }); }}
+              onPointerMove={e => { if (!zoomRect) return; const r = e.currentTarget.getBoundingClientRect(); setZoomRect({ ...zoomRect, x1: e.clientX - r.left, y1: e.clientY - r.top }); }}
+              onPointerUp={() => {
+                const z = zoomRect; setZoomRect(null);
+                if (z && Math.abs(z.x1 - z.x0) > 6 && Math.abs(z.y1 - z.y0) > 6) { viewerRef.current?.zoomToRect(z.x0, z.y0, z.x1, z.y1); setZoomBox(false); }
+              }}>
+              <span className="mir-zoombox__hint">확대할 부분을 끌어서 그리세요 · <button type="button" className="btn btn--sm" onPointerDown={e => e.stopPropagation()} onClick={() => setZoomBox(false)}>취소</button></span>
+              {zoomRect && <div className="mir-zoombox__rect" style={{ left: Math.min(zoomRect.x0, zoomRect.x1), top: Math.min(zoomRect.y0, zoomRect.y1), width: Math.abs(zoomRect.x1 - zoomRect.x0), height: Math.abs(zoomRect.y1 - zoomRect.y0) }} />}
+            </div>
+          )}
+          {minimap && viewerRef.current && <MirMinimap viewer={viewerRef.current} boxes={minimap.boxes} bounds={minimap.bounds} onClose={() => setMinimap(null)} />}
+          {levelsOpen && tree && <MirLevelPanel load={index.levels} onPick={v => void isolateLevel(v)} onShowAll={showAll} onClose={() => setLevelsOpen(false)} />}
           {markupImage && <MirMarkupEditor image={markupImage} fileName={`${(modelName || '3D').replace(/\.[^.]+$/, '')}_마크업.png`} onClose={() => setMarkupImage(null)} />}
           {project && clashOpen && tree && (
             <MirClashPanel tree={tree} projectId={projectId} canEdit={canEdit} urls={() => urlsRef.current} boxes={loadBoxes}
@@ -946,9 +1025,24 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
             {measuring && (
               <div className="threed-test2__selbar" role="toolbar" aria-label="측정">
                 <strong>측정</strong>
-                <span className="muted">{measureFrom ? '끝점을 클릭하세요 (Esc 취소)' : '시작점을 클릭하세요'} · 측정 {measures.length}개</span>
+                {(['distance', 'angle', 'area'] as const).map(k => (
+                  <button key={k} type="button" className={`btn btn--sm${measureKind === k ? ' btn--primary' : ''}`}
+                    onClick={() => { setMeasureKind(k); setMeasurePts([]); }}>{k === 'distance' ? '거리' : k === 'angle' ? '각도' : '면적'}</button>
+                ))}
+                <span className="muted">{measureKind === 'distance' ? (measurePts.length ? '끝점을 클릭' : '시작점을 클릭')
+                  : measureKind === 'angle' ? ['첫 점을 클릭', '꼭짓점을 클릭', '끝점을 클릭'][measurePts.length] ?? ''
+                    : measurePts.length < 3 ? `점을 차례로 클릭 (${measurePts.length}점)` : '첫 점을 다시 누르거나 「닫기」'} · 측정 {measures.length}개</span>
+                {measureKind === 'area' && measurePts.length >= 3 && <button type="button" className="btn btn--sm btn--primary" onClick={closeArea}>닫기</button>}
                 {measures.length > 0 && <button type="button" className="btn btn--sm" onClick={() => setMeasures([])}>모두 지우기</button>}
-                <button type="button" className="btn btn--sm" onClick={() => { setMeasuring(false); setMeasureFrom(null); }}>끝내기</button>
+                <button type="button" className="btn btn--sm" onClick={() => { setMeasuring(false); setMeasurePts([]); }}>끝내기</button>
+              </div>
+            )}
+            {explode !== null && (
+              <div className="threed-test2__selbar" role="toolbar" aria-label="분해">
+                <strong>분해</strong>
+                <input type="range" min={0} max={100} value={explode} aria-label="분해 정도" onChange={e => setExplode(Number(e.target.value))} />
+                <span className="muted">{explode}%</span>
+                <button type="button" className="btn btn--sm" onClick={() => setExplode(null)}>끄기</button>
               </div>
             )}
             {section && (

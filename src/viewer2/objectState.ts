@@ -1,4 +1,4 @@
-import { DataTexture, MeshLambertMaterial, RGBAFormat, ShaderMaterial, UnsignedByteType, NearestFilter, DoubleSide, type Material, type Texture } from 'three';
+import { DataTexture, FloatType, MeshLambertMaterial, RGBAFormat, ShaderMaterial, UnsignedByteType, NearestFilter, DoubleSide, type Material, type Texture } from 'three';
 
 /**
  * Per-object display state read by the shaders (second viewer, docs/3D뷰_2차_엔진.md). Every vertex carries its
@@ -22,6 +22,11 @@ export class ObjectStateTexture {
   /** Objects kept solid while every other object is ghosted; null = no ghosting. */
   private ghostKeep: ReadonlySet<number> | null = null;
   private last: { selected: number[]; highlighted: number[]; hidden: number[] } = { selected: [], highlighted: [], hidden: [] };
+  /**
+   * 분해(Explode): per object an offset (scene frame, xyz) the shaders add times `factor` — objects move apart from a
+   * centre. Shared uniform objects, so every material sees changes at once.
+   */
+  readonly explode = { offsets: { value: new DataTexture(new Float32Array(4), 1, 1, RGBAFormat, FloatType) as DataTexture }, factor: { value: 0 } };
 
   constructor(objects: number) {
     const rows = Math.max(1, Math.ceil(Math.max(objects, 1) / WIDTH));
@@ -43,6 +48,24 @@ export class ObjectStateTexture {
   setGhost(keep: Iterable<number> | null): void {
     this.ghostKeep = keep ? new Set(keep) : null;
     this.apply(this.last.selected, this.last.highlighted, this.last.hidden);
+  }
+
+  /** Explode offsets: rgba per dbId (xyz used, scene frame); null clears. */
+  setExplodeOffsets(offsets: Float32Array | null): void {
+    const old = this.explode.offsets.value;
+    if (!offsets) {
+      this.explode.offsets.value = new DataTexture(new Float32Array(4), 1, 1, RGBAFormat, FloatType);
+    } else {
+      const rows = Math.max(1, Math.ceil(offsets.length / 4 / WIDTH));
+      const data = new Float32Array(rows * WIDTH * 4);
+      data.set(offsets.subarray(0, Math.min(offsets.length, data.length)));
+      const tex = new DataTexture(data, WIDTH, rows, RGBAFormat, FloatType);
+      tex.magFilter = tex.minFilter = NearestFilter;
+      tex.generateMipmaps = false;
+      this.explode.offsets.value = tex;
+    }
+    this.explode.offsets.value.needsUpdate = true;
+    old.dispose();
   }
 
   /** Whether an object is hidden (walk mode passes through it). */
@@ -86,6 +109,17 @@ const STATE_VERTEX = /* glsl */`
 attribute float _feature_id_0;
 attribute float _skin;
 uniform highp sampler2D objectState;
+uniform highp sampler2D explodeOffsets;
+uniform float explodeFactor;
+/** 분해: the object's offset (scene frame) times the factor, into view space (mvPosition, gl_Position). */
+void applyExplode(inout vec4 mv) {
+  if (explodeFactor <= 0.0) return;
+  int id = int(_feature_id_0 + 0.5);
+  ivec2 size = textureSize(explodeOffsets, 0);
+  if (id >= size.x * size.y) return;
+  vec3 off = texelFetch(explodeOffsets, ivec2(id % size.x, id / size.x), 0).xyz * explodeFactor;
+  mv.xyz += (viewMatrix * vec4(off, 0.0)).xyz;
+}
 varying vec4 vObjectState;
 varying float vSkinPush;
 vec4 readObjectState() {
@@ -198,7 +232,9 @@ export function createSurfaceMaterial(state: ObjectStateTexture, transparent: bo
     shader.uniforms.objectState = { value: state.texture };
     shader.vertexShader = STATE_VERTEX + shader.vertexShader
       .replace('#include <begin_vertex>', '#include <begin_vertex>\n  vObjectState = readObjectState();\n  vSkinPush = skinPush(vObjectState);')
-      .replace('#include <project_vertex>', `#include <project_vertex>\n${HIDE}`);
+      .replace('#include <project_vertex>', `#include <project_vertex>\n  applyExplode(mvPosition); gl_Position = projectionMatrix * mvPosition;\n${HIDE}`);
+    shader.uniforms.explodeOffsets = state.explode.offsets;
+    shader.uniforms.explodeFactor = state.explode.factor;
     shader.vertexShader = withIdVaryings(shader.vertexShader, 'int(_feature_id_0 + 0.5)');
     shader.fragmentShader = 'varying vec4 vObjectState;\nvarying float vSkinPush;\n' + ID_OUTPUT + DEPTH_ORDER + shader.fragmentShader
       .replace('#include <logdepthbuf_fragment>', APPLY_DEPTH_ORDER('vOutlineId', 'vViewPosition'))
@@ -216,7 +252,7 @@ export function createSurfaceMaterial(state: ObjectStateTexture, transparent: bo
  */
 export function createPickMaterial(state: ObjectStateTexture): ShaderMaterial {
   return new ShaderMaterial({
-    uniforms: { objectState: { value: state.texture }, mode: { value: 0 }, far: { value: 1e6 } },
+    uniforms: { objectState: { value: state.texture }, mode: { value: 0 }, far: { value: 1e6 }, explodeOffsets: state.explode.offsets, explodeFactor: state.explode.factor },
     side: DoubleSide,
     clipping: true, // 단면: what is cut away is not picked
 
@@ -233,6 +269,7 @@ export function createPickMaterial(state: ObjectStateTexture): ShaderMaterial {
         vSkinPush = skinPush(vObjectState);
         vId = int(_feature_id_0 + 0.5);
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        applyExplode(mv);
         vDepth = -mv.z;
         vView = -mv.xyz;
         gl_Position = projectionMatrix * mv;

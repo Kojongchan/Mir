@@ -381,6 +381,57 @@ export class TilesViewer {
     }
   }
 
+  /**
+   * 분해: every object moved away from `centre` (tileset frame) by `factor` × (its box centre − centre). `boxes`
+   * (objects.bin) is read once per call; factor 0 = as modelled.
+   */
+  setExplode(boxes: Float32Array | null, centre: ArrayLike<number> | null, factor: number): void {
+    const state = this.state;
+    if (!state) return;
+    if (!boxes || !centre || factor <= 0) { state.explode.factor.value = 0; this.dirty = true; return; }
+    if (this.explodeCentre !== centre || this.explodeBoxes !== boxes) {
+      this.explodeCentre = centre; this.explodeBoxes = boxes;
+      const n = Math.floor(boxes.length / 6), out = new Float32Array(n * 4);
+      for (let id = 1; id < n; id++) {
+        const o = id * 6;
+        if (Number.isNaN(boxes[o])) continue;
+        // tileset (x, y, z) → scene (x, z, −y), like the world group's rotation
+        const dx = (boxes[o] + boxes[o + 3]) / 2 - centre[0], dy = (boxes[o + 1] + boxes[o + 4]) / 2 - centre[1], dz = (boxes[o + 2] + boxes[o + 5]) / 2 - centre[2];
+        out[id * 4] = dx; out[id * 4 + 1] = dz; out[id * 4 + 2] = -dy;
+      }
+      state.setExplodeOffsets(out);
+    }
+    state.explode.factor.value = factor;
+    this.dirty = true;
+  }
+  private explodeCentre: ArrayLike<number> | null = null;
+  private explodeBoxes: Float32Array | null = null;
+
+  /** A tileset-frame point in the scene. */
+  modelToScene(x: number, y: number, z: number): Vector3 {
+    return new Vector3(x, y, z).applyMatrix4(this.world.matrixWorld);
+  }
+
+  /** The orbit target (scene frame). */
+  get target(): Vector3 { return this.controls.getTarget(new Vector3(), false); }
+
+  /** 영역 줌: fly so the canvas rectangle (CSS px) fills the view, toward the surface under its centre. */
+  zoomToRect(x0: number, y0: number, x1: number, y1: number): void {
+    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    const ratio = Math.max(Math.abs(x1 - x0) / w, Math.abs(y1 - y0) / h, 0.01);
+    const eye = this.camera.position.clone();
+    const hit = this.pick(cx, cy);
+    let target: Vector3;
+    if (hit) target = hit.point.clone();
+    else {
+      const dir = new Vector3((cx / w) * 2 - 1, -(cy / h) * 2 + 1, 0.5).unproject(this.camera).sub(eye).normalize();
+      target = eye.clone().add(dir.multiplyScalar(this.controls.distance));
+    }
+    const dir = target.clone().sub(eye).normalize();
+    this.lookAt(target.clone().sub(dir.multiplyScalar(Math.max(eye.distanceTo(target) * ratio, 1))), target);
+  }
+
   /** See-through every object but `keep` (간섭 보기 반투명); null = all solid. */
   setGhost(keep: Iterable<number> | null): void {
     this.state?.setGhost(keep);
