@@ -15,7 +15,7 @@ import { ISSUE_TYPES, TYPE_LABEL, type IssueType } from '../../lib/issueTypes';
 import { listIssueCategories, type IssueCategory } from '../../lib/issueCategories';
 import { listProjectMembers, memberLabel, type ProjectMember } from '../../lib/members';
 import { uploadAttachment } from '../../lib/attachments';
-import { dataUrlToFile } from '../../lib/apsReport';
+import { clashReportHtml, dataUrlToFile, downloadReport } from '../../lib/apsReport';
 import { useAuth } from '../../auth/AuthProvider';
 import { errMessage } from '../../lib/errors';
 import type { ModelTree } from '../../viewer/ModelTree';
@@ -39,6 +39,14 @@ export interface MirClashPanelProps {
   onShow: (a: number, b: number) => void;
   /** 지금 화면(이슈 첨부 사진, 데이터 URL). */
   snapshot: () => Promise<string | null>;
+  /** 결과 보기 방식: ghost = A·B 만 또렷이(나머지 반투명), all = 모두 그대로, null = 결과 표시 없음. */
+  view: 'ghost' | 'all' | null;
+  onView: (mode: 'ghost' | 'all' | 'clear') => void;
+  /** 보고서: 한 건을 비춘 사진(데이터 URL). */
+  capture: (a: number, b: number) => Promise<string | null>;
+  /** 객체 → 분야(상위 파일 이름). */
+  fileOf: (dbId: number) => string;
+  projectName?: string;
   onIssueCreated?: () => void;
   onClose: () => void;
 }
@@ -48,7 +56,7 @@ type Mapping = ApsMapping;
 const emptyMapping = (): Mapping => ({ model: { id: 0 }, dbIdToGlobalId: new Map(), globalIdToDbId: new Map(), size: 0 });
 
 export function MirClashPanel(props: MirClashPanelProps) {
-  const { tree, projectId, canEdit, urls, boxes, externalOf, findExternal, onShow, snapshot, onIssueCreated, onClose } = props;
+  const { tree, projectId, canEdit, urls, boxes, externalOf, findExternal, onShow, snapshot, view, onView, capture, fileOf, projectName, onIssueCreated, onClose } = props;
   const { profile } = useAuth();
   const authorName = profile?.full_name ?? profile?.username ?? null;
 
@@ -255,6 +263,31 @@ export function MirClashPanel(props: MirClashPanelProps) {
     }
   };
 
+  // 이미지 보고서(.html): 보이는 결과 순서대로 최대 60건을 비춰 찍는다(기존 뷰어 보고서와 같은 양식).
+  const [reportBusy, setReportBusy] = useState(false);
+  const reportCancel = useRef(false);
+  const exportReport = async (list: ClashRow[]) => {
+    if (!list.length || reportBusy) return;
+    setReportBusy(true);
+    reportCancel.current = false;
+    const shots: Record<string, string> = {};
+    const targets = list.filter((r) => r.a.expressID >= 0 && r.b.expressID >= 0).slice(0, 60);
+    try {
+      for (let i = 0; i < targets.length && !reportCancel.current; i++) {
+        setStatus(`보고서 사진 ${i + 1}/${targets.length} (화면이 자동으로 옮겨 갑니다)…`);
+        const shot = await capture(targets[i].a.expressID, targets[i].b.expressID).catch(() => null);
+        if (shot) shots[targets[i].id] = shot;
+      }
+      const html = clashReportHtml(list, shots, fileOf, { projectName, setA: aSel?.name, setB: bSel?.name, maxShots: 60 });
+      downloadReport(`간섭보고서-${new Date().toISOString().slice(0, 10)}.html`, html);
+      setStatus(`보고서 저장 완료(.html, 사진 ${Object.keys(shots).length}장 — 브라우저에서 인쇄 → PDF 가능)`);
+    } catch (e) {
+      setStatus(`보고서 실패: ${errMessage(e)}`);
+    } finally {
+      setReportBusy(false);
+    }
+  };
+
   const visibleRows = useMemo(() => rows.filter((r) => statusFilter.has(r.status)), [rows, statusFilter]);
   const grouped = useMemo(() => groupClashes(visibleRows, groupBy, sortBy), [visibleRows, groupBy, sortBy]);
   const openCount = rows.filter((r) => OPEN_CLASH_STATUSES.includes(r.status)).length;
@@ -298,6 +331,13 @@ export function MirClashPanel(props: MirClashPanelProps) {
         <strong>간섭검토</strong>
         <span className="muted">{rows.length ? `총 ${rows.length} · 미해결 ${openCount}` : ''}</span>
         <span className="spacer" />
+        {view && (
+          <>
+            <button type="button" className={`btn btn--sm${view === 'all' ? ' btn--primary' : ''}`} onClick={() => onView('all')} title="모든 부재를 그대로 표시(A·B 색 유지)">전체 표시</button>
+            <button type="button" className={`btn btn--sm${view === 'ghost' ? ' btn--primary' : ''}`} onClick={() => onView('ghost')} title="간섭 부재만 또렷이, 나머지는 반투명">반투명</button>
+            <button type="button" className="btn btn--sm" onClick={() => onView('clear')} title="간섭 표시 지우기">표시 해제</button>
+          </>
+        )}
         <button type="button" className="ic-only" onClick={onClose} aria-label="간섭검토 닫기">✕</button>
       </div>
       <div className="mir-clash__body">
@@ -329,6 +369,9 @@ export function MirClashPanel(props: MirClashPanelProps) {
           {canEdit && selTest && <button type="button" className="btn btn--sm" onClick={() => void removeTest(selTest)} title="삭제">삭제</button>}
           {canEdit && <button type="button" className="btn btn--sm" onClick={() => void save()} disabled={!rows.length} title="결과 저장">저장</button>}
           <button type="button" className="btn btn--sm" onClick={() => downloadCsv('clash.csv', clashesToCsv(rows))} disabled={!rows.length}>CSV</button>
+          <button type="button" className="btn btn--sm" onClick={() => void exportReport(grouped.flatMap((g) => g.rows))} disabled={!rows.length || reportBusy}
+            title="보이는 결과(필터·정렬 그대로) 최대 60건을 사진과 함께 .html 보고서로">{reportBusy ? '보고서 만드는 중…' : '보고서'}</button>
+          {reportBusy && <button type="button" className="btn btn--sm" onClick={() => { reportCancel.current = true; }}>사진 그만 찍기</button>}
         </div>
         {rows.length > 0 && (
           <div className="mir-clash__row">

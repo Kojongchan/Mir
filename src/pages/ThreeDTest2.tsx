@@ -94,6 +94,8 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
   // 간섭 이슈의 「위치 보기」: 두 부재(?focusClashA=&focusClashB=).
   const focusClashA = project ? params.get('focusClashA') ?? '' : '', focusClashB = project ? params.get('focusClashB') ?? '' : '';
   const [clashOpen, setClashOpen] = useState(project && purpose === 'clash');
+  // 간섭 결과 보기: A 초록·B 빨강, ghost = 나머지 반투명(아니면 그대로 표시).
+  const [clashView, setClashView] = useState<{ a: number; b: number; ghost: boolean } | null>(null);
   const linkedView = project ? (location.state as { applyApsState?: unknown } | null)?.applyApsState : undefined;
   const linkedViewRef = useRef<MirViewState | null>(isMirView(linkedView) ? linkedView : null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -210,7 +212,19 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
   useEffect(() => { viewerRef.current?.setStates(selected, highlighted, hidden); }, [selected, highlighted, hidden]);
   // Colour mode → per-object paint under the states (again for each opened model: its tree arrives after the tiles).
   const painted = useMemo(() => (tree ? paintFor(tree, colorMode) : null), [tree, colorMode]);
-  useEffect(() => { viewerRef.current?.setPaint(painted?.paint ?? null); }, [painted]);
+  const paintWithClash = useMemo(() => {
+    const base = painted?.paint ?? null;
+    if (!clashView) return base;
+    const size = Math.max(base?.length ?? 0, (Math.max(clashView.a, clashView.b) + 1) * 4);
+    const out = new Uint8Array(size);
+    if (base) out.set(base);
+    out.set([22, 163, 74, 255], clashView.a * 4); // A 초록
+    out.set([220, 38, 38, 255], clashView.b * 4); // B 빨강
+    return out;
+  }, [painted, clashView]);
+  useEffect(() => { viewerRef.current?.setPaint(paintWithClash); }, [paintWithClash]);
+  useEffect(() => { viewerRef.current?.setGhost(clashView?.ghost ? [clashView.a, clashView.b] : null); }, [clashView]);
+  useEffect(() => { setClashView(null); }, [tree]);
 
   /** Per-object boxes (objects.bin, tileset frame) for zooming and issue pins; loaded on first use. */
   const loadBoxes = useCallback((): Promise<Float32Array> | null => {
@@ -219,7 +233,7 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
     boxesRef.current ??= fetch(url).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); }).then(b => new Float32Array(b));
     return boxesRef.current;
   }, []);
-  const zoomTo = useCallback(async (ids: number[]) => {
+  const zoomTo = useCallback(async (ids: number[], animate = true) => {
     const loading = loadBoxes();
     if (!loading || !ids.length) return;
     try {
@@ -229,7 +243,7 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
         if (id * 6 + 5 >= boxes.length || Number.isNaN(boxes[id * 6])) continue;
         for (let a = 0; a < 3; a++) { box[a] = Math.min(box[a], boxes[id * 6 + a]); box[a + 3] = Math.max(box[a + 3], boxes[id * 6 + 3 + a]); }
       }
-      if (box.every(Number.isFinite)) viewerRef.current?.frameBox(box);
+      if (box.every(Number.isFinite)) viewerRef.current?.frameBox(box, animate);
       else setStatus('선택한 객체의 위치 정보가 없습니다.');
     } catch (e) { boxesRef.current = null; setStatus(`위치 정보를 불러오지 못했습니다: ${errMessage(e)}`); }
   }, [expand, loadBoxes]);
@@ -598,9 +612,30 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
 
   /** 간섭 결과 한 건: 두 부재를 선택해 보여 준다. */
   const showClash = useCallback((a: number, b: number) => {
-    setSelection([a, b]); setRevealDb(b);
+    setSelection([]); setRevealDb(b);
+    setClashView(v => ({ a, b, ghost: v ? v.ghost : true }));
     void zoomTo([a, b]);
   }, [zoomTo]);
+  /** 보고서용: 한 건을 비추고(바로, 애니메이션 없이) 타일이 다 들어온 뒤 한 장. */
+  const captureClash = useCallback(async (a: number, b: number): Promise<string | null> => {
+    const viewer = viewerRef.current;
+    if (!viewer) return null;
+    setSelection([]);
+    setClashView({ a, b, ghost: true });
+    await zoomTo([a, b], false);
+    await viewer.settle(8000);
+    const blob = await viewer.snapshot(900).catch(() => null);
+    if (!blob) return null;
+    return await new Promise<string | null>(resolve => { const r = new FileReader(); r.onload = () => resolve(typeof r.result === 'string' ? r.result : null); r.onerror = () => resolve(null); r.readAsDataURL(blob); });
+  }, [zoomTo]);
+  /** The file (top-level node under the model root) an object belongs to — 보고서의 「분야」. */
+  const fileOf = useCallback((id: number): string => {
+    if (!tree) return '';
+    const path = tree.path(id);
+    // The model root (the integrated file) is not a 분야: the node below it is.
+    const top = path.length > 1 && tree.roots.includes(path[0]) ? path[1] : path[0];
+    return top === undefined ? '' : tree.name(top);
+  }, [tree]);
   const snapshotUrl = useCallback(async (): Promise<string | null> => {
     const viewer = viewerRef.current;
     if (!viewer) return null;
@@ -901,7 +936,10 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
           {project && clashOpen && tree && (
             <MirClashPanel tree={tree} projectId={projectId} canEdit={canEdit} urls={() => urlsRef.current} boxes={loadBoxes}
               externalOf={index.externalOf} findExternal={index.findExternal} onShow={showClash} snapshot={snapshotUrl}
-              onIssueCreated={reloadIssues} onClose={() => setClashOpen(false)} />
+              view={clashView ? (clashView.ghost ? 'ghost' : 'all') : null}
+              onView={mode => setClashView(v => (mode === 'clear' || !v ? null : { ...v, ghost: mode === 'ghost' }))}
+              capture={captureClash} fileOf={fileOf}
+              onIssueCreated={reloadIssues} onClose={() => { setClashOpen(false); setClashView(null); }} />
           )}
           {/* Top centre: what is selected / hidden and what to do with it, then the colour legend. */}
           <div className="threed-test2__top">

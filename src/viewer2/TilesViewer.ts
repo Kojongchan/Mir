@@ -367,6 +367,26 @@ export class TilesViewer {
     this.dirty = true;
   }
 
+  /** Resolves once no tile is loading (several checks in a row) or after `maxMs` — for still pictures of a view. */
+  async settle(maxMs = 8000): Promise<void> {
+    const tiles = this.tiles;
+    if (!tiles) return;
+    const start = performance.now();
+    let quiet = 0;
+    while (performance.now() - start < maxMs && quiet < 3) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      this.needsUpdate = this.dirty = true;
+      const st = (tiles as unknown as { stats: TileStats & { queued?: number } }).stats;
+      quiet = loading(tiles) || st.downloading > 0 || st.parsing > 0 || (st.queued ?? 0) > 0 ? 0 : quiet + 1;
+    }
+  }
+
+  /** See-through every object but `keep` (간섭 보기 반투명); null = all solid. */
+  setGhost(keep: Iterable<number> | null): void {
+    this.state?.setGhost(keep);
+    this.dirty = true;
+  }
+
   /** Colour per object (colour modes: rgba per dbId, a = 255 painted) under selection and highlight; null = as modelled. */
   setPaint(paint: Uint8Array | null): void {
     this.state?.setPaint(paint);
