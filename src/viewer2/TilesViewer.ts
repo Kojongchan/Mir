@@ -1,5 +1,5 @@
 import {
-  AmbientLight, Box3, Clock, Color, DirectionalLight, DoubleSide, Euler, Group, Matrix3, Matrix4, Mesh, PerspectiveCamera,
+  AmbientLight, Box3, Clock, Color, DirectionalLight, DoubleSide, Euler, Group, Matrix3, Matrix4, Mesh, PerspectiveCamera, Plane,
   Quaternion, Ray, Raycaster, Scene, Sphere, Spherical, Vector2, Vector3, Vector4, WebGLRenderer, WebGLRenderTarget,
   type BufferAttribute, type BufferGeometry, type InterleavedBufferAttribute, type Material, type MeshStandardMaterial, type Object3D,
 } from 'three';
@@ -107,6 +107,8 @@ export class TilesViewer {
   onStats?: (stats: ViewerStats) => void;
   /** Called after a frame in which the camera moved or the canvas was resized (overlays that follow the model). */
   private readonly viewListeners = new Set<() => void>();
+  /** The view the next opened tileset starts from (home view, a linked viewpoint) instead of the whole site. */
+  startView: { position: ArrayLike<number>; target: ArrayLike<number> } | null = null;
   private tiles: TilesRenderer | null = null;
   private state: ObjectStateTexture | null = null;
   private surface: { opaque: Material; transparent: Material } | null = null;
@@ -308,7 +310,11 @@ export class TilesViewer {
     tiles.addEventListener('load-tileset', () => {
       const box = new Box3();
       if (tiles.getBoundingBox(box)) { this.world.updateMatrixWorld(true); this.bounds = box.applyMatrix4(this.world.matrixWorld).getBoundingSphere(new Sphere()); }
-      if (!this.firstFrameMs) this.frameAll(false);
+      if (!this.firstFrameMs) {
+        if (this.startView) this.setView(this.startView, false);
+        else this.frameAll(false);
+        this.startView = null;
+      }
       this.nearby = structureFiles((tiles as unknown as { root: Parameters<typeof structureFiles>[0] }).root);
     });
     this.world.add(tiles.group);
@@ -970,6 +976,42 @@ export class TilesViewer {
     this.tiles?.setResolutionFromRenderer(this.camera, this.renderer);
     this.needsUpdate = this.dirty = true;
     this.viewChanged = true;
+  }
+
+  /** A scene point on the canvas (CSS pixels), or null behind the camera. */
+  sceneToScreen(x: number, y: number, z: number): { x: number; y: number } | null {
+    const p = new Vector3(x, y, z).project(this.camera);
+    if (p.z > 1 || p.z < -1) return null;
+    return { x: (p.x + 1) / 2 * this.canvas.clientWidth, y: (1 - p.y) / 2 * this.canvas.clientHeight };
+  }
+
+  /** A scene point in the tileset frame (Z-up, the model's coordinates). */
+  sceneToModel(x: number, y: number, z: number): [number, number, number] {
+    const p = new Vector3(x, y, z).applyMatrix4(this.world.matrixWorld.clone().invert());
+    return [p.x, p.y, p.z];
+  }
+
+  /** The structures' box in the tileset frame [minX, minY, minZ, maxX, maxY, maxZ] (no terrain), or null. */
+  structureBox(): [number, number, number, number, number, number] | null {
+    type TileNode = { boundingVolume?: { box?: number[] }; children?: TileNode[]; extras?: { mir?: string } };
+    const top = (this.tiles as unknown as { root: TileNode | null } | null)?.root;
+    const b = (top?.children?.find(c => c.extras?.mir === 'structure') ?? top)?.boundingVolume?.box;
+    if (!b) return null;
+    const e = [0, 1, 2].map(a => Math.abs(b[3 + a]) + Math.abs(b[6 + a]) + Math.abs(b[9 + a]));
+    return [b[0] - e[0], b[1] - e[1], b[2] - e[2], b[0] + e[0], b[1] + e[1], b[2] + e[2]];
+  }
+
+  /**
+   * Section planes (단면), each a point and the normal of the side kept, in the tileset frame; [] = none. Applied to
+   * every material (global clipping) and to picking, so a click goes through what is cut away.
+   */
+  setSection(planes: { at: ArrayLike<number>; normal: ArrayLike<number> }[]): void {
+    this.world.updateMatrixWorld(true);
+    const m = this.world.matrixWorld;
+    this.renderer.clippingPlanes = planes.map(p => new Plane().setFromNormalAndCoplanarPoint(
+      new Vector3(p.normal[0], p.normal[1], p.normal[2]).transformDirection(m),
+      new Vector3(p.at[0], p.at[1], p.at[2]).applyMatrix4(m)));
+    this.dirty = true;
   }
 
   /** Follow camera moves and resizes (issue pins, measurements); returns the unsubscribe. */

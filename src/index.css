@@ -8179,3 +8179,169 @@ textarea.input {
     height: 120px;
   }
 }
+
+/* 통합모델(3D) 자체 엔진: 홈뷰·관측점 창 */
+.mir-vp {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 26;
+  display: flex;
+  flex-direction: column;
+  width: min(300px, calc(100% - 16px));
+  max-height: calc(100% - 60px);
+  background: var(--color-surface, var(--panel));
+  border: 1px solid var(--color-border, var(--border));
+  border-radius: 10px;
+  box-shadow: var(--shadow-md, 0 4px 16px rgba(0, 0, 0, 0.12));
+}
+.mir-vp__body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 10px 10px;
+  font-size: 12px;
+}
+.mir-vp__home,
+.mir-vp__add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.mir-vp__add input {
+  flex: 1;
+  min-width: 120px;
+}
+.mir-vp__empty {
+  margin: 0;
+}
+.mir-vp__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mir-vp__list li {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.mir-vp__item {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--color-border, var(--border));
+  border-radius: 6px;
+  cursor: pointer;
+}
+.mir-vp__item img,
+.mir-vp__noimg {
+  flex: 0 0 auto;
+  width: 64px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.15);
+}
+.mir-vp__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 거리 측정 표시 */
+.mir-measure {
+  position: absolute;
+  inset: 0;
+  z-index: 19;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.mir-measure__line {
+  stroke: #f59e0b;
+  stroke-width: 2.5;
+}
+.mir-measure__dot {
+  fill: #f59e0b;
+  stroke: #fff;
+  stroke-width: 1.5;
+}
+.mir-measure__dot.is-pending {
+  fill: #ef4444;
+}
+.mir-measure__label {
+  font-size: 13px;
+  font-weight: 700;
+  fill: #111;
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 4px;
+}
+
+/* 마크업(지금 화면에 그리기) */
+.mir-markup {
+  position: absolute;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  background: rgba(10, 14, 22, 0.88);
+}
+.mir-markup__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--color-surface, var(--panel));
+  border-bottom: 1px solid var(--color-border, var(--border));
+}
+.mir-markup__colors {
+  display: inline-flex;
+  gap: 4px;
+}
+.mir-markup__color {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.mir-markup__color.is-on {
+  border-color: var(--text);
+}
+.mir-markup__stage {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 12px;
+}
+.mir-markup__frame {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
+}
+.mir-markup__frame img {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 220px);
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.threed-test2__selbar input[type='range'] {
+  width: 160px;
+}

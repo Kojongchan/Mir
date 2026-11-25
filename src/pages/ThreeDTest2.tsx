@@ -6,6 +6,7 @@ import { listIssueCategories, type IssueCategory } from '../lib/issueCategories'
 import { addIssueViewpoint } from '../lib/issueViewpoints';
 import { MirIssueForm, MirIssuePins, MirIssuePopup, isMirView, type MirViewState } from '../components/model/MirIssueLayer';
 import { MirClashPanel } from '../components/model/MirClashPanel';
+import { MirMarkupEditor, MirMeasureLayer, MirViewpointPanel, loadHomeView, type Measure } from '../components/model/MirViewTools';
 import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
 import { useProjectRole } from '../auth/useProjectRole';
 import { supabase } from '../lib/supabase';
@@ -131,6 +132,20 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
   const heightCancelled = useRef(false), heightBefore = useRef(0);
   const placingRef = useRef(false);
   useEffect(() => { placingRef.current = placing; }, [placing]);
+  // 통합모델(3D) 도구: 홈뷰·관측점 창, 거리 측정(두 점 클릭), 단면(축 평면 / 선택 상자), 마크업(지금 화면에 그리기).
+  const [vpOpen, setVpOpen] = useState(false);
+  const [measuring, setMeasuring] = useState(false);
+  const measuringRef = useRef(false);
+  useEffect(() => { measuringRef.current = measuring; }, [measuring]);
+  const [measures, setMeasures] = useState<Measure[]>([]);
+  const [measureFrom, setMeasureFrom] = useState<{ p: [number, number, number]; z: number } | null>(null);
+  const measureFromRef = useRef<{ p: [number, number, number]; z: number } | null>(null);
+  useEffect(() => { measureFromRef.current = measureFrom; }, [measureFrom]);
+  type Section = { axis: 0 | 1 | 2; t: number; flip: boolean } | { box: [number, number, number, number, number, number] };
+  const [section, setSection] = useState<Section | null>(null);
+  const [markupImage, setMarkupImage] = useState<string | null>(null);
+  // The view the designated model starts from (a linked viewpoint, else this browser's home view).
+  const startViewRef = useRef<{ position: [number, number, number]; target: [number, number, number] } | null>(null);
   const [colorMode, setColorMode] = useState<ColorMode>(storedColorMode);
   // Selected objects in the order picked; the last one is shown in the tree and (alone) in the property panel.
   const [selection, setSelection] = useState<readonly number[]>([]);
@@ -230,6 +245,17 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
       const start = down; down = null;
       if (!start || e.button !== 0 || Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4 || performance.now() - start.t > 500) return;
       const rect = canvas.getBoundingClientRect();
+      if (measuringRef.current) {
+        const viewer = viewerRef.current;
+        const hit = viewer?.pick(e.clientX - rect.left, e.clientY - rect.top);
+        if (!viewer || !hit) { setStatus('측정: 모델 위를 클릭하세요.'); return; }
+        const p: [number, number, number] = [hit.point.x, hit.point.y, hit.point.z];
+        const z = viewer.sceneToModel(p[0], p[1], p[2])[2];
+        const from = measureFromRef.current;
+        if (!from) setMeasureFrom({ p, z });
+        else { setMeasures(m => [...m, { a: from.p, b: p, za: from.z, zb: z }]); setMeasureFrom(null); }
+        return;
+      }
       if (placingRef.current) {
         if (!viewerRef.current?.startWalkAt(e.clientX - rect.left, e.clientY - rect.top)) setStatus('그곳에는 설 곳이 없습니다 — 모델 위를 클릭하세요.');
         return;
@@ -266,7 +292,12 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
       const actions = keyActions.current;
       if (typing || !actions) return;
       const mod = e.ctrlKey || e.metaKey;
-      if (e.key === 'Escape') { if (placingRef.current) setPlacing(false); else setSelection(prev => (prev.length ? [] : prev)); }
+      if (e.key === 'Escape') {
+        if (placingRef.current) setPlacing(false);
+        else if (measureFromRef.current) setMeasureFrom(null);
+        else if (measuringRef.current) setMeasuring(false);
+        else setSelection(prev => (prev.length ? [] : prev));
+      }
       else if (e.code === 'KeyZ' && mod && !e.shiftKey && !e.altKey) { e.preventDefault(); actions.undo(); }
       else if (mod || e.altKey) return;
       else if (e.code === 'KeyH') { if (e.shiftKey) actions.showAll(); else actions.hide(); }
@@ -320,6 +351,7 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
       urlsRef.current = { ...t.urls };
       // Renewed 15 min before the URLs expire, so a long session keeps loading tiles.
       renewAt.current = { urn: f.accUrn!, at: Math.max(Date.now() + 60_000, t.expiresAt - 15 * 60_000) };
+      if (startViewRef.current) { viewer.startView = startViewRef.current; startViewRef.current = null; }
       viewer.open(t.urls, (t.meta?.objects ?? 0) + 1);
       void index.open(f.accUrn!, t.meta);
       setStatus(project ? f.name : `${f.name} · 3D Tiles ${Object.keys(t.urls).length.toLocaleString()}개 파일${t.builtAt ? ` · 생성 ${t.builtAt.slice(0, 10)}` : ''}`);
@@ -380,6 +412,8 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
       }
       const file: PickedAccFile = { accProjectId: acc.acc_project_id, accItemId: pinnedItem ?? '', accUrn: null,
         name: pinnedName || (clash ? '간섭 모델' : '통합모델'), size: null, folderId: null, folderIds: [], folderNames: [] };
+      startViewRef.current = linkedViewRef.current ?? loadHomeView(`${projectId}:${purpose}`);
+      linkedViewRef.current = null;
       for (const c of order) {
         if (cancelled) return;
         if (await openModel({ ...file, accUrn: c.urn }, true)) {
@@ -480,13 +514,7 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
     setSelection(ids); setRevealDb(ids[ids.length - 1]);
     void zoomTo(ids);
   }, [focusClashA, focusClashB, anchors, zoomTo]);
-  // A viewpoint saved in this engine (협업·이슈 「3D에서 열기」): once the model is open.
-  useEffect(() => {
-    const view = linkedViewRef.current;
-    if (!view || !tree) return;
-    linkedViewRef.current = null;
-    viewerRef.current?.setView(view, false);
-  }, [tree]);
+  // A viewpoint saved in this engine (협업·이슈 「3D에서 열기」) is the start view of the designated model (above).
 
   /** The view now (camera + snapshot) saved as a viewpoint of the issue — best effort, like the Autodesk viewer. */
   const saveViewFor = useCallback(async (issueId: string, title: string | null): Promise<boolean> => {
@@ -522,6 +550,49 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
       setStatus(saved ? `이슈를 만들었습니다: ${form.title} (현재 뷰 저장)` : `이슈를 만들었습니다: ${form.title}`);
     } catch (e) { setStatus(`이슈 생성 실패: ${errMessage(e)}`); }
   }, [selection, index, projectId, authorName, loadBoxes, saveViewFor, reloadIssues]);
+
+  // 단면 → the viewer's clipping planes (tileset frame). Axis plane: keeps the part below the position (뒤집기: above).
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    if (!section) { viewer.setSection([]); return; }
+    if ('box' in section) {
+      const b = section.box;
+      viewer.setSection([0, 1, 2].flatMap(a => {
+        const n = [0, 0, 0]; n[a] = 1;
+        const lo = [0, 0, 0], hi = [0, 0, 0]; lo[a] = b[a]; hi[a] = b[a + 3];
+        return [{ at: lo, normal: n }, { at: hi, normal: n.map(v => -v) }];
+      }));
+      return;
+    }
+    const box = viewer.structureBox();
+    if (!box) return;
+    const at = [0, 0, 0], n = [0, 0, 0];
+    at[section.axis] = box[section.axis] + section.t * (box[section.axis + 3] - box[section.axis]);
+    n[section.axis] = section.flip ? 1 : -1;
+    viewer.setSection([{ at, normal: n }]);
+  }, [section, tree]);
+  /** 선택 상자 단면: the selected objects' box, 1 m wider on every side. */
+  const sectionToSelection = useCallback(async () => {
+    const loading = loadBoxes();
+    if (!loading || !selection.length) return;
+    const boxes = await loading;
+    const box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+    for (const id of expand(selection)) {
+      if (id * 6 + 5 >= boxes.length || Number.isNaN(boxes[id * 6])) continue;
+      for (let a = 0; a < 3; a++) { box[a] = Math.min(box[a], boxes[id * 6 + a]); box[a + 3] = Math.max(box[a + 3], boxes[id * 6 + 3 + a]); }
+    }
+    if (!box.every(Number.isFinite)) { setStatus('선택한 객체의 위치 정보가 없습니다.'); return; }
+    setSection({ box: [box[0] - 1, box[1] - 1, box[2] - 1, box[3] + 1, box[4] + 1, box[5] + 1] });
+  }, [loadBoxes, selection, expand]);
+  const openMarkup = useCallback(async () => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const blob = await viewer.snapshot(1920).catch(() => null);
+    if (!blob) { setStatus('화면을 캡처하지 못했습니다.'); return; }
+    const url = await new Promise<string | null>(resolve => { const r = new FileReader(); r.onload = () => resolve(typeof r.result === 'string' ? r.result : null); r.onerror = () => resolve(null); r.readAsDataURL(blob); });
+    if (url) setMarkupImage(url);
+  }, []);
 
   /** 간섭 결과 한 건: 두 부재를 선택해 보여 준다. */
   const showClash = useCallback((a: number, b: number) => {
@@ -727,6 +798,17 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
               )}
             </>
           )}
+          {project && modelName && (
+            <>
+              <button className={`btn btn--sm${vpOpen ? ' btn--primary' : ''}`} aria-pressed={vpOpen} onClick={() => setVpOpen(v => !v)}
+                title="홈뷰(처음 보이는 시점)와 관측점(이름 붙인 시점) 저장·이동">시점</button>
+              <button className={`btn btn--sm${measuring ? ' btn--primary' : ''}`} aria-pressed={measuring}
+                onClick={() => { setMeasuring(v => !v); setMeasureFrom(null); }} title="거리 측정: 모델 위 두 점을 차례로 클릭 (Esc 로 끝)">측정</button>
+              <button className={`btn btn--sm${section ? ' btn--primary' : ''}`} aria-pressed={!!section}
+                onClick={() => setSection(v => (v ? null : { axis: 2, t: 0.5, flip: false }))} title="단면: 평면으로 잘라 안쪽 보기 (선택 객체 상자로도)">단면</button>
+              <button className="btn btn--sm" onClick={() => void openMarkup()} title="마크업: 지금 화면에 화살표·글자를 그려 PNG 로 저장">마크업</button>
+            </>
+          )}
           </div>
           {index.note && <span className="muted threed-test__model">{index.note}</span>}
           <div className="spacer" />
@@ -807,6 +889,13 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
               onSaveView={it => void saveViewFor(it.id, it.title).then(ok => setStatus(ok ? '현재 뷰를 이슈 뷰포인트로 저장했습니다.' : '뷰포인트를 저장하지 못했습니다.'))} />
           )}
           {issueFormOpen && <MirIssueForm categories={issueCats} onSubmit={submitIssue} onClose={() => setIssueFormOpen(false)} />}
+          {project && viewerRef.current && (measures.length > 0 || measureFrom) && (
+            <MirMeasureLayer viewer={viewerRef.current} measures={measures} pending={measureFrom?.p ?? null} />
+          )}
+          {project && vpOpen && viewerRef.current && (
+            <MirViewpointPanel viewer={viewerRef.current} projectId={`${projectId}:${purpose}`} onClose={() => setVpOpen(false)} onStatus={setStatus} />
+          )}
+          {markupImage && <MirMarkupEditor image={markupImage} fileName={`${(modelName || '3D').replace(/\.[^.]+$/, '')}_마크업.png`} onClose={() => setMarkupImage(null)} />}
           {project && clashOpen && tree && (
             <MirClashPanel tree={tree} projectId={projectId} canEdit={canEdit} urls={() => urlsRef.current} boxes={loadBoxes}
               externalOf={index.externalOf} findExternal={index.findExternal} onShow={showClash} snapshot={snapshotUrl}
@@ -814,6 +903,34 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
           )}
           {/* Top centre: what is selected / hidden and what to do with it, then the colour legend. */}
           <div className="threed-test2__top">
+            {measuring && (
+              <div className="threed-test2__selbar" role="toolbar" aria-label="측정">
+                <strong>측정</strong>
+                <span className="muted">{measureFrom ? '끝점을 클릭하세요 (Esc 취소)' : '시작점을 클릭하세요'} · 측정 {measures.length}개</span>
+                {measures.length > 0 && <button type="button" className="btn btn--sm" onClick={() => setMeasures([])}>모두 지우기</button>}
+                <button type="button" className="btn btn--sm" onClick={() => { setMeasuring(false); setMeasureFrom(null); }}>끝내기</button>
+              </div>
+            )}
+            {section && (
+              <div className="threed-test2__selbar" role="toolbar" aria-label="단면">
+                <strong>단면</strong>
+                {'box' in section ? <span className="muted">선택 객체 상자</span> : (
+                  <>
+                    {(['X축', 'Y축', '높이'] as const).map((label, a) => (
+                      <button key={label} type="button" className={`btn btn--sm${section.axis === a ? ' btn--primary' : ''}`}
+                        onClick={() => setSection({ axis: a as 0 | 1 | 2, t: 0.5, flip: section.flip })}>{label}</button>
+                    ))}
+                    <input type="range" min={0} max={1000} value={Math.round(section.t * 1000)} aria-label="단면 위치"
+                      onChange={e => setSection({ ...section, t: Number(e.target.value) / 1000 })} />
+                    <button type="button" className="btn btn--sm" onClick={() => setSection({ ...section, flip: !section.flip })} title="자르는 쪽 바꾸기">뒤집기</button>
+                  </>
+                )}
+                <button type="button" className="btn btn--sm" disabled={!selection.length} onClick={() => void sectionToSelection()}
+                  title="선택한 객체 둘레(1 m 여유)만 남기기">선택 상자</button>
+                {'box' in section && <button type="button" className="btn btn--sm" onClick={() => setSection({ axis: 2, t: 0.5, flip: false })}>평면으로</button>}
+                <button type="button" className="btn btn--sm" onClick={() => setSection(null)}>끄기</button>
+              </div>
+            )}
             {placing && !walk && (
               <div className="threed-test2__selbar" role="toolbar" aria-label="보행 시작 위치">
                 <strong>보행</strong>

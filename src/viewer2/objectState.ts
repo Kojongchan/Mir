@@ -196,10 +196,13 @@ export function createPickMaterial(state: ObjectStateTexture): ShaderMaterial {
   return new ShaderMaterial({
     uniforms: { objectState: { value: state.texture }, mode: { value: 0 }, far: { value: 1e6 } },
     side: DoubleSide,
+    clipping: true, // 단면: what is cut away is not picked
+
     // The logarithmic depth chunks (no-ops without a log depth buffer) keep the nearest surface the one drawn on screen.
     vertexShader: STATE_VERTEX + /* glsl */`
       #include <common>
       #include <logdepthbuf_pars_vertex>
+      #include <clipping_planes_pars_vertex>
       varying float vDepth;
       varying vec3 vView;
       flat varying int vId;
@@ -212,12 +215,15 @@ export function createPickMaterial(state: ObjectStateTexture): ShaderMaterial {
         vView = -mv.xyz;
         gl_Position = projectionMatrix * mv;
         #include <logdepthbuf_vertex>
+        vec4 mvPosition = mv;
+        #include <clipping_planes_vertex>
         ${HIDE}
       }`,
     // The same depth order as the surfaces, so a click picks the face that is drawn.
     fragmentShader: /* glsl */`
       #include <packing>
       #include <logdepthbuf_pars_fragment>
+      #include <clipping_planes_pars_fragment>
       uniform int mode;
       uniform float far;
       varying float vDepth;
@@ -227,6 +233,7 @@ export function createPickMaterial(state: ObjectStateTexture): ShaderMaterial {
       flat varying int vId;
       ${DEPTH_ORDER}
       void main() {
+        #include <clipping_planes_fragment>
         ${APPLY_DEPTH_ORDER('vId', 'vView')}
         if (mode == 0) gl_FragColor = vec4(float((vId >> 16) & 255) / 255.0, float((vId >> 8) & 255) / 255.0, float(vId & 255) / 255.0, 1.0);
         else gl_FragColor = packDepthToRGBA(clamp(vDepth / far, 0.0, 0.999999));
