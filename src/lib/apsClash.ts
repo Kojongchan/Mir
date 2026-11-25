@@ -241,7 +241,8 @@ function maxPenetration(fromGeom: THREE.BufferGeometry, intoGeom: THREE.BufferGe
   return max;
 }
 
-function penetrationDepth(ga: ApsClashGeom, gb: ApsClashGeom, overlap: THREE.Box3): number {
+/** 두 솔리드가 서로 파고든 최대 깊이(자체 엔진 간섭에서도 같은 기준으로 쓴다 — mirClash.ts). */
+export function penetrationDepth(ga: ApsClashGeom, gb: ApsClashGeom, overlap: THREE.Box3): number {
   if (overlap.isEmpty()) return 0;
   try {
     const a = maxPenetration(ga.geometry, gb.geometry, gb.bvh, overlap);

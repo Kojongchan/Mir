@@ -5,6 +5,7 @@ import { listIssues, createIssue, logIssueEvent, type Issue } from '../lib/issue
 import { listIssueCategories, type IssueCategory } from '../lib/issueCategories';
 import { addIssueViewpoint } from '../lib/issueViewpoints';
 import { MirIssueForm, MirIssuePins, MirIssuePopup, isMirView, type MirViewState } from '../components/model/MirIssueLayer';
+import { MirClashPanel } from '../components/model/MirClashPanel';
 import { AccFilePicker, type PickedAccFile } from '../components/AccFilePicker';
 import { useProjectRole } from '../auth/useProjectRole';
 import { supabase } from '../lib/supabase';
@@ -73,8 +74,11 @@ function versionNote(opened: OpenCandidate, latest: OpenCandidate | undefined): 
  * `project`: the project's 통합모델(3D) page — opens the model the admin designated (its newest version that has
  * tiles), without the test notes; `onUnavailable` when there is nothing to show here.
  */
-export function ThreeDTest2({ variant, project = false, onUnavailable }: {
-  variant?: 'svf'; project?: boolean; onUnavailable?: (why: ViewerUnavailable) => void;
+export function ThreeDTest2({ variant, project = false, purpose = 'model', onUnavailable }: {
+  variant?: 'svf'; project?: boolean;
+  /** Which designated model a project page opens: 통합모델(3D) (acc_default) or 간섭검토 (acc_clash, with the clash panel). */
+  purpose?: 'model' | 'clash';
+  onUnavailable?: (why: ViewerUnavailable) => void;
 } = {}) {
   const { projectId = '' } = useParams();
   const tilesQuery = variant ? `tiles3d=1&variant=${variant}` : 'tiles3d=1';
@@ -86,6 +90,9 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
   const location = useLocation();
   // Links from 협업·이슈: an object to show (?focusGlobalId=) or a viewpoint saved in this engine.
   const focusGlobalId = project ? params.get('focusGlobalId') ?? '' : '';
+  // 간섭 이슈의 「위치 보기」: 두 부재(?focusClashA=&focusClashB=).
+  const focusClashA = project ? params.get('focusClashA') ?? '' : '', focusClashB = project ? params.get('focusClashB') ?? '' : '';
+  const [clashOpen, setClashOpen] = useState(project && purpose === 'clash');
   const linkedView = project ? (location.state as { applyApsState?: unknown } | null)?.applyApsState : undefined;
   const linkedViewRef = useRef<MirViewState | null>(isMirView(linkedView) ? linkedView : null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -358,16 +365,20 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
     void (async () => {
       const acc = await getProjectAcc(projectId);
       if (cancelled) return;
-      if (!acc.acc_project_id || !acc.acc_default_urn) { unavailable.current?.(acc.acc_project_id ? 'no-model' : 'no-mapping'); return; }
-      let order: OpenCandidate[] = [{ urn: acc.acc_default_urn, versionNumber: null }];
-      if (acc.acc_default_item_id) {
+      const clash = purpose === 'clash';
+      const pinnedUrn = clash ? acc.acc_clash_urn : acc.acc_default_urn;
+      const pinnedItem = clash ? acc.acc_clash_item_id : acc.acc_default_item_id;
+      const pinnedName = clash ? acc.acc_clash_name : acc.acc_default_name;
+      if (!acc.acc_project_id || !pinnedUrn) { unavailable.current?.(acc.acc_project_id ? 'no-model' : 'no-mapping'); return; }
+      let order: OpenCandidate[] = [{ urn: pinnedUrn, versionNumber: null }];
+      if (pinnedItem) {
         try {
-          const r = await accFetch({ action: 'versions', project: acc.acc_project_id, item: acc.acc_default_item_id });
-          order = openOrder(acc.acc_default_urn, r.versions ?? [], 5);
+          const r = await accFetch({ action: 'versions', project: acc.acc_project_id, item: pinnedItem });
+          order = openOrder(pinnedUrn, r.versions ?? [], 5);
         } catch { /* the designated version */ }
       }
-      const file: PickedAccFile = { accProjectId: acc.acc_project_id, accItemId: acc.acc_default_item_id ?? '', accUrn: null,
-        name: acc.acc_default_name || '통합모델', size: null, folderId: null, folderIds: [], folderNames: [] };
+      const file: PickedAccFile = { accProjectId: acc.acc_project_id, accItemId: pinnedItem ?? '', accUrn: null,
+        name: pinnedName || (clash ? '간섭 모델' : '통합모델'), size: null, folderId: null, folderIds: [], folderNames: [] };
       for (const c of order) {
         if (cancelled) return;
         if (await openModel({ ...file, accUrn: c.urn }, true)) {
@@ -380,7 +391,7 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
     return () => { cancelled = true; };
     // openModel changes with the model index; the designated model is opened once per page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project, projectId, initError]);
+  }, [project, projectId, initError, purpose]);
 
   // Signed tile URLs last 9 h: renew them 15 min early so a long session keeps loading tiles (kept for reopening too).
   useEffect(() => {
@@ -423,9 +434,9 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
   const wantedIds = useMemo(() => {
     const ids = new Set<string>();
     for (const it of issues) { if (it.global_id) ids.add(it.global_id); if (it.global_id_b) ids.add(it.global_id_b); }
-    if (focusGlobalId) ids.add(focusGlobalId);
+    for (const x of [focusGlobalId, focusClashA, focusClashB]) if (x) ids.add(x);
     return [...ids].sort();
-  }, [issues, focusGlobalId]);
+  }, [issues, focusGlobalId, focusClashA, focusClashB]);
   useEffect(() => {
     if (!project || !tree || !settled) return;
     const missingIds = wantedIds.filter(x => !anchors.has(x));
@@ -459,6 +470,15 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
     setSelection([id]); setRevealDb(id);
     void zoomTo([id]);
   }, [focusGlobalId, anchors, zoomTo]);
+  useEffect(() => {
+    const key = `${focusClashA}|${focusClashB}`;
+    if (!focusClashA || focusedLink.current === key) return;
+    const ids = [anchors.get(focusClashA), anchors.get(focusClashB)].filter((x): x is number => x !== undefined);
+    if (!ids.length) return;
+    focusedLink.current = key;
+    setSelection(ids); setRevealDb(ids[ids.length - 1]);
+    void zoomTo(ids);
+  }, [focusClashA, focusClashB, anchors, zoomTo]);
   // A viewpoint saved in this engine (협업·이슈 「3D에서 열기」): once the model is open.
   useEffect(() => {
     const view = linkedViewRef.current;
@@ -501,6 +521,23 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
       setStatus(saved ? `이슈를 만들었습니다: ${form.title} (현재 뷰 저장)` : `이슈를 만들었습니다: ${form.title}`);
     } catch (e) { setStatus(`이슈 생성 실패: ${errMessage(e)}`); }
   }, [selection, index, projectId, authorName, loadBoxes, saveViewFor, reloadIssues]);
+
+  /** 간섭 결과 한 건: 두 부재를 선택해 보여 준다. */
+  const showClash = useCallback((a: number, b: number) => {
+    setSelection([a, b]); setRevealDb(b);
+    void zoomTo([a, b]);
+  }, [zoomTo]);
+  const snapshotUrl = useCallback(async (): Promise<string | null> => {
+    const viewer = viewerRef.current;
+    if (!viewer) return null;
+    const blob = await viewer.snapshot(960);
+    return await new Promise<string | null>(resolve => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  }, []);
 
   /** Project admins: build this model's tiles (Actions job, ≈10–20 min), then open it when the job succeeds. */
   const buildTiles = useCallback(async () => {
@@ -675,6 +712,10 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
               <button className={`btn btn--sm${propsOpen ? ' btn--primary' : ''}`} onClick={() => { setPropsOpen(o => !o); if (narrowScreen()) setTreeOpen(false); }}>속성</button>
             </>
           )}
+          {project && tree && purpose === 'clash' && (
+            <button className={`btn btn--sm${clashOpen ? ' btn--primary' : ''}`} aria-pressed={clashOpen} onClick={() => setClashOpen(v => !v)}
+              title="간섭검토 창 열기/닫기">간섭검토</button>
+          )}
           {project && tree && (
             <>
               <button className={`btn btn--sm${pinsOn ? ' btn--primary' : ''}`} aria-pressed={pinsOn} onClick={() => setPinsOn(v => !v)}
@@ -765,6 +806,11 @@ export function ThreeDTest2({ variant, project = false, onUnavailable }: {
               onSaveView={it => void saveViewFor(it.id, it.title).then(ok => setStatus(ok ? '현재 뷰를 이슈 뷰포인트로 저장했습니다.' : '뷰포인트를 저장하지 못했습니다.'))} />
           )}
           {issueFormOpen && <MirIssueForm categories={issueCats} onSubmit={submitIssue} onClose={() => setIssueFormOpen(false)} />}
+          {project && clashOpen && tree && (
+            <MirClashPanel tree={tree} projectId={projectId} canEdit={canEdit} urls={() => urlsRef.current} boxes={loadBoxes}
+              externalOf={index.externalOf} findExternal={index.findExternal} onShow={showClash} snapshot={snapshotUrl}
+              onIssueCreated={reloadIssues} onClose={() => setClashOpen(false)} />
+          )}
           {/* Top centre: what is selected / hidden and what to do with it, then the colour legend. */}
           <div className="threed-test2__top">
             {placing && !walk && (

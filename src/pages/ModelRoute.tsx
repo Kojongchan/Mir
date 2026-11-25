@@ -23,7 +23,7 @@ const FALLBACK_NOTE: Record<ViewerUnavailable, string> = {
  * 통합모델(3D): the viewer the system admin chose for this project (0043 viewer_engine) — the own engine
  * (three.js + 3D Tiles) by default, the Autodesk viewer when set to 'aps' or when the own engine has nothing to show.
  */
-export function ModelRoute() {
+export function ModelRoute({ purpose = 'model' }: { purpose?: 'model' | 'clash' } = {}) {
   const { projectId = '' } = useParams();
   const { profile } = useAuth();
   const { canManage } = useProjectRole(projectId);
@@ -44,15 +44,16 @@ export function ModelRoute() {
     setFallback(null);
     void getProjectViewer(projectId).then((e) => { if (alive) setEngine(e); });
     return () => { alive = false; };
-  }, [projectId]);
+  }, [projectId, purpose]);
 
   if (!engine) return <RouteFallback />;
-  if (engine === 'aps' || apsLink) return <AccModels key={`aps-${projectId}`} />;
+  const clash = purpose === 'clash';
+  if (engine === 'aps' || apsLink) return <AccModels key={`aps-${purpose}-${projectId}`} autoClash={clash} />;
   if (fallback) {
-    const note = canManage || profile?.is_admin ? FALLBACK_NOTE[fallback] : undefined;
-    return <AccModels key={`fallback-${projectId}`} notice={note} />;
+    const note = canManage || profile?.is_admin ? FALLBACK_NOTE[fallback].replace('통합모델(3D)', clash ? '간섭검토' : '통합모델(3D)') : undefined;
+    return <AccModels key={`fallback-${purpose}-${projectId}`} autoClash={clash} notice={note} />;
   }
-  return <ThreeDTest2 key={`mir-${projectId}`} variant="svf" project onUnavailable={setFallback} />;
+  return <ThreeDTest2 key={`mir-${purpose}-${projectId}`} variant="svf" project purpose={purpose} onUnavailable={setFallback} />;
 }
 
 export default ModelRoute;
