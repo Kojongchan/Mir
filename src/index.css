@@ -7847,7 +7847,8 @@ textarea.input {
 }
 .mir-issue-pop {
   position: absolute;
-  left: 12px;
+  left: 50%;
+  transform: translateX(-50%);
   bottom: 52px;
   z-index: 30;
   width: min(300px, calc(100% - 24px));
