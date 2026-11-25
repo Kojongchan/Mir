@@ -314,7 +314,9 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
   const fetchTiles = useCallback(async (f: PickedAccFile, scope: string, quiet = false): Promise<SignedTiles | null> => {
     const headers = await authHeaders();
     const urn = encodeURIComponent(f.accUrn ?? '');
-    const r = await fetch(`/api/aps-convert?urn=${urn}&${tilesQuery}`, { headers });
+    // The ACC project lets the server recognise the same file uploaded elsewhere and share its tiles.
+    const project = f.accProjectId ? `&project=${encodeURIComponent(f.accProjectId)}` : '';
+    const r = await fetch(`/api/aps-convert?urn=${urn}&${tilesQuery}${project}`, { headers });
     const tiles = await readApiJson<{ run?: string; urls?: Record<string, string>; builtAt?: string; expiresIn?: number; meta?: MetaInfo; error?: string; missing?: boolean }>(r);
     const ok = r.ok && !!tiles.urls?.['tileset.json'];
     if (!ok && quiet && tiles.missing) return null;

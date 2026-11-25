@@ -110,7 +110,8 @@ async function resolveCacheDir(urn: string): Promise<string> {
   const legacy = legacyCacheKey(urn);
   if (!/^[A-Za-z0-9]{1,40}$/.test(legacy)) return key;
   const aliasText = await r2GetText(`${key}/alias.json`);
-  if (owns(aliasText)) return legacy;
+  // A legacy claim ({ urn, prefix: legacy }) or the same file uploaded elsewhere ({ urn, prefix: <that model>, sameFile }).
+  if (owns(aliasText)) return aliasPrefix(aliasText) ?? legacy;
   if (!(await r2Head(`${legacy}/xkt/manifest.json`) || await r2Head(`${legacy}/model.glb`))) return key;
   let claimText = await r2GetText(`${legacy}/claim.json`);
   if (!claimText) {
@@ -121,6 +122,63 @@ async function resolveCacheDir(urn: string): Promise<string> {
   await r2PutJson(`${key}/alias.json`, { urn, prefix: legacy });
   return legacy;
 }
+function aliasPrefix(text: string | null): string | null {
+  try {
+    const prefix = text ? (JSON.parse(text) as { prefix?: unknown }).prefix : null;
+    return typeof prefix === 'string' && /^[A-Za-z0-9]{1,64}$/.test(prefix) ? prefix : null;
+  } catch { return null; }
+}
+
+// ── 같은 파일의 다른 업로드본(예: 다른 ACC 프로젝트에 복사한 같은 모델)은 이미 만든 자체 엔진 타일을 함께 쓴다 ──
+// 파일 정체 = ACC 버전의 이름 + 바이트 수(APS Data Management, 2-legged). 타일을 연 모델은 files/<sha256(이름|크기)>.json 에
+// 등록되고, 타일이 없는 버전이 같은 이름·크기면 그 모델 폴더로 별칭(alias.json)을 단다. 복사·삭제 없음(저장 공간 그대로).
+const APS_CLIENT_ID = process.env.APS_CLIENT_ID;
+const APS_CLIENT_SECRET = process.env.APS_CLIENT_SECRET;
+type FileIdentity = { name: string; size: number };
+async function fileIdentity(project: string | null, urn: string): Promise<FileIdentity | null> {
+  if (!project || !/^b\.[0-9a-f-]{36}$/i.test(project) || !APS_CLIENT_ID || !APS_CLIENT_SECRET) return null;
+  try {
+    const version = atob(urn.replace(/-/g, '+').replace(/_/g, '/'));
+    if (!/^urn:adsk\.wipprod:fs\.file:vf\.[\w-]+\?version=\d+$/.test(version)) return null;
+    const t = await fetch('https://developer.api.autodesk.com/authentication/v2/token', {
+      method: 'POST',
+      headers: { authorization: `Basic ${btoa(`${APS_CLIENT_ID}:${APS_CLIENT_SECRET}`)}`, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'client_credentials', scope: 'data:read' }),
+    });
+    const token = ((await t.json()) as { access_token?: string }).access_token;
+    if (!t.ok || !token) return null;
+    const r = await fetch(`https://developer.api.autodesk.com/data/v1/projects/${encodeURIComponent(project)}/versions/${encodeURIComponent(version)}`,
+      { headers: { authorization: `Bearer ${token}` } });
+    if (!r.ok) return null;
+    const a = ((await r.json()) as { data?: { attributes?: { displayName?: string; name?: string; storageSize?: number } } }).data?.attributes;
+    const name = a?.displayName ?? a?.name, size = a?.storageSize;
+    return name && typeof size === 'number' && size > 0 ? { name, size } : null;
+  } catch { return null; }
+}
+async function identityKey(id: FileIdentity): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${id.name}|${id.size}`));
+  return `files/${Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, '0')).join('')}.json`;
+}
+/** A model whose tiles were opened: registered under its file identity (once). */
+async function registerFile(project: string | null, urn: string): Promise<void> {
+  const id = await fileIdentity(project, urn);
+  if (!id) return;
+  const key = await identityKey(id);
+  if (!(await r2Head(key))) await r2PutJson(key, { urn, ...id, registeredAt: new Date().toISOString() }, true);
+}
+/** No tiles for this version: the folder of the same file uploaded elsewhere (now aliased to it), or null. */
+async function shareSameFile(project: string | null, urn: string, folder: string): Promise<string | null> {
+  const id = await fileIdentity(project, urn);
+  if (!id) return null;
+  let entry: { urn?: string } | null = null;
+  try { entry = JSON.parse((await r2GetText(await identityKey(id))) ?? 'null'); } catch { entry = null; }
+  if (!entry?.urn || entry.urn === urn) return null;
+  const dir = await resolveCacheDir(entry.urn);
+  if (!(await r2Head(`${dir}/${folder}/current.json`))) return null;
+  await r2PutJson(`${await cacheKey(urn)}/alias.json`, { urn, prefix: dir, sameFile: { ...id, from: entry.urn }, sharedAt: new Date().toISOString() });
+  return dir;
+}
+
 async function r2GetText(key: string): Promise<string | null> {
   const res = await r2().fetch(objUrl(key));
   return res.ok ? await res.text() : null;
@@ -322,8 +380,14 @@ export default async function handler(req: Request): Promise<Response> {
       const variant = url.searchParams.get('variant');
       if (variant !== null && variant !== 'svf') return json({ error: 'variant 오류' }, 400);
       const folder = variant === 'svf' ? 'tiles3d-svf' : 'tiles3d';
-      const dir = await resolveCacheDir(urn);
-      const text = await r2GetText(`${dir}/${folder}/current.json`);
+      const project = url.searchParams.get('project');
+      let dir = await resolveCacheDir(urn);
+      let text = await r2GetText(`${dir}/${folder}/current.json`);
+      if (!text) {
+        // 같은 파일을 다른 곳에 올린 것이면 그 타일을 함께 쓴다(저장 공간 그대로).
+        const shared = await shareSameFile(project, urn, folder);
+        if (shared) { dir = shared; text = await r2GetText(`${dir}/${folder}/current.json`); }
+      } else if (project) await registerFile(project, urn).catch(() => {});
       if (!text) return json({ error: variant === 'svf' ? '이 모델은 3차 화면용(SVF 정밀) 타일이 아직 없습니다.' : '이 모델은 2차 화면용 타일이 아직 없습니다.', missing: true }, 404);
       let current: { v?: number; run?: string; files?: unknown; hash?: Record<string, unknown>; builtAt?: string };
       try { current = JSON.parse(text); } catch { return json({ error: '3D Tiles 기록이 손상되었습니다.' }, 500); }
