@@ -35,7 +35,7 @@ export function Login() {
       <form className="auth-card" onSubmit={onSubmit}>
         <h1 className="auth-brand"><BrandLogo size="lg" /></h1>
         <p className="auth-sub">
-          쌍용건설 <strong>스마트 건설기술 플랫폼</strong>에 오신 것을 환영합니다.
+          쌍용건설 <strong>BIM 플랫폼</strong>에 오신 것을 환영합니다.
         </p>
 
         {!isSupabaseConfigured && (

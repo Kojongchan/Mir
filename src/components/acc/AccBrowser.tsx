@@ -202,17 +202,20 @@ export function AccBrowser({
       setStatus(`${it.name}: 변환된 3D 뷰가 아직 없어 고정할 수 없습니다.`);
       return;
     }
+    // 아이템 ID(파일 계보)도 함께 저장 → 같은 파일의 새 버전은 뷰어가 자동으로 최신을 연다(0042).
     const fields =
       purpose === '4d'
-        ? { acc_4d_urn: it.urn, acc_4d_name: it.name }
+        ? { acc_4d_urn: it.urn, acc_4d_name: it.name, acc_4d_item_id: it.id }
         : purpose === 'clash'
-          ? { acc_clash_urn: it.urn, acc_clash_name: it.name }
-          : { acc_default_urn: it.urn, acc_default_name: it.name };
+          ? { acc_clash_urn: it.urn, acc_clash_name: it.name, acc_clash_item_id: it.id }
+          : { acc_default_urn: it.urn, acc_default_name: it.name, acc_default_item_id: it.id };
     const label = purpose === '4d' ? '공정관리(4D)' : purpose === 'clash' ? '간섭검토' : '통합모델(3D)';
     setBusy(true);
     try {
       await setProjectAcc(projectId, fields);
-      setStatus(`${label} 고정 모델로 지정: ${it.name}`);
+      setStatus(
+        `${label} 고정 모델로 지정: ${it.name} · 같은 파일에 새 버전을 올리면 자동으로 최신 버전이 열립니다. 이름이 다른 새 파일은 다시 지정하세요.`,
+      );
     } catch (e) {
       setStatus(`지정 실패: ${(e as Error).message}`);
     } finally {

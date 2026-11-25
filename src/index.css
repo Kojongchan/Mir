@@ -527,6 +527,8 @@ body {
   position: relative;
   min-height: 100vh;
   display: grid;
+  /* 열을 화면 폭으로 고정 — 없으면 카드가 내용 폭만큼 커져 휴대폰에서 화면 밖으로 넘친다. */
+  grid-template-columns: minmax(0, 1fr);
   place-items: center;
   padding: 60px 16px 52px;
   /* 격자(그리드) 배경 제거 — subtle mesh gradient (DESIGN_SYSTEM §6.1) */
@@ -590,7 +592,7 @@ body {
 }
 
 .auth-card.wide {
-  max-width: 460px;
+  max-width: 560px;
 }
 
 .auth-brand {
@@ -629,10 +631,10 @@ body {
 .brand-mir {
   color: var(--brand-gray);
 }
-.brand-smart {
+.brand-bim {
   color: var(--brand-red);
 }
-/* 로고(SS 마크) 높이에 맞춰 MIR SMART 글자 크기 조절 — 대문자 높이 ≈ 마크 높이 */
+/* 로고(SS 마크) 높이에 맞춰 MIR BIM 글자 크기 조절 — 대문자 높이 ≈ 마크 높이 */
 .brand-logo-lg {
   gap: 8px;
 }
@@ -772,13 +774,24 @@ body {
   background: var(--accent-soft);
 }
 
+/* 현장 이름은 길어도 자르지 않고 줄바꿈해 전부 보인다(예: 남양주왕숙 공공주택지구 조성공사 4공구). */
 .project-name {
+  flex: 1 1 auto;
   font-size: 15px;
   font-weight: 600;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+}
+/* 휴대폰: 발주처/분류 코드는 이름 아래 줄로 — 이름 폭을 넉넉히. */
+@media (max-width: 640px) {
+  .project-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
 }
 
 .project-code {
@@ -1049,6 +1062,28 @@ button:disabled {
 
 .admin-table-wrap {
   overflow-x: auto;
+}
+
+/* 현장별 메뉴 고르기(관리자 콘솔 · 0042 enabled_menus) */
+.admin-menu-editor {
+  padding: 8px 4px;
+}
+.admin-menu-editor > p {
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+.admin-menu-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px 14px;
+  margin-bottom: 12px;
+}
+.admin-menu-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
 }
 
 .admin-table {

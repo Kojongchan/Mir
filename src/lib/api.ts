@@ -20,6 +20,11 @@ export interface ProjectAcc {
   /** 간섭검토 전용 고정 모델(0031) — 통합모델/4D 와 독립된 뷰. */
   acc_clash_urn: string | null;
   acc_clash_name: string | null;
+  /** 고정 모델의 ACC 아이템(파일 계보, 0042) — 같은 파일의 새 버전이 올라오면 최신 버전을 연다.
+   *  비어 있으면(0042 이전 고정·미적용) 고정한 버전(*_urn) 그대로. */
+  acc_default_item_id: string | null;
+  acc_4d_item_id: string | null;
+  acc_clash_item_id: string | null;
 }
 
 const EMPTY_ACC: ProjectAcc = {
@@ -33,8 +38,12 @@ const EMPTY_ACC: ProjectAcc = {
   acc_4d_name: null,
   acc_clash_urn: null,
   acc_clash_name: null,
+  acc_default_item_id: null,
+  acc_4d_item_id: null,
+  acc_clash_item_id: null,
 };
 
+const ACC_ITEM_COLS = 'acc_default_item_id, acc_4d_item_id, acc_clash_item_id';
 const ACC_COLS =
   'acc_hub_id, acc_project_id, acc_default_urn, acc_default_name, acc_root_folder_id, acc_root_folder_name, acc_4d_urn, acc_4d_name, acc_clash_urn, acc_clash_name';
 const ACC_COLS_4D =
@@ -44,6 +53,14 @@ const ACC_COLS_LEGACY =
 
 /** 관리자가 고정한 ACC 허브/프로젝트/시작폴더/기본모델을 읽는다(미적용 시 null). */
 export async function getProjectAcc(projectId: string): Promise<ProjectAcc> {
+  const withItems = await supabase
+    .from('projects')
+    .select(`${ACC_COLS}, ${ACC_ITEM_COLS}`)
+    .eq('id', projectId)
+    .single();
+  if (!withItems.error && withItems.data) return { ...EMPTY_ACC, ...(withItems.data as Partial<ProjectAcc>) };
+
+  // 0042(acc_*_item_id) 미적용 폴백.
   const { data, error } = await supabase.from('projects').select(ACC_COLS).eq('id', projectId).single();
   if (!error && data) return { ...EMPTY_ACC, ...(data as Partial<ProjectAcc>) };
 
@@ -60,7 +77,17 @@ export async function getProjectAcc(projectId: string): Promise<ProjectAcc> {
 /** ACC 매핑 저장(관리자만 — projects update RLS). */
 export async function setProjectAcc(projectId: string, fields: Partial<ProjectAcc>): Promise<void> {
   const { error } = await supabase.from('projects').update(fields).eq('id', projectId);
-  if (error) throw error;
+  if (!error) return;
+  // 0042 미적용이면 아이템 ID 없이 저장(고정한 버전만 열림 — 새 버전 자동 반영은 0042 뒤부터).
+  const itemKeys = ['acc_default_item_id', 'acc_4d_item_id', 'acc_clash_item_id'] as const;
+  if (itemKeys.some((k) => k in fields && error.message.includes(k))) {
+    const rest = { ...fields };
+    for (const k of itemKeys) delete rest[k];
+    const retry = await supabase.from('projects').update(rest).eq('id', projectId);
+    if (retry.error) throw retry.error;
+    return;
+  }
+  throw error;
 }
 
 export type ModelPurpose = 'integrated' | '4d' | 'clash';
