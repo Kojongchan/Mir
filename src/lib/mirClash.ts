@@ -3,7 +3,7 @@ import { MeshBVH } from 'three-mesh-bvh';
 import type { ElementMeta } from '../viewer/IfcViewer';
 import type { ClashHit, ClashType } from './clash';
 import { penetrationDepth, type ApsClashGeom } from './apsClash';
-import { collectTriangles, leafTiles, tileBytes, tilesFor, type LeafTile } from '../viewer2/tileGeometry';
+import { decodeTile, leafTiles, tileBytes, tilesFor, trianglesOf, type DecodedTile, type LeafTile } from '../viewer2/tileGeometry';
 
 // =====================================================================
 // 자체 엔진(3D Tiles) 간섭 검출 — 기존 APS 간섭(apsClash.ts)과 같은 판정·같은 결과 형식(ClashHit).
@@ -11,8 +11,9 @@ import { collectTriangles, leafTiles, tileBytes, tilesFor, type LeafTile } from 
 //      x 축 정렬 후 한 번 훑기(같은 쌍은 한 번만, 쌍은 정수 배열에).
 //   2) 협역: 쌍을 겹침 상자 중심의 주 방향(현장이 긴 쪽) 순서로 정렬해, 폭 120m·1,000쌍 이하의 촘촘한 묶음으로 나눈다.
 //      묶음마다 그 구역(겹침 상자들의 합 + 1m)과 만나는 잎 타일만 읽고, 묶음 객체의 삼각형 중 구역과 만나는 것만 형식 배열로
-//      모아 BVH 를 만들고 교차 + 관통깊이(apsClash 와 같은 함수, 표본 256). 묶음이 끝나면 형상을 모두 버린다 — 들고 있는
-//      것은 한 묶음 구역 분량뿐이라 모델 전체 대 전체도 메모리가 넘치지 않는다
+//      모아 BVH 를 만들고 교차 + 관통깊이(apsClash 와 같은 함수, 표본 256 → 허용오차 미만이면 1,200). 묶음이 끝나면 형상을
+//      모두 버린다 — 들고 있는 것은 한 묶음 구역 분량 + 풀어 둔 타일(예산 320MB, 이웃 묶음이 다시 쓰게)뿐이라 모델 전체
+//      대 전체도 메모리가 넘치지 않는다
 //      (2026-11-26 TEST 전체 간섭에서 브라우저 Out of Memory — 전 객체 형상을 한꺼번에 들고 있었음).
 //   선택: 같은 파일끼리의 쌍 제외(groupOf), 남은 시간 표시.
 // 화면에 보이는 단계와 상관없이 원본 단계 형상으로 계산한다. 결과의 expressID 슬롯 = dbId, modelID = 0(한 모델).
@@ -100,8 +101,14 @@ const element = (id: number, m: { name: string; category: string }): ElementMeta
 /** 한 묶음: 쌍 수 상한과 주 방향 폭(m) 상한 — 묶음 구역 안의 형상만 모은다. */
 const BATCH_PAIRS = 1000;
 const BATCH_SPAN = 120;
-/** 관통깊이 표본(정점 수, 양쪽 각각) — 기존 뷰어(1,200)보다 적게: 전체 검사는 수십만 쌍. */
+/** 관통깊이 표본(정점 수, 양쪽 각각) — 먼저 적게(전체 검사는 수십만 쌍), 허용오차 미만이면 기존 뷰어와 같은 1,200 으로 다시. */
 const DEPTH_SAMPLES = 256;
+const DEPTH_SAMPLES_FULL = 1200;
+/** 풀어 둔 타일(정점·삼각형)을 들고 있는 상한 — 이웃 묶음이 같은 타일을 다시 풀지 않게. */
+const DECODED_BUDGET = 320 * 1024 * 1024;
+
+/** 마지막 검사의 단계별 시간(ms)·횟수 — 점검용(window.__mirClashStats). */
+export type MirClashStats = { pairs: number; batches: number; decodes: number; reuse: number; tileMs: number; buildMs: number; narrowMs: number; totalMs: number };
 
 export async function runMirClashDetection(input: MirClashInput): Promise<ClashHit[]> {
   const { urls, boxes, idsA, idsB, type, tolerance, meta, onProgress, shouldCancel } = input;
@@ -155,8 +162,34 @@ export async function runMirClashDetection(input: MirClashInput): Promise<ClashH
     return { dbId: id, geometry, box, bvh };
   };
 
+  // 풀어 둔 타일: 최근 사용 순(Map 삽입 순서), 바이트 예산을 넘으면 오래된 것부터 버린다.
+  const decoded = new Map<string, DecodedTile>();
+  const decoding = new Map<string, Promise<DecodedTile>>();
+  let decodedBytes = 0;
+  const stats: MirClashStats = { pairs: n, batches: 0, decodes: 0, reuse: 0, tileMs: 0, buildMs: 0, narrowMs: 0, totalMs: 0 };
+  (globalThis as { __mirClashStats?: MirClashStats }).__mirClashStats = stats;
+  const tileOf = async (path: string): Promise<DecodedTile> => {
+    const hit = decoded.get(path);
+    if (hit) { decoded.delete(path); decoded.set(path, hit); stats.reuse++; return hit; }
+    let job = decoding.get(path);
+    if (!job) {
+      job = tileBytes(urls, path).then(decodeTile).finally(() => decoding.delete(path));
+      decoding.set(path, job);
+      stats.decodes++;
+    }
+    const tile = await job;
+    if (!decoded.has(path)) {
+      decoded.set(path, tile); decodedBytes += tile.bytes;
+      for (const [k, t] of decoded) {
+        if (decodedBytes <= DECODED_BUDGET || decoded.size <= 1) break;
+        decoded.delete(k); decodedBytes -= t.bytes;
+      }
+    }
+    return tile;
+  };
+
   const started = performance.now();
-  let done = 0, batchNo = 0;
+  let done = 0;
   const eta = () => {
     if (done < 200) return '';
     const s = ((performance.now() - started) / done) * (n - done) / 1000;
@@ -166,8 +199,8 @@ export async function runMirClashDetection(input: MirClashInput): Promise<ClashH
     // 묶음: 주 방향으로 BATCH_SPAN m 안, BATCH_PAIRS 쌍까지(겹침이 아주 긴 쌍은 혼자 한 묶음).
     let to = from + 1;
     const start = ov[order[from] * 6 + axis];
-    while (to < n && to - from < BATCH_PAIRS && ov[order[to] * 6 + 3 + axis] - start <= BATCH_SPAN && ov[order[to - 1] * 6 + 3 + axis] - start <= BATCH_SPAN) to++;
-    batchNo++;
+    while (to < n && to - from < BATCH_PAIRS && ov[order[to] * 6 + 3 + axis] - start <= BATCH_SPAN) to++;
+    stats.batches++;
     const region = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
     const want = new Set<number>();
     for (let j = from; j < to; j++) {
@@ -179,30 +212,38 @@ export async function runMirClashDetection(input: MirClashInput): Promise<ClashH
     const inRegion = new Set(tilesFor(leaves, [region], 0).map(t => t.path));
     const tiles = tilesFor(leaves, wantedBoxes, 0.01).filter(t => inRegion.has(t.path));
     // 타일별로 모아 타일 순서대로 합친다(실행마다 같은 결과).
+    const t0 = performance.now();
     const perTile: Map<number, Float32Array[]>[] = new Array(tiles.length);
     let next = 0;
     await Promise.all(Array.from({ length: Math.min(6, tiles.length) }, async () => {
       for (let i = next++; i < tiles.length; i = next++) {
         if (shouldCancel?.()) return;
         const own = new Map<number, Float32Array[]>();
-        await collectTriangles(await tileBytes(urls, tiles[i].path), want, own, region);
+        trianglesOf(await tileOf(tiles[i].path), want, own, region);
         perTile[i] = own;
       }
     }));
     const chunks = new Map<number, Float32Array[]>();
     for (const own of perTile) if (own) for (const [id, list] of own) { const all = chunks.get(id); if (all) all.push(...list); else chunks.set(id, [...list]); }
+    stats.tileMs += performance.now() - t0;
     const geoms = new Map<number, ApsClashGeom | null>();
-    const geomOf = (id: number) => { if (!geoms.has(id)) geoms.set(id, build(id, chunks.get(id))); return geoms.get(id)!; };
+    const geomOf = (id: number) => {
+      if (!geoms.has(id)) { const t = performance.now(); geoms.set(id, build(id, chunks.get(id))); stats.buildMs += performance.now() - t; }
+      return geoms.get(id)!;
+    };
     for (let j = from; j < to; j++) {
       const i = order[j], a = pairs.a[i], b = pairs.b[i];
       const ga = geomOf(a), gb = geomOf(b);
+      const t1 = performance.now();
       if (ga && gb) {
         const intersects = ga.bvh.intersectsGeometry(gb.geometry, identity);
         overlap.copy(ga.box).intersect(gb.box);
         const middle = () => (overlap.isEmpty() ? ga.box.getCenter(ca).clone().lerp(gb.box.getCenter(cb), 0.5) : overlap.getCenter(new THREE.Vector3()));
         if (type === 'hard') {
           if (intersects) {
-            const depth = penetrationDepth(ga, gb, overlap, DEPTH_SAMPLES);
+            let depth = penetrationDepth(ga, gb, overlap, DEPTH_SAMPLES);
+            const sampled = ga.geometry.getAttribute('position').count > DEPTH_SAMPLES || gb.geometry.getAttribute('position').count > DEPTH_SAMPLES;
+            if (depth < tolerance && sampled) depth = penetrationDepth(ga, gb, overlap, DEPTH_SAMPLES_FULL);
             if (depth >= tolerance) hits.push(hitOf(a, b, middle(), depth));
           }
         } else if (intersects) hits.push(hitOf(a, b, middle(), 0));
@@ -211,6 +252,7 @@ export async function runMirClashDetection(input: MirClashInput): Promise<ClashH
           hits.push(hitOf(a, b, ca.clone().lerp(cb, 0.5), ca.distanceTo(cb)));
         }
       }
+      stats.narrowMs += performance.now() - t1;
       done++;
       if (done % 150 === 0) {
         onProgress?.(0.03 + (done / n) * 0.97, `간섭 검사 ${done.toLocaleString()}/${n.toLocaleString()}쌍 · ${hits.length.toLocaleString()}건${eta()}`);
@@ -221,7 +263,9 @@ export async function runMirClashDetection(input: MirClashInput): Promise<ClashH
     }
     for (const g of geoms.values()) g?.geometry.dispose();
     from = to;
+    stats.totalMs = performance.now() - started;
   }
+  decoded.clear();
   onProgress?.(1, hits.length >= maxHits ? `결과가 ${maxHits.toLocaleString()}건에 닿아 멈췄습니다` : '완료');
   return hits;
 }
