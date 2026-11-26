@@ -1079,8 +1079,9 @@ export class TilesViewer {
   }
 
   // ── 단면(평면·상자) + 조작 손잡이(TransformControls) ────────────────────────────────────────────────────────────
-  // 단면 물체(평면: 위치·방향, 상자: 위치·방향·크기)를 장면 좌표로 들고, 그 모양에서 잘림 평면을 만든다. 평면·상자 윤곽과
-  // 손잡이는 별도 장면(overlay)에 그려 잘리지 않고 항상 보인다. 손잡이를 잡으면 카메라 조작·클릭 선택은 쉰다.
+  // 단면 물체(평면: 위치·방향, 상자: 위치·방향·크기)를 장면 좌표로 들고, 그 모양에서 잘림 평면을 만든다. 단면 면·윤곽과
+  // 손잡이는 별도 장면(overlay)에 그려 잘리지 않는다(면은 남은 모델 뒤에선 가려지고, 윤곽·손잡이는 항상 보임).
+  // 손잡이를 잡으면 카메라 조작·클릭 선택은 쉰다.
   private readonly overlay = new Scene();
   private gizmo: TransformControls | null = null;
   private section: { mode: 'plane' | 'box'; obj: SceneObject; flip: boolean } | null = null;
@@ -1119,14 +1120,17 @@ export class TilesViewer {
     return true;
   }
 
-  /** The overlay (section outline, gizmo) over the picture: no clipping, always on top. */
+  /**
+   * The overlay (section face, outline, gizmo) over the picture, not clipped. The depth of the model pass is kept: the
+   * section face shows only where no remaining model is in front of it (as a Navisworks section plane), while the
+   * outline and the gizmo (materials without depth test) stay on top.
+   */
   private drawOverlay(): void {
     if (!this.overlay.children.length) return;
     const r = this.renderer, planes = r.clippingPlanes, autoClear = r.autoClear;
     r.clippingPlanes = [];
     r.autoClear = false;
     r.setRenderTarget(null);
-    r.clearDepth();
     r.render(this.overlay, this.camera);
     r.autoClear = autoClear;
     r.clippingPlanes = planes;
@@ -1159,9 +1163,13 @@ export class TilesViewer {
     const obj = new SceneObject();
     obj.position.copy(centre);
     obj.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), this.sceneAxis(axis));
-    const size = box.getSize(new Vector3()).length();
-    const geo = new PlaneGeometry(size, size).rotateX(-Math.PI / 2);
-    const fill = new Mesh(geo, new MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.08, side: DoubleSide, depthTest: false, depthWrite: false }));
+    // 면 크기: 구조물 범위를 평면의 두 방향(지역 X·Z)으로 잰 것보다 조금 크게(긴 교량이면 긴 직사각형).
+    const size = box.getSize(new Vector3());
+    const along = (v: Vector3) => Math.abs(v.x) * size.x + Math.abs(v.y) * size.y + Math.abs(v.z) * size.z;
+    const w = Math.max(1, along(new Vector3(1, 0, 0).applyQuaternion(obj.quaternion)) * 1.1);
+    const h = Math.max(1, along(new Vector3(0, 0, 1).applyQuaternion(obj.quaternion)) * 1.1);
+    const geo = new PlaneGeometry(w, h).rotateX(-Math.PI / 2);
+    const fill = new Mesh(geo, new MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.22, side: DoubleSide, depthTest: true, depthWrite: false }));
     const edge = new LineSegments(new EdgesGeometry(geo), new LineBasicMaterial({ color: 0xf59e0b, depthTest: false }));
     obj.add(fill, edge);
     this.overlay.add(obj);
@@ -1179,7 +1187,7 @@ export class TilesViewer {
     obj.scale.copy(b.getSize(new Vector3()).max(new Vector3(0.1, 0.1, 0.1)));
     const geo = new BoxGeometry(1, 1, 1);
     const edge = new LineSegments(new EdgesGeometry(geo), new LineBasicMaterial({ color: 0xf59e0b, depthTest: false }));
-    const fill = new Mesh(geo, new MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.04, side: DoubleSide, depthTest: false, depthWrite: false }));
+    const fill = new Mesh(geo, new MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.08, side: DoubleSide, depthTest: true, depthWrite: false }));
     obj.add(fill, edge);
     this.overlay.add(obj);
     this.section = { mode: 'box', obj, flip: false };
