@@ -1169,7 +1169,7 @@ export class TilesViewer {
     const w = Math.max(1, along(new Vector3(1, 0, 0).applyQuaternion(obj.quaternion)) * 1.1);
     const h = Math.max(1, along(new Vector3(0, 0, 1).applyQuaternion(obj.quaternion)) * 1.1);
     const geo = new PlaneGeometry(w, h).rotateX(-Math.PI / 2);
-    const fill = new Mesh(geo, new MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.22, side: DoubleSide, depthTest: true, depthWrite: false }));
+    const fill = new Mesh(geo, new MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.14, side: DoubleSide, depthTest: true, depthWrite: false }));
     const edge = new LineSegments(new EdgesGeometry(geo), new LineBasicMaterial({ color: 0xf59e0b, depthTest: false }));
     obj.add(fill, edge);
     this.overlay.add(obj);
