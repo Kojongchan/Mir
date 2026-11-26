@@ -1003,13 +1003,18 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
                 onZoom={ids => void zoomTo(ids)} onHighlight={setHighlightIds} />
             </aside>
           )}
-          {project && pinsOn && pinBoxes && anchors.size > 0 && viewerRef.current && (
-            <MirIssuePins viewer={viewerRef.current} issues={issues} anchors={anchors} boxes={pinBoxes} onPinClick={setPopIssue} />
-          )}
-          {popIssue && (
-            <MirIssuePopup issue={popIssue} projectId={projectId} canEdit={canEdit} onClose={() => setPopIssue(null)} onFocus={focusIssue}
-              onSaveView={it => void saveViewFor(it.id, it.title).then(ok => setStatus(ok ? '현재 뷰를 이슈 뷰포인트로 저장했습니다.' : '뷰포인트를 저장하지 못했습니다.'))} />
-          )}
+          {(() => {
+            const popup = popIssue && (
+              <MirIssuePopup issue={popIssue} projectId={projectId} canEdit={canEdit} onClose={() => setPopIssue(null)} onFocus={focusIssue}
+                onSaveView={it => void saveViewFor(it.id, it.title).then(ok => setStatus(ok ? '현재 뷰를 이슈 뷰포인트로 저장했습니다.' : '뷰포인트를 저장하지 못했습니다.'))} />
+            );
+            // 핀이 보이면 요약 창은 그 핀 옆에(MirIssuePins), 아니면 아래쪽 가운데.
+            if (project && pinsOn && pinBoxes && anchors.size > 0 && viewerRef.current) {
+              return <MirIssuePins viewer={viewerRef.current} issues={issues} anchors={anchors} boxes={pinBoxes} onPinClick={setPopIssue}
+                openId={popIssue?.id ?? null} popup={popup} />;
+            }
+            return popup;
+          })()}
           {issueFormOpen && <MirIssueForm categories={issueCats} onSubmit={submitIssue} onClose={() => setIssueFormOpen(false)} />}
           {project && viewerRef.current && (measures.length > 0 || measurePts.length > 0) && (
             <MirMeasureLayer viewer={viewerRef.current} measures={measures} pending={measurePts.map(x => x.p)} kind={measureKind} />

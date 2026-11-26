@@ -7859,6 +7859,23 @@ textarea.input {
   border-radius: 10px;
   box-shadow: var(--shadow-md, 0 6px 24px rgba(0, 0, 0, 0.25));
 }
+/* 핀 옆에 붙은 요약 창(핀 레이어 안, 레이어는 클릭 통과라 창만 받음) */
+.mir-issue-pop-at {
+  position: absolute;
+  z-index: 30;
+  pointer-events: auto;
+}
+.mir-issue-pop-at .mir-issue-pop {
+  position: static;
+  transform: none;
+  width: auto;
+}
+.mir-pins > .mir-issue-pop {
+  pointer-events: auto;
+}
+.mir-pin--open {
+  filter: drop-shadow(0 0 0 #fff) drop-shadow(0 2px 6px rgba(0, 0, 0, 0.7));
+}
 .mir-issue-pop__head {
   display: flex;
   align-items: flex-start;

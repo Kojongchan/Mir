@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { TilesViewer } from '../../viewer2/TilesViewer';
 import { STATUS_LABEL, type Issue } from '../../lib/issues';
@@ -18,8 +18,13 @@ const PIN_BASE = 38;
 type Anchor = { issue: Issue; center: [number, number, number]; idx: number };
 type PinPos = { issue: Issue; x: number; y: number; idx: number; scale: number };
 
-/** 이슈 핀(객체 위 물방울 마커). 카메라가 움직일 때마다 화면 위치를 다시 계산한다. */
-export function MirIssuePins({ viewer, issues, anchors, boxes, onPinClick }: {
+const POP_W = 300; // 요약 창 폭(px)
+
+/**
+ * 이슈 핀(객체 위 물방울 마커). 카메라가 움직일 때마다 화면 위치를 다시 계산한다.
+ * `popup`: 연 이슈(`openId`)의 요약 창 — 그 핀 옆에 붙어 화면을 돌려도 따라간다(핀이 화면 밖이면 아래쪽 가운데).
+ */
+export function MirIssuePins({ viewer, issues, anchors, boxes, onPinClick, openId, popup }: {
   viewer: TilesViewer;
   issues: Issue[];
   /** global_id → 이 모델의 객체 번호(dbId). */
@@ -27,9 +32,12 @@ export function MirIssuePins({ viewer, issues, anchors, boxes, onPinClick }: {
   /** objects.bin: 객체마다 [minX, minY, minZ, maxX, maxY, maxZ] (타일셋 좌표). */
   boxes: Float32Array;
   onPinClick: (issue: Issue) => void;
+  openId?: string | null;
+  popup?: ReactNode;
 }) {
   const [pins, setPins] = useState<PinPos[]>([]);
   const anchorsRef = useRef<Anchor[]>([]);
+  const layerRef = useRef<HTMLDivElement | null>(null);
 
   const recompute = useCallback(() => {
     const out: PinPos[] = [];
@@ -58,14 +66,25 @@ export function MirIssuePins({ viewer, issues, anchors, boxes, onPinClick }: {
 
   useEffect(() => viewer.onViewChange(recompute), [viewer, recompute]);
 
+  // 요약 창 자리: 핀 오른쪽(넘치면 왼쪽), 핀 머리 높이에서 화면 안으로.
+  const open = openId ? pins.find((p) => p.issue.id === openId) : undefined;
+  let at: { left: number; top: number } | null = null;
+  if (open && popup) {
+    const W = layerRef.current?.clientWidth ?? 1200, H = layerRef.current?.clientHeight ?? 800;
+    const w = Math.round(PIN_BASE * open.scale), h = Math.round(((PIN_BASE * 34) / 26) * open.scale);
+    const right = open.x + w / 2 + 10;
+    const left = right + POP_W + 8 <= W ? right : Math.max(8, open.x - w / 2 - 10 - POP_W);
+    at = { left, top: Math.min(Math.max(8, open.y - h), Math.max(8, H - 200)) };
+  }
+
   return (
-    <div className="mir-pins" aria-label="이슈 핀">
+    <div className="mir-pins" aria-label="이슈 핀" ref={layerRef}>
       {pins.map((p) => {
         const color = OPEN.has(p.issue.status) ? '#dc2626' : '#16a34a';
         const w = Math.round(PIN_BASE * p.scale);
         const h = Math.round(((PIN_BASE * 34) / 26) * p.scale);
         return (
-          <svg key={p.issue.id} width={w} height={h} viewBox="0 0 26 34" className="mir-pin" style={{ left: p.x, top: p.y }}
+          <svg key={p.issue.id} width={w} height={h} viewBox="0 0 26 34" className={`mir-pin${p.issue.id === openId ? ' mir-pin--open' : ''}`} style={{ left: p.x, top: p.y }}
             onClick={() => onPinClick(p.issue)} role="button" aria-label={`이슈 ${p.idx}: ${p.issue.title}`}>
             <title>{p.issue.title}</title>
             <path d="M13 1C6.4 1 1 6.4 1 13c0 8.4 12 20 12 20s12-11.6 12-20C25 6.4 19.6 1 13 1z" fill={color} stroke="#fff" strokeWidth="1.6" />
@@ -74,6 +93,7 @@ export function MirIssuePins({ viewer, issues, anchors, boxes, onPinClick }: {
           </svg>
         );
       })}
+      {popup && (at ? <div className="mir-issue-pop-at" style={{ left: at.left, top: at.top, width: POP_W }}>{popup}</div> : popup)}
     </div>
   );
 }
