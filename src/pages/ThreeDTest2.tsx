@@ -15,6 +15,7 @@ import { getProjectAcc } from '../lib/api';
 import { openOrder, type OpenCandidate } from '../lib/accVersions';
 import { errMessage, readApiJson } from '../lib/errors';
 import { dialogOpen } from '../lib/useEscapeKey';
+import { toast } from '../lib/dialogs';
 import { UiIcon } from '../components/icons/UiIcon';
 import { ModelTreePanel } from '../components/model/ModelTreePanel';
 import { PropertyPanel } from '../components/model/PropertyPanel';
@@ -154,7 +155,8 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
     setMeasures(m => [...m, { kind: 'area', pts: pts.map(x => x.p), zs: pts.map(x => x.z) }]);
     setMeasurePts([]);
   }, []);
-  type Section = { axis: 0 | 1 | 2; t: number; flip: boolean } | { box: [number, number, number, number, number, number] };
+  // 단면: 평면(축 + 손잡이로 이동·회전) 또는 상자(선택 객체·전체에 맞춰 + 이동·회전·크기). 모양은 뷰어가 들고 있다.
+  type Section = { mode: 'plane' | 'box'; axis: 0 | 1 | 2; gizmo: 'translate' | 'rotate' | 'scale' | null };
   const [section, setSection] = useState<Section | null>(null);
   const [markupImage, setMarkupImage] = useState<string | null>(null);
   // 영역 줌(끌어서 그린 사각형으로 확대), 분해(객체 벌려 보기, 0~100), 층 필터, 미니맵.
@@ -163,8 +165,19 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
   const [explode, setExplode] = useState<number | null>(null);
   const explodeCentre = useRef<[number, number, number] | null>(null);
   const [levelsOpen, setLevelsOpen] = useState(false);
-  const [minimap, setMinimap] = useState<{ boxes: Float32Array; bounds: [number, number, number, number, number, number] } | null>(null);
+  const [minimap, setMinimap] = useState<{ boxes: Float32Array } | null>(null);
   const toolsRef = useRef<HTMLDetailsElement>(null);
+  /**
+   * 클릭으로 점을 찍는 도구(측정·영역 줌·보행 시작 위치)는 한 번에 하나: 하나를 켜면 나머지는 끄고 알린다.
+   * 단면·분해·간섭 표시는 상태라 어느 도구와도 함께 쓴다(마크업은 그 상태의 화면을 찍는다).
+   */
+  const takeClicks = (who: 'measure' | 'zoom' | 'walk') => {
+    const off: string[] = [];
+    if (who !== 'measure' && measuringRef.current) { setMeasuring(false); setMeasurePts([]); off.push('측정'); }
+    if (who !== 'zoom' && zoomBox) { setZoomBox(false); setZoomRect(null); off.push('영역 줌'); }
+    if (who !== 'walk' && placingRef.current) { setPlacing(false); off.push('보행 시작 위치 고르기'); }
+    if (off.length) toast(`${off.join('·')}을(를) 끄고 ${who === 'measure' ? '측정' : who === 'zoom' ? '영역 줌' : '보행'}을 켰습니다.`, 'info');
+  };
   // The view the designated model starts from (a linked viewpoint, else this browser's home view).
   const startViewRef = useRef<{ position: [number, number, number]; target: [number, number, number] } | null>(null);
   const [colorMode, setColorMode] = useState<ColorMode>(storedColorMode);
@@ -276,6 +289,7 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
     const onDown = (e: PointerEvent) => { if (e.button === 0) down = { x: e.clientX, y: e.clientY, t: performance.now() }; };
     const onUp = (e: PointerEvent) => {
       const start = down; down = null;
+      if (viewerRef.current?.gizmoHeld) return; // the section gizmo was dragged or clicked
       if (!start || e.button !== 0 || Math.hypot(e.clientX - start.x, e.clientY - start.y) > 4 || performance.now() - start.t > 500) return;
       const rect = canvas.getBoundingClientRect();
       if (measuringRef.current) {
@@ -594,39 +608,35 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
     } catch (e) { setStatus(`이슈 생성 실패: ${errMessage(e)}`); }
   }, [selection, index, projectId, authorName, loadBoxes, saveViewFor, reloadIssues]);
 
-  // 단면 → the viewer's clipping planes (tileset frame). Axis plane: keeps the part below the position (뒤집기: above).
+  // 단면 → the viewer (its section object and gizmo).
+  const sectionRef = useRef<Section | null>(null);
   useEffect(() => {
+    const viewer = viewerRef.current, prev = sectionRef.current;
+    sectionRef.current = section;
+    if (!viewer) return;
+    if (!section) { viewer.sectionClear(); return; }
+    if (section.mode === 'plane' && (!prev || prev.mode !== 'plane' || prev.axis !== section.axis)) viewer.sectionPlane(section.axis);
+    viewer.sectionGizmo(section.gizmo);
+  }, [section]);
+  useEffect(() => { setSection(null); }, [tree]);
+  /** 단면 상자: 선택한 객체 둘레(1 m 여유), 선택이 없으면 구조물 전체. */
+  const sectionBoxFit = useCallback(async () => {
     const viewer = viewerRef.current;
     if (!viewer) return;
-    if (!section) { viewer.setSection([]); return; }
-    if ('box' in section) {
-      const b = section.box;
-      viewer.setSection([0, 1, 2].flatMap(a => {
-        const n = [0, 0, 0]; n[a] = 1;
-        const lo = [0, 0, 0], hi = [0, 0, 0]; lo[a] = b[a]; hi[a] = b[a + 3];
-        return [{ at: lo, normal: n }, { at: hi, normal: n.map(v => -v) }];
-      }));
-      return;
+    let fitted = false;
+    if (selection.length) {
+      const loading = loadBoxes();
+      const boxes = loading ? await loading : null;
+      const box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+      if (boxes) for (const id of expand(selection)) {
+        if (id * 6 + 5 >= boxes.length || Number.isNaN(boxes[id * 6])) continue;
+        for (let a = 0; a < 3; a++) { box[a] = Math.min(box[a], boxes[id * 6 + a]); box[a + 3] = Math.max(box[a + 3], boxes[id * 6 + 3 + a]); }
+      }
+      if (box.every(Number.isFinite)) { viewer.sectionBox(viewer.sceneBoxOf(box, 1)); fitted = true; }
     }
-    const box = viewer.structureBox();
-    if (!box) return;
-    const at = [0, 0, 0], n = [0, 0, 0];
-    at[section.axis] = box[section.axis] + section.t * (box[section.axis + 3] - box[section.axis]);
-    n[section.axis] = section.flip ? 1 : -1;
-    viewer.setSection([{ at, normal: n }]);
-  }, [section, tree]);
-  /** 선택 상자 단면: the selected objects' box, 1 m wider on every side. */
-  const sectionToSelection = useCallback(async () => {
-    const loading = loadBoxes();
-    if (!loading || !selection.length) return;
-    const boxes = await loading;
-    const box = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
-    for (const id of expand(selection)) {
-      if (id * 6 + 5 >= boxes.length || Number.isNaN(boxes[id * 6])) continue;
-      for (let a = 0; a < 3; a++) { box[a] = Math.min(box[a], boxes[id * 6 + a]); box[a + 3] = Math.max(box[a + 3], boxes[id * 6 + 3 + a]); }
-    }
-    if (!box.every(Number.isFinite)) { setStatus('선택한 객체의 위치 정보가 없습니다.'); return; }
-    setSection({ box: [box[0] - 1, box[1] - 1, box[2] - 1, box[3] + 1, box[4] + 1, box[5] + 1] });
+    if (!fitted) viewer.sectionBox();
+    setSection(v => ({ mode: 'box', axis: v?.axis ?? 2, gizmo: v?.gizmo && v.gizmo !== 'rotate' ? v.gizmo : 'scale' }));
+    setStatus(fitted ? '단면 상자: 선택한 객체 둘레(1 m 여유) — 손잡이로 크기·위치·방향 조절' : '단면 상자: 모델 전체 — 손잡이로 크기·위치·방향 조절');
   }, [loadBoxes, selection, expand]);
   const openMarkup = useCallback(async () => {
     const viewer = viewerRef.current;
@@ -652,9 +662,8 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
   }, [explode]);
   const openMinimap = useCallback(async () => {
     const viewer = viewerRef.current, loading = loadBoxes();
-    const bounds = viewer?.structureBox();
-    if (!viewer || !loading || !bounds) { setStatus('모델을 연 뒤 미니맵을 볼 수 있습니다.'); return; }
-    setMinimap({ boxes: await loading, bounds });
+    if (!viewer || !loading) { setStatus('모델을 연 뒤 미니맵을 볼 수 있습니다.'); return; }
+    setMinimap({ boxes: await loading });
   }, [loadBoxes]);
   /** 간섭 결과 한 건: 두 부재를 선택해 보여 준다. */
   const showClash = useCallback((a: number, b: number) => {
@@ -807,7 +816,13 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
       <div className="threed-test__viewer">
         <div className="viewer-bar threed-test__bar">
           {/* The tools: in line on wide screens, one scrolling row on phones (status on its own line below). */}
-          <div className="threed-test__tools">
+          <div className="threed-test__tools" onClickCapture={e => {
+            // 마크업은 찍어 둔 화면 위에 그리는 중이라, 그동안 다른 도구는 막고 알린다(닫으면 다시 쓸 수 있음).
+            if (markupImage && (e.target as HTMLElement).closest('button, summary')) {
+              e.preventDefault(); e.stopPropagation();
+              toast('마크업 사용 중입니다. 「PNG 저장」 또는 「닫기」로 마크업을 끝낸 뒤 다른 도구를 쓰세요.', 'warning');
+            }
+          }}>
           <button className="btn btn--sm btn--primary" onClick={() => setPickerOpen(true)} disabled={busy || !!initError} aria-label="ACC에서 열기">
             <UiIcon name="folder" size={14} /> <span className="threed-test__wide">ACC에서 </span>열기
           </button>
@@ -819,7 +834,7 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
           {variant === 'svf' && (
             <button className={`btn btn--sm${walk || placing ? ' btn--primary' : ''}`} aria-pressed={!!walk || placing} disabled={!modelName}
               title="보행 모드: 시작할 곳을 클릭한 뒤 사람 눈높이로 걷기 — W·A·S·D(방향키) 이동, Shift 달리기, Space 점프, 드래그로 둘러보기, 휠로 속도. 중력·충돌(보이는 객체에 막힘, 숨긴 객체는 통과)"
-              onClick={() => { if (walk) viewerRef.current?.setWalk(false); else setPlacing(p => !p); }}>보행</button>
+              onClick={() => { if (walk) viewerRef.current?.setWalk(false); else { if (!placing) takeClicks('walk'); setPlacing(p => !p); } }}>보행</button>
           )}
           <button className="btn btn--sm" disabled={!modelName || capturing} onClick={() => void capture()}
             title="지금 화면을 2배 해상도로, 멀리 있는 부분까지 세밀한 단계를 불러온 뒤 PNG 로 저장">{capturing ? '캡처 중…' : '고화질 캡처'}</button>
@@ -892,15 +907,16 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
               <button className={`btn btn--sm${vpOpen ? ' btn--primary' : ''}`} aria-pressed={vpOpen} onClick={() => setVpOpen(v => !v)}
                 title="홈뷰(처음 보이는 시점)와 관측점(이름 붙인 시점) 저장·이동">시점</button>
               <button className={`btn btn--sm${measuring ? ' btn--primary' : ''}`} aria-pressed={measuring}
-                onClick={() => { setMeasuring(v => !v); setMeasurePts([]); }} title="측정: 거리(두 점)·각도(세 점)·면적(여러 점) — 모델 위를 클릭 (Esc 로 끝)">측정</button>
+                onClick={() => { if (!measuring) takeClicks('measure'); setMeasuring(v => !v); setMeasurePts([]); }} title="측정: 거리(두 점)·각도(세 점)·면적(여러 점) — 모델 위를 클릭 (Esc 로 끝)">측정</button>
               <button className={`btn btn--sm${section ? ' btn--primary' : ''}`} aria-pressed={!!section}
-                onClick={() => setSection(v => (v ? null : { axis: 2, t: 0.5, flip: false }))} title="단면: 평면으로 잘라 안쪽 보기 (선택 객체 상자로도)">단면</button>
+                onClick={() => setSection(v => (v ? null : { mode: 'plane', axis: 2, gizmo: 'translate' }))}
+                title="단면: 평면이나 상자로 잘라 안쪽 보기 — 손잡이로 이동·회전·크기 조절">단면</button>
               <button className="btn btn--sm" onClick={() => void openMarkup()} title="마크업: 지금 화면에 화살표·글자를 그려 PNG 로 저장">마크업</button>
               <details className="threed-test2__settings" ref={toolsRef}>
                 <summary className="btn btn--sm" title="영역 줌·분해·층 필터·미니맵">도구</summary>
                 <div className="threed-test2__settings-pop">
                   <button type="button" className={`btn btn--sm${zoomBox ? ' btn--primary' : ''}`}
-                    onClick={() => { setZoomBox(v => !v); if (toolsRef.current) toolsRef.current.open = false; }} title="끌어서 그린 사각형 부분으로 확대">영역 줌</button>
+                    onClick={() => { if (!zoomBox) takeClicks('zoom'); setZoomBox(v => !v); if (toolsRef.current) toolsRef.current.open = false; }} title="끌어서 그린 사각형 부분으로 확대">영역 줌</button>
                   <button type="button" className={`btn btn--sm${explode !== null ? ' btn--primary' : ''}`}
                     onClick={() => { setExplode(v => (v === null ? 30 : null)); if (toolsRef.current) toolsRef.current.open = false; }} title="지금 회전 중심에서 객체를 벌려 보기">분해</button>
                   <button type="button" className={`btn btn--sm${levelsOpen ? ' btn--primary' : ''}`}
@@ -1009,7 +1025,7 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
               {zoomRect && <div className="mir-zoombox__rect" style={{ left: Math.min(zoomRect.x0, zoomRect.x1), top: Math.min(zoomRect.y0, zoomRect.y1), width: Math.abs(zoomRect.x1 - zoomRect.x0), height: Math.abs(zoomRect.y1 - zoomRect.y0) }} />}
             </div>
           )}
-          {minimap && viewerRef.current && <MirMinimap viewer={viewerRef.current} boxes={minimap.boxes} bounds={minimap.bounds} onClose={() => setMinimap(null)} />}
+          {minimap && viewerRef.current && <MirMinimap viewer={viewerRef.current} boxes={minimap.boxes} onClose={() => setMinimap(null)} />}
           {levelsOpen && tree && <MirLevelPanel load={index.levels} onPick={v => void isolateLevel(v)} onShowAll={showAll} onClose={() => setLevelsOpen(false)} />}
           {markupImage && <MirMarkupEditor image={markupImage} fileName={`${(modelName || '3D').replace(/\.[^.]+$/, '')}_마크업.png`} onClose={() => setMarkupImage(null)} />}
           {project && clashOpen && tree && (
@@ -1048,20 +1064,28 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
             {section && (
               <div className="threed-test2__selbar" role="toolbar" aria-label="단면">
                 <strong>단면</strong>
-                {'box' in section ? <span className="muted">선택 객체 상자</span> : (
+                <button type="button" className={`btn btn--sm${section.mode === 'plane' ? ' btn--primary' : ''}`}
+                  onClick={() => { viewerRef.current?.sectionPlane(section.axis); setSection({ ...section, mode: 'plane', gizmo: section.gizmo === 'scale' ? 'translate' : section.gizmo }); }}
+                  title="평면 하나로 자르기">평면</button>
+                <button type="button" className={`btn btn--sm${section.mode === 'box' ? ' btn--primary' : ''}`} onClick={() => void sectionBoxFit()}
+                  title={selection.length ? '선택한 객체 둘레(1 m 여유)만 남기는 상자' : '모델 전체 크기의 상자 — 손잡이로 줄여 원하는 부분만 남기기'}>
+                  {selection.length ? '상자(선택)' : '상자(전체)'}</button>
+                <span className="threed-test2__sep" />
+                {section.mode === 'plane' && (
                   <>
                     {(['X축', 'Y축', '높이'] as const).map((label, a) => (
                       <button key={label} type="button" className={`btn btn--sm${section.axis === a ? ' btn--primary' : ''}`}
-                        onClick={() => setSection({ axis: a as 0 | 1 | 2, t: 0.5, flip: section.flip })}>{label}</button>
+                        onClick={() => setSection({ ...section, axis: a as 0 | 1 | 2 })} title={`${label} 방향으로 자르기(지금 위치에서)`}>{label}</button>
                     ))}
-                    <input type="range" min={0} max={1000} value={Math.round(section.t * 1000)} aria-label="단면 위치"
-                      onChange={e => setSection({ ...section, t: Number(e.target.value) / 1000 })} />
-                    <button type="button" className="btn btn--sm" onClick={() => setSection({ ...section, flip: !section.flip })} title="자르는 쪽 바꾸기">뒤집기</button>
+                    <button type="button" className="btn btn--sm" onClick={() => viewerRef.current?.sectionFlip()} title="잘라 내는 쪽 바꾸기">뒤집기</button>
+                    <span className="threed-test2__sep" />
                   </>
                 )}
-                <button type="button" className="btn btn--sm" disabled={!selection.length} onClick={() => void sectionToSelection()}
-                  title="선택한 객체 둘레(1 m 여유)만 남기기">선택 상자</button>
-                {'box' in section && <button type="button" className="btn btn--sm" onClick={() => setSection({ axis: 2, t: 0.5, flip: false })}>평면으로</button>}
+                {([['translate', '이동'], ['rotate', '회전'], ...(section.mode === 'box' ? [['scale', '크기']] : [])] as ['translate' | 'rotate' | 'scale', string][]).map(([g, label]) => (
+                  <button key={g} type="button" className={`btn btn--sm${section.gizmo === g ? ' btn--primary' : ''}`}
+                    onClick={() => setSection({ ...section, gizmo: section.gizmo === g ? null : g })}
+                    title={`손잡이: ${label} (화살표·고리·상자를 끌기, 다시 누르면 손잡이 숨김)`}>{label}</button>
+                ))}
                 <button type="button" className="btn btn--sm" onClick={() => setSection(null)}>끄기</button>
               </div>
             )}

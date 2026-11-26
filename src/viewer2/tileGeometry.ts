@@ -68,10 +68,19 @@ type Gltf = {
   bufferViews: { byteStride?: number; byteLength: number; extensions?: { EXT_meshopt_compression?: { byteOffset?: number; byteLength: number; byteStride: number; count: number; mode: string; filter?: string } } }[];
 };
 
-/**
- * Triangles of the wanted objects in one tile, appended per object to `out` as flat xyz triples (tileset frame).
- */
-export async function collectTriangles(glb: ArrayBuffer, wanted: ReadonlySet<number>, out: Map<number, number[]>): Promise<void> {
+/** One decoded tile primitive: vertices in the tileset frame, indices, and its triangles grouped by object. */
+type DecodedPrim = {
+  vx: Float32Array;
+  idx: Uint32Array | Uint16Array;
+  /** Triangle numbers (first index / 3) ordered by object; object id → [from, to) into this. */
+  tris: Uint32Array;
+  ranges: Map<number, [number, number]>;
+};
+/** A leaf tile decoded once and kept (clash batches over the same area reuse it instead of decoding the file again). */
+export type DecodedTile = { prims: DecodedPrim[]; bytes: number };
+
+/** Decode a tile .glb: meshopt buffers, vertices once to the tileset frame, triangles grouped by `_FEATURE_ID_0`. */
+export async function decodeTile(glb: ArrayBuffer): Promise<DecodedTile> {
   const dv = new DataView(glb);
   if (dv.getUint32(0, true) !== 0x46546c67) throw new Error('타일 형식 오류');
   const jsonLength = dv.getUint32(12, true);
@@ -93,6 +102,9 @@ export async function collectTriangles(glb: ArrayBuffer, wanted: ReadonlySet<num
   const node = json.nodes[0] ?? {};
   const [tx, ty, tz] = node.translation ?? [0, 0, 0];
   const [sx, sy, sz] = node.scale ?? [1, 1, 1];
+  const n = (v: number) => Math.max(v / 32767, -1);
+  const prims: DecodedPrim[] = [];
+  let bytes = 0;
   for (const prim of json.meshes[0]?.primitives ?? []) {
     const pa = json.accessors[prim.attributes.POSITION], ia = json.accessors[prim.attributes._FEATURE_ID_0], xa = json.accessors[prim.indices];
     if (!pa || !ia || !xa) continue;
@@ -102,18 +114,65 @@ export async function collectTriangles(glb: ArrayBuffer, wanted: ReadonlySet<num
     const idx = xa.componentType === 5125
       ? new Uint32Array(xv.buffer, xv.byteOffset + (xa.byteOffset ?? 0), xa.count)
       : new Uint16Array(xv.buffer, xv.byteOffset + (xa.byteOffset ?? 0), xa.count);
-    const n = (v: number) => Math.max(v / 32767, -1);
-    for (let t = 0; t + 2 < idx.length; t += 3) {
-      const id = Math.round(ids[idx[t]]);
-      if (!wanted.has(id)) continue;
-      let list = out.get(id);
-      if (!list) { list = []; out.set(id, list); }
-      for (let k = 0; k < 3; k++) {
-        const v = idx[t + k] * 4;
-        // glTF (X, Y, Z) = translation + scale · normalized; tileset frame (x, y, z) = (X, −Z, Y).
-        const X = tx + sx * n(pos[v]), Y = ty + sy * n(pos[v + 1]), Z = tz + sz * n(pos[v + 2]);
-        list.push(X, -Z, Y);
+    // Vertices once in the tileset frame: glTF (X, Y, Z) = translation + scale · normalized; tileset (x, y, z) = (X, −Z, Y).
+    const vx = new Float32Array(pa.count * 3);
+    for (let v = 0; v < pa.count; v++) {
+      const X = tx + sx * n(pos[v * 4]), Y = ty + sy * n(pos[v * 4 + 1]), Z = tz + sz * n(pos[v * 4 + 2]);
+      vx[v * 3] = X; vx[v * 3 + 1] = -Z; vx[v * 3 + 2] = Y;
+    }
+    // Triangles grouped by object (counting sort over the ids met).
+    const triCount = Math.floor(idx.length / 3);
+    const counts = new Map<number, number>();
+    for (let t = 0; t < triCount; t++) { const id = Math.round(ids[idx[t * 3]]); counts.set(id, (counts.get(id) ?? 0) + 1); }
+    const ranges = new Map<number, [number, number]>();
+    let at = 0;
+    for (const [id, c] of counts) { ranges.set(id, [at, at]); at += c; }
+    const tris = new Uint32Array(triCount);
+    for (let t = 0; t < triCount; t++) { const r = ranges.get(Math.round(ids[idx[t * 3]]))!; tris[r[1]++] = t; }
+    prims.push({ vx, idx, tris, ranges });
+    bytes += vx.byteLength + idx.byteLength + tris.byteLength + ranges.size * 64;
+  }
+  return { prims, bytes };
+}
+
+/**
+ * Triangles of the wanted objects in a decoded tile, appended per object to `out` as Float32Array chunks of xyz triples
+ * (tileset frame). `region` [minX, minY, minZ, maxX, maxY, maxZ]: only triangles whose box meets it (a clash batch
+ * needs the objects only where they can touch). Typed arrays sized by a counting pass (no growing JS number arrays —
+ * 2026-11-26 whole-model clash ran the browser out of memory).
+ */
+export function trianglesOf(tile: DecodedTile, wanted: Iterable<number>, out: Map<number, Float32Array[]>, region?: ArrayLike<number>): void {
+  for (const { vx, idx, tris, ranges } of tile.prims) {
+    const meets = (t: number) => {
+      if (!region) return true;
+      const i0 = idx[t * 3] * 3, i1 = idx[t * 3 + 1] * 3, i2 = idx[t * 3 + 2] * 3;
+      for (let a = 0; a < 3; a++) {
+        const p0 = vx[i0 + a], p1 = vx[i1 + a], p2 = vx[i2 + a];
+        if ((p0 > p1 ? (p0 > p2 ? p0 : p2) : (p1 > p2 ? p1 : p2)) < region[a]) return false;
+        if ((p0 < p1 ? (p0 < p2 ? p0 : p2) : (p1 < p2 ? p1 : p2)) > region[a + 3]) return false;
       }
+      return true;
+    };
+    for (const id of wanted) {
+      const r = ranges.get(id);
+      if (!r) continue;
+      let c = 0;
+      for (let k = r[0]; k < r[1]; k++) if (meets(tris[k])) c++;
+      if (!c) continue;
+      const arr = new Float32Array(c * 9);
+      let at = 0;
+      for (let k = r[0]; k < r[1]; k++) {
+        const t = tris[k];
+        if (!meets(t)) continue;
+        for (let j = 0; j < 3; j++) { const v = idx[t * 3 + j] * 3; arr[at++] = vx[v]; arr[at++] = vx[v + 1]; arr[at++] = vx[v + 2]; }
+      }
+      const list = out.get(id);
+      if (list) list.push(arr); else out.set(id, [arr]);
     }
   }
+}
+
+/** Triangles of the wanted objects in one tile file (decode + trianglesOf). */
+export async function collectTriangles(glb: ArrayBuffer, wanted: ReadonlySet<number>, out: Map<number, Float32Array[]>, region?: ArrayLike<number>): Promise<void> {
+  trianglesOf(await decodeTile(glb), wanted, out, region);
 }
