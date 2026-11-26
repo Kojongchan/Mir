@@ -217,21 +217,37 @@ function triNormal(pos: ArrayLike<number>, faceIndex: number, out: THREE.Vector3
   out.crossVectors(_pb, _pc).normalize();
 }
 
-/** fromGeom 정점들이 intoBvh 솔리드 내부로 파고든 최대 깊이(overlap 박스 내 표본). */
-function maxPenetration(fromGeom: THREE.BufferGeometry, intoGeom: THREE.BufferGeometry, intoBvh: MeshBVH, box: THREE.Box3, samples = 1200): number {
+/**
+ * fromGeom 정점들이 intoBvh 솔리드 내부로 파고든 최대 깊이(overlap 박스 내 표본).
+ * `inBox` false(기존 뷰어): 전체 정점을 고르게 건너뛰며 표본 → 박스 밖은 버림. true(자체 엔진 전체 검사): 박스 안 정점만
+ * 먼저 추려 그중에서 표본 — 겹침이 작은 쌍도 그 부분을 빠짐없이 보고, 박스 밖 정점에 질의하지 않아 빠르다.
+ */
+function maxPenetration(fromGeom: THREE.BufferGeometry, intoGeom: THREE.BufferGeometry, intoBvh: MeshBVH, box: THREE.Box3, samples = 1200, inBox = false): number {
   const pos = (fromGeom.getAttribute('position') as THREE.BufferAttribute).array as ArrayLike<number>;
   const intoPos = (intoGeom.getAttribute('position') as THREE.BufferAttribute).array as ArrayLike<number>;
   const count = pos.length / 3;
-  const stride = Math.max(1, Math.floor(count / samples)); // 표본 ≤ ~samples 정점
+  let list: ArrayLike<number> | null = null;
+  if (inBox) {
+    const inside: number[] = [];
+    const { min, max } = box;
+    for (let i = 0; i < count; i++) {
+      const x = pos[i * 3], y = pos[i * 3 + 1], z = pos[i * 3 + 2];
+      if (x >= min.x && x <= max.x && y >= min.y && y <= max.y && z >= min.z && z <= max.z) inside.push(i);
+    }
+    list = inside;
+  }
+  const total = list ? list.length : count;
+  const stride = Math.max(1, Math.floor(total / samples)); // 표본 ≤ ~samples 정점
   const target: { point: THREE.Vector3; distance: number; faceIndex: number } = {
     point: new THREE.Vector3(),
     distance: 0,
     faceIndex: 0,
   };
   let max = 0;
-  for (let i = 0; i < count; i += stride) {
+  for (let k = 0; k < total; k += stride) {
+    const i = list ? list[k] : k;
     _pv.set(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
-    if (!box.containsPoint(_pv)) continue;
+    if (!list && !box.containsPoint(_pv)) continue;
     const hit = (intoBvh as any).closestPointToPoint(_pv, target);
     if (!hit) continue;
     triNormal(intoPos, hit.faceIndex, _pn);
@@ -241,12 +257,15 @@ function maxPenetration(fromGeom: THREE.BufferGeometry, intoGeom: THREE.BufferGe
   return max;
 }
 
-/** 두 솔리드가 서로 파고든 최대 깊이(자체 엔진 간섭에서도 같은 기준으로 쓴다 — mirClash.ts). */
-export function penetrationDepth(ga: ApsClashGeom, gb: ApsClashGeom, overlap: THREE.Box3, samples = 1200): number {
+/**
+ * 두 솔리드가 서로 파고든 최대 깊이(자체 엔진 간섭에서도 같은 기준으로 쓴다 — mirClashBatch.ts).
+ * `inBox`: 겹침 박스 안 정점만 추려 표본(maxPenetration 참고).
+ */
+export function penetrationDepth(ga: ApsClashGeom, gb: ApsClashGeom, overlap: THREE.Box3, samples = 1200, inBox = false): number {
   if (overlap.isEmpty()) return 0;
   try {
-    const a = maxPenetration(ga.geometry, gb.geometry, gb.bvh, overlap, samples);
-    const b = maxPenetration(gb.geometry, ga.geometry, ga.bvh, overlap, samples);
+    const a = maxPenetration(ga.geometry, gb.geometry, gb.bvh, overlap, samples, inBox);
+    const b = maxPenetration(gb.geometry, ga.geometry, ga.bvh, overlap, samples, inBox);
     return Math.max(a, b);
   } catch {
     overlap.getSize(_pv);

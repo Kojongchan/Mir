@@ -7,7 +7,7 @@ import { decodeTile, tileBytes, trianglesOf, type DecodedTile } from '../viewer2
 // =====================================================================
 // 자체 엔진 간섭 검출의 협역 한 묶음(mirClash.ts 가 나눠 준다) — 웹 워커(mirClash.worker.ts)에서도, 워커를 못 쓰면
 // 화면 스레드에서도 같은 함수로 돈다. 묶음 구역과 만나는 잎 타일(풀어 둔 것은 TileStore 에서 재사용)에서 묶음 객체의
-// 삼각형 중 구역과 만나는 것만 모아 BVH → 교차 + 관통깊이. 묶음이 끝나면 형상은 버린다.
+// 삼각형 중 구역과 만나는 것만 모아 BVH → 교차 + 관통깊이(겹침 박스 안 정점). 묶음이 끝나면 형상은 버린다.
 // =====================================================================
 
 /** 한 묶음: 쌍(a[i]·b[i] dbId), 구역 [minX, minY, minZ, maxX, maxY, maxZ](타일셋 좌표), 읽을 잎 타일 경로(이 순서로 합침). */
@@ -16,9 +16,8 @@ export type BatchStats = { decodes: number; reuse: number; tileMs: number; build
 /** 결과: 간섭마다 [a, b, x, y, z, depth] 를 이어 붙인 배열(워커에서 그대로 넘긴다). */
 export type BatchResult = { hits: Float64Array; stats: BatchStats };
 
-/** 관통깊이 표본(정점 수, 양쪽 각각) — 먼저 적게(전체 검사는 수십만 쌍), 허용오차 미만이면 기존 뷰어와 같은 1,200 으로 다시. */
-const DEPTH_SAMPLES = 256;
-const DEPTH_SAMPLES_FULL = 1200;
+/** 관통깊이: 겹침 박스 안 정점만 추려 최대 1,200 개(양쪽 각각)를 검사 — 기존 뷰어(전체 정점에서 1,200 표본)보다 겹친 부분을 촘촘히 본다. */
+const DEPTH_SAMPLES = 1200;
 
 /** 풀어 둔 타일(정점·삼각형): 최근 사용 순, 바이트 예산을 넘으면 오래된 것부터 버린다 — 이웃 묶음이 같은 타일을 다시 풀지 않게. */
 export class TileStore {
@@ -112,9 +111,7 @@ export async function runClashBatch(job: ClashBatch, store: TileStore, shouldCan
     const middle = () => (overlap.isEmpty() ? ga.box.getCenter(ca).lerp(gb.box.getCenter(cb), 0.5) : overlap.getCenter(p));
     if (type === 'hard') {
       if (intersects) {
-        let depth = penetrationDepth(ga, gb, overlap, DEPTH_SAMPLES);
-        const sampled = ga.geometry.getAttribute('position').count > DEPTH_SAMPLES || gb.geometry.getAttribute('position').count > DEPTH_SAMPLES;
-        if (depth < tolerance && sampled) depth = penetrationDepth(ga, gb, overlap, DEPTH_SAMPLES_FULL);
+        const depth = penetrationDepth(ga, gb, overlap, DEPTH_SAMPLES, true);
         if (depth >= tolerance) push(a, b, middle(), depth);
       }
     } else if (intersects) push(a, b, middle(), 0);

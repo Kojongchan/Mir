@@ -184,13 +184,18 @@ export async function runMirClashDetection(input: MirClashInput): Promise<ClashH
   const stats: MirClashStats = { pairs: n, workers: runners.length, batches: 0, decodes: 0, reuse: 0, tileMs: 0, buildMs: 0, narrowMs: 0, totalMs: 0 };
   (globalThis as { __mirClashStats?: MirClashStats }).__mirClashStats = stats;
 
-  // 다음 묶음: 주 방향으로 BATCH_SPAN m 안, batchPairs 쌍까지(겹침이 아주 긴 쌍은 혼자 한 묶음).
-  let from = 0, made = 0;
-  const nextBatch = (): { index: number; size: number; job: ClashBatch } | null => {
-    if (from >= n) return null;
-    let to = from + 1;
-    const start = ov[order[from] * 6 + axis];
-    while (to < n && to - from < batchPairs && ov[order[to] * 6 + 3 + axis] - start <= BATCH_SPAN) to++;
+  // 묶음 경계: 주 방향으로 BATCH_SPAN m 안, batchPairs 쌍까지(겹침이 아주 긴 쌍은 혼자 한 묶음).
+  const bounds: number[] = [0];
+  for (let f = 0; f < n;) {
+    let to = f + 1;
+    const start = ov[order[f] * 6 + axis];
+    while (to < n && to - f < batchPairs && ov[order[to] * 6 + 3 + axis] - start <= BATCH_SPAN) to++;
+    bounds.push(to);
+    f = to;
+  }
+  const batchCount = bounds.length - 1;
+  const batchOf = (index: number): ClashBatch => {
+    const from = bounds[index], to = bounds[index + 1];
     const region = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
     const a = new Int32Array(to - from), b = new Int32Array(to - from);
     const want = new Set<number>();
@@ -203,10 +208,11 @@ export async function runMirClashDetection(input: MirClashInput): Promise<ClashH
     // 구역과 만나는 잎 중 묶음 객체 상자와도 만나는 것.
     const near = tilesFor(leaves, [region], 0);
     const wantedBoxes = [...want].map(id => boxOf(boxes, id)).filter((x): x is Float32Array => !!x);
-    const tiles = tilesFor(near, wantedBoxes, 0.01).map(t => t.path);
-    from = to;
-    return { index: made++, size: a.length, job: { a, b, region, tiles, type, tolerance } };
+    return { a, b, region, tiles: tilesFor(near, wantedBoxes, 0.01).map(t => t.path), type, tolerance };
   };
+  // 일꾼은 이웃 묶음 몇 개를 연달아 맡는다(풀어 둔 타일을 그 일꾼이 다시 씀).
+  const chunk = Math.max(1, Math.min(8, Math.floor(batchCount / (runners.length * 4))));
+  let nextChunk = 0;
 
   // 묶음 결과는 묶음 순서대로 합친다(병렬이어도 실행마다 같은 결과·같은 순서).
   const started = performance.now();
@@ -228,25 +234,34 @@ export async function runMirClashDetection(input: MirClashInput): Promise<ClashH
   const report = () => onProgress?.(0.03 + (done / n) * 0.97,
     `간섭 검사 ${done.toLocaleString()}/${n.toLocaleString()}쌍 · ${hits.length.toLocaleString()}건${runners.length > 1 ? ` · 병렬 ${runners.length}` : ''}${eta()}`);
   report();
+  // 중지·결과 상한: 돌고 있는 묶음을 기다리지 않고 바로 끝낸다(일꾼은 아래에서 종료).
+  let halt: () => void = () => {};
+  const halted = new Promise<null>(resolve => { halt = () => resolve(null); });
+  const watch = setInterval(() => { if (stop || shouldCancel?.()) halt(); }, 200);
   try {
     await Promise.all(runners.map(async (runner) => {
       for (;;) {
-        if (stop || shouldCancel?.()) return;
-        const next = nextBatch();
-        if (!next) return;
-        const r = await runner.run(next.job);
-        if (stop || shouldCancel?.()) return;
-        stats.batches++; stats.decodes += r.stats.decodes; stats.reuse += r.stats.reuse;
-        stats.tileMs += r.stats.tileMs; stats.buildMs += r.stats.buildMs; stats.narrowMs += r.stats.narrowMs;
-        stats.totalMs = performance.now() - started;
-        ready.set(next.index, r.hits);
-        done += next.size;
-        merge();
-        report();
-        if (runners.length === 1) await yieldToUi();
+        const c = nextChunk++;
+        if (c * chunk >= batchCount) return;
+        for (let index = c * chunk; index < Math.min(batchCount, (c + 1) * chunk); index++) {
+          if (stop || shouldCancel?.()) return;
+          const job = batchOf(index), size = job.a.length;
+          const r = await Promise.race([runner.run(job), halted]);
+          if (!r || stop || shouldCancel?.()) return;
+          stats.batches++; stats.decodes += r.stats.decodes; stats.reuse += r.stats.reuse;
+          stats.tileMs += r.stats.tileMs; stats.buildMs += r.stats.buildMs; stats.narrowMs += r.stats.narrowMs;
+          stats.totalMs = performance.now() - started;
+          ready.set(index, r.hits);
+          done += size;
+          merge();
+          report();
+          if (runners.length === 1) await yieldToUi();
+        }
       }
     }));
   } finally {
+    clearInterval(watch);
+    halt();
     for (const r of runners) r.dispose();
   }
   onProgress?.(1, hits.length >= maxHits ? `결과가 ${maxHits.toLocaleString()}건에 닿아 멈췄습니다` : '완료');
