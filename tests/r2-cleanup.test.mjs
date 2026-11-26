@@ -55,3 +55,13 @@ test('other groups are listed for review, the model is not', () => {
   const groups = otherGroups(bucket).map(g => g.prefix);
   assert.ok(!groups.includes(MODEL) && groups.includes('oldglb') && groups.includes('files'));
 });
+
+test('approved old caches of other models go only when they still match and hold no alias or manifest', async () => {
+  const { ORPHANS } = await import('../scripts/r2-cleanup.mjs');
+  const t = ORPHANS[0];
+  const match = [obj(`${t.prefix}/model.glb`, t.bytes - 1), obj(`${t.prefix}/focus.json`, 1)];
+  const plan = planCleanup([...bucket, ...match], manifest, now);
+  assert.ok(match.every(o => plan.deletions.some(d => d.key === o.key)));
+  const changed = planCleanup([...bucket, ...match, obj(`${t.prefix}/alias.json`)], manifest, now);
+  assert.ok(!changed.deletions.some(d => d.key.startsWith(`${t.prefix}/`)), 'a group that changed or holds an alias is kept');
+});

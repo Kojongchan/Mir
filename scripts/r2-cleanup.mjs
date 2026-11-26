@@ -14,8 +14,22 @@ import { gunzipSync } from 'node:zlib';
 import { pathToFileURL } from 'node:url';
 
 export const MODEL = 'dXJuOmFkc2sud2lwcHJvZDpmcy5maWxlOnZmLkp4';
-/** Other models' old caches the user's approval covers — filled from the dry run (prefix, objects, bytes must match). */
-export const ORPHANS = [];
+/**
+ * Other models' old caches the user's approval covers — from the dry run of 2026-11-26 (run 235): GLB conversions of
+ * small test models from July–August (model.glb, focus.json), none of them a model a project uses now (평택~오송 통합·4D,
+ * 남양주왕숙, TEST). Kept: the group with a claim.json (an alias written 11-02 points at it), the 4D/5D volumes, aliases, files/.
+ */
+export const ORPHANS = [
+  { prefix: 'dXJuOmFkc2sud2lwcHJvZDpmcy5maWxlOnZmLjEz', objects: 2, bytes: 73801086 },
+  { prefix: 'dXJuOmFkc2sud2lwcHJvZDpmcy5maWxlOnZmLkNG', objects: 2, bytes: 45292225 },
+  { prefix: 'dXJuOmFkc2sud2lwcHJvZDpmcy5maWxlOnZmLnFO', objects: 1, bytes: 14995120 },
+  { prefix: 'dXJuOmFkc2sud2lwcHJvZDpmcy5maWxlOnZmLmpM', objects: 1, bytes: 3058984 },
+  { prefix: 'dXJuOmFkc2sud2lwcHJvZDpmcy5maWxlOnZmLnpD', objects: 1, bytes: 431584 },
+  { prefix: 'dXJuOmFkc2sud2lwcHJvZDpmcy5maWxlOnZmLnoz', objects: 1, bytes: 344320 },
+  { prefix: 'dXJuOmFkc2sud2lwcHJvZDpmcy5maWxlOnZmLjR1', objects: 1, bytes: 222072 },
+  { prefix: 'dXJuOmFkc2sud2lwcHJvZDpmcy5maWxlOnZmLlpj', objects: 1, bytes: 152032 },
+  { prefix: 'dXJuOmFkc2sud2lwcHJvZDpmcy5maWxlOnZmLlo0', objects: 1, bytes: 97232 },
+];
 /** Files changed this recently are never removed (a job may have written them before updating the manifest). */
 export const MIN_AGE_MS = 6 * 3600 * 1000;
 
