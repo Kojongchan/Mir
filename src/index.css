@@ -8382,12 +8382,12 @@ textarea.input {
   background: rgba(37, 99, 235, 0.12);
   pointer-events: none;
 }
-/* 미니맵(왼쪽 아래) */
+/* 미니맵(오른쪽 아래 — 왼쪽은 모델 트리·간섭검토 창 자리) */
 .mir-minimap {
   position: absolute;
-  left: 8px;
+  right: 8px;
   bottom: 52px;
-  z-index: 24;
+  z-index: 46;
   padding: 4px;
   background: var(--color-surface, var(--panel));
   border: 1px solid var(--color-border, var(--border));
@@ -8398,10 +8398,16 @@ textarea.input {
   display: block;
   cursor: pointer;
 }
-.mir-minimap__close {
-  position: absolute;
-  top: 2px;
-  right: 2px;
+.mir-minimap__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px 4px;
+  font-size: 11px;
+}
+.mir-minimap__head .muted {
+  flex: 1;
+  font-size: 10px;
 }
 /* 층 필터: 관측점 창과 같은 자리(왼쪽) */
 .mir-levels {
@@ -8414,4 +8420,19 @@ textarea.input {
 }
 .mir-levels .mir-vp__item {
   justify-content: space-between;
+}
+
+/* 단면 막대 구분선, 마크업 안내, 간섭 목록 더 보기 */
+.threed-test2__sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 2px;
+  background: var(--color-border, var(--border));
+}
+.mir-markup__note {
+  font-size: 11px;
+}
+.mir-clash__more {
+  width: 100%;
+  margin-top: 8px;
 }

@@ -9,7 +9,8 @@ import {
   type ClashTestMeta,
 } from '../../lib/clashApi';
 import type { ApsMapping } from '../../lib/apsMapping';
-import { runMirClashDetection } from '../../lib/mirClash';
+import { estimateClash, runMirClashDetection } from '../../lib/mirClash';
+import { confirmDialog } from '../../lib/dialogs';
 import { createIssue, ISSUE_PRIORITIES, PRIORITY_LABEL, type IssuePriority } from '../../lib/issues';
 import { ISSUE_TYPES, TYPE_LABEL, type IssueType } from '../../lib/issueTypes';
 import { listIssueCategories, type IssueCategory } from '../../lib/issueCategories';
@@ -51,6 +52,8 @@ export interface MirClashPanelProps {
   onClose: () => void;
 }
 
+const SHOW_STEP = 300;
+
 /** 한 모델 매핑(저장·불러오기용 — clashApi 는 APS 매핑 모양을 받는다). */
 type Mapping = ApsMapping;
 const emptyMapping = (): Mapping => ({ model: { id: 0 }, dbIdToGlobalId: new Map(), globalIdToDbId: new Map(), size: 0 });
@@ -82,6 +85,8 @@ export function MirClashPanel(props: MirClashPanelProps) {
   const [progress, setProgress] = useState<{ ratio: number; phase: string } | null>(null);
   const cancelRef = useRef(false);
   const [rows, setRows] = useState<ClashRow[]>([]);
+  // 목록은 앞에서부터 SHOW_STEP 건씩 그린다(수만 건을 한꺼번에 그리면 화면이 멈춤).
+  const [shown, setShown] = useState(SHOW_STEP);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [dbBacked, setDbBacked] = useState(false);
   const [status, setStatus] = useState('');
@@ -123,15 +128,32 @@ export function MirClashPanel(props: MirClashPanelProps) {
     try {
       const idsA = leavesOf(aSel.id), idsB = leavesOf(bSel.id);
       if (!idsA.length || !idsB.length) { setStatus('대상에 부재가 없습니다.'); return; }
+      const allBoxes = await b;
+      // 큰 검사(예: 모델 전체 대 전체)는 규모를 먼저 알리고 묻는다.
+      if (idsA.length + idsB.length > 4000) {
+        setProgress({ ratio: 0, phase: '규모 확인 중' });
+        const est = await estimateClash(u, allBoxes, idsA, idsB, tolerance);
+        if (est.truncated) { setStatus(`후보 쌍이 ${est.pairs.toLocaleString()}개를 넘습니다. 대상을 파일·분류 단위로 나눠 검사하세요.`); return; }
+        const heavy = est.tiles > 300 || est.pairs > 200_000;
+        const ok = await confirmDialog(
+          `대상 A ${idsA.length.toLocaleString()}개 · B ${idsB.length.toLocaleString()}개 부재\n`
+          + `후보 쌍 ${est.pairs.toLocaleString()}개 · 관련 부재 ${est.objects.toLocaleString()}개 · 원본 타일 ${est.tiles.toLocaleString()}개를 검사합니다.\n`
+          + (heavy ? '규모가 커서 수 분 이상 걸릴 수 있습니다(진행 중 「중지」 가능, 받은 타일은 이 브라우저에 남아 다음 검사가 빨라짐). ' : '')
+          + '계속할까요?',
+          { title: '간섭 검사 규모', confirmLabel: '검사 시작' });
+        if (!ok) { setStatus('검사를 시작하지 않았습니다.'); return; }
+      }
       const hits = await runMirClashDetection({
-        urls: u, boxes: await b, idsA, idsB, type, tolerance, meta,
+        urls: u, boxes: allBoxes, idsA, idsB, type, tolerance, meta,
         onProgress: (ratio, phase) => setProgress({ ratio, phase }),
         shouldCancel: () => cancelRef.current,
       });
       const next = inheritStatuses(hits, rows);
       const inherited = next.filter((r) => r.status !== 'new').length;
       setRows(next); setDbBacked(false); setSelTest(''); setActiveId(null);
-      setStatus(cancelRef.current ? `중지됨 · 그때까지 ${next.length}건` : `간섭 ${next.length}건${inherited ? ` (상태 승계 ${inherited}건)` : ''}`);
+      setShown(SHOW_STEP);
+      setStatus(cancelRef.current ? `중지됨 · 그때까지 ${next.length}건`
+        : `간섭 ${next.length.toLocaleString()}건${next.length >= 20000 ? ' (2만 건에서 멈춤 — 대상을 나눠 검사하세요)' : ''}${inherited ? ` (상태 승계 ${inherited}건)` : ''}`);
     } catch (e) {
       setStatus(`검사 실패: ${errMessage(e)}`);
     } finally {
@@ -398,6 +420,7 @@ export function MirClashPanel(props: MirClashPanelProps) {
               )}
               {!collapsed.has(g.key) && g.rows.map((r) => {
                 n += 1;
+                if (n > shown) return null;
                 return (
                   <div key={r.id} className={`mir-clash__item${r.id === activeId ? ' is-active' : ''}`}>
                     <div className="mir-clash__item-h" onClick={() => show(r)}>
@@ -418,6 +441,11 @@ export function MirClashPanel(props: MirClashPanelProps) {
               })}
             </div>
           ))}
+          {visibleRows.length > shown && (
+            <button type="button" className="btn btn--sm mir-clash__more" onClick={() => setShown((v) => v + SHOW_STEP)}>
+              더 보기 ({shown.toLocaleString()} / {visibleRows.length.toLocaleString()}건 표시 중)
+            </button>
+          )}
         </div>
         {status && <div className="muted mir-clash__status">{status}</div>}
       </div>

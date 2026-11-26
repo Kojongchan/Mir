@@ -5,6 +5,8 @@ import {
 } from 'three';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import CameraControls from 'camera-controls';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
+import { BoxGeometry, EdgesGeometry, LineBasicMaterial, LineSegments, MeshBasicMaterial, Object3D as SceneObject, PlaneGeometry } from 'three';
 import { TilesRenderer } from '3d-tiles-renderer';
 import { GLTFExtensionsPlugin } from '3d-tiles-renderer/plugins';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
@@ -259,6 +261,7 @@ export class TilesViewer {
 
   /** Open a published tileset: `urls` maps its relative paths (tileset.json, c/*.glb, objects.bin) to signed URLs. */
   open(urls: Record<string, string>, objects: number): void {
+    this.sectionClear(); // a section belongs to the model it was made on
     this.closeTiles();
     this.urls = { ...urls };
     this.pathBySigned.clear();
@@ -717,6 +720,8 @@ export class TilesViewer {
     this.canvas.removeEventListener('wheel', this.onWheel);
     for (const type of ['pointermove', 'pointerup', 'pointerleave'] as const) this.canvas.removeEventListener(type, this.trackPointer);
     this.closeTiles();
+    this.sectionClear();
+    this.gizmo?.dispose();
     this.controls.dispose();
     this.pickTarget.dispose();
     this.sampleTarget.dispose();
@@ -907,6 +912,7 @@ export class TilesViewer {
    * empty space about emptyPivot; pan and pinch at the depth from depthNear, with the target back on the view axis.
    */
   private pivotAtPointer = (event: PointerEvent) => {
+    if (this.grabGizmo(event)) return;
     if (!this.tiles || this.walkState) return;
     const rect = this.canvas.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
     const hit = this.surfaceAt(x, y, true);
@@ -1070,6 +1076,174 @@ export class TilesViewer {
     if (!b) return null;
     const e = [0, 1, 2].map(a => Math.abs(b[3 + a]) + Math.abs(b[6 + a]) + Math.abs(b[9 + a]));
     return [b[0] - e[0], b[1] - e[1], b[2] - e[2], b[0] + e[0], b[1] + e[1], b[2] + e[2]];
+  }
+
+  // ── 단면(평면·상자) + 조작 손잡이(TransformControls) ────────────────────────────────────────────────────────────
+  // 단면 물체(평면: 위치·방향, 상자: 위치·방향·크기)를 장면 좌표로 들고, 그 모양에서 잘림 평면을 만든다. 평면·상자 윤곽과
+  // 손잡이는 별도 장면(overlay)에 그려 잘리지 않고 항상 보인다. 손잡이를 잡으면 카메라 조작·클릭 선택은 쉰다.
+  private readonly overlay = new Scene();
+  private gizmo: TransformControls | null = null;
+  private section: { mode: 'plane' | 'box'; obj: SceneObject; flip: boolean } | null = null;
+  /** True after a pointer-down on the gizmo until the next pointer-up (the page skips its click selection). */
+  gizmoHeld = false;
+  /** 단면이 바뀔 때(손잡이로 끌 때 포함). */
+  onSectionChange?: () => void;
+
+  private gizmoControls(): TransformControls {
+    if (this.gizmo) return this.gizmo;
+    const g = new TransformControls(this.camera, this.canvas);
+    g.setSize(0.9);
+    g.addEventListener('change', () => { this.dirty = true; });
+    g.addEventListener('objectChange', () => { this.applySection(); this.onSectionChange?.(); });
+    g.addEventListener('dragging-changed', e => {
+      const dragging = (e as unknown as { value: boolean }).value;
+      this.controls.enabled = !dragging;
+      if (!dragging) window.setTimeout(() => { this.gizmoHeld = false; }, 0);
+    });
+    this.overlay.add(g.getHelper());
+    this.gizmo = g;
+    return g;
+  }
+
+  /** Pointer down over a gizmo handle: the camera must not move with this drag. */
+  private grabGizmo(event: PointerEvent): boolean {
+    const g = this.gizmo;
+    if (!g || !g.object || !g.enabled || event.button !== 0) return false;
+    const rect = this.canvas.getBoundingClientRect();
+    g.pointerHover({ x: ((event.clientX - rect.left) / rect.width) * 2 - 1, y: -((event.clientY - rect.top) / rect.height) * 2 + 1, button: 0 } as never);
+    if (!g.axis) return false;
+    this.controls.enabled = false;
+    this.gizmoHeld = true;
+    const release = () => { window.removeEventListener('pointerup', release, true); if (!g.dragging) { this.controls.enabled = true; window.setTimeout(() => { this.gizmoHeld = false; }, 0); } };
+    window.addEventListener('pointerup', release, true);
+    return true;
+  }
+
+  /** The overlay (section outline, gizmo) over the picture: no clipping, always on top. */
+  private drawOverlay(): void {
+    if (!this.overlay.children.length) return;
+    const r = this.renderer, planes = r.clippingPlanes, autoClear = r.autoClear;
+    r.clippingPlanes = [];
+    r.autoClear = false;
+    r.setRenderTarget(null);
+    r.clearDepth();
+    r.render(this.overlay, this.camera);
+    r.autoClear = autoClear;
+    r.clippingPlanes = planes;
+  }
+
+  /** Scene direction of a tileset axis (0 x, 1 y, 2 z / 높이). */
+  private sceneAxis(axis: 0 | 1 | 2): Vector3 {
+    return axis === 0 ? new Vector3(1, 0, 0) : axis === 1 ? new Vector3(0, 0, -1) : new Vector3(0, 1, 0);
+  }
+
+  /** The structures' box in the scene (world-aligned), or null. */
+  private structureSceneBox(): Box3 | null {
+    const b = this.structureBox();
+    if (!b) return null;
+    const box = new Box3();
+    for (const x of [b[0], b[3]]) for (const y of [b[1], b[4]]) for (const z of [b[2], b[5]]) box.expandByPoint(this.modelToScene(x, y, z));
+    return box;
+  }
+
+  /**
+   * 단면 평면: `axis` 방향 법선, 지나는 점 `at`(장면 좌표, 없으면 지금 단면 위치 → 구조물 중심). 기본은 축 + 쪽을 잘라
+   * 낸다(높이: 위쪽을 잘라 안이 보임). 크기는 구조물 범위.
+   */
+  sectionPlane(axis: 0 | 1 | 2, at?: Vector3): void {
+    const box = this.structureSceneBox();
+    if (!box) return;
+    const centre = at ?? (this.section ? this.section.obj.position.clone() : box.getCenter(new Vector3()));
+    const flip = this.section?.mode === 'plane' ? this.section.flip : false;
+    this.sectionClear(false);
+    const obj = new SceneObject();
+    obj.position.copy(centre);
+    obj.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), this.sceneAxis(axis));
+    const size = box.getSize(new Vector3()).length();
+    const geo = new PlaneGeometry(size, size).rotateX(-Math.PI / 2);
+    const fill = new Mesh(geo, new MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.08, side: DoubleSide, depthTest: false, depthWrite: false }));
+    const edge = new LineSegments(new EdgesGeometry(geo), new LineBasicMaterial({ color: 0xf59e0b, depthTest: false }));
+    obj.add(fill, edge);
+    this.overlay.add(obj);
+    this.section = { mode: 'plane', obj, flip };
+    this.applySection();
+  }
+
+  /** 단면 상자: 장면 좌표 상자(없으면 구조물 전체보다 조금 크게). 상자 안만 남는다. */
+  sectionBox(box?: Box3): void {
+    const b = box ?? this.structureSceneBox()?.expandByScalar(1);
+    if (!b || b.isEmpty()) return;
+    this.sectionClear(false);
+    const obj = new SceneObject();
+    obj.position.copy(b.getCenter(new Vector3()));
+    obj.scale.copy(b.getSize(new Vector3()).max(new Vector3(0.1, 0.1, 0.1)));
+    const geo = new BoxGeometry(1, 1, 1);
+    const edge = new LineSegments(new EdgesGeometry(geo), new LineBasicMaterial({ color: 0xf59e0b, depthTest: false }));
+    const fill = new Mesh(geo, new MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.04, side: DoubleSide, depthTest: false, depthWrite: false }));
+    obj.add(fill, edge);
+    this.overlay.add(obj);
+    this.section = { mode: 'box', obj, flip: false };
+    this.applySection();
+  }
+
+  /** A tileset-frame box [minX, minY, minZ, maxX, maxY, maxZ] (objects.bin) in the scene, widened by `margin` m. */
+  sceneBoxOf(b: ArrayLike<number>, margin = 0): Box3 {
+    const box = new Box3();
+    for (const x of [b[0], b[3]]) for (const y of [b[1], b[4]]) for (const z of [b[2], b[5]]) box.expandByPoint(this.modelToScene(x, y, z));
+    return box.expandByScalar(margin);
+  }
+
+  /** 평면 단면의 잘라 내는 쪽 바꾸기. */
+  sectionFlip(): void {
+    if (this.section?.mode !== 'plane') return;
+    this.section.flip = !this.section.flip;
+    this.applySection();
+  }
+
+  /** 손잡이: 이동·회전·크기(상자만), null 이면 숨김. */
+  sectionGizmo(mode: 'translate' | 'rotate' | 'scale' | null): void {
+    const g = this.gizmoControls();
+    if (!this.section || !mode || (mode === 'scale' && this.section.mode !== 'box')) { g.detach(); this.dirty = true; return; }
+    g.setMode(mode);
+    g.setSpace('local'); // along the plane's normal / the box's own axes
+    g.attach(this.section.obj);
+    this.dirty = true;
+  }
+
+  /** 단면 끄기. `keepGizmo` false: 손잡이도 뗀다. */
+  sectionClear(detach = true): void {
+    if (detach) this.gizmo?.detach();
+    if (this.section) {
+      this.overlay.remove(this.section.obj);
+      this.section.obj.traverse(o => { const m = o as Mesh; m.geometry?.dispose(); (m.material as Material | undefined)?.dispose?.(); });
+      this.section = null;
+    }
+    this.renderer.clippingPlanes = [];
+    this.dirty = true;
+  }
+
+  get sectionMode(): 'plane' | 'box' | null { return this.section?.mode ?? null; }
+
+  /** 단면 물체 → 잘림 평면(장면 좌표). 평면: 지역 +Y 쪽을 잘라 냄(뒤집기: 반대). 상자: 여섯 면 안쪽만 남김. */
+  private applySection(): void {
+    const s = this.section;
+    if (!s) { this.renderer.clippingPlanes = []; this.dirty = true; return; }
+    s.obj.updateMatrixWorld(true);
+    const q = s.obj.quaternion, c = s.obj.position;
+    if (s.mode === 'plane') {
+      const n = new Vector3(0, s.flip ? 1 : -1, 0).applyQuaternion(q);
+      this.renderer.clippingPlanes = [new Plane().setFromNormalAndCoplanarPoint(n, c)];
+    } else {
+      const planes: Plane[] = [];
+      const scale = s.obj.scale;
+      for (const [axis, half] of [[new Vector3(1, 0, 0), Math.abs(scale.x) / 2], [new Vector3(0, 1, 0), Math.abs(scale.y) / 2], [new Vector3(0, 0, 1), Math.abs(scale.z) / 2]] as const) {
+        const u = axis.clone().applyQuaternion(q);
+        planes.push(new Plane().setFromNormalAndCoplanarPoint(u, c.clone().addScaledVector(u, -half)));
+        planes.push(new Plane().setFromNormalAndCoplanarPoint(u.clone().negate(), c.clone().addScaledVector(u, half)));
+      }
+      this.renderer.clippingPlanes = planes;
+    }
+    this.dirty = true;
   }
 
   /**
@@ -1527,6 +1701,7 @@ export class TilesViewer {
     if (!this.dirty) return;
     this.dirty = false;
     this.frame = this.draw();
+    this.drawOverlay();
     this.frames++;
     this.frameTimes.push(now);
     while (this.frameTimes.length > 2 && now - this.frameTimes[0] > 1000) this.frameTimes.shift();

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { TilesViewer } from '../../viewer2/TilesViewer';
 import { MarkupOverlay, type MarkupTool } from '../MarkupOverlay';
 import { REDLINE_COLORS, bakeMarkup, type MarkupShape, type RedlineColor } from '../../lib/viewpoints';
@@ -166,6 +166,7 @@ export function MirMarkupEditor({ image, fileName, onClose }: { image: string; f
         </span>
         {selected !== null && <button type="button" className="btn btn--sm" onClick={() => { setShapes(s => s.filter((_, i) => i !== selected)); setSelected(null); }}>선택 삭제</button>}
         <button type="button" className="btn btn--sm" disabled={!shapes.length} onClick={() => { setShapes(s => s.slice(0, -1)); setSelected(null); }}>되돌리기</button>
+        <span className="muted mir-markup__note">마크업 중에는 다른 도구가 잠깁니다(단면·숨기기 등은 켠 상태 그대로 찍힘)</span>
         <div className="spacer" />
         <button type="button" className="btn btn--sm btn--primary" onClick={() => void download()} disabled={busy}>{busy ? '저장 중…' : 'PNG 저장'}</button>
         <button type="button" className="btn btn--sm" onClick={onClose}>닫기</button>
@@ -180,66 +181,97 @@ export function MirMarkupEditor({ image, fileName, onClose }: { image: string; f
   );
 }
 
-/** 미니맵: 구조물 평면 배치(객체 상자 중심)와 카메라 위치·바라보는 방향. 누르면 그곳으로 시점을 옮긴다. */
-export function MirMinimap({ viewer, boxes, bounds, onClose }: {
-  viewer: TilesViewer; boxes: Float32Array; bounds: [number, number, number, number, number, number]; onClose: () => void;
+/**
+ * 미니맵: 구조물 평면 배치(객체 상자 중심)와 카메라 위치·바라보는 방향. 긴 노선도 칸을 채우도록 배치의 주 방향을
+ * 가로로 돌려 그리고, 누르면 그곳으로 시점을 옮긴다. 화면 밖 카메라는 테두리에 화살표로.
+ */
+export function MirMinimap({ viewer, boxes, onClose }: {
+  viewer: TilesViewer; boxes: Float32Array; onClose: () => void;
 }) {
-  const W = 260, H = 160, PAD = 8;
+  const W = 300, H = 150, PAD = 10;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const baseRef = useRef<HTMLCanvasElement | null>(null);
-  const sx = (W - PAD * 2) / Math.max(1e-6, bounds[3] - bounds[0]), sy = (H - PAD * 2) / Math.max(1e-6, bounds[4] - bounds[1]);
-  const scale = Math.min(sx, sy);
-  const ox = PAD + ((W - PAD * 2) - (bounds[3] - bounds[0]) * scale) / 2, oy = PAD + ((H - PAD * 2) - (bounds[4] - bounds[1]) * scale) / 2;
-  const toPx = useCallback((x: number, y: number) => ({ x: ox + (x - bounds[0]) * scale, y: H - (oy + (y - bounds[1]) * scale) }), [bounds, scale, ox, oy]);
+  // Object centres, the main horizontal direction (principal axis) and the rotated extent — once per model.
+  const frame = useMemo(() => {
+    const xs: number[] = [], ys: number[] = [];
+    for (let id = 1; id * 6 + 5 < boxes.length; id++) {
+      const o = id * 6;
+      if (Number.isNaN(boxes[o])) continue;
+      xs.push((boxes[o] + boxes[o + 3]) / 2); ys.push((boxes[o + 1] + boxes[o + 4]) / 2);
+    }
+    const n = Math.max(1, xs.length);
+    const mx = xs.reduce((a, v) => a + v, 0) / n, my = ys.reduce((a, v) => a + v, 0) / n;
+    let sxx = 0, syy = 0, sxy = 0;
+    for (let i = 0; i < xs.length; i++) { const dx = xs[i] - mx, dy = ys[i] - my; sxx += dx * dx; syy += dy * dy; sxy += dx * dy; }
+    const angle = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+    const c = Math.cos(angle), sn = Math.sin(angle);
+    const rot = (x: number, y: number) => [(x - mx) * c + (y - my) * sn, -(x - mx) * sn + (y - my) * c] as const;
+    let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    const pts = new Float32Array(xs.length * 2);
+    for (let i = 0; i < xs.length; i++) {
+      const [u, v] = rot(xs[i], ys[i]); pts[i * 2] = u; pts[i * 2 + 1] = v;
+      if (u < u0) u0 = u; if (u > u1) u1 = u; if (v < v0) v0 = v; if (v > v1) v1 = v;
+    }
+    const scale = Math.min((W - PAD * 2) / Math.max(1e-6, u1 - u0), (H - PAD * 2) / Math.max(1e-6, v1 - v0));
+    const ox = PAD + ((W - PAD * 2) - (u1 - u0) * scale) / 2, oy = PAD + ((H - PAD * 2) - (v1 - v0) * scale) / 2;
+    const toPx = (x: number, y: number) => { const [u, v] = rot(x, y); return { x: ox + (u - u0) * scale, y: H - (oy + (v - v0) * scale) }; };
+    const fromPx = (px: number, py: number) => {
+      const u = u0 + (px - ox) / scale, v = v0 + (H - py - oy) / scale;
+      return { x: mx + u * c - v * sn, y: my + u * sn + v * c };
+    };
+    return { pts, u0, v0, scale, ox, oy, toPx, fromPx };
+  }, [boxes]);
   const draw = useCallback(() => {
-    const c = canvasRef.current;
-    if (!c) return;
+    const cv = canvasRef.current;
+    if (!cv) return;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    if (c.width !== W * dpr) { c.width = W * dpr; c.height = H * dpr; }
-    const g = c.getContext('2d');
+    if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+    const g = cv.getContext('2d');
     if (!g) return;
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (!baseRef.current) {
       const b = document.createElement('canvas');
       b.width = W * dpr; b.height = H * dpr;
       const bg = b.getContext('2d')!;
       bg.setTransform(dpr, 0, 0, dpr, 0, 0);
-      bg.fillStyle = 'rgba(120,130,145,0.55)';
-      for (let id = 1; id * 6 + 5 < boxes.length; id++) {
-        const o = id * 6;
-        if (Number.isNaN(boxes[o])) continue;
-        const p = toPx((boxes[o] + boxes[o + 3]) / 2, (boxes[o + 1] + boxes[o + 4]) / 2);
-        bg.fillRect(p.x, p.y, 1, 1);
-      }
+      bg.fillStyle = 'rgba(60,72,88,0.85)';
+      const { pts, u0, v0, scale, ox, oy } = frame;
+      for (let i = 0; i < pts.length; i += 2) bg.fillRect(ox + (pts[i] - u0) * scale - 1, H - (oy + (pts[i + 1] - v0) * scale) - 1, 2, 2);
       baseRef.current = b;
     }
-    g.clearRect(0, 0, W, H);
-    g.drawImage(baseRef.current, 0, 0, W, H);
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, cv.width, cv.height);
+    g.drawImage(baseRef.current, 0, 0);
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
     const cam = viewer.camera.position, t = viewer.target;
     const pc = viewer.sceneToModel(cam.x, cam.y, cam.z), pt = viewer.sceneToModel(t.x, t.y, t.z);
-    const a = toPx(pc[0], pc[1]), b = toPx(pt[0], pt[1]);
+    const a = frame.toPx(pc[0], pc[1]), b = frame.toPx(pt[0], pt[1]);
+    const inside = (p: { x: number; y: number }) => p.x >= 0 && p.x <= W && p.y >= 0 && p.y <= H;
+    const clamp = (p: { x: number; y: number }) => ({ x: Math.min(W - 6, Math.max(6, p.x)), y: Math.min(H - 6, Math.max(6, p.y)) });
+    // The view target (circle) and the camera (dot, or an arrow on the border when it is off the map).
     g.strokeStyle = '#dc2626'; g.lineWidth = 2;
-    g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke();
+    const ca = inside(a) ? a : clamp(a), cb = clamp(b);
+    g.beginPath(); g.moveTo(ca.x, ca.y); g.lineTo(cb.x, cb.y); g.stroke();
     g.fillStyle = '#dc2626';
-    g.beginPath(); g.arc(a.x, a.y, 4, 0, Math.PI * 2); g.fill();
-    g.strokeStyle = '#fff'; g.lineWidth = 1.5;
-    g.beginPath(); g.arc(b.x, b.y, 3, 0, Math.PI * 2); g.stroke();
-  }, [viewer, boxes, toPx]);
+    g.beginPath(); g.arc(ca.x, ca.y, inside(a) ? 4.5 : 3, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = '#dc2626'; g.lineWidth = 2;
+    g.beginPath(); g.arc(cb.x, cb.y, 4, 0, Math.PI * 2); g.stroke();
+  }, [viewer, frame]);
   useEffect(() => { baseRef.current = null; draw(); }, [draw]);
   useEffect(() => viewer.onViewChange(draw), [viewer, draw]);
   const onClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    const px = e.clientX - r.left, py = e.clientY - r.top;
-    const x = bounds[0] + (px - ox) / scale, y = bounds[1] + (H - py - oy) / scale;
+    const p = frame.fromPx(e.clientX - r.left, e.clientY - r.top);
     const t = viewer.target, cur = viewer.sceneToModel(t.x, t.y, t.z);
-    const next = viewer.modelToScene(x, y, cur[2]);
-    const shift = next.clone().sub(t);
-    viewer.lookAt(viewer.camera.position.clone().add(shift), next);
+    const next = viewer.modelToScene(p.x, p.y, cur[2]);
+    viewer.lookAt(viewer.camera.position.clone().add(next.clone().sub(t)), next);
   };
   return (
     <div className="mir-minimap" aria-label="미니맵">
+      <div className="mir-minimap__head">
+        <strong>미니맵</strong><span className="muted">빨간 점 = 카메라 · 원 = 보는 곳 · 누르면 이동</span>
+        <button type="button" className="ic-only" onClick={onClose} aria-label="미니맵 닫기">✕</button>
+      </div>
       <canvas ref={canvasRef} style={{ width: W, height: H }} onClick={onClick} title="누르면 그곳으로 시점을 옮깁니다" />
-      <button type="button" className="ic-only mir-minimap__close" onClick={onClose} aria-label="미니맵 닫기">✕</button>
     </div>
   );
 }
