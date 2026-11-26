@@ -218,11 +218,11 @@ function triNormal(pos: ArrayLike<number>, faceIndex: number, out: THREE.Vector3
 }
 
 /** fromGeom 정점들이 intoBvh 솔리드 내부로 파고든 최대 깊이(overlap 박스 내 표본). */
-function maxPenetration(fromGeom: THREE.BufferGeometry, intoGeom: THREE.BufferGeometry, intoBvh: MeshBVH, box: THREE.Box3): number {
+function maxPenetration(fromGeom: THREE.BufferGeometry, intoGeom: THREE.BufferGeometry, intoBvh: MeshBVH, box: THREE.Box3, samples = 1200): number {
   const pos = (fromGeom.getAttribute('position') as THREE.BufferAttribute).array as ArrayLike<number>;
   const intoPos = (intoGeom.getAttribute('position') as THREE.BufferAttribute).array as ArrayLike<number>;
   const count = pos.length / 3;
-  const stride = Math.max(1, Math.floor(count / 1200)); // 표본 ≤ ~1200정점
+  const stride = Math.max(1, Math.floor(count / samples)); // 표본 ≤ ~samples 정점
   const target: { point: THREE.Vector3; distance: number; faceIndex: number } = {
     point: new THREE.Vector3(),
     distance: 0,
@@ -242,11 +242,11 @@ function maxPenetration(fromGeom: THREE.BufferGeometry, intoGeom: THREE.BufferGe
 }
 
 /** 두 솔리드가 서로 파고든 최대 깊이(자체 엔진 간섭에서도 같은 기준으로 쓴다 — mirClash.ts). */
-export function penetrationDepth(ga: ApsClashGeom, gb: ApsClashGeom, overlap: THREE.Box3): number {
+export function penetrationDepth(ga: ApsClashGeom, gb: ApsClashGeom, overlap: THREE.Box3, samples = 1200): number {
   if (overlap.isEmpty()) return 0;
   try {
-    const a = maxPenetration(ga.geometry, gb.geometry, gb.bvh, overlap);
-    const b = maxPenetration(gb.geometry, ga.geometry, ga.bvh, overlap);
+    const a = maxPenetration(ga.geometry, gb.geometry, gb.bvh, overlap, samples);
+    const b = maxPenetration(gb.geometry, ga.geometry, ga.bvh, overlap, samples);
     return Math.max(a, b);
   } catch {
     overlap.getSize(_pv);

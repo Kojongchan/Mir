@@ -8059,6 +8059,17 @@ textarea.input {
 .mir-clash__opts input {
   width: 90px;
 }
+.mir-clash__opts label.mir-clash__check {
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  padding-bottom: 6px;
+  cursor: pointer;
+}
+.mir-clash__opts .mir-clash__check input {
+  width: auto;
+  margin: 0;
+}
 .mir-clash__row > select {
   flex: 1;
   min-width: 120px;

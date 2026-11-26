@@ -69,9 +69,12 @@ type Gltf = {
 };
 
 /**
- * Triangles of the wanted objects in one tile, appended per object to `out` as flat xyz triples (tileset frame).
+ * Triangles of the wanted objects in one tile, appended per object to `out` as Float32Array chunks of xyz triples
+ * (tileset frame). `region` [minX, minY, minZ, maxX, maxY, maxZ]: only triangles whose box meets it (a clash batch
+ * needs the objects only where they can touch). Two passes per primitive: count, then fill typed arrays (no growing
+ * JS number arrays — 2026-11-26 whole-model clash ran the browser out of memory).
  */
-export async function collectTriangles(glb: ArrayBuffer, wanted: ReadonlySet<number>, out: Map<number, number[]>): Promise<void> {
+export async function collectTriangles(glb: ArrayBuffer, wanted: ReadonlySet<number>, out: Map<number, Float32Array[]>, region?: ArrayLike<number>): Promise<void> {
   const dv = new DataView(glb);
   if (dv.getUint32(0, true) !== 0x46546c67) throw new Error('타일 형식 오류');
   const jsonLength = dv.getUint32(12, true);
@@ -93,6 +96,7 @@ export async function collectTriangles(glb: ArrayBuffer, wanted: ReadonlySet<num
   const node = json.nodes[0] ?? {};
   const [tx, ty, tz] = node.translation ?? [0, 0, 0];
   const [sx, sy, sz] = node.scale ?? [1, 1, 1];
+  const n = (v: number) => Math.max(v / 32767, -1);
   for (const prim of json.meshes[0]?.primitives ?? []) {
     const pa = json.accessors[prim.attributes.POSITION], ia = json.accessors[prim.attributes._FEATURE_ID_0], xa = json.accessors[prim.indices];
     if (!pa || !ia || !xa) continue;
@@ -102,18 +106,31 @@ export async function collectTriangles(glb: ArrayBuffer, wanted: ReadonlySet<num
     const idx = xa.componentType === 5125
       ? new Uint32Array(xv.buffer, xv.byteOffset + (xa.byteOffset ?? 0), xa.count)
       : new Uint16Array(xv.buffer, xv.byteOffset + (xa.byteOffset ?? 0), xa.count);
-    const n = (v: number) => Math.max(v / 32767, -1);
-    for (let t = 0; t + 2 < idx.length; t += 3) {
-      const id = Math.round(ids[idx[t]]);
-      if (!wanted.has(id)) continue;
-      let list = out.get(id);
-      if (!list) { list = []; out.set(id, list); }
-      for (let k = 0; k < 3; k++) {
-        const v = idx[t + k] * 4;
-        // glTF (X, Y, Z) = translation + scale · normalized; tileset frame (x, y, z) = (X, −Z, Y).
-        const X = tx + sx * n(pos[v]), Y = ty + sy * n(pos[v + 1]), Z = tz + sz * n(pos[v + 2]);
-        list.push(X, -Z, Y);
-      }
+    // Vertices once in the tileset frame: glTF (X, Y, Z) = translation + scale · normalized; tileset (x, y, z) = (X, −Z, Y).
+    const vx = new Float32Array(pa.count * 3);
+    for (let v = 0; v < pa.count; v++) {
+      const X = tx + sx * n(pos[v * 4]), Y = ty + sy * n(pos[v * 4 + 1]), Z = tz + sz * n(pos[v * 4 + 2]);
+      vx[v * 3] = X; vx[v * 3 + 1] = -Z; vx[v * 3 + 2] = Y;
     }
+    const keep = (t: number) => {
+      if (!wanted.has(Math.round(ids[idx[t]]))) return false;
+      if (!region) return true;
+      for (let a = 0; a < 3; a++) {
+        const p0 = vx[idx[t] * 3 + a], p1 = vx[idx[t + 1] * 3 + a], p2 = vx[idx[t + 2] * 3 + a];
+        if (Math.max(p0, p1, p2) < region[a] || Math.min(p0, p1, p2) > region[a + 3]) return false;
+      }
+      return true;
+    };
+    const counts = new Map<number, number>();
+    for (let t = 0; t + 2 < idx.length; t += 3) if (keep(t)) { const id = Math.round(ids[idx[t]]); counts.set(id, (counts.get(id) ?? 0) + 1); }
+    if (!counts.size) continue;
+    const chunks = new Map<number, { arr: Float32Array; at: number }>();
+    for (const [id, c] of counts) chunks.set(id, { arr: new Float32Array(c * 9), at: 0 });
+    for (let t = 0; t + 2 < idx.length; t += 3) {
+      if (!keep(t)) continue;
+      const ch = chunks.get(Math.round(ids[idx[t]]))!;
+      for (let k = 0; k < 3; k++) { const v = idx[t + k] * 3; ch.arr[ch.at++] = vx[v]; ch.arr[ch.at++] = vx[v + 1]; ch.arr[ch.at++] = vx[v + 2]; }
+    }
+    for (const [id, ch] of chunks) { const list = out.get(id); if (list) list.push(ch.arr); else out.set(id, [ch.arr]); }
   }
 }
