@@ -1,5 +1,5 @@
 import {
-  AmbientLight, Box3, Clock, Color, DirectionalLight, DoubleSide, Euler, Group, Matrix3, Matrix4, Mesh, PerspectiveCamera, Plane,
+  AmbientLight, Box3, Clock, Color, DirectionalLight, DoubleSide, Euler, FrontSide, Group, Matrix3, Matrix4, Mesh, PerspectiveCamera, Plane,
   Quaternion, Ray, Raycaster, Scene, Sphere, Spherical, Vector2, Vector3, Vector4, WebGLRenderer, WebGLRenderTarget,
   type BufferAttribute, type BufferGeometry, type InterleavedBufferAttribute, type Material, type MeshStandardMaterial, type Object3D,
 } from 'three';
@@ -1187,7 +1187,8 @@ export class TilesViewer {
     obj.scale.copy(b.getSize(new Vector3()).max(new Vector3(0.1, 0.1, 0.1)));
     const geo = new BoxGeometry(1, 1, 1);
     const edge = new LineSegments(new EdgesGeometry(geo), new LineBasicMaterial({ color: 0xf59e0b, depthTest: false }));
-    const fill = new Mesh(geo, new MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.08, side: DoubleSide, depthTest: true, depthWrite: false }));
+    // 바깥 면만(FrontSide): 카메라가 상자 안에 들어가면 면이 화면을 덮지 않고 윤곽만 보인다.
+    const fill = new Mesh(geo, new MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.06, side: FrontSide, depthTest: true, depthWrite: false }));
     obj.add(fill, edge);
     this.overlay.add(obj);
     this.section = { mode: 'box', obj, flip: false };

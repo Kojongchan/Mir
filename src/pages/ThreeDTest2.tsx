@@ -610,9 +610,12 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
 
   // 단면 → the viewer (its section object and gizmo).
   const sectionRef = useRef<Section | null>(null);
+  /** 단면 상자 안내 전의 상태 줄(파일 이름 등) — 상자를 끄거나 평면으로 바꾸면 되돌린다. */
+  const statusBeforeBox = useRef('');
   useEffect(() => {
     const viewer = viewerRef.current, prev = sectionRef.current;
     sectionRef.current = section;
+    if (section?.mode !== 'box') setStatus(s => (s.startsWith('단면 상자') ? statusBeforeBox.current : s));
     if (!viewer) return;
     if (!section) { viewer.sectionClear(); return; }
     if (section.mode === 'plane' && (!prev || prev.mode !== 'plane' || prev.axis !== section.axis)) viewer.sectionPlane(section.axis);
@@ -636,7 +639,8 @@ export function ThreeDTest2({ variant, project = false, purpose = 'model', onUna
     }
     if (!fitted) viewer.sectionBox();
     setSection(v => ({ mode: 'box', axis: v?.axis ?? 2, gizmo: v?.gizmo && v.gizmo !== 'rotate' ? v.gizmo : 'scale' }));
-    setStatus(fitted ? '단면 상자: 선택한 객체 둘레(1 m 여유) — 손잡이로 크기·위치·방향 조절' : '단면 상자: 모델 전체 — 손잡이로 크기·위치·방향 조절');
+    const note = fitted ? '단면 상자: 선택한 객체 둘레(1 m 여유) — 손잡이로 크기·위치·방향 조절' : '단면 상자: 모델 전체 — 손잡이로 크기·위치·방향 조절';
+    setStatus(s => { if (!s.startsWith('단면 상자')) statusBeforeBox.current = s; return note; });
   }, [loadBoxes, selection, expand]);
   const openMarkup = useCallback(async () => {
     const viewer = viewerRef.current;
