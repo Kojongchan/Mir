@@ -84,19 +84,32 @@ export async function runMirClashDetection(input: MirClashInput): Promise<ClashH
   const leaves: LeafTile[] = await leafTiles(urls);
   const wantedBoxes = [...wanted].map(id => boxOf(boxes, id)).filter((b): b is Float32Array => !!b);
   const tiles = tilesFor(leaves, wantedBoxes, 0.01);
-  const tris = new Map<number, number[]>();
+  // Tiles arrive in any order (6 at a time); each keeps its own triangles and they are joined in tile order, so the
+  // same check gives the same result every time (the penetration depth samples vertices by position in the list).
+  const perTile: Map<number, number[]>[] = new Array(tiles.length);
   let done = 0;
   let next = 0;
   const worker = async () => {
     for (let i = next++; i < tiles.length; i = next++) {
       if (shouldCancel?.()) return;
-      await collectTriangles(await tileBytes(urls, tiles[i].path), wanted, tris);
+      const own = new Map<number, number[]>();
+      await collectTriangles(await tileBytes(urls, tiles[i].path), wanted, own);
+      perTile[i] = own;
       done++;
       onProgress?.(0.05 + (done / tiles.length) * 0.55, `원본 형상 받는 중 ${done}/${tiles.length}타일`);
     }
   };
   await Promise.all(Array.from({ length: Math.min(6, tiles.length) }, worker));
   if (shouldCancel?.()) return [];
+  const tris = new Map<number, number[]>();
+  for (const own of perTile) {
+    if (!own) continue;
+    for (const [id, list] of own) {
+      const all = tris.get(id);
+      if (!all) tris.set(id, list);
+      else for (let k = 0; k < list.length; k++) all.push(list[k]);
+    }
+  }
 
   // 협역: 객체별 BVH(필요할 때 한 번).
   const geoms = new Map<number, ApsClashGeom | null>();

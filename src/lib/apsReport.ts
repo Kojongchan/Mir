@@ -180,14 +180,28 @@ export async function buildApsClashReport(
   }
   clearApsClashView(viewer, model);
 
+  return clashReportHtml(rows, shots, (id) => modelNameOf(model, id), { ...opts, maxShots: max });
+}
+
+/**
+ * 간섭 보고서 HTML(요약 표 + 건별 표·사진) — 기존 뷰어·자체 엔진 공통. `shots`: 행 id → 사진(data URL),
+ * `fileOf`: 객체 → 분야(상위 파일 이름).
+ */
+export function clashReportHtml(
+  rows: ClashRow[],
+  shots: Record<string, string>,
+  fileOf: (id: number) => string,
+  opts: ReportOptions = {},
+): string {
+  const max = opts.maxShots ?? 60;
   const now = new Date().toLocaleString('ko-KR');
   const open = rows.filter((r) => r.status === 'new' || r.status === 'reviewing').length;
 
   // 검토사항 요약 — 모델(상위 파일) 쌍별 건수(첨부 양식의 '구분/검토결과' 표처럼).
   const byPair = new Map<string, number>();
   for (const r of rows) {
-    const fa = modelNameOf(model, r.a.expressID);
-    const fb = modelNameOf(model, r.b.expressID);
+    const fa = fileOf(r.a.expressID);
+    const fb = fileOf(r.b.expressID);
     const key = [fa, fb].sort().join(' ↔ ');
     byPair.set(key, (byPair.get(key) ?? 0) + 1);
   }
@@ -202,8 +216,8 @@ export async function buildApsClashReport(
   // 항목별 상세 — 첨부 보고서의 1건당 표(분야/항목/관련 모델/BIM 모델 사진/검토내용).
   const sections = rows
     .map((r, i) => {
-      const fa = modelNameOf(model, r.a.expressID);
-      const fb = modelNameOf(model, r.b.expressID);
+      const fa = fileOf(r.a.expressID);
+      const fb = fileOf(r.b.expressID);
       const img = shots[r.id]
         ? `<img src="${shots[r.id]}" alt="간섭 ${i + 1}" style="max-width:100%;border:1px solid #bbb" />`
         : `<div style="color:#888;font-size:12px;padding:20px;text-align:center">(이미지 없음 — ${i < max ? '캡처 실패' : '캡처 생략'})</div>`;

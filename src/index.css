@@ -7958,8 +7958,9 @@ textarea.input {
 }
 .mir-clash__head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px 8px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--color-border, var(--border));
   cursor: move;
@@ -8344,4 +8345,73 @@ textarea.input {
 }
 .threed-test2__selbar input[type='range'] {
   width: 160px;
+}
+
+/* 측정: 면적은 채움, 나머지는 선만 */
+.mir-measure path.mir-measure__line {
+  fill: none;
+}
+.mir-measure path.mir-measure__line.is-area {
+  fill: rgba(245, 158, 11, 0.18);
+}
+/* 영역 줌: 캔버스 위에서 사각형을 끌어 그림 */
+.mir-zoombox {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  cursor: crosshair;
+  touch-action: none;
+}
+.mir-zoombox__hint {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--color-surface, var(--panel));
+  border: 1px solid var(--color-border, var(--border));
+  border-radius: 8px;
+}
+.mir-zoombox__rect {
+  position: absolute;
+  border: 2px dashed #2563eb;
+  background: rgba(37, 99, 235, 0.12);
+  pointer-events: none;
+}
+/* 미니맵(왼쪽 아래) */
+.mir-minimap {
+  position: absolute;
+  left: 8px;
+  bottom: 52px;
+  z-index: 24;
+  padding: 4px;
+  background: var(--color-surface, var(--panel));
+  border: 1px solid var(--color-border, var(--border));
+  border-radius: 8px;
+  box-shadow: var(--shadow-md, 0 4px 16px rgba(0, 0, 0, 0.12));
+}
+.mir-minimap canvas {
+  display: block;
+  cursor: pointer;
+}
+.mir-minimap__close {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+}
+/* 층 필터: 관측점 창과 같은 자리(왼쪽) */
+.mir-levels {
+  right: auto;
+  left: 8px;
+}
+.mir-vp__item.is-on {
+  border-color: var(--accent);
+  background: rgba(37, 99, 235, 0.08);
+}
+.mir-levels .mir-vp__item {
+  justify-content: space-between;
 }

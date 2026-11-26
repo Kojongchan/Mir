@@ -1,14 +1,17 @@
-import { DataTexture, MeshLambertMaterial, RGBAFormat, ShaderMaterial, UnsignedByteType, NearestFilter, DoubleSide, type Material, type Texture } from 'three';
+import { DataTexture, FloatType, MeshLambertMaterial, RGBAFormat, ShaderMaterial, UnsignedByteType, NearestFilter, DoubleSide, type Material, type Texture } from 'three';
 
 /**
  * Per-object display state read by the shaders (second viewer, docs/3D뷰_2차_엔진.md). Every vertex carries its
  * object's dbId (_FEATURE_ID_0), so one texel per dbId recolours or hides the object in every level and in tiles
  * that load later — no extra draw pass (the xeokit emphasis pass z-fought) and no per-tile bookkeeping.
- * Texel: rgb = colour, a = 255 colourize (colour mode) · 254 selected · 253 highlighted · 1 hidden · 0 as modelled.
+ * Texel: rgb = colour, a = 255 colourize (colour mode) · 254 selected · 253 highlighted · 252 ghosted (see-through,
+ * not picked) · 1 hidden · 0 as modelled.
  */
 const WIDTH = 1024;
 export const SELECT_RGB = [38, 128, 255];
 export const HIGHLIGHT_RGB = [255, 158, 20];
+/** Ghosted objects (간섭 보기 반투명): light grey, one pixel in four drawn (screen-door: no sorting, any order). */
+const GHOST_RGB = [214, 219, 226];
 
 export class ObjectStateTexture {
   readonly texture: DataTexture;
@@ -16,7 +19,14 @@ export class ObjectStateTexture {
   readonly capacity: number;
   /** Colour per object under the states (colour modes): rgba per dbId, a = 255 painted; null = as modelled. */
   private paint: Uint8Array | null = null;
+  /** Objects kept solid while every other object is ghosted; null = no ghosting. */
+  private ghostKeep: ReadonlySet<number> | null = null;
   private last: { selected: number[]; highlighted: number[]; hidden: number[] } = { selected: [], highlighted: [], hidden: [] };
+  /**
+   * 분해(Explode): per object an offset (scene frame, xyz) the shaders add times `factor` — objects move apart from a
+   * centre. Shared uniform objects, so every material sees changes at once.
+   */
+  readonly explode = { offsets: { value: new DataTexture(new Float32Array(4), 1, 1, RGBAFormat, FloatType) as DataTexture }, factor: { value: 0 } };
 
   constructor(objects: number) {
     const rows = Math.max(1, Math.ceil(Math.max(objects, 1) / WIDTH));
@@ -34,6 +44,30 @@ export class ObjectStateTexture {
     this.apply(this.last.selected, this.last.highlighted, this.last.hidden);
   }
 
+  /** Ghost every object but `keep` (null: none ghosted). */
+  setGhost(keep: Iterable<number> | null): void {
+    this.ghostKeep = keep ? new Set(keep) : null;
+    this.apply(this.last.selected, this.last.highlighted, this.last.hidden);
+  }
+
+  /** Explode offsets: rgba per dbId (xyz used, scene frame); null clears. */
+  setExplodeOffsets(offsets: Float32Array | null): void {
+    const old = this.explode.offsets.value;
+    if (!offsets) {
+      this.explode.offsets.value = new DataTexture(new Float32Array(4), 1, 1, RGBAFormat, FloatType);
+    } else {
+      const rows = Math.max(1, Math.ceil(offsets.length / 4 / WIDTH));
+      const data = new Float32Array(rows * WIDTH * 4);
+      data.set(offsets.subarray(0, Math.min(offsets.length, data.length)));
+      const tex = new DataTexture(data, WIDTH, rows, RGBAFormat, FloatType);
+      tex.magFilter = tex.minFilter = NearestFilter;
+      tex.generateMipmaps = false;
+      this.explode.offsets.value = tex;
+    }
+    this.explode.offsets.value.needsUpdate = true;
+    old.dispose();
+  }
+
   /** Whether an object is hidden (walk mode passes through it). */
   isHidden(id: number): boolean {
     return id > 0 && id < this.capacity && this.data[id * 4 + 3] === 1;
@@ -44,6 +78,14 @@ export class ObjectStateTexture {
     this.last = { selected: [...selected], highlighted: [...highlighted], hidden: [...hidden] };
     this.data.fill(0);
     if (this.paint) this.data.set(this.paint.subarray(0, Math.min(this.paint.length, this.data.length)));
+    if (this.ghostKeep) {
+      const keep = this.ghostKeep;
+      for (let id = 1; id < this.capacity; id++) {
+        if (keep.has(id)) continue;
+        const o = id * 4;
+        this.data[o] = GHOST_RGB[0]; this.data[o + 1] = GHOST_RGB[1]; this.data[o + 2] = GHOST_RGB[2]; this.data[o + 3] = 252;
+      }
+    }
     const put = (id: number, rgb: number[], a: number) => {
       if (!(id > 0 && id < this.capacity)) return;
       this.data.set([rgb[0], rgb[1], rgb[2], a], id * 4);
@@ -67,6 +109,17 @@ const STATE_VERTEX = /* glsl */`
 attribute float _feature_id_0;
 attribute float _skin;
 uniform highp sampler2D objectState;
+uniform highp sampler2D explodeOffsets;
+uniform float explodeFactor;
+/** 분해: the object's offset (scene frame) times the factor, into view space (mvPosition, gl_Position). */
+void applyExplode(inout vec4 mv) {
+  if (explodeFactor <= 0.0) return;
+  int id = int(_feature_id_0 + 0.5);
+  ivec2 size = textureSize(explodeOffsets, 0);
+  if (id >= size.x * size.y) return;
+  vec3 off = texelFetch(explodeOffsets, ivec2(id % size.x, id / size.x), 0).xyz * explodeFactor;
+  mv.xyz += (viewMatrix * vec4(off, 0.0)).xyz;
+}
 varying vec4 vObjectState;
 varying float vSkinPush;
 vec4 readObjectState() {
@@ -103,6 +156,11 @@ float mirDepthRank(int id, float state) {
   return float(1 + id % 31);
 }
 `;
+/**
+ * Ghosted (a = 252): only one pixel in each 2×2 block is drawn, so what is behind shows through (screen-door
+ * transparency, a fine even dot grid — a diagonal pattern read as hatching).
+ */
+const GHOST_DISCARD = 'if (abs(vObjectState.a - 252.0 / 255.0) < 0.5 / 255.0 && mod(floor(gl_FragCoord.x), 2.0) + mod(floor(gl_FragCoord.y), 2.0) > 0.5) discard;';
 /** `view`: the fragment's view-space offset to the eye (vViewPosition), for the skin push (no branch: derivatives). */
 const APPLY_DEPTH_ORDER = (id: string, view: string) => /* glsl */`
 #include <logdepthbuf_fragment>
@@ -177,11 +235,14 @@ export function createSurfaceMaterial(state: ObjectStateTexture, transparent: bo
     shader.uniforms.objectState = { value: state.texture };
     shader.vertexShader = STATE_VERTEX + shader.vertexShader
       .replace('#include <begin_vertex>', '#include <begin_vertex>\n  vObjectState = readObjectState();\n  vSkinPush = skinPush(vObjectState);')
-      .replace('#include <project_vertex>', `#include <project_vertex>\n${HIDE}`);
+      .replace('#include <project_vertex>', `#include <project_vertex>\n  applyExplode(mvPosition); gl_Position = projectionMatrix * mvPosition;\n${HIDE}`);
+    shader.uniforms.explodeOffsets = state.explode.offsets;
+    shader.uniforms.explodeFactor = state.explode.factor;
     shader.vertexShader = withIdVaryings(shader.vertexShader, 'int(_feature_id_0 + 0.5)');
     shader.fragmentShader = 'varying vec4 vObjectState;\nvarying float vSkinPush;\n' + ID_OUTPUT + DEPTH_ORDER + shader.fragmentShader
       .replace('#include <logdepthbuf_fragment>', APPLY_DEPTH_ORDER('vOutlineId', 'vViewPosition'))
-      .replace('#include <color_fragment>', '#include <color_fragment>\n  diffuseColor.rgb = mix(diffuseColor.rgb, vObjectState.rgb, step(0.5, vObjectState.a));')
+      .replace('#include <color_fragment>', '#include <color_fragment>\n  diffuseColor.rgb = mix(diffuseColor.rgb, vObjectState.rgb, step(0.5, vObjectState.a));\n'
+        + `  ${GHOST_DISCARD}`)
       .replace('#include <dithering_fragment>', '#include <dithering_fragment>\n  writeOutlineId(vOutlineId);');
   };
   material.customProgramCacheKey = () => `mir-surface-${transparent}`;
@@ -194,7 +255,7 @@ export function createSurfaceMaterial(state: ObjectStateTexture, transparent: bo
  */
 export function createPickMaterial(state: ObjectStateTexture): ShaderMaterial {
   return new ShaderMaterial({
-    uniforms: { objectState: { value: state.texture }, mode: { value: 0 }, far: { value: 1e6 } },
+    uniforms: { objectState: { value: state.texture }, mode: { value: 0 }, far: { value: 1e6 }, explodeOffsets: state.explode.offsets, explodeFactor: state.explode.factor },
     side: DoubleSide,
     clipping: true, // 단면: what is cut away is not picked
 
@@ -211,6 +272,7 @@ export function createPickMaterial(state: ObjectStateTexture): ShaderMaterial {
         vSkinPush = skinPush(vObjectState);
         vId = int(_feature_id_0 + 0.5);
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        applyExplode(mv);
         vDepth = -mv.z;
         vView = -mv.xyz;
         gl_Position = projectionMatrix * mv;
@@ -234,6 +296,7 @@ export function createPickMaterial(state: ObjectStateTexture): ShaderMaterial {
       ${DEPTH_ORDER}
       void main() {
         #include <clipping_planes_fragment>
+        if (abs(vObjectState.a - 252.0 / 255.0) < 0.5 / 255.0) discard; // ghosted: clicks go through
         ${APPLY_DEPTH_ORDER('vId', 'vView')}
         if (mode == 0) gl_FragColor = vec4(float((vId >> 16) & 255) / 255.0, float((vId >> 8) & 255) / 255.0, float(vId & 255) / 255.0, 1.0);
         else gl_FragColor = packDepthToRGBA(clamp(vDepth / far, 0.0, 0.999999));

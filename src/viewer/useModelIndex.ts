@@ -8,10 +8,11 @@ import { openPropsCache, propsCacheOf, propsKey } from './propsCache';
 /** Model index from the cache state (`meta`): tree URL and property shards (scripts/build-meta-index.mjs). */
 export type MetaInfo = { tree: string; shardSize: number; shardCount: number; objects?: number; alias?: string };
 type Pending = {
-  type: 'search' | 'external'; query: string; ids?: string[]; key: string; onProgress: (done: number, total: number) => void;
-  resolve: (answer: { ids?: number[]; found?: Record<string, number> }) => void; reject: (e: Error) => void;
+  type: 'search' | 'external' | 'levels' | 'level'; query: string; ids?: string[]; key: string; onProgress: (done: number, total: number) => void;
+  resolve: (answer: Answer) => void; reject: (e: Error) => void;
 };
 type Shard = Record<string, ObjectProps>;
+type Answer = { ids?: number[]; found?: Record<string, number>; levels?: { value: string; count: number }[] };
 type MetaState = {
   urn: string; shardSize: number; shardCount: number; cacheName: string | null;
   /** Parsed shards in memory (the most recent PARSED_KEPT), and shards known to be in the browser cache. */
@@ -133,7 +134,7 @@ export function useModelIndex() {
     if (!w) {
       const worker = new Worker(new URL('./propSearch.worker.ts', import.meta.url), { type: 'module' });
       const state: NonNullable<typeof searchRef.current> = { worker, seq: 0, pending: new Map() };
-      worker.onmessage = async (e: MessageEvent<{ type: string; seq?: number; ids?: number[]; found?: Record<string, number>; done?: number; total?: number; message?: string }>) => {
+      worker.onmessage = async (e: MessageEvent<Answer & { type: string; seq?: number; done?: number; total?: number; message?: string }>) => {
         const msg = e.data;
         if (msg.type === 'progress') { for (const p of state.pending.values()) p.onProgress(msg.done ?? 0, msg.total ?? 0); return; }
         const p = msg.seq === undefined ? undefined : state.pending.get(msg.seq);
@@ -149,7 +150,7 @@ export function useModelIndex() {
           return;
         }
         state.pending.delete(msg.seq!);
-        if (msg.type === 'result') p.resolve({ ids: msg.ids, found: msg.found });
+        if (msg.type === 'result') p.resolve({ ids: msg.ids, found: msg.found, levels: msg.levels });
         else p.reject(new Error(msg.message ?? '검색 실패'));
       };
       worker.onerror = e => {
@@ -159,7 +160,7 @@ export function useModelIndex() {
       searchRef.current = w = state;
     }
     const seq = ++w.seq;
-    return new Promise<{ ids?: number[]; found?: Record<string, number> }>((resolve, reject) => {
+    return new Promise<Answer>((resolve, reject) => {
       w!.pending.set(seq, { type, query, ids, key: meta.urn, onProgress, resolve, reject });
       w!.worker.postMessage({ type, key: meta.urn, query, ids, seq });
     });
@@ -182,8 +183,20 @@ export function useModelIndex() {
     return metaRef.current === meta ? new Map(Object.entries(found)) : new Map();
   }, [ask]);
 
+  /** 층 필터: level / storey values of the open model with object counts (loads every shard once, in the worker). */
+  const levels = useCallback(async (onProgress: (done: number, total: number) => void = () => {}) => {
+    const meta = metaRef.current;
+    if (!meta) return [] as { value: string; count: number }[];
+    return (await ask(meta, 'levels', '', undefined, onProgress)).levels ?? [];
+  }, [ask]);
+  const levelObjects = useCallback(async (value: string) => {
+    const meta = metaRef.current;
+    if (!meta) return [] as number[];
+    return (await ask(meta, 'level', value, undefined, () => {})).ids ?? [];
+  }, [ask]);
+
   /** The external id of one object (from its property shard), or null. */
   const externalOf = useCallback(async (dbId: number): Promise<string | null> => (await loadProps(dbId))?.x ?? null, [loadProps]);
 
-  return { tree, note, open, reset, loadProps, searchValues, prefetch, findExternal, externalOf };
+  return { tree, note, open, reset, loadProps, searchValues, prefetch, findExternal, externalOf, levels, levelObjects };
 }
