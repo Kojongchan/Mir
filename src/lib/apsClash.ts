@@ -222,7 +222,7 @@ function triNormal(pos: ArrayLike<number>, faceIndex: number, out: THREE.Vector3
  * `inBox` false(기존 뷰어): 전체 정점을 고르게 건너뛰며 표본 → 박스 밖은 버림. true(자체 엔진 전체 검사): 박스 안 정점만
  * 먼저 추려 그중에서 표본 — 겹침이 작은 쌍도 그 부분을 빠짐없이 보고, 박스 밖 정점에 질의하지 않아 빠르다.
  */
-function maxPenetration(fromGeom: THREE.BufferGeometry, intoGeom: THREE.BufferGeometry, intoBvh: MeshBVH, box: THREE.Box3, samples = 1200, inBox = false): number {
+function maxPenetration(fromGeom: THREE.BufferGeometry, intoGeom: THREE.BufferGeometry, intoBvh: MeshBVH, box: THREE.Box3, samples = 1200, inBox = false, minDepth = 0): number {
   const pos = (fromGeom.getAttribute('position') as THREE.BufferAttribute).array as ArrayLike<number>;
   const intoPos = (intoGeom.getAttribute('position') as THREE.BufferAttribute).array as ArrayLike<number>;
   const count = pos.length / 3;
@@ -248,8 +248,9 @@ function maxPenetration(fromGeom: THREE.BufferGeometry, intoGeom: THREE.BufferGe
     const i = list ? list[k] : k;
     _pv.set(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]);
     if (!list && !box.containsPoint(_pv)) continue;
-    const hit = (intoBvh as any).closestPointToPoint(_pv, target);
-    if (!hit) continue;
+    // minDepth: 표면이 그보다 가까우면 찾는 즉시 멈춘다(그 정점은 minDepth 만큼 파고들 수 없음) — 접촉면 정점이 많은 쌍이 빨라진다.
+    const hit = (intoBvh as any).closestPointToPoint(_pv, target, minDepth);
+    if (!hit || hit.distance < minDepth) continue;
     triNormal(intoPos, hit.faceIndex, _pn);
     _pd.copy(_pv).sub(hit.point);
     if (_pd.dot(_pn) < 0 && hit.distance > max) max = hit.distance; // 내부(법선 반대) = 관통
@@ -259,13 +260,14 @@ function maxPenetration(fromGeom: THREE.BufferGeometry, intoGeom: THREE.BufferGe
 
 /**
  * 두 솔리드가 서로 파고든 최대 깊이(자체 엔진 간섭에서도 같은 기준으로 쓴다 — mirClashBatch.ts).
- * `inBox`: 겹침 박스 안 정점만 추려 표본(maxPenetration 참고).
+ * `inBox`: 겹침 박스 안 정점만 추려 표본(maxPenetration 참고). `minDepth`(보통 허용오차): 그보다 얕은 관통은 재지 않는다 —
+ * 결과가 minDepth 이상이면 그 값은 정확하고, 미만이면 0.
  */
-export function penetrationDepth(ga: ApsClashGeom, gb: ApsClashGeom, overlap: THREE.Box3, samples = 1200, inBox = false): number {
+export function penetrationDepth(ga: ApsClashGeom, gb: ApsClashGeom, overlap: THREE.Box3, samples = 1200, inBox = false, minDepth = 0): number {
   if (overlap.isEmpty()) return 0;
   try {
-    const a = maxPenetration(ga.geometry, gb.geometry, gb.bvh, overlap, samples, inBox);
-    const b = maxPenetration(gb.geometry, ga.geometry, ga.bvh, overlap, samples, inBox);
+    const a = maxPenetration(ga.geometry, gb.geometry, gb.bvh, overlap, samples, inBox, minDepth);
+    const b = maxPenetration(gb.geometry, ga.geometry, ga.bvh, overlap, samples, inBox, minDepth);
     return Math.max(a, b);
   } catch {
     overlap.getSize(_pv);

@@ -111,7 +111,7 @@ export async function runClashBatch(job: ClashBatch, store: TileStore, shouldCan
     const middle = () => (overlap.isEmpty() ? ga.box.getCenter(ca).lerp(gb.box.getCenter(cb), 0.5) : overlap.getCenter(p));
     if (type === 'hard') {
       if (intersects) {
-        const depth = penetrationDepth(ga, gb, overlap, DEPTH_SAMPLES, true);
+        const depth = penetrationDepth(ga, gb, overlap, DEPTH_SAMPLES, true, tolerance);
         if (depth >= tolerance) push(a, b, middle(), depth);
       }
     } else if (intersects) push(a, b, middle(), 0);
